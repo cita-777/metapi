@@ -16,6 +16,7 @@ import { I18nProvider, useI18n } from './i18n.js';
 import { resolveLoginErrorMessage } from './loginError.js';
 import { SITE_DOCS_URL } from './docsLink.js';
 import { useAnimatedVisibility } from './components/useAnimatedVisibility.js';
+import { useIsMobile } from './components/useIsMobile.js';
 const Dashboard = lazy(() => import('./pages/Dashboard.js'));
 const Sites = lazy(() => import('./pages/Sites.js'));
 const Accounts = lazy(() => import('./pages/Accounts.js'));
@@ -383,6 +384,7 @@ function AppShell() {
   const notifBtnRef = useRef<HTMLButtonElement>(null);
   const latestTaskEventIdRef = useRef(0);
   const toast = useToast();
+  const isMobile = useIsMobile(768);
   const resolvedTheme: 'light' | 'dark' = themeMode === 'system'
     ? (systemPrefersDark ? 'dark' : 'light')
     : themeMode;
@@ -414,6 +416,10 @@ function AppShell() {
       localStorage.setItem('theme', themeMode);
     }
   }, [resolvedTheme, themeMode]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-layout', isMobile ? 'mobile' : 'desktop');
+  }, [isMobile]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
