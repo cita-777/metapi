@@ -1,4 +1,5 @@
 import { Suspense, lazy, useEffect, useState, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 import { useToast } from '../components/Toast.js';
 import { formatCompactTokenMetric } from '../numberFormat.js';
@@ -35,6 +36,105 @@ type SiteSpeedState =
   | { status: 'timeout' }
   | { status: 'done'; ms: number }
   | undefined;
+
+type SiteAvailabilityBucket = {
+  startUtc?: string | null;
+  label: string;
+  totalRequests: number;
+  successCount: number;
+  failedCount: number;
+  availabilityPercent: number | null;
+  averageLatencyMs: number | null;
+};
+
+type SiteAvailabilitySummary = {
+  siteId: number;
+  siteName: string;
+  siteUrl?: string | null;
+  platform?: string | null;
+  totalRequests: number;
+  successCount: number;
+  failedCount: number;
+  availabilityPercent: number | null;
+  averageLatencyMs: number | null;
+  buckets: SiteAvailabilityBucket[];
+};
+
+function formatAvailabilityPercent(value: number | null | undefined): string {
+  if (typeof value !== 'number' || Number.isNaN(value) || !Number.isFinite(value)) return '—';
+  return `${Math.round(value)}%`;
+}
+
+function getAvailabilityColor(value: number | null | undefined): string {
+  if (typeof value !== 'number' || Number.isNaN(value) || !Number.isFinite(value)) {
+    return 'var(--color-border-light)';
+  }
+  const hue = Math.max(0, Math.min(120, value * 1.2));
+  return `hsl(${hue}, 72%, 45%)`;
+}
+
+function padDateTimeSegment(value: number): string {
+  return String(value).padStart(2, '0');
+}
+
+function formatDateTimeRouteValue(value: Date): string {
+  return `${value.getFullYear()}-${padDateTimeSegment(value.getMonth() + 1)}-${padDateTimeSegment(value.getDate())}T${padDateTimeSegment(value.getHours())}:${padDateTimeSegment(value.getMinutes())}`;
+}
+
+function buildSiteLogsRoute(siteId: number, range?: { from: Date; to: Date }): string {
+  const params = new URLSearchParams();
+  params.set('siteId', String(siteId));
+  if (range) {
+    params.set('from', formatDateTimeRouteValue(range.from));
+    params.set('to', formatDateTimeRouteValue(range.to));
+  }
+  return `/logs?${params.toString()}`;
+}
+
+function buildSiteLast24hLogsRoute(siteId: number): string {
+  const now = new Date();
+  const from = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours() - 23, 0, 0, 0);
+  const to = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours() + 1, 0, 0, 0);
+  return buildSiteLogsRoute(siteId, { from, to });
+}
+
+function parseAvailabilityBucketStart(startUtc?: string | null): Date | null {
+  const text = (startUtc || '').trim();
+  if (!text) return null;
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
+}
+
+function parseAvailabilityBucketLabel(label: string): Date | null {
+  const match = label.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (!match) return null;
+  const [, year, month, day, hour, minute, second = '0'] = match;
+  const parsed = new Date(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second),
+    0,
+  );
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
+}
+
+function formatAvailabilityBucketLabel(bucket: SiteAvailabilityBucket): string {
+  const parsed = parseAvailabilityBucketStart(bucket.startUtc) || parseAvailabilityBucketLabel(bucket.label);
+  if (!parsed) return bucket.label;
+  return `${parsed.getFullYear()}-${padDateTimeSegment(parsed.getMonth() + 1)}-${padDateTimeSegment(parsed.getDate())} ${padDateTimeSegment(parsed.getHours())}:${padDateTimeSegment(parsed.getMinutes())}:${padDateTimeSegment(parsed.getSeconds())}`;
+}
+
+function buildAvailabilityBucketLogsRoute(siteId: number, bucket: SiteAvailabilityBucket): string {
+  const start = parseAvailabilityBucketStart(bucket.startUtc) || parseAvailabilityBucketLabel(bucket.label);
+  if (!start) return buildSiteLast24hLogsRoute(siteId);
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+  return buildSiteLogsRoute(siteId, { from: start, to: end });
+}
 
 export default function Dashboard({ adminName = '\u7ba1\u7406\u5458' }: { adminName?: string }) {
   const [data, setData] = useState<any>(null);
@@ -213,6 +313,9 @@ export default function Dashboard({ adminName = '\u7ba1\u7406\u5458' }: { adminN
   const performanceWindowSeconds = Math.max(1, safeNumber(data?.performance?.windowSeconds) || 60);
   const requestsPerMinute = safeNumber(data?.performance?.requestsPerMinute);
   const tokensPerMinute = safeNumber(data?.performance?.tokensPerMinute);
+  const siteAvailability: SiteAvailabilitySummary[] = Array.isArray(data?.siteAvailability)
+    ? data.siteAvailability
+    : [];
 
   const getLatencyColor = (ms: number) => (
     ms <= 500
@@ -459,6 +562,97 @@ export default function Dashboard({ adminName = '\u7ba1\u7406\u5458' }: { adminN
             <SiteTrendChart data={siteTrend} loading={siteLoading} />
           </Suspense>
         </div>
+      </div>
+
+      <div className="chart-container animate-slide-up stagger-8 site-observability-panel">
+        <div className="site-observability-header">
+          <div>
+            <div className="site-observability-title">
+              <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12h4l3 8 4-16 3 8h4" /></svg>
+              站点可用性观测
+            </div>
+            <div className="site-observability-subtitle">最近 24 小时，每个色块代表 1 小时，按单次上游请求统计</div>
+          </div>
+          <div className="site-observability-legend">
+            <span className="site-observability-legend-text">低</span>
+            <span className="site-observability-legend-chip" style={{ background: getAvailabilityColor(0) }} />
+            <span className="site-observability-legend-chip" style={{ background: getAvailabilityColor(50) }} />
+            <span className="site-observability-legend-chip" style={{ background: getAvailabilityColor(100) }} />
+            <span className="site-observability-legend-text">高</span>
+          </div>
+        </div>
+
+        {siteAvailability.length > 0 ? (
+          <div className="site-observability-list">
+            {siteAvailability.map((site) => (
+              <div key={site.siteId} className="site-observability-row">
+                <div className="site-observability-row-header">
+                  <div className="site-observability-site-meta">
+                    <div className="site-observability-site-name-row">
+                      <span className="site-observability-site-name">{site.siteName}</span>
+                      {site.platform && (
+                        <span className="site-observability-platform-badge">{site.platform}</span>
+                      )}
+                      {site.siteUrl && (
+                        <a
+                          href={site.siteUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="site-observability-link"
+                        >
+                          打开
+                        </a>
+                      )}
+                    </div>
+                    <div className="site-observability-site-stats">
+                      <span>{formatAvailabilityPercent(site.availabilityPercent)} 可用性</span>
+                      <span style={site.averageLatencyMs != null ? { color: getLatencyColor(site.averageLatencyMs) } : undefined}>
+                        {site.averageLatencyMs != null ? `${site.averageLatencyMs}ms` : '—'} 平均响应
+                      </span>
+                      <span>{Math.round(site.totalRequests || 0)} 次请求</span>
+                      <span>{Math.round(site.successCount || 0)} 成功 / {Math.round(site.failedCount || 0)} 失败</span>
+                    </div>
+                  </div>
+                  <div className="site-observability-row-actions">
+                    <Link
+                      to={buildSiteLast24hLogsRoute(site.siteId)}
+                      className="site-observability-log-link"
+                    >
+                      查看日志
+                    </Link>
+                  </div>
+                </div>
+                <div className="site-availability-strip">
+                  {site.buckets.map((bucket, index) => (
+                    <Link
+                      key={`${site.siteId}-${index}`}
+                      to={buildAvailabilityBucketLogsRoute(site.siteId, bucket)}
+                      className="site-availability-cell site-availability-cell-link"
+                      style={{
+                        background: getAvailabilityColor(bucket.availabilityPercent),
+                        opacity: bucket.totalRequests > 0 ? 1 : 0.35,
+                      }}
+                      title={[
+                        formatAvailabilityBucketLabel(bucket),
+                        bucket.totalRequests > 0
+                          ? `可用性 ${formatAvailabilityPercent(bucket.availabilityPercent)}`
+                          : '无请求',
+                        `${bucket.successCount} 成功 / ${bucket.failedCount} 失败`,
+                        bucket.averageLatencyMs != null ? `平均响应 ${bucket.averageLatencyMs}ms` : '平均响应 —',
+                      ].join(' | ')}
+                      aria-label={`${site.siteName} ${formatAvailabilityBucketLabel(bucket)} 使用日志`}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="site-observability-empty">
+            <div className="site-observability-empty-title">暂无站点观测数据</div>
+            <div className="site-observability-empty-note">有代理请求后，这里会自动生成每个站点的可用性条和平均响应速度。</div>
+          </div>
+        )}
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 16 }}>

@@ -184,6 +184,7 @@ export type ProxyLogListItem = {
   totalTokens: number | null;
   retryCount: number;
   accountId?: number | null;
+  siteId?: number | null;
   username?: string | null;
   siteName?: string | null;
   siteUrl?: string | null;
@@ -213,6 +214,9 @@ export type ProxyLogsQuery = {
   offset?: number;
   status?: ProxyLogStatusFilter;
   search?: string;
+  siteId?: number;
+  from?: string;
+  to?: string;
 };
 
 export type ProxyLogsResponse = {

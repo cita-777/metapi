@@ -242,4 +242,108 @@ describe('stats dashboard filters disabled sites', () => {
       tokensPerMinute: 1800,
     });
   });
+
+  it('returns site availability buckets and average latency from per-request proxy logs', async () => {
+    const activeSite = await db.insert(schema.sites).values({
+      name: 'availability-site',
+      url: 'https://availability.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    const disabledSite = await db.insert(schema.sites).values({
+      name: 'disabled-availability-site',
+      url: 'https://disabled-availability.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    await db.run(sql`update sites set status = 'disabled' where id = ${disabledSite.id}`);
+
+    const activeAccount = await db.insert(schema.accounts).values({
+      siteId: activeSite.id,
+      username: 'availability-user',
+      accessToken: 'availability-token',
+      balance: 20,
+      status: 'active',
+    }).returning().get();
+
+    const disabledAccount = await db.insert(schema.accounts).values({
+      siteId: disabledSite.id,
+      username: 'disabled-availability-user',
+      accessToken: 'disabled-availability-token',
+      balance: 20,
+      status: 'active',
+    }).returning().get();
+
+    const now = Date.now();
+    const recentSuccess = formatUtcSqlDateTime(new Date(now - 5 * 60_000));
+    const recentFailure = formatUtcSqlDateTime(new Date(now - 65 * 60_000));
+
+    await db.insert(schema.proxyLogs).values([
+      {
+        accountId: activeAccount.id,
+        status: 'success',
+        latencyMs: 120,
+        createdAt: recentSuccess,
+      },
+      {
+        accountId: activeAccount.id,
+        status: 'failed',
+        latencyMs: 280,
+        createdAt: recentFailure,
+      },
+      {
+        accountId: disabledAccount.id,
+        status: 'success',
+        latencyMs: 999,
+        createdAt: recentSuccess,
+      },
+    ]).run();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/stats/dashboard',
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      siteAvailability?: Array<{
+        siteId: number;
+        siteName: string;
+        totalRequests: number;
+        successCount: number;
+        failedCount: number;
+        availabilityPercent: number | null;
+        averageLatencyMs: number | null;
+        buckets: Array<{
+          startUtc?: string;
+          totalRequests: number;
+          successCount: number;
+          failedCount: number;
+        }>;
+      }>;
+    };
+
+    expect(Array.isArray(body.siteAvailability)).toBe(true);
+    expect(body.siteAvailability).toHaveLength(1);
+    expect(body.siteAvailability?.[0]).toMatchObject({
+      siteId: activeSite.id,
+      siteName: 'availability-site',
+      totalRequests: 2,
+      successCount: 1,
+      failedCount: 1,
+      availabilityPercent: 50,
+      averageLatencyMs: 200,
+    });
+    expect(body.siteAvailability?.[0]?.buckets).toHaveLength(24);
+    expect(
+      body.siteAvailability?.[0]?.buckets.reduce((sum, bucket) => sum + bucket.totalRequests, 0),
+    ).toBe(2);
+    expect(
+      body.siteAvailability?.[0]?.buckets.reduce((sum, bucket) => sum + bucket.successCount, 0),
+    ).toBe(1);
+    expect(
+      body.siteAvailability?.[0]?.buckets.reduce((sum, bucket) => sum + bucket.failedCount, 0),
+    ).toBe(1);
+    expect(typeof body.siteAvailability?.[0]?.buckets[0]?.startUtc).toBe('string');
+  });
 });

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, create, type ReactTestInstance } from 'react-test-renderer';
+import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
 import ProxyLogs from './ProxyLogs.js';
 
@@ -7,6 +8,7 @@ const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getProxyLogs: vi.fn(),
     getProxyLogDetail: vi.fn(),
+    getSites: vi.fn(),
   },
 }));
 
@@ -79,6 +81,10 @@ function buildListResponse(overrides?: Partial<{
 describe('ProxyLogs server-driven page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    apiMock.getSites.mockResolvedValue([
+      { id: 9, name: 'main-site', status: 'active' },
+      { id: 12, name: 'backup-site', status: 'active' },
+    ]);
     apiMock.getProxyLogs.mockResolvedValue(buildListResponse());
     apiMock.getProxyLogDetail.mockResolvedValue({
       id: 101,
@@ -138,9 +144,11 @@ describe('ProxyLogs server-driven page', () => {
     try {
       await act(async () => {
         root = create(
-          <ToastProvider>
-            <ProxyLogs />
-          </ToastProvider>,
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
         );
       });
       await flushMicrotasks();
@@ -168,9 +176,11 @@ describe('ProxyLogs server-driven page', () => {
     try {
       await act(async () => {
         root = create(
-          <ToastProvider>
-            <ProxyLogs />
-          </ToastProvider>,
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
         );
       });
       await flushMicrotasks();
@@ -214,9 +224,11 @@ describe('ProxyLogs server-driven page', () => {
     try {
       await act(async () => {
         root = create(
-          <ToastProvider>
-            <ProxyLogs />
-          </ToastProvider>,
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
         );
       });
       await flushMicrotasks();
@@ -244,6 +256,40 @@ describe('ProxyLogs server-driven page', () => {
 
       expect(apiMock.getProxyLogDetail).toHaveBeenCalledTimes(1);
       expect(apiMock.getProxyLogDetail).toHaveBeenCalledWith(101);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('hydrates site and time filters from the route query', async () => {
+    let root: ReturnType<typeof create> | null = null;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs?siteId=9&from=2026-03-09T08:00&to=2026-03-09T09:00']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const expectedFrom = new Date(2026, 2, 9, 8, 0).toISOString();
+      const expectedTo = new Date(2026, 2, 9, 9, 0).toISOString();
+      expect(apiMock.getProxyLogs).toHaveBeenCalledWith({
+        limit: 50,
+        offset: 0,
+        status: 'all',
+        search: '',
+        siteId: 9,
+        from: expectedFrom,
+        to: expectedTo,
+      });
+
+      const rendered = JSON.stringify(root!.toJSON());
+      expect(rendered).toContain('main-site');
     } finally {
       root?.unmount();
     }

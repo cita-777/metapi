@@ -199,4 +199,99 @@ describe('stats proxy logs routes', () => {
       usage: { promptTokens: 100, completionTokens: 20 },
     });
   });
+
+  it('filters proxy logs by site and time range', async () => {
+    const alphaSite = await db.insert(schema.sites).values({
+      name: 'alpha-site',
+      url: 'https://alpha.example.com',
+      platform: 'new-api',
+    }).returning().get();
+    const betaSite = await db.insert(schema.sites).values({
+      name: 'beta-site',
+      url: 'https://beta.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    const alphaAccount = await db.insert(schema.accounts).values({
+      siteId: alphaSite.id,
+      username: 'alpha-user',
+      accessToken: 'alpha-token',
+      status: 'active',
+    }).returning().get();
+    const betaAccount = await db.insert(schema.accounts).values({
+      siteId: betaSite.id,
+      username: 'beta-user',
+      accessToken: 'beta-token',
+      status: 'active',
+    }).returning().get();
+
+    await db.insert(schema.proxyLogs).values([
+      {
+        accountId: alphaAccount.id,
+        modelRequested: 'gpt-4o',
+        modelActual: 'gpt-4o',
+        status: 'success',
+        totalTokens: 10,
+        estimatedCost: 0.11,
+        createdAt: formatUtcSqlDateTime(new Date('2026-03-09T08:15:00.000Z')),
+      },
+      {
+        accountId: alphaAccount.id,
+        modelRequested: 'gpt-4.1-mini',
+        modelActual: 'gpt-4.1-mini',
+        status: 'failed',
+        totalTokens: 20,
+        estimatedCost: 0.22,
+        createdAt: formatUtcSqlDateTime(new Date('2026-03-09T08:45:00.000Z')),
+      },
+      {
+        accountId: alphaAccount.id,
+        modelRequested: 'gpt-4.1',
+        modelActual: 'gpt-4.1',
+        status: 'success',
+        totalTokens: 30,
+        estimatedCost: 0.33,
+        createdAt: formatUtcSqlDateTime(new Date('2026-03-09T09:15:00.000Z')),
+      },
+      {
+        accountId: betaAccount.id,
+        modelRequested: 'claude-3-7-sonnet',
+        modelActual: 'claude-3-7-sonnet',
+        status: 'success',
+        totalTokens: 40,
+        estimatedCost: 0.44,
+        createdAt: formatUtcSqlDateTime(new Date('2026-03-09T08:30:00.000Z')),
+      },
+    ]).run();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/stats/proxy-logs?siteId=${alphaSite.id}&from=${encodeURIComponent('2026-03-09T08:00:00.000Z')}&to=${encodeURIComponent('2026-03-09T09:00:00.000Z')}`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      items: Array<Record<string, unknown>>;
+      total: number;
+      summary: {
+        totalCount: number;
+        successCount: number;
+        failedCount: number;
+        totalCost: number;
+        totalTokensAll: number;
+      };
+    };
+
+    expect(body.total).toBe(2);
+    expect(body.items).toHaveLength(2);
+    expect(body.items.map((item) => item.siteId)).toEqual([alphaSite.id, alphaSite.id]);
+    expect(body.items.map((item) => item.siteName)).toEqual(['alpha-site', 'alpha-site']);
+    expect(body.summary).toEqual({
+      totalCount: 2,
+      successCount: 1,
+      failedCount: 1,
+      totalCost: 0.33,
+      totalTokensAll: 30,
+    });
+  });
 });
