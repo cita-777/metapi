@@ -57,6 +57,7 @@ describe('Dashboard site observability panel', () => {
         availabilityPercent: 75,
         averageLatencyMs: 320,
         buckets: Array.from({ length: 24 }, (_, index) => ({
+          startUtc: new Date(Date.UTC(2026, 2, 11, index, 0, 0)).toISOString(),
           label: `2026-03-11 ${String(index).padStart(2, '0')}:00:00`,
           totalRequests: index < 8 ? 1 : 0,
           successCount: index < 6 ? 1 : 0,

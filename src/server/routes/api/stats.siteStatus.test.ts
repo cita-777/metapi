@@ -315,6 +315,7 @@ describe('stats dashboard filters disabled sites', () => {
         availabilityPercent: number | null;
         averageLatencyMs: number | null;
         buckets: Array<{
+          startUtc?: string;
           totalRequests: number;
           successCount: number;
           failedCount: number;
@@ -343,5 +344,6 @@ describe('stats dashboard filters disabled sites', () => {
     expect(
       body.siteAvailability?.[0]?.buckets.reduce((sum, bucket) => sum + bucket.failedCount, 0),
     ).toBe(1);
+    expect(typeof body.siteAvailability?.[0]?.buckets[0]?.startUtc).toBe('string');
   });
 });

@@ -38,6 +38,7 @@ type SiteSpeedState =
   | undefined;
 
 type SiteAvailabilityBucket = {
+  startUtc?: string | null;
   label: string;
   totalRequests: number;
   successCount: number;
@@ -97,7 +98,15 @@ function buildSiteLast24hLogsRoute(siteId: number): string {
   return buildSiteLogsRoute(siteId, { from, to });
 }
 
-function parseAvailabilityBucketStart(label: string): Date | null {
+function parseAvailabilityBucketStart(startUtc?: string | null): Date | null {
+  const text = (startUtc || '').trim();
+  if (!text) return null;
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
+}
+
+function parseAvailabilityBucketLabel(label: string): Date | null {
   const match = label.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})(?::(\d{2}))?$/);
   if (!match) return null;
   const [, year, month, day, hour, minute, second = '0'] = match;
@@ -114,8 +123,14 @@ function parseAvailabilityBucketStart(label: string): Date | null {
   return parsed;
 }
 
-function buildAvailabilityBucketLogsRoute(siteId: number, bucketLabel: string): string {
-  const start = parseAvailabilityBucketStart(bucketLabel);
+function formatAvailabilityBucketLabel(bucket: SiteAvailabilityBucket): string {
+  const parsed = parseAvailabilityBucketStart(bucket.startUtc) || parseAvailabilityBucketLabel(bucket.label);
+  if (!parsed) return bucket.label;
+  return `${parsed.getFullYear()}-${padDateTimeSegment(parsed.getMonth() + 1)}-${padDateTimeSegment(parsed.getDate())} ${padDateTimeSegment(parsed.getHours())}:${padDateTimeSegment(parsed.getMinutes())}:${padDateTimeSegment(parsed.getSeconds())}`;
+}
+
+function buildAvailabilityBucketLogsRoute(siteId: number, bucket: SiteAvailabilityBucket): string {
+  const start = parseAvailabilityBucketStart(bucket.startUtc) || parseAvailabilityBucketLabel(bucket.label);
   if (!start) return buildSiteLast24hLogsRoute(siteId);
   const end = new Date(start.getTime() + 60 * 60 * 1000);
   return buildSiteLogsRoute(siteId, { from: start, to: end });
@@ -611,21 +626,21 @@ export default function Dashboard({ adminName = '\u7ba1\u7406\u5458' }: { adminN
                   {site.buckets.map((bucket, index) => (
                     <Link
                       key={`${site.siteId}-${index}`}
-                      to={buildAvailabilityBucketLogsRoute(site.siteId, bucket.label)}
+                      to={buildAvailabilityBucketLogsRoute(site.siteId, bucket)}
                       className="site-availability-cell site-availability-cell-link"
                       style={{
                         background: getAvailabilityColor(bucket.availabilityPercent),
                         opacity: bucket.totalRequests > 0 ? 1 : 0.35,
                       }}
                       title={[
-                        bucket.label,
+                        formatAvailabilityBucketLabel(bucket),
                         bucket.totalRequests > 0
                           ? `可用性 ${formatAvailabilityPercent(bucket.availabilityPercent)}`
                           : '无请求',
                         `${bucket.successCount} 成功 / ${bucket.failedCount} 失败`,
                         bucket.averageLatencyMs != null ? `平均响应 ${bucket.averageLatencyMs}ms` : '平均响应 —',
                       ].join(' | ')}
-                      aria-label={`${site.siteName} ${bucket.label} 使用日志`}
+                      aria-label={`${site.siteName} ${formatAvailabilityBucketLabel(bucket)} 使用日志`}
                     />
                   ))}
                 </div>

@@ -183,6 +183,7 @@ type SiteAvailabilityLogRow = {
 };
 
 type SiteAvailabilityBucketAccumulator = {
+  startUtc: string;
   label: string;
   totalRequests: number;
   successCount: number;
@@ -210,6 +211,7 @@ function buildSiteAvailabilitySummaries(
     Array.from({ length: SITE_AVAILABILITY_BUCKET_COUNT }, (_, index) => {
       const bucketStart = new Date(startMs + index * SITE_AVAILABILITY_BUCKET_MS);
       return {
+        startUtc: bucketStart.toISOString(),
         label: formatLocalDateTime(bucketStart),
         totalRequests: 0,
         successCount: 0,
@@ -293,6 +295,7 @@ function buildSiteAvailabilitySummaries(
         ? Math.round(aggregate.latencyTotalMs / aggregate.latencyCount)
         : null,
       buckets: aggregate.buckets.map((bucket) => ({
+        startUtc: bucket.startUtc,
         label: bucket.label,
         totalRequests: bucket.totalRequests,
         successCount: bucket.successCount,

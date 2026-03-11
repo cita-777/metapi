@@ -276,14 +276,16 @@ describe('ProxyLogs server-driven page', () => {
       });
       await flushMicrotasks();
 
+      const expectedFrom = new Date(2026, 2, 9, 8, 0).toISOString();
+      const expectedTo = new Date(2026, 2, 9, 9, 0).toISOString();
       expect(apiMock.getProxyLogs).toHaveBeenCalledWith({
         limit: 50,
         offset: 0,
         status: 'all',
         search: '',
         siteId: 9,
-        from: '2026-03-09T08:00:00.000Z',
-        to: '2026-03-09T09:00:00.000Z',
+        from: expectedFrom,
+        to: expectedTo,
       });
 
       const rendered = JSON.stringify(root!.toJSON());

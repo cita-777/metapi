@@ -1,4 +1,4 @@
-import React, { useDeferredValue, useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   api,
@@ -221,6 +221,7 @@ export default function ProxyLogs() {
   const [sites, setSites] = useState<Array<{ id: number; name: string; status?: string | null }>>([]);
   const isMobile = useIsMobile(768);
   const toast = useToast();
+  const loadSeq = useRef(0);
   const fromApiBoundary = toApiTimeBoundary(fromInput);
   const toApiBoundaryValue = toApiTimeBoundary(toInput);
   const hasInvalidTimeRange = Boolean(
@@ -320,11 +321,12 @@ export default function ProxyLogs() {
   }, [siteFilter, siteOptions]);
 
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
     if (hasInvalidTimeRange) {
       setLogs([]);
       setTotal(0);
       setSummary(EMPTY_SUMMARY);
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
       return;
     }
     setLoading(true);
@@ -339,13 +341,15 @@ export default function ProxyLogs() {
         ...(toApiBoundaryValue ? { to: toApiBoundaryValue } : {}),
       };
       const data = await api.getProxyLogs(params);
+      if (seq !== loadSeq.current) return;
       setLogs(Array.isArray(data.items) ? data.items : []);
       setTotal(Number(data.total || 0));
       setSummary(data.summary || EMPTY_SUMMARY);
     } catch (e: any) {
+      if (seq !== loadSeq.current) return;
       toast.error(e.message || '加载日志失败');
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   }, [currentOffset, deferredSearchInput, fromApiBoundary, hasInvalidTimeRange, pageSize, siteFilter, statusFilter, toApiBoundaryValue, toast]);
 
