@@ -154,8 +154,8 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.15)(lightningcss@1.31.1)
       wait-on:
-        specifier: ^8.0.3
-        version: 8.0.5
+        specifier: ^9.0.4
+        version: 9.0.4
 
 packages:
 
@@ -4757,9 +4757,9 @@ packages:
       typescript:
         optional: true
 
-  wait-on@8.0.5:
-    resolution: {integrity: sha512-J3WlS0txVHkhLRb2FsmRg3dkMTCV1+M6Xra3Ho7HzZDHpE7DCOnoSoCJsZotrmW3uRMhvIJGSKUKrh/MeF4iag==}
-    engines: {node: '>=12.0.0'}
+  wait-on@9.0.4:
+    resolution: {integrity: sha512-k8qrgfwrPVJXTeFY8tl6BxVHiclK11u72DVKhpybHfUL/K6KM4bdyK9EhIVYGytB5MJe/3lq4Tf0hrjM+pvJZQ==}
+    engines: {node: '>=20.0.0'}
     hasBin: true
 
   wcwidth@1.0.1:
@@ -9535,7 +9535,7 @@ snapshots:
     optionalDependencies:
       typescript: 5.9.3
 
-  wait-on@8.0.5:
+  wait-on@9.0.4:
     dependencies:
       axios: 1.13.6
       joi: 18.0.2
