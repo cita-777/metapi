@@ -34,7 +34,7 @@ type RecoveryMigration = RecoveryMigrationRecord & {
   statements: string[];
 };
 
-const VERIFIED_BOOTSTRAP_TAG = '0009_model_availability_is_manual';
+const VERIFIED_BOOTSTRAP_TAG = '0011_downstream_api_key_metadata';
 const VERIFIED_SCHEMA_MARKERS: SchemaMarker[] = [
   { table: 'sites' },
   { table: 'settings' },
@@ -57,6 +57,11 @@ const VERIFIED_SCHEMA_MARKERS: SchemaMarker[] = [
   { table: 'account_tokens', column: 'token_group' },
   // 0009: is_manual column on model_availability
   { table: 'model_availability', column: 'is_manual' },
+  // 0010: downstream_api_key_id column on proxy_logs
+  { table: 'proxy_logs', column: 'downstream_api_key_id' },
+  // 0011: downstream key metadata columns
+  { table: 'downstream_api_keys', column: 'group_name' },
+  { table: 'downstream_api_keys', column: 'tags' },
 ];
 
 
