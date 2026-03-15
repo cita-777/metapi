@@ -17,6 +17,7 @@ import {
 import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from './downstreamPolicy.js';
 import { composeProxyLogMessage } from './logPathMeta.js';
 import { executeEndpointFlow, withUpstreamPath } from './endpointFlow.js';
+import { detectProxyFailure } from './proxyFailureJudge.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { resolveProxyLogBilling } from './proxyBilling.js';
 import { getProxyAuthContext, getProxyResourceOwner } from '../../middleware/auth.js';
@@ -425,6 +426,44 @@ export async function responsesProxyRoute(app: FastifyInstance) {
         }
         const latency = Date.now() - startTime;
         const parsedUsage = parseProxyUsage(upstreamData);
+        const failure = detectProxyFailure({ rawText, totalTokens: parsedUsage.totalTokens });
+        if (failure) {
+          const errText = withUpstreamPath(successfulUpstreamPath, failure.reason);
+          tokenRouter.recordFailure(selected.channel.id);
+          logProxy(
+            selected,
+            requestedModel,
+            'failed',
+            failure.status,
+            latency,
+            errText,
+            retryCount,
+            downstreamPath,
+            0,
+            0,
+            0,
+            0,
+            null,
+            null,
+            clientContext,
+            logDownstreamApiKeyId ? downstreamApiKeyId : null,
+          );
+
+          if (shouldRetryProxyRequest(failure.status, errText) && retryCount < MAX_RETRIES) {
+            retryCount += 1;
+            continue;
+          }
+
+          await reportProxyAllFailed({
+            model: requestedModel,
+            reason: failure.reason,
+          });
+
+          return reply.code(failure.status).send({
+            error: { message: errText, type: 'upstream_error' },
+          });
+        }
+
         const normalized = openAiResponsesTransformer.transformFinalResponse(
           upstreamData,
           modelName,

@@ -55,6 +55,8 @@ interface RuntimeSettingsBody {
   adminIpAllowlist?: string[] | string;
   routingFallbackUnitCost?: number;
   routingWeights?: Partial<RoutingWeights>;
+  proxyErrorKeywords?: string[] | string;
+  proxyEmptyContentFailEnabled?: boolean;
 }
 
 interface DatabaseMigrationBody {
@@ -195,6 +197,14 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
     case 'system_proxy_url': {
       if (typeof value !== 'string') return;
       config.systemProxyUrl = normalizeSiteProxyUrl(value) || '';
+      return;
+    }
+    case 'proxy_error_keywords': {
+      config.proxyErrorKeywords = toStringList(value);
+      return;
+    }
+    case 'proxy_empty_content_fail_enabled': {
+      config.proxyEmptyContentFailEnabled = !!value;
       return;
     }
     case 'webhook_url': {
@@ -347,6 +357,8 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     adminIpAllowlist: config.adminIpAllowlist,
     currentAdminIp,
     systemProxyUrl: config.systemProxyUrl,
+    proxyErrorKeywords: config.proxyErrorKeywords,
+    proxyEmptyContentFailEnabled: config.proxyEmptyContentFailEnabled,
     proxyTokenMasked: maskSecret(config.proxyToken),
   };
 }
@@ -601,6 +613,24 @@ export async function settingsRoutes(app: FastifyInstance) {
       config.systemProxyUrl = normalizedSystemProxyUrl || '';
       upsertSetting('system_proxy_url', config.systemProxyUrl);
       invalidateSiteProxyCache();
+    }
+
+    if (body.proxyErrorKeywords !== undefined) {
+      const nextKeywords = toStringList(body.proxyErrorKeywords);
+      if (nextKeywords.join(',') !== (config.proxyErrorKeywords || []).join(',')) {
+        changedLabels.push('上游错误关键词');
+      }
+      config.proxyErrorKeywords = nextKeywords;
+      upsertSetting('proxy_error_keywords', config.proxyErrorKeywords);
+    }
+
+    if (body.proxyEmptyContentFailEnabled !== undefined) {
+      const nextValue = !!body.proxyEmptyContentFailEnabled;
+      if (nextValue !== config.proxyEmptyContentFailEnabled) {
+        changedLabels.push('空内容判定失败');
+      }
+      config.proxyEmptyContentFailEnabled = nextValue;
+      upsertSetting('proxy_empty_content_fail_enabled', config.proxyEmptyContentFailEnabled);
     }
 
     if (body.webhookUrl !== undefined) {
