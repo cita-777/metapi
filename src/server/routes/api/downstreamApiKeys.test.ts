@@ -30,6 +30,8 @@ describe('downstream api keys routes', () => {
   beforeEach(async () => {
     await db.delete(schema.proxyLogs).run();
     await db.delete(schema.downstreamApiKeys).run();
+    await db.delete(schema.tokenRoutes).run();
+    await db.delete(schema.sites).run();
   });
 
   afterAll(async () => {
@@ -38,6 +40,18 @@ describe('downstream api keys routes', () => {
   });
 
   it('creates, updates, resets and deletes downstream api keys', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'portal-site',
+      url: 'https://portal.example.com',
+      status: 'active',
+      platform: 'openai',
+    }).returning().get();
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.2',
+      displayName: 'portal-route',
+      enabled: true,
+    }).returning().get();
+
     const createRes = await app.inject({
       method: 'POST',
       url: '/api/downstream-keys',
@@ -49,8 +63,8 @@ describe('downstream api keys routes', () => {
         maxCost: 12.5,
         maxRequests: 500,
         supportedModels: ['gpt-5.2', 'claude-sonnet-4-5'],
-        allowedRouteIds: [11, 22],
-        siteWeightMultipliers: { 1: 1.2 },
+        allowedRouteIds: [route.id],
+        siteWeightMultipliers: { [site.id]: 1.2 },
       },
     });
 
@@ -63,7 +77,7 @@ describe('downstream api keys routes', () => {
       maxCost: 12.5,
       maxRequests: 500,
       supportedModels: ['gpt-5.2', 'claude-sonnet-4-5'],
-      allowedRouteIds: [11, 22],
+      allowedRouteIds: [route.id],
     });
 
     const keyId = createdBody.item.id as number;
@@ -349,5 +363,58 @@ describe('downstream api keys routes', () => {
     expect(trendBody.buckets.some((bucket: any) => bucket.totalTokens === 1500)).toBe(true);
     expect(trendBody.buckets.some((bucket: any) => bucket.totalTokens === 600)).toBe(true);
     expect(trendBody.buckets.some((bucket: any) => bucket.totalTokens === 900)).toBe(true);
+  });
+
+  it('rejects unknown route ids and site ids in downstream policy payloads', async () => {
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/downstream-keys',
+      payload: {
+        name: 'invalid-policy',
+        key: 'sk-invalid-policy-001',
+        allowedRouteIds: [999],
+      },
+    });
+    expect(createRes.statusCode).toBe(400);
+    expect(createRes.json()).toMatchObject({
+      success: false,
+      message: 'allowedRouteIds 包含不存在的路由: 999',
+    });
+
+    const site = await db.insert(schema.sites).values({
+      name: 'site-a',
+      url: 'https://example.com',
+      status: 'active',
+      platform: 'openai',
+    }).returning().get();
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.2',
+      enabled: true,
+    }).returning().get();
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/downstream-keys',
+      payload: {
+        name: 'valid-policy',
+        key: 'sk-valid-policy-001',
+        allowedRouteIds: [route.id],
+        siteWeightMultipliers: { [site.id]: 1.2 },
+      },
+    });
+    expect(created.statusCode).toBe(200);
+    const keyId = created.json().item.id as number;
+
+    const updateRes = await app.inject({
+      method: 'PUT',
+      url: `/api/downstream-keys/${keyId}`,
+      payload: {
+        siteWeightMultipliers: { 999: 1.5 },
+      },
+    });
+    expect(updateRes.statusCode).toBe(400);
+    expect(updateRes.json()).toMatchObject({
+      success: false,
+      message: 'siteWeightMultipliers 包含不存在的站点: 999',
+    });
   });
 });

@@ -88,6 +88,42 @@ function resolveBucketTsExpression(bucketSeconds: number) {
   return sql<number>`cast(cast(strftime('%s', ${schema.proxyLogs.createdAt}) as integer) / ${bucketSeconds} as integer) * ${bucketSeconds}`;
 }
 
+async function validatePolicyReferences(input: {
+  allowedRouteIds: number[];
+  siteWeightMultipliers: Record<number, number>;
+}): Promise<string | null> {
+  const routeIds = input.allowedRouteIds || [];
+  if (routeIds.length > 0) {
+    const rows = await db.select({ id: schema.tokenRoutes.id })
+      .from(schema.tokenRoutes)
+      .where(inArray(schema.tokenRoutes.id, routeIds))
+      .all();
+    const existingIds = new Set(rows.map((row) => Number(row.id)));
+    const missingIds = routeIds.filter((id) => !existingIds.has(id));
+    if (missingIds.length > 0) {
+      return `allowedRouteIds 包含不存在的路由: ${missingIds.join(', ')}`;
+    }
+  }
+
+  const siteIds = Object.keys(input.siteWeightMultipliers || {})
+    .map((key) => Number(key))
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .map((value) => Math.trunc(value));
+  if (siteIds.length > 0) {
+    const rows = await db.select({ id: schema.sites.id })
+      .from(schema.sites)
+      .where(inArray(schema.sites.id, siteIds))
+      .all();
+    const existingIds = new Set(rows.map((row) => Number(row.id)));
+    const missingIds = siteIds.filter((id) => !existingIds.has(id));
+    if (missingIds.length > 0) {
+      return `siteWeightMultipliers 包含不存在的站点: ${missingIds.join(', ')}`;
+    }
+  }
+
+  return null;
+}
+
 export async function downstreamApiKeysRoutes(app: FastifyInstance) {
   app.get<{ Querystring: { range?: string; status?: string; search?: string } }>('/api/downstream-keys/summary', async (request) => {
     const range = normalizeDownstreamKeyRange(request.query?.range);
@@ -341,6 +377,13 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
     if (!validateKeyShape(normalized.key)) {
       return reply.code(400).send({ success: false, message: 'key 必须以 sk- 开头且长度至少 6' });
     }
+    const policyRefError = await validatePolicyReferences({
+      allowedRouteIds: normalized.allowedRouteIds,
+      siteWeightMultipliers: normalized.siteWeightMultipliers,
+    });
+    if (policyRefError) {
+      return reply.code(400).send({ success: false, message: policyRefError });
+    }
 
     const nowIso = new Date().toISOString();
 
@@ -439,6 +482,13 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
     }
     if (!validateKeyShape(normalized.key)) {
       return reply.code(400).send({ success: false, message: 'key 必须以 sk- 开头且长度至少 6' });
+    }
+    const policyRefError = await validatePolicyReferences({
+      allowedRouteIds: normalized.allowedRouteIds,
+      siteWeightMultipliers: normalized.siteWeightMultipliers,
+    });
+    if (policyRefError) {
+      return reply.code(400).send({ success: false, message: policyRefError });
     }
 
     const nowIso = new Date().toISOString();
