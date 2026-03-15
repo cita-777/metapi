@@ -70,7 +70,7 @@
     "minimatch": "^10.2.4",
     "minimist": "^1.2.8",
     "mysql2": "^3.15.3",
-    "node-cron": "^3.0.3",
+    "node-cron": "^4.2.1",
     "nodemailer": "^8.0.1",
     "pg": "^8.16.3",
     "undici": "^6.24.0"
