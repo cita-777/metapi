@@ -1,0 +1,39 @@
+name: Question
+description: Ask for clarification or usage guidance
+title: "[Question]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for support or clarification questions that are not bug reports or feature requests.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and the README for an answer
+          required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What do you need help understanding?
+      placeholder: Ask one clear question and include the relevant context.
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you tried?
+      description: Include commands, config, or investigation you already attempted.
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Relevant environment or config
+      description: Paste config snippets, request examples, or environment details if needed.
+      render: shell

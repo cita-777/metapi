@@ -1,0 +1,40 @@
+name: Documentation update
+description: Report missing, incorrect, or unclear documentation
+title: "[Docs]: "
+labels: ["docs"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template when documentation is missing, incorrect, or hard to follow.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues to avoid creating a duplicate
+          required: true
+
+  - type: input
+    id: location
+    attributes:
+      label: Documentation location
+      description: Link the page or file that needs attention.
+      placeholder: e.g. README.md or docs/getting-started.md
+    validations:
+      required: true
+
+  - type: textarea
+    id: issue
+    attributes:
+      label: What is wrong or missing?
+      placeholder: Describe the missing, inaccurate, or confusing part.
+    validations:
+      required: true
+
+  - type: textarea
+    id: fix
+    attributes:
+      label: Suggested improvement
+      placeholder: Describe how the documentation could be improved.

@@ -1,0 +1,71 @@
+name: Label Pull Requests
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  apply-labels:
+    name: Apply area and size labels
+    runs-on: ubuntu-latest
+    steps:
+      - name: Apply area labels
+        uses: actions/labeler@v5
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          sync-labels: false
+
+      - name: Apply size label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pull_number = context.payload.pull_request.number;
+            const sizeLabels = ['size: XS', 'size: S', 'size: M', 'size: L', 'size: XL', 'size: XXL'];
+
+            const { data: pull } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number,
+            });
+
+            const totalChanges = pull.additions + pull.deletions;
+            let nextSize = 'size: XXL';
+            if (totalChanges < 50) nextSize = 'size: XS';
+            else if (totalChanges < 200) nextSize = 'size: S';
+            else if (totalChanges < 500) nextSize = 'size: M';
+            else if (totalChanges < 1000) nextSize = 'size: L';
+            else if (totalChanges < 2000) nextSize = 'size: XL';
+
+            const currentLabels = pull.labels.map((label) => label.name);
+            const existingSizeLabels = currentLabels.filter((label) => sizeLabels.includes(label));
+            const labelsToRemove = existingSizeLabels.filter((label) => label !== nextSize);
+
+            for (const label of labelsToRemove) {
+              try {
+                await github.rest.issues.removeLabel({
+                  owner,
+                  repo,
+                  issue_number: pull_number,
+                  name: label,
+                });
+              } catch (error) {
+                if (error.status !== 404) {
+                  throw error;
+                }
+              }
+            }
+
+            if (!currentLabels.includes(nextSize)) {
+              await github.rest.issues.addLabels({
+                owner,
+                repo,
+                issue_number: pull_number,
+                labels: [nextSize],
+              });
+            }

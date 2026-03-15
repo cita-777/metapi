@@ -1,0 +1,45 @@
+"area: db":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/server/db/**"
+          - "drizzle/**"
+
+"area: server":
+  - all:
+      - changed-files:
+          - any-glob-to-any-file:
+              - "src/server/**"
+          - all-globs-to-all-files:
+              - "!src/server/db/**"
+
+"area: web":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/web/**"
+
+"area: desktop":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/desktop/**"
+          - "electron-builder.yml"
+          - "tsconfig.desktop.json"
+
+"area: docs":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**"
+          - "README.md"
+          - "README_EN.md"
+
+"area: scripts":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "scripts/**"
+
+"area: ci":
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/**"
+          - "docker/**"
+          - "render.yaml"
+          - "zeabur-template.yaml"

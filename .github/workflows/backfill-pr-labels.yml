@@ -1,0 +1,155 @@
+name: Backfill PR Labels
+
+on:
+  workflow_dispatch:
+    inputs:
+      state:
+        description: Pull request state to scan
+        required: true
+        default: all
+        type: choice
+        options:
+          - open
+          - closed
+          - all
+      limit:
+        description: Maximum number of pull requests to inspect
+        required: true
+        default: "100"
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  backfill:
+    name: Backfill missing PR labels
+    runs-on: ubuntu-latest
+    steps:
+      - name: Backfill PR labels
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const requestedState = core.getInput('state');
+            const limit = Number.parseInt(core.getInput('limit'), 10);
+            const sizeLabels = ['size: XS', 'size: S', 'size: M', 'size: L', 'size: XL', 'size: XXL'];
+            const areaRules = [
+              { label: 'area: db', include: ['src/server/db/', 'drizzle/'] },
+              { label: 'area: server', include: ['src/server/'], exclude: ['src/server/db/'] },
+              { label: 'area: web', include: ['src/web/'] },
+              { label: 'area: desktop', include: ['src/desktop/', 'electron-builder.yml', 'tsconfig.desktop.json'] },
+              { label: 'area: docs', include: ['docs/', 'README.md', 'README_EN.md'] },
+              { label: 'area: scripts', include: ['scripts/'] },
+              { label: 'area: ci', include: ['.github/', 'docker/', 'render.yaml', 'zeabur-template.yaml'] },
+            ];
+
+            if (!Number.isFinite(limit) || limit <= 0) {
+              core.setFailed('The limit input must be a positive integer.');
+              return;
+            }
+
+            function matchesRule(filename, rule) {
+              const included = rule.include.some((prefix) => filename === prefix || filename.startsWith(prefix));
+              if (!included) return false;
+              if (!rule.exclude) return true;
+              return !rule.exclude.some((prefix) => filename === prefix || filename.startsWith(prefix));
+            }
+
+            function computeAreaLabels(files) {
+              return areaRules
+                .filter((rule) => files.some((file) => matchesRule(file.filename, rule)))
+                .map((rule) => rule.label);
+            }
+
+            function computeSizeLabel(totalChanges) {
+              if (totalChanges < 50) return 'size: XS';
+              if (totalChanges < 200) return 'size: S';
+              if (totalChanges < 500) return 'size: M';
+              if (totalChanges < 1000) return 'size: L';
+              if (totalChanges < 2000) return 'size: XL';
+              return 'size: XXL';
+            }
+
+            const state = requestedState === 'all' ? 'all' : requestedState;
+            const pulls = await github.paginate(github.rest.pulls.list, {
+              owner,
+              repo,
+              state,
+              per_page: 100,
+            });
+
+            let inspected = 0;
+            let updated = 0;
+            let skipped = 0;
+
+            for (const pull of pulls) {
+              if (inspected >= limit) {
+                break;
+              }
+
+              inspected += 1;
+
+              const files = await github.paginate(github.rest.pulls.listFiles, {
+                owner,
+                repo,
+                pull_number: pull.number,
+                per_page: 100,
+              });
+
+              const desiredAreaLabels = computeAreaLabels(files);
+              const desiredSizeLabel = computeSizeLabel(pull.additions + pull.deletions);
+              const currentLabels = pull.labels.map((label) => label.name);
+              const missingAreaLabels = desiredAreaLabels.filter((label) => !currentLabels.includes(label));
+              const currentSizeLabels = currentLabels.filter((label) => sizeLabels.includes(label));
+              const sizeMatches = currentSizeLabels.length === 1 && currentSizeLabels[0] === desiredSizeLabel;
+
+              if (missingAreaLabels.length === 0 && sizeMatches) {
+                skipped += 1;
+                continue;
+              }
+
+              for (const label of currentSizeLabels) {
+                if (label === desiredSizeLabel) {
+                  continue;
+                }
+
+                try {
+                  await github.rest.issues.removeLabel({
+                    owner,
+                    repo,
+                    issue_number: pull.number,
+                    name: label,
+                  });
+                } catch (error) {
+                  if (error.status !== 404) {
+                    throw error;
+                  }
+                }
+              }
+
+              const labelsToAdd = [...missingAreaLabels];
+              if (!sizeMatches) {
+                labelsToAdd.push(desiredSizeLabel);
+              }
+
+              if (labelsToAdd.length > 0) {
+                await github.rest.issues.addLabels({
+                  owner,
+                  repo,
+                  issue_number: pull.number,
+                  labels: labelsToAdd,
+                });
+              }
+
+              updated += 1;
+            }
+
+            core.summary
+              .addHeading('Backfill summary')
+              .addRaw(`Inspected PRs: ${inspected}\n`)
+              .addRaw(`Updated PRs: ${updated}\n`)
+              .addRaw(`Skipped PRs: ${skipped}\n`)
+              .write();

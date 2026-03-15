@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Metapi README
+    url: https://github.com/cita-777/metapi#readme
+    about: Start with the README for setup, usage, and deployment details.
