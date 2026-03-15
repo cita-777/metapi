@@ -88,7 +88,7 @@
     "@types/pg": "^8.15.6",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
-    "@vitejs/plugin-react": "^4.3.4",
+    "@vitejs/plugin-react": "^6.0.1",
     "concurrently": "^9.1.0",
     "cross-env": "^7.0.3",
     "drizzle-kit": "^0.28.1",
@@ -103,10 +103,10 @@
     "tailwindcss": "^4.0.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "vite": "^6.0.3",
+    "vite": "^8.0.0",
     "vitepress": "^1.6.4",
     "vitepress-plugin-mermaid": "^2.0.17",
-    "vitest": "^2.1.8",
+    "vitest": "^4.1.0",
     "wait-on": "^8.0.3"
   },
   "overrides": {
