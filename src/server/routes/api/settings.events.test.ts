@@ -4,6 +4,7 @@ import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { eq } from 'drizzle-orm';
+import { resetRequestRateLimitStore } from '../../middleware/requestRateLimit.js';
 
 type DbModule = typeof import('../../db/index.js');
 type ConfigModule = typeof import('../../config.js');
@@ -35,6 +36,7 @@ describe('settings and auth events', () => {
   });
 
   beforeEach(async () => {
+    resetRequestRateLimitStore();
     await db.delete(schema.events).run();
     await db.delete(schema.settings).run();
 
@@ -431,6 +433,38 @@ describe('settings and auth events', () => {
       type: 'token',
       title: '管理员登录令牌已更新',
       relatedType: 'settings',
+    });
+  });
+
+  it('rate limits repeated admin auth token changes from the same client ip', async () => {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/settings/auth/change',
+        remoteAddress: '198.51.100.12',
+        payload: {
+          oldToken: config.authToken,
+          newToken: `new-admin-token-${attempt}-456`,
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+    }
+
+    const limited = await app.inject({
+      method: 'POST',
+      url: '/api/settings/auth/change',
+      remoteAddress: '198.51.100.12',
+      payload: {
+        oldToken: config.authToken,
+        newToken: 'new-admin-token-rate-limit',
+      },
+    });
+
+    expect(limited.statusCode).toBe(429);
+    expect(limited.json()).toMatchObject({
+      success: false,
+      message: '请求过于频繁，请稍后再试',
     });
   });
 });

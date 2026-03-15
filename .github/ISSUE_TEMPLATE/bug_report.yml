@@ -1,80 +1,162 @@
-name: Bug report
-description: Report a reproducible problem in Metapi
+name: Bug Report / Bug 反馈
+description: Report a bug to help us improve / 报告 bug 帮助我们改进
 title: "[Bug]: "
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting a bug. Please include enough detail for someone else to reproduce it.
+        Thanks for taking the time to fill out this bug report. Even a brief description helps us understand what went wrong. If you can share the details below, it usually helps us reproduce the issue without asking you to repeat yourself.
+
+        感谢您愿意告诉我们这个问题。哪怕只是简要描述，也能帮助我们理解发生了什么。如果方便的话，补充下面这些信息，通常能帮助我们更快复现问题，也尽量减少反复向您确认。
 
   - type: checkboxes
-    id: checks
+    id: pre-submission
     attributes:
-      label: Before submitting
+      label: Pre-submission Checklist / 提交前检查清单
+      description: Please confirm the following before submitting / 提交前请确认以下内容
       options:
-        - label: I searched existing issues to avoid creating a duplicate
+        - label: I searched existing issues to avoid creating a duplicate / 我已检索现有 issue，确认这不是重复问题
           required: true
-        - label: I tested on the latest release or current main branch
+        - label: I tested on the latest release or current main branch / 我已在最新 release 或 main 分支版本中复现
           required: true
 
   - type: dropdown
     id: deployment
     attributes:
-      label: Deployment type
-      description: Where did you reproduce the problem?
+      label: Deployment Type / 部署方式
+      description: Where did you reproduce the problem? / 您是在什么运行方式下复现这个问题的？
       options:
-        - Web app
-        - Desktop app
-        - Server only
-        - Docker deployment
-        - Other
+        - Docker Compose / Docker Compose 部署
+        - Docker run / Docker 命令部署
+        - Desktop app / 桌面端
+        - Local development / 本地源码开发
+        - Zeabur deployment / Zeabur 部署
+        - Render deployment / Render 部署
+        - Other / 其他
     validations:
       required: true
 
-  - type: textarea
-    id: summary
+  - type: dropdown
+    id: problem-area
     attributes:
-      label: What happened?
-      description: Describe the bug clearly and concisely.
-      placeholder: Describe the problem you observed.
+      label: Problem Area / 问题模块
+      description: Which part of Metapi seems related? Optional, but helpful. / 您觉得问题和 Metapi 的哪个模块有关？选填，但有助于排查。
+      options:
+        - Site / Account Management / 站点与账号管理
+        - Token Management / 令牌管理
+        - Routing / 路由
+        - Proxy API (/v1/*) / 代理接口
+        - Model Marketplace / 模型广场
+        - Check-in / 签到
+        - Notifications / 通知
+        - Desktop App / 桌面端
+        - Deployment / Database / 部署或数据库
+        - Other / 其他
     validations:
-      required: true
+      required: false
 
   - type: textarea
-    id: reproduce
+    id: app-version
     attributes:
-      label: Steps to reproduce
+      label: Metapi Version / Metapi 版本
+      description: Tell us the version, image tag, or commit if you know it. / 如果您知道，请填写版本号、镜像标签或 commit。
       placeholder: |
-        1. Go to ...
-        2. Configure ...
-        3. Send request ...
-        4. Observe ...
+        e.g. v1.2.2 / latest / commit SHA
+        例如 v1.2.2 / latest / commit SHA
+    validations:
+      required: true
+
+  - type: dropdown
+    id: database
+    attributes:
+      label: Database Type / 数据库类型
+      description: Which runtime database are you using? / 您当前运行时使用的是哪种数据库？
+      options:
+        - SQLite
+        - MySQL
+        - PostgreSQL
+        - Not sure / 不确定
+    validations:
+      required: false
+
+  - type: textarea
+    id: bug-description
+    attributes:
+      label: Bug Description / Bug 描述
+      description: A clear and concise description of what the bug is / 清晰简洁地描述这个 bug 是什么
+      placeholder: |
+        Describe the problem you observed.
+        请描述您实际遇到的问题。
     validations:
       required: true
 
   - type: textarea
-    id: expected
+    id: steps-to-reproduce
     attributes:
-      label: Expected behavior
-      placeholder: Describe what you expected to happen.
+      label: Steps To Reproduce / 复现步骤
+      description: Steps to reproduce the behavior / 请尽量提供稳定复现的步骤
+      placeholder: |
+        1. Go to ... / 打开 ...
+        2. Configure ... / 配置 ...
+        3. Click or send request ... / 点击或发送请求 ...
+        4. Observe the result ... / 观察结果 ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected Behavior / 预期行为
+      description: What did you expect to happen? / 您原本期望发生什么？
+      placeholder: |
+        Describe the expected behavior.
+        请描述您期望的正确行为。
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Actual Behavior / 实际行为
+      description: What actually happened? / 实际发生了什么？
+      placeholder: |
+        Describe the actual result.
+        请描述实际发生的结果。
     validations:
       required: true
 
   - type: textarea
     id: logs
     attributes:
-      label: Logs, screenshots, or error output
-      description: Paste logs or attach screenshots if available.
+      label: Logs Or Error Output / 日志或错误输出
+      description: Paste relevant logs, stack traces, request/response snippets, or screenshots of error output. / 请粘贴相关日志、报错堆栈、请求/响应片段，或错误输出截图。
       render: shell
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots / 截图
+      description: If applicable, add screenshots to help explain the problem. / 如果方便，请附上截图帮助说明问题。
 
   - type: textarea
     id: environment
     attributes:
-      label: Environment
-      description: Include OS, browser, app version, database type, or other relevant details.
+      label: Environment Details / 环境信息
+      description: Include OS, host platform, reverse proxy, client tool, browser version if relevant, and anything else that might matter. / 请补充系统、宿主环境、反向代理、客户端工具，以及在相关时补充浏览器版本等信息。
       placeholder: |
         OS:
-        Browser:
+        Deployment:
+        Host platform:
+        Reverse proxy:
+        Client tool:
         Metapi version:
         Database:
+
+        操作系统：
+        部署方式：
+        宿主环境：
+        反向代理：
+        客户端工具：
+        Metapi 版本：
+        数据库：

@@ -33,7 +33,7 @@ function quoteIdentifier(dialect: SqlDialect, identifier: string): string {
 }
 
 function escapeMysqlTextPrefix(columnType: LogicalColumnType): string {
-  return columnType === 'text' || columnType === 'datetime' || columnType === 'json' ? '(191)' : '';
+  return columnType === 'text' ? '(191)' : '';
 }
 
 function mapColumnType(dialect: SqlDialect, columnName: string, column: SchemaContractColumn): string {

@@ -1,0 +1,130 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 6
+    ignore:
+      - dependency-name: "vite"
+        update-types:
+          - "version-update:semver-major"
+      - dependency-name: "@vitejs/plugin-react"
+        update-types:
+          - "version-update:semver-major"
+      - dependency-name: "vitest"
+        update-types:
+          - "version-update:semver-major"
+      - dependency-name: "react-router-dom"
+        update-types:
+          - "version-update:semver-major"
+      - dependency-name: "undici"
+        update-types:
+          - "version-update:semver-major"
+      - dependency-name: "cross-env"
+        update-types:
+          - "version-update:semver-major"
+      - dependency-name: "drizzle-orm"
+        update-types:
+          - "version-update:semver-major"
+      - dependency-name: "drizzle-kit"
+        update-types:
+          - "version-update:semver-major"
+    groups:
+      drizzle-risk:
+        patterns:
+          - "drizzle-orm"
+          - "drizzle-kit"
+        update-types:
+          - minor
+          - patch
+      build-tooling:
+        patterns:
+          - "vite"
+          - "@vitejs/plugin-react"
+          - "vitest"
+          - "tsx"
+          - "typescript"
+        update-types:
+          - minor
+          - patch
+      routing:
+        patterns:
+          - "react-router-dom"
+        update-types:
+          - minor
+          - patch
+      runtime-http:
+        patterns:
+          - "undici"
+        update-types:
+          - minor
+          - patch
+      node-runtime-sensitive:
+        patterns:
+          - "cross-env"
+        update-types:
+          - minor
+          - patch
+      minor-and-patch:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "drizzle-orm"
+          - "drizzle-kit"
+          - "vite"
+          - "@vitejs/plugin-react"
+          - "vitest"
+          - "tsx"
+          - "typescript"
+          - "react-router-dom"
+          - "undici"
+          - "cross-env"
+        update-types:
+          - minor
+          - patch
+      dev-dependencies:
+        dependency-type: development
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+        exclude-patterns:
+          - "drizzle-kit"
+          - "vite"
+          - "@vitejs/plugin-react"
+          - "vitest"
+          - "tsx"
+          - "typescript"
+          - "react-router-dom"
+          - "cross-env"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: docker
+    directory: /docker
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    groups:
+      docker:
+        patterns:
+          - "*"

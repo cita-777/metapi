@@ -3,11 +3,13 @@ import currentContract from './generated/schemaContract.json' with { type: 'json
 import { applyContractFixtureThenUpgrade, introspectLiveSchema } from './schemaIntrospection.js';
 import { describe, expect, it } from 'vitest';
 
+const skipLiveSchema = process.env.DB_PARITY_SKIP_LIVE_SCHEMA === 'true';
+const sqliteUpgrade = !skipLiveSchema && process.env.DB_PARITY_SQLITE !== 'false' ? it : it.skip;
 const mysqlUpgrade = process.env.DB_PARITY_MYSQL_URL ? it : it.skip;
 const postgresUpgrade = process.env.DB_PARITY_POSTGRES_URL ? it : it.skip;
 
 describe('schema upgrade parity', () => {
-  it('upgrades sqlite to the current contract', async () => {
+  sqliteUpgrade('upgrades sqlite to the current contract', async () => {
     const sqliteUrl = await applyContractFixtureThenUpgrade('sqlite', baselineContract, currentContract);
     const live = await introspectLiveSchema({ dialect: 'sqlite', connectionString: sqliteUrl });
     expect(live).toEqual(currentContract);

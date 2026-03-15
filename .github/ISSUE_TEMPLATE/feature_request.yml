@@ -1,49 +1,78 @@
-name: Feature request
-description: Suggest a new capability or improvement
+name: Feature Request / 功能请求
+description: Suggest a new feature or enhancement / 建议新功能或改进
 title: "[Feature]: "
 labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for the suggestion. Keep this issue focused on one feature request.
+        Thanks for taking the time to suggest a new feature. A focused request with enough context helps us evaluate the idea much faster.
+
+        感谢您提出功能建议。一个聚焦、信息完整的功能请求，通常能让我们更快判断需求价值和实现方向。
 
   - type: checkboxes
-    id: checks
+    id: pre-submission
     attributes:
-      label: Before submitting
+      label: Pre-submission Checklist / 提交前检查清单
+      description: Please confirm the following before submitting / 提交前请确认以下内容
       options:
-        - label: I searched existing issues to avoid creating a duplicate
+        - label: I searched existing issues to avoid creating a duplicate / 我已检索现有 issue，确认这不是重复需求
           required: true
-        - label: I confirmed this feature is not already available in the latest release or main branch
+        - label: I confirmed this feature is not already available in the latest release or main branch / 我已确认该功能尚未在最新 release 或 main 分支中提供
           required: true
 
   - type: textarea
     id: problem
     attributes:
-      label: Problem or use case
-      description: What problem are you trying to solve?
-      placeholder: Explain the workflow or pain point behind this request.
+      label: Problem Or Use Case / 使用场景或问题背景
+      description: What problem are you trying to solve? What is inconvenient today? / 您想解决什么问题？当前使用上哪里不方便？
+      placeholder: |
+        Explain the workflow or pain point behind this request.
+        请描述当前流程、痛点或为什么需要这个功能。
     validations:
       required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Related Area / 相关模块
+      description: Which part of Metapi is this feature mainly about? / 这个功能主要涉及 Metapi 的哪个模块？
+      options:
+        - Site / Account Management / 站点与账号管理
+        - Token Management / 令牌管理
+        - Routing / 路由
+        - Proxy API (/v1/*) / 代理接口
+        - Model Marketplace / 模型广场
+        - Check-in / 签到
+        - Notifications / 通知
+        - Desktop App / 桌面端
+        - Deployment / Database / 部署或数据库
+        - Other / 其他
+    validations:
+      required: false
 
   - type: textarea
     id: proposal
     attributes:
-      label: Proposed solution
-      description: Describe the change you want to see.
-      placeholder: Explain the feature or behavior you want added.
+      label: Proposed Solution / 建议的解决方案
+      description: Describe the change you want to see. / 请描述您希望增加的功能或行为变化。
+      placeholder: |
+        Explain the feature or behavior you want added.
+        请尽量具体描述您希望如何实现。
     validations:
       required: true
 
   - type: textarea
     id: alternatives
     attributes:
-      label: Alternatives considered
-      description: Describe any workaround or alternative you considered.
+      label: Alternatives Considered / 考虑过的替代方案
+      description: Describe any workaround or alternative approach you considered. / 请描述您考虑过的替代方案、当前 workaround，或为什么现有方式不够好。
 
   - type: textarea
     id: context
     attributes:
-      label: Additional context
-      description: Add screenshots, examples, or links if they help explain the request.
+      label: Additional Context / 其他信息
+      description: Add screenshots, examples, related issues, or links if they help explain the request. / 如果截图、示例、关联 issue 或参考链接有帮助，请补充在这里。
+      placeholder: |
+        You can include route examples, API paths, screenshots, upstream platform names, or migration concerns.
+        可以补充路由示例、API 路径、截图、上游平台名称，或兼容性/迁移方面的考虑。

@@ -21,6 +21,9 @@
     "url": "git+https://github.com/cita-777/metapi.git"
   },
   "license": "MIT",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
   "type": "module",
   "scripts": {
     "dev:server": "tsx scripts/dev/run-server.ts --watch",
@@ -46,6 +49,7 @@
     "test:schema:unit": "vitest run --root . src/server/db/schemaContract.test.ts src/server/db/schemaArtifactGenerator.test.ts src/server/db/schemaIntrospection.test.ts src/server/db/schemaParity.test.ts",
     "test:schema:parity": "vitest run --root . src/server/db/schemaParity.live.test.ts",
     "test:schema:upgrade": "vitest run --root . src/server/db/schemaUpgrade.live.test.ts",
+    "test:schema:runtime": "vitest run --root . src/server/db/runtimeSchemaBootstrap.live.test.ts",
     "smoke:db": "tsx scripts/dev/db-smoke.ts",
     "smoke:db:sqlite": "tsx scripts/dev/db-smoke.ts --db-type sqlite",
     "smoke:db:mysql": "tsx scripts/dev/db-smoke.ts --db-type mysql",
@@ -61,7 +65,7 @@
     "@fastify/static": "^9.0.0",
     "@visactor/react-vchart": "^2.0.16",
     "better-sqlite3": "^11.3.0",
-    "dotenv": "^16.4.5",
+    "dotenv": "^17.3.1",
     "drizzle-orm": "^0.36.4",
     "electron-log": "^5.2.4",
     "electron-updater": "^6.6.2",
@@ -70,10 +74,10 @@
     "minimatch": "^10.2.4",
     "minimist": "^1.2.8",
     "mysql2": "^3.15.3",
-    "node-cron": "^3.0.3",
+    "node-cron": "^4.2.1",
     "nodemailer": "^8.0.1",
     "pg": "^8.16.3",
-    "undici": "^6.24.0"
+    "undici": "^6.24.1"
   },
   "devDependencies": {
     "@electron/notarize": "^3.1.0",
@@ -89,12 +93,12 @@
     "concurrently": "^9.1.0",
     "cross-env": "^7.0.3",
     "drizzle-kit": "^0.28.1",
-    "electron": "^35.0.1",
+    "electron": "^41.0.2",
     "electron-builder": "^26.0.12",
     "mermaid": "^11.12.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.28.0",
+    "react-router-dom": "^7.13.1",
     "react-test-renderer": "^18.3.1",
     "sharp": "^0.34.5",
     "tailwindcss": "^4.0.0",
@@ -104,7 +108,7 @@
     "vitepress": "^1.6.4",
     "vitepress-plugin-mermaid": "^2.0.17",
     "vitest": "^2.1.8",
-    "wait-on": "^8.0.3"
+    "wait-on": "^9.0.4"
   },
   "overrides": {
     "minimist": "^1.2.8"

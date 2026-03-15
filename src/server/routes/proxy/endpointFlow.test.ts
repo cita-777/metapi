@@ -1,9 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetch } from 'undici';
-import { executeEndpointFlow, type BuiltEndpointRequest } from './endpointFlow.js';
+import type { BuiltEndpointRequest } from './endpointFlow.js';
 
 vi.mock('undici', () => ({
   fetch: vi.fn(),
+}));
+
+vi.mock('../../services/siteProxy.js', () => ({
+  withSiteProxyRequestInit: async (_targetUrl: string, init: RequestInit) => init,
 }));
 
 const fetchMock = vi.mocked(fetch);
@@ -22,6 +26,14 @@ function toUndiciResponse(response: Response): Awaited<ReturnType<typeof fetch>>
 }
 
 describe('executeEndpointFlow', () => {
+  let executeEndpointFlow: (input: any) => Promise<any>;
+
+  beforeEach(async () => {
+    if (!executeEndpointFlow) {
+      ({ executeEndpointFlow } = await import('./endpointFlow.js'));
+    }
+  });
+
   beforeEach(() => {
     fetchMock.mockReset();
   });
@@ -42,7 +54,53 @@ describe('executeEndpointFlow', () => {
     if (result.ok) {
       expect(result.upstreamPath).toBe('/v1/responses');
     }
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://example.com/v1/responses');
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('avoids duplicated /v1 when base url already ends with /v1', async () => {
+    fetchMock.mockResolvedValueOnce(toUndiciResponse(new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })));
+
+    await executeEndpointFlow({
+      siteUrl: 'https://api.example.com/v1',
+      endpointCandidates: ['chat'],
+      buildRequest: () => ({ ...requestFor('/v1/chat/completions'), endpoint: 'chat' }),
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.example.com/v1/chat/completions');
+  });
+
+  it('avoids duplicated /v1 when base url already ends with /api/v1', async () => {
+    fetchMock.mockResolvedValueOnce(toUndiciResponse(new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })));
+
+    await executeEndpointFlow({
+      siteUrl: 'https://openrouter.ai/api/v1',
+      endpointCandidates: ['chat'],
+      buildRequest: () => ({ ...requestFor('/v1/chat/completions'), endpoint: 'chat' }),
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://openrouter.ai/api/v1/chat/completions');
+  });
+
+  it('keeps url well-formed when base url includes query/hash', async () => {
+    fetchMock.mockResolvedValueOnce(toUndiciResponse(new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })));
+
+    await executeEndpointFlow({
+      siteUrl: 'https://api.example.com/v1?foo=1#keep',
+      endpointCandidates: ['chat'],
+      buildRequest: () => ({ ...requestFor('/v1/chat/completions'), endpoint: 'chat' }),
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.example.com/v1/chat/completions?foo=1#keep');
   });
 
   it('downgrades to next endpoint when policy allows', async () => {

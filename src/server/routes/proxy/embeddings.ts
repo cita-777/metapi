@@ -14,6 +14,7 @@ import { composeProxyLogMessage } from './logPathMeta.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { resolveProxyLogBilling } from './proxyBilling.js';
 import { getProxyAuthContext } from '../../middleware/auth.js';
+import { buildUpstreamUrl } from './upstreamUrl.js';
 
 const MAX_RETRIES = 2;
 
@@ -53,7 +54,7 @@ export async function embeddingsProxyRoute(app: FastifyInstance) {
 
       excludeChannelIds.push(selected.channel.id);
 
-      const targetUrl = `${selected.site.url}/v1/embeddings`;
+      const targetUrl = buildUpstreamUrl(selected.site.url, '/v1/embeddings');
       const forwardBody = { ...body, model: selected.actualModel };
       const startTime = Date.now();
 

@@ -54,7 +54,7 @@ describe('factoryResetService', () => {
     delete process.env.DATA_DIR;
   });
 
-  it('clears current active data before switching runtime back to sqlite', async () => {
+  it('clears current active data while preserving external runtime connectivity', async () => {
     await db.insert(schema.sites).values({
       name: 'External Runtime Site',
       url: 'https://external.example.com',
@@ -81,10 +81,17 @@ describe('factoryResetService', () => {
       ensureDefaultSitesSeeded,
     });
 
-    expect(switchRuntimeDatabase).toHaveBeenCalledWith('sqlite', '', false);
-    expect(runSqliteMigrations).toHaveBeenCalledTimes(1);
+    expect(switchRuntimeDatabase).toHaveBeenCalledWith('postgres', 'postgres://user:pass@127.0.0.1:5432/metapi', true);
+    expect(runSqliteMigrations).not.toHaveBeenCalled();
     expect(ensureDefaultSitesSeeded).toHaveBeenCalledTimes(1);
     expect(await db.select().from(schema.sites).all()).toHaveLength(0);
-    expect(await db.select().from(schema.settings).all()).toHaveLength(0);
+    expect(await db.select().from(schema.settings).all()).toEqual([
+      { key: 'auth_token', value: JSON.stringify('external-reset-token') },
+      { key: 'proxy_token', value: JSON.stringify('change-me-proxy-sk-token') },
+      { key: 'system_proxy_url', value: JSON.stringify('') },
+      { key: 'db_type', value: JSON.stringify('postgres') },
+      { key: 'db_url', value: JSON.stringify('postgres://user:pass@127.0.0.1:5432/metapi') },
+      { key: 'db_ssl', value: JSON.stringify(true) },
+    ]);
   });
 });

@@ -9,11 +9,13 @@ const dbDir = dirname(fileURLToPath(import.meta.url));
 const schemaContractPath = resolve(dbDir, 'generated/schemaContract.json');
 const contract = JSON.parse(readFileSync(schemaContractPath, 'utf8')) as SchemaContract;
 
+const skipLiveSchema = process.env.DB_PARITY_SKIP_LIVE_SCHEMA === 'true';
+const sqliteParity = !skipLiveSchema && process.env.DB_PARITY_SQLITE !== 'false' ? it : it.skip;
 const mysqlParity = process.env.DB_PARITY_MYSQL_URL ? it : it.skip;
 const postgresParity = process.env.DB_PARITY_POSTGRES_URL ? it : it.skip;
 
 describe('live schema parity', () => {
-  it('matches the contract for sqlite', async () => {
+  sqliteParity('matches the contract for sqlite', async () => {
     const sqliteUrl = await materializeFreshSchema('sqlite');
     const live = await introspectLiveSchema({ dialect: 'sqlite', connectionString: sqliteUrl });
     expect(live).toEqual(contract);

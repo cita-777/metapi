@@ -122,6 +122,20 @@ type PostgresForeignKeyRow = {
   delete_rule: string | null;
 };
 
+export function readMySqlField<T>(row: Record<string, unknown>, field: string): T | undefined {
+  const exact = row[field];
+  if (exact !== undefined) return exact as T;
+
+  const upper = row[field.toUpperCase()];
+  if (upper !== undefined) return upper as T;
+
+  const lower = row[field.toLowerCase()];
+  if (lower !== undefined) return lower as T;
+
+  const matchedKey = Object.keys(row).find((key) => key.toLowerCase() === field.toLowerCase());
+  return matchedKey ? row[matchedKey] as T : undefined;
+}
+
 function splitMigrationStatements(sqlText: string): string[] {
   return sqlText
     .split('--> statement-breakpoint')
@@ -452,16 +466,20 @@ async function introspectMySqlSchema(input: SchemaIntrospectionInput): Promise<S
 
   try {
     const [tableRows] = await connection.query(`
-      SELECT table_name
+      SELECT table_name AS table_name
       FROM information_schema.tables
       WHERE table_schema = DATABASE()
         AND table_type = 'BASE TABLE'
       ORDER BY table_name ASC
     `);
-    const tableNames = (tableRows as Array<{ table_name: string }>).map((row) => row.table_name);
+    const tableNames = (tableRows as Array<Record<string, unknown>>)
+      .map((row) => readMySqlField<string>(row, 'table_name'))
+      .filter((tableName): tableName is string => typeof tableName === 'string');
 
     const [primaryKeyRows] = await connection.query(`
-      SELECT kcu.table_name, kcu.column_name
+      SELECT
+        kcu.table_name AS table_name,
+        kcu.column_name AS column_name
       FROM information_schema.table_constraints tc
       JOIN information_schema.key_column_usage kcu
         ON tc.constraint_schema = kcu.constraint_schema
@@ -470,10 +488,20 @@ async function introspectMySqlSchema(input: SchemaIntrospectionInput): Promise<S
       WHERE tc.table_schema = DATABASE()
         AND tc.constraint_type = 'PRIMARY KEY'
     `);
-    const primaryKeys = new Set((primaryKeyRows as MySqlPrimaryKeyRow[]).map((row) => `${row.table_name}.${row.column_name}`));
+    const primaryKeys = new Set((primaryKeyRows as Array<Record<string, unknown>>).map((row) => {
+      const tableName = readMySqlField<string>(row, 'table_name');
+      const columnName = readMySqlField<string>(row, 'column_name');
+      return tableName && columnName ? `${tableName}.${columnName}` : null;
+    }).filter((value): value is string => value !== null));
 
     const [columnRows] = await connection.query(`
-      SELECT table_name, column_name, data_type, column_type, is_nullable, column_default
+      SELECT
+        table_name AS table_name,
+        column_name AS column_name,
+        data_type AS data_type,
+        column_type AS column_type,
+        is_nullable AS is_nullable,
+        column_default AS column_default
       FROM information_schema.columns
       WHERE table_schema = DATABASE()
       ORDER BY table_name ASC, ordinal_position ASC
@@ -484,40 +512,61 @@ async function introspectMySqlSchema(input: SchemaIntrospectionInput): Promise<S
       tableMap.set(tableName, { columns: {} });
     }
 
-    for (const row of columnRows as MySqlColumnRow[]) {
-      const logicalType = normalizeSqlType('mysql', row.column_type || row.data_type, row.column_name, row.column_default);
-      tableMap.get(row.table_name)!.columns[row.column_name] = {
+    for (const row of columnRows as Array<Record<string, unknown>>) {
+      const tableName = readMySqlField<string>(row, 'table_name');
+      const columnName = readMySqlField<string>(row, 'column_name');
+      const declaredType = readMySqlField<string>(row, 'column_type') || readMySqlField<string>(row, 'data_type');
+      const isNullable = readMySqlField<string>(row, 'is_nullable');
+      const columnDefault = readMySqlField<string | null>(row, 'column_default') ?? null;
+      if (!tableName || !columnName || !declaredType) {
+        continue;
+      }
+
+      const logicalType = normalizeSqlType('mysql', declaredType, columnName, columnDefault);
+      tableMap.get(tableName)!.columns[columnName] = {
         logicalType,
-        notNull: row.is_nullable === 'NO',
-        defaultValue: primaryKeys.has(`${row.table_name}.${row.column_name}`)
+        notNull: isNullable === 'NO',
+        defaultValue: primaryKeys.has(`${tableName}.${columnName}`)
           ? null
-          : normalizeDefaultValueForColumn(row.column_default, logicalType),
-        primaryKey: primaryKeys.has(`${row.table_name}.${row.column_name}`),
+          : normalizeDefaultValueForColumn(columnDefault, logicalType),
+        primaryKey: primaryKeys.has(`${tableName}.${columnName}`),
       };
     }
 
     const tables = Object.fromEntries(tableNames.map((tableName) => [tableName, tableMap.get(tableName)!]));
 
     const [indexRows] = await connection.query(`
-      SELECT table_name, index_name, column_name, non_unique
+      SELECT
+        table_name AS table_name,
+        index_name AS index_name,
+        column_name AS column_name,
+        non_unique AS non_unique
       FROM information_schema.statistics
       WHERE table_schema = DATABASE()
         AND index_name <> 'PRIMARY'
       ORDER BY table_name ASC, index_name ASC, seq_in_index ASC
     `);
     const indexGroups = new Map<string, SchemaContractIndex>();
-    for (const row of indexRows as MySqlIndexRow[]) {
-      const key = `${row.table_name}:${row.index_name}`;
+    for (const row of indexRows as Array<Record<string, unknown>>) {
+      const tableName = readMySqlField<string>(row, 'table_name');
+      const indexName = readMySqlField<string>(row, 'index_name');
+      const columnName = readMySqlField<string>(row, 'column_name');
+      const nonUnique = readMySqlField<number>(row, 'non_unique');
+      if (!tableName || !indexName || !columnName) {
+        continue;
+      }
+
+      const key = `${tableName}:${indexName}`;
       const existing = indexGroups.get(key);
       if (existing) {
-        existing.columns.push(row.column_name);
+        existing.columns.push(columnName);
         continue;
       }
       indexGroups.set(key, {
-        name: row.index_name,
-        table: row.table_name,
-        columns: [row.column_name],
-        unique: Number(row.non_unique) === 0,
+        name: indexName,
+        table: tableName,
+        columns: [columnName],
+        unique: Number(nonUnique) === 0,
       });
     }
 
@@ -529,12 +578,12 @@ async function introspectMySqlSchema(input: SchemaIntrospectionInput): Promise<S
 
     const [foreignKeyRows] = await connection.query(`
       SELECT
-        kcu.table_name,
-        kcu.constraint_name,
-        kcu.column_name,
-        kcu.referenced_table_name,
-        kcu.referenced_column_name,
-        rc.delete_rule
+        kcu.table_name AS table_name,
+        kcu.constraint_name AS constraint_name,
+        kcu.column_name AS column_name,
+        kcu.referenced_table_name AS referenced_table_name,
+        kcu.referenced_column_name AS referenced_column_name,
+        rc.delete_rule AS delete_rule
       FROM information_schema.key_column_usage kcu
       JOIN information_schema.referential_constraints rc
         ON rc.constraint_schema = kcu.constraint_schema
@@ -544,20 +593,30 @@ async function introspectMySqlSchema(input: SchemaIntrospectionInput): Promise<S
       ORDER BY kcu.table_name ASC, kcu.constraint_name ASC, kcu.ordinal_position ASC
     `);
     const foreignKeyGroups = new Map<string, SchemaContractForeignKey>();
-    for (const row of foreignKeyRows as MySqlForeignKeyRow[]) {
-      const key = `${row.table_name}:${row.constraint_name}`;
+    for (const row of foreignKeyRows as Array<Record<string, unknown>>) {
+      const tableName = readMySqlField<string>(row, 'table_name');
+      const constraintName = readMySqlField<string>(row, 'constraint_name');
+      const columnName = readMySqlField<string>(row, 'column_name');
+      const referencedTableName = readMySqlField<string>(row, 'referenced_table_name');
+      const referencedColumnName = readMySqlField<string>(row, 'referenced_column_name');
+      const deleteRule = readMySqlField<string | null>(row, 'delete_rule') ?? null;
+      if (!tableName || !constraintName || !columnName || !referencedTableName || !referencedColumnName) {
+        continue;
+      }
+
+      const key = `${tableName}:${constraintName}`;
       const existing = foreignKeyGroups.get(key);
       if (existing) {
-        existing.columns.push(row.column_name);
-        existing.referencedColumns.push(row.referenced_column_name);
+        existing.columns.push(columnName);
+        existing.referencedColumns.push(referencedColumnName);
         continue;
       }
       foreignKeyGroups.set(key, {
-        table: row.table_name,
-        columns: [row.column_name],
-        referencedTable: row.referenced_table_name,
-        referencedColumns: [row.referenced_column_name],
-        onDelete: normalizeDeleteRule(row.delete_rule),
+        table: tableName,
+        columns: [columnName],
+        referencedTable: referencedTableName,
+        referencedColumns: [referencedColumnName],
+        onDelete: normalizeDeleteRule(deleteRule),
       });
     }
 
@@ -736,13 +795,17 @@ function readBootstrapSql(dialect: Exclude<SchemaIntrospectionDialect, 'sqlite'>
 async function resetMySqlSchema(connection: mysql.Connection): Promise<void> {
   await connection.query('SET FOREIGN_KEY_CHECKS = 0');
   const [rows] = await connection.query(`
-    SELECT table_name
+    SELECT table_name AS table_name
     FROM information_schema.tables
     WHERE table_schema = DATABASE()
       AND table_type = 'BASE TABLE'
   `);
-  for (const row of rows as Array<{ table_name: string }>) {
-    await connection.query(`DROP TABLE IF EXISTS \`${row.table_name}\``);
+  for (const row of rows as Array<Record<string, unknown>>) {
+    const tableName = readMySqlField<string>(row, 'table_name');
+    if (!tableName) {
+      continue;
+    }
+    await connection.query(`DROP TABLE IF EXISTS \`${tableName}\``);
   }
   await connection.query('SET FOREIGN_KEY_CHECKS = 1');
 }

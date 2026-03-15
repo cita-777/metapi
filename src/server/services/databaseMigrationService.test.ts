@@ -1,9 +1,14 @@
+import currentContract from '../db/generated/schemaContract.json' with { type: 'json' };
 import { describe, expect, it } from 'vitest';
 import {
   __databaseMigrationServiceTestUtils,
   maskConnectionString,
   normalizeMigrationInput,
 } from './databaseMigrationService.js';
+
+function cloneContract<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
 
 describe('databaseMigrationService', () => {
   it('accepts postgres migration input with normalized url', () => {
@@ -103,8 +108,14 @@ describe('databaseMigrationService', () => {
 
   it.each(['postgres', 'mysql', 'sqlite'] as const)('creates or patches sites schema with use_system_proxy and custom_headers for %s', async (dialect) => {
     const executedSql: string[] = [];
+    const liveContract = cloneContract(currentContract);
+    delete liveContract.tables.sites.columns.use_system_proxy;
+    delete liveContract.tables.sites.columns.custom_headers;
+
     await __databaseMigrationServiceTestUtils.ensureSchema({
       dialect,
+      connectionString: dialect === 'sqlite' ? ':memory:' : `${dialect}://example.invalid/metapi`,
+      ssl: false,
       begin: async () => {},
       commit: async () => {},
       rollback: async () => {},
@@ -112,17 +123,11 @@ describe('databaseMigrationService', () => {
         executedSql.push(sqlText);
         return [];
       },
-      queryScalar: async (sqlText, params = []) => {
-        if (sqlText.includes('sqlite_master') || sqlText.includes('information_schema.tables')) {
-          return 1;
-        }
-        if (sqlText.includes('pragma_table_info') || sqlText.includes('information_schema.columns')) {
-          const columnName = String(params[1] ?? sqlText.match(/name = '([^']+)'/)?.[1] ?? '');
-          return columnName === 'use_system_proxy' || columnName === 'custom_headers' ? 0 : 1;
-        }
-        return 0;
-      },
+      queryScalar: async () => 1,
       close: async () => {},
+    }, {
+      currentContract,
+      liveContract,
     });
 
     const useSystemProxySql = executedSql.find((sqlText) => sqlText.includes('use_system_proxy'));
@@ -134,8 +139,13 @@ describe('databaseMigrationService', () => {
 
   it.each(['postgres', 'mysql'] as const)('patches token_routes decision snapshot columns for %s', async (dialect) => {
     const executedSql: string[] = [];
+    const liveContract = cloneContract(currentContract);
+    delete liveContract.tables.token_routes.columns.decision_snapshot;
+
     await __databaseMigrationServiceTestUtils.ensureSchema({
       dialect,
+      connectionString: `${dialect}://example.invalid/metapi`,
+      ssl: false,
       begin: async () => {},
       commit: async () => {},
       rollback: async () => {},
@@ -143,17 +153,11 @@ describe('databaseMigrationService', () => {
         executedSql.push(sqlText);
         return [];
       },
-      queryScalar: async (sqlText, params = []) => {
-        if (sqlText.includes('information_schema.tables')) {
-          return 1;
-        }
-        if (sqlText.includes('information_schema.columns')) {
-          const columnName = String(params[1] ?? '');
-          return columnName === 'decision_snapshot' ? 0 : 1;
-        }
-        return 0;
-      },
+      queryScalar: async () => 1,
       close: async () => {},
+    }, {
+      currentContract,
+      liveContract,
     });
 
     expect(

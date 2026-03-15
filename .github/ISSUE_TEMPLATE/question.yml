@@ -1,39 +1,72 @@
-name: Question
-description: Ask for clarification or usage guidance
+name: Question / 使用问题
+description: Ask for clarification or usage guidance / 询问使用方法、配置方式或行为解释
 title: "[Question]: "
 labels: ["question"]
 body:
   - type: markdown
     attributes:
       value: |
-        Use this template for support or clarification questions that are not bug reports or feature requests.
+        Use this template for support or clarification questions that are not bug reports or feature requests. The more context you share, the easier it is for us to give a direct answer.
+
+        如果这是使用方式、配置方法或行为解释相关的问题，请使用这个模板。您提供的上下文越完整，我们越容易直接给出准确答案。
 
   - type: checkboxes
     id: checks
     attributes:
-      label: Before submitting
+      label: Before submitting / 提交前确认
       options:
-        - label: I searched existing issues and the README for an answer
+        - label: I searched existing issues and the README for an answer / 我已搜索现有 issue 和 README，但还没有找到答案
           required: true
 
   - type: textarea
     id: question
     attributes:
-      label: Question
-      description: What do you need help understanding?
-      placeholder: Ask one clear question and include the relevant context.
+      label: Question / 问题描述
+      description: What do you need help understanding? / 您具体想确认什么问题？
+      placeholder: |
+        Ask one clear question and include the relevant context.
+        请尽量用一句话先说清楚您想问什么。
     validations:
       required: true
+
+  - type: dropdown
+    id: scenario
+    attributes:
+      label: Question Type / 问题类型
+      description: What kind of question is this? / 这是哪一类使用问题？
+      options:
+        - Deployment / 部署
+        - Configuration / 配置
+        - Client Integration / 客户端接入
+        - Routing / 路由
+        - Site / Account / Token / 站点、账号或令牌
+        - Desktop App / 桌面端
+        - Proxy API (/v1/*) / 代理接口
+        - Other / 其他
+    validations:
+      required: false
 
   - type: textarea
     id: tried
     attributes:
-      label: What have you tried?
-      description: Include commands, config, or investigation you already attempted.
+      label: What Have You Tried? / 您已经尝试过什么？
+      description: Include commands, config, screenshots, or investigation you already attempted. / 请补充您已经尝试过的命令、配置、截图或排查过程。
 
   - type: textarea
     id: environment
     attributes:
-      label: Relevant environment or config
-      description: Paste config snippets, request examples, or environment details if needed.
+      label: Relevant Environment Or Config / 相关环境或配置
+      description: Paste config snippets, request examples, deployment details, or environment information if needed. / 如有需要，请补充配置片段、请求示例、部署方式或环境信息。
+      placeholder: |
+        Deployment:
+        Base URL:
+        Client:
+        Database:
+        Related config:
+
+        部署方式：
+        Base URL：
+        客户端：
+        数据库：
+        相关配置：
       render: shell

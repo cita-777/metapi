@@ -114,6 +114,15 @@ describe('schema artifact generator', () => {
     expect(artifacts.mysqlBootstrap).not.toContain('CREATE TABLE IF NOT EXISTS `settings` (`key` TEXT NOT NULL PRIMARY KEY, `value` TEXT)');
   });
 
+  it('does not add mysql text prefixes to non-text index columns', () => {
+    const artifacts = generateDialectArtifacts(readSchemaContract());
+
+    expect(artifacts.mysqlBootstrap).toContain('CREATE INDEX `checkin_logs_account_created_at_idx` ON `checkin_logs` (`account_id`, `created_at`)');
+    expect(artifacts.mysqlBootstrap).toContain('CREATE INDEX `events_read_created_at_idx` ON `events` (`read`, `created_at`)');
+    expect(artifacts.mysqlBootstrap).not.toContain('`created_at`(191)');
+    expect(artifacts.mysqlBootstrap).not.toContain('`read`(191)');
+  });
+
   it('rejects destructive diffs when generating additive upgrades', () => {
     const current = readSchemaContract();
     const previous = structuredClone(current);

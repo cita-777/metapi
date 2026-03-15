@@ -7,13 +7,16 @@ import {
   ensureLegacySchemaCompatibility,
   type LegacySchemaCompatInspector,
 } from './legacySchemaCompat.js';
-import { generateBootstrapSql, resolveGeneratedArtifactPath } from './schemaArtifactGenerator.js';
-import type { SchemaContract } from './schemaContract.js';
+import { generateBootstrapSql, generateUpgradeSql } from './schemaArtifactGenerator.js';
+import { introspectLiveSchema } from './schemaIntrospection.js';
+import { resolveGeneratedSchemaContractPath, type SchemaContract } from './schemaContract.js';
 
 export type RuntimeSchemaDialect = 'sqlite' | 'mysql' | 'postgres';
 
 export interface RuntimeSchemaClient {
   dialect: RuntimeSchemaDialect;
+  connectionString: string;
+  ssl: boolean;
   begin(): Promise<void>;
   commit(): Promise<void>;
   rollback(): Promise<void>;
@@ -42,10 +45,13 @@ function isExistingSchemaObjectError(error: unknown): boolean {
     : '';
 
   return code === 'ER_DUP_KEYNAME'
+    || code === 'ER_DUP_FIELDNAME'
     || code === 'ER_TABLE_EXISTS_ERROR'
     || code === '42P07'
+    || code === '42701'
     || code === '42710'
     || lowered.includes('already exists')
+    || lowered.includes('duplicate column')
     || lowered.includes('duplicate key name')
     || lowered.includes('relation') && lowered.includes('already exists');
 }
@@ -144,12 +150,87 @@ function splitSqlStatements(sqlText: string): string[] {
 }
 
 function readSchemaContract(): SchemaContract {
-  return JSON.parse(readFileSync(resolveGeneratedArtifactPath('schemaContract.json'), 'utf8')) as SchemaContract;
+  return JSON.parse(readFileSync(resolveGeneratedSchemaContractPath(), 'utf8')) as SchemaContract;
 }
 
-function readGeneratedBootstrapStatements(dialect: Exclude<RuntimeSchemaDialect, 'sqlite'>): string[] {
-  const filename = dialect === 'mysql' ? 'mysql.bootstrap.sql' : 'postgres.bootstrap.sql';
-  return splitSqlStatements(readFileSync(resolveGeneratedArtifactPath(filename), 'utf8'));
+function cloneContract(contract: SchemaContract): SchemaContract {
+  return JSON.parse(JSON.stringify(contract)) as SchemaContract;
+}
+
+function serializeColumn(column: SchemaContract['tables'][string]['columns'][string]): string {
+  return [
+    column.logicalType,
+    column.notNull ? 'not-null' : 'nullable',
+    column.defaultValue ?? 'default:null',
+    column.primaryKey ? 'pk' : 'non-pk',
+  ].join('|');
+}
+
+function serializeIndex(index: SchemaContract['indexes'][number]): string {
+  return [index.table, index.columns.join(','), index.unique ? 'unique' : 'non-unique'].join('|');
+}
+
+function serializeUnique(unique: SchemaContract['uniques'][number]): string {
+  return [unique.table, unique.columns.join(',')].join('|');
+}
+
+function serializeForeignKey(foreignKey: SchemaContract['foreignKeys'][number]): string {
+  return [
+    foreignKey.table,
+    foreignKey.columns.join(','),
+    foreignKey.referencedTable,
+    foreignKey.referencedColumns.join(','),
+    foreignKey.onDelete ?? 'null',
+  ].join('|');
+}
+
+function buildCompatibleRuntimeBaseline(
+  currentContract: SchemaContract,
+  liveContract: SchemaContract,
+): SchemaContract {
+  const baseline: SchemaContract = {
+    tables: {},
+    indexes: [],
+    uniques: [],
+    foreignKeys: [],
+  };
+
+  for (const [tableName, liveTable] of Object.entries(liveContract.tables)) {
+    const currentTable = currentContract.tables[tableName];
+    if (!currentTable) {
+      continue;
+    }
+
+    const compatibleColumns = Object.fromEntries(
+      Object.entries(liveTable.columns)
+        .filter(([columnName, liveColumn]) => {
+          const currentColumn = currentTable.columns[columnName];
+          return currentColumn && serializeColumn(currentColumn) === serializeColumn(liveColumn);
+        }),
+    );
+
+    baseline.tables[tableName] = { columns: compatibleColumns };
+  }
+
+  const currentIndexes = new Map(currentContract.indexes.map((index) => [index.name, index]));
+  baseline.indexes = liveContract.indexes
+    .filter((index) => {
+      const currentIndex = currentIndexes.get(index.name);
+      return currentIndex && serializeIndex(currentIndex) === serializeIndex(index);
+    });
+
+  const currentUniques = new Map(currentContract.uniques.map((unique) => [unique.name, unique]));
+  baseline.uniques = liveContract.uniques
+    .filter((unique) => {
+      const currentUnique = currentUniques.get(unique.name);
+      return currentUnique && serializeUnique(currentUnique) === serializeUnique(unique);
+    });
+
+  const currentForeignKeys = new Set(currentContract.foreignKeys.map(serializeForeignKey));
+  baseline.foreignKeys = liveContract.foreignKeys
+    .filter((foreignKey) => currentForeignKeys.has(serializeForeignKey(foreignKey)));
+
+  return baseline;
 }
 
 async function createPostgresClient(connectionString: string, ssl: boolean): Promise<RuntimeSchemaClient> {
@@ -162,6 +243,8 @@ async function createPostgresClient(connectionString: string, ssl: boolean): Pro
 
   return {
     dialect: 'postgres',
+    connectionString,
+    ssl,
     begin: async () => { await client.query('BEGIN'); },
     commit: async () => { await client.query('COMMIT'); },
     rollback: async () => { await client.query('ROLLBACK'); },
@@ -185,6 +268,8 @@ async function createMySqlClient(connectionString: string, ssl: boolean): Promis
 
   return {
     dialect: 'mysql',
+    connectionString,
+    ssl,
     begin: async () => { await connection.beginTransaction(); },
     commit: async () => { await connection.commit(); },
     rollback: async () => { await connection.rollback(); },
@@ -210,6 +295,8 @@ async function createSqliteClient(connectionString: string): Promise<RuntimeSche
 
   return {
     dialect: 'sqlite',
+    connectionString,
+    ssl: false,
     begin: async () => { sqlite.exec('BEGIN'); },
     commit: async () => { sqlite.exec('COMMIT'); },
     rollback: async () => { sqlite.exec('ROLLBACK'); },
@@ -238,10 +325,44 @@ export async function createRuntimeSchemaClient(input: RuntimeSchemaConnectionIn
   return createSqliteClient(input.connectionString);
 }
 
-export async function ensureRuntimeDatabaseSchema(client: RuntimeSchemaClient): Promise<void> {
+type EnsureRuntimeDatabaseSchemaOptions = {
+  currentContract?: SchemaContract;
+  liveContract?: SchemaContract;
+};
+
+async function resolveLiveContract(client: RuntimeSchemaClient, liveContract?: SchemaContract): Promise<SchemaContract> {
+  if (liveContract) {
+    return liveContract;
+  }
+
+  return introspectLiveSchema({
+    dialect: client.dialect,
+    connectionString: client.connectionString,
+    ssl: client.ssl,
+  });
+}
+
+function buildExternalUpgradeStatements(
+  dialect: Exclude<RuntimeSchemaDialect, 'sqlite'>,
+  currentContract: SchemaContract,
+  liveContract: SchemaContract,
+): string[] {
+  const compatibleBaseline = buildCompatibleRuntimeBaseline(currentContract, liveContract);
+  return splitSqlStatements(generateUpgradeSql(dialect, currentContract, compatibleBaseline));
+}
+
+export async function ensureRuntimeDatabaseSchema(
+  client: RuntimeSchemaClient,
+  options: EnsureRuntimeDatabaseSchemaOptions = {},
+): Promise<void> {
+  const currentContract = options.currentContract ?? readSchemaContract();
   const statements = client.dialect === 'sqlite'
-    ? splitSqlStatements(generateBootstrapSql('sqlite', readSchemaContract()))
-    : readGeneratedBootstrapStatements(client.dialect);
+    ? splitSqlStatements(generateBootstrapSql('sqlite', currentContract))
+    : buildExternalUpgradeStatements(
+      client.dialect,
+      currentContract,
+      await resolveLiveContract(client, options.liveContract),
+    );
 
   for (const sqlText of statements) {
     await executeBootstrapStatement(client, sqlText);
@@ -260,5 +381,8 @@ export async function bootstrapRuntimeDatabaseSchema(input: RuntimeSchemaConnect
 }
 
 export const __runtimeSchemaBootstrapTestUtils = {
-  readGeneratedBootstrapStatements,
+  buildCompatibleRuntimeBaseline,
+  cloneContract,
+  splitSqlStatements,
+  buildExternalUpgradeStatements,
 };

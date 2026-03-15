@@ -1,40 +1,65 @@
-name: Documentation update
-description: Report missing, incorrect, or unclear documentation
+name: Documentation Update / 文档反馈
+description: Report missing, incorrect, or unclear documentation / 反馈文档缺失、错误或不清晰的问题
 title: "[Docs]: "
 labels: ["docs"]
 body:
   - type: markdown
     attributes:
       value: |
-        Use this template when documentation is missing, incorrect, or hard to follow.
+        Use this template when documentation is missing, incorrect, outdated, or hard to follow.
+
+        如果文档存在缺失、错误、过时或难以理解的问题，请使用这个模板。
 
   - type: checkboxes
     id: checks
     attributes:
-      label: Before submitting
+      label: Before submitting / 提交前确认
       options:
-        - label: I searched existing issues to avoid creating a duplicate
+        - label: I searched existing issues to avoid creating a duplicate / 我已搜索现有 issue，确认这不是重复反馈
           required: true
 
   - type: input
     id: location
     attributes:
-      label: Documentation location
-      description: Link the page or file that needs attention.
-      placeholder: e.g. README.md or docs/getting-started.md
+      label: Documentation Location / 文档位置
+      description: Link the page or file that needs attention. / 请填写需要修改的页面、章节或文件路径。
+      placeholder: e.g. README.md or docs/getting-started.md / 例如 README.md 或 docs/getting-started.md
     validations:
       required: true
+
+  - type: dropdown
+    id: doc-area
+    attributes:
+      label: Documentation Area / 文档类型
+      description: Which documentation area is affected? / 受影响的是哪一类文档？
+      options:
+        - README / 项目首页说明
+        - Getting Started / 快速开始
+        - Deployment / 部署
+        - Configuration / 配置
+        - Client Integration / 客户端接入
+        - FAQ / 常见问题
+        - Operations / 运维
+        - Other / 其他
+    validations:
+      required: false
 
   - type: textarea
     id: issue
     attributes:
-      label: What is wrong or missing?
-      placeholder: Describe the missing, inaccurate, or confusing part.
+      label: What Is Wrong Or Missing? / 哪里有问题或缺失？
+      description: Describe the missing, inaccurate, outdated, or confusing part. / 请描述缺失、不准确、过时或不清晰的内容。
+      placeholder: |
+        Describe the missing, inaccurate, or confusing part.
+        请说明哪一部分有问题，以及为什么会造成困惑。
     validations:
       required: true
 
   - type: textarea
     id: fix
     attributes:
-      label: Suggested improvement
-      placeholder: Describe how the documentation could be improved.
+      label: Suggested Improvement / 建议修改方式
+      description: Describe how the documentation could be improved. / 请描述您建议的修改方式或理想写法。
+      placeholder: |
+        Describe how the documentation could be improved.
+        请尽量给出建议内容、结构或示例。

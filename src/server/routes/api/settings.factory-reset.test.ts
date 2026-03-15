@@ -63,7 +63,7 @@ describe('settings factory reset api', () => {
     delete process.env.DATA_DIR;
   });
 
-  it('clears data, resets runtime config, and returns to initial sqlite state', async () => {
+  it('clears business data while preserving infrastructure settings', async () => {
     const siteInsert = await db.insert(schema.sites).values({
       name: 'Reset Me',
       url: 'https://reset.example.com',
@@ -149,10 +149,11 @@ describe('settings factory reset api', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ success: true });
-    expect(config.authToken).toBe(FACTORY_RESET_ADMIN_TOKEN);
+    expect(config.authToken).toBe('before-reset-token');
     expect(config.dbType).toBe('sqlite');
     expect(config.dbUrl).toBe('');
     expect(config.dbSsl).toBe(false);
+    expect(config.systemProxyUrl).toBe('http://127.0.0.1:7890');
 
     const sites = await db.select().from(schema.sites).all();
     expect(sites.map((site) => site.name)).toEqual([
@@ -166,10 +167,12 @@ describe('settings factory reset api', () => {
     const dbTypeSetting = await db.select().from(schema.settings).where(eq(schema.settings.key, 'db_type')).get();
     const dbUrlSetting = await db.select().from(schema.settings).where(eq(schema.settings.key, 'db_url')).get();
     const dbSslSetting = await db.select().from(schema.settings).where(eq(schema.settings.key, 'db_ssl')).get();
-    expect(authTokenSetting).toBeUndefined();
-    expect(dbTypeSetting).toBeUndefined();
-    expect(dbUrlSetting).toBeUndefined();
-    expect(dbSslSetting).toBeUndefined();
+    const systemProxySetting = await db.select().from(schema.settings).where(eq(schema.settings.key, 'system_proxy_url')).get();
+    expect(authTokenSetting?.value).toBe(JSON.stringify('before-reset-token'));
+    expect(dbTypeSetting?.value).toBe(JSON.stringify('sqlite'));
+    expect(dbUrlSetting?.value).toBe(JSON.stringify(''));
+    expect(dbSslSetting?.value).toBe(JSON.stringify(false));
+    expect(systemProxySetting?.value).toBe(JSON.stringify('http://127.0.0.1:7890'));
 
     expect(await db.select().from(schema.accounts).all()).toHaveLength(0);
     expect(await db.select().from(schema.accountTokens).all()).toHaveLength(0);

@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM node:20-bookworm-slim AS builder
+FROM node:25-bookworm-slim AS builder
 
 WORKDIR /app
 
@@ -16,7 +16,7 @@ COPY . .
 RUN npm run build
 RUN --mount=type=cache,target=/root/.npm npm prune --omit=dev --no-audit --no-fund
 
-FROM node:20-bookworm-slim
+FROM node:25-bookworm-slim
 
 WORKDIR /app
 

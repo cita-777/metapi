@@ -9,6 +9,7 @@ import { shouldRetryProxyRequest } from '../../services/proxyRetryPolicy.js';
 import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from './downstreamPolicy.js';
 import { withSiteProxyRequestInit, withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
 import { cloneFormDataWithOverrides, ensureMultipartBufferParser, parseMultipartFormData } from './multipart.js';
+import { buildUpstreamUrl } from './upstreamUrl.js';
 import {
   deleteProxyVideoTaskByPublicId,
   getProxyVideoTaskByPublicId,
@@ -70,7 +71,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
       }
 
       excludeChannelIds.push(selected.channel.id);
-      const targetUrl = `${selected.site.url}/v1/videos`;
+      const targetUrl = buildUpstreamUrl(selected.site.url, '/v1/videos');
       const startTime = Date.now();
 
       try {
@@ -180,7 +181,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
       });
     }
 
-    const targetUrl = `${mapping.siteUrl}/v1/videos/${encodeURIComponent(mapping.upstreamVideoId)}`;
+    const targetUrl = buildUpstreamUrl(mapping.siteUrl, `/v1/videos/${encodeURIComponent(mapping.upstreamVideoId)}`);
     const upstream = await fetch(targetUrl, await withSiteProxyRequestInit(targetUrl, {
       method: 'GET',
       headers: {
@@ -211,7 +212,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
       });
     }
 
-    const targetUrl = `${mapping.siteUrl}/v1/videos/${encodeURIComponent(mapping.upstreamVideoId)}`;
+    const targetUrl = buildUpstreamUrl(mapping.siteUrl, `/v1/videos/${encodeURIComponent(mapping.upstreamVideoId)}`);
     const upstream = await fetch(targetUrl, await withSiteProxyRequestInit(targetUrl, {
       method: 'DELETE',
       headers: {

@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { resetRequestRateLimitStore } from '../../middleware/requestRateLimit.js';
 
 const verifyTokenMock = vi.fn();
 const undiciFetchMock = vi.fn();
@@ -45,6 +46,7 @@ describe('accounts verify-token shield detection', () => {
     verifyTokenMock.mockReset();
     undiciFetchMock.mockReset();
     adapterPlatformName = 'new-api';
+    resetRequestRateLimitStore();
 
     await db.delete(schema.proxyLogs).run();
     await db.delete(schema.checkinLogs).run();
@@ -84,6 +86,45 @@ describe('accounts verify-token shield detection', () => {
     expect(response.json()).toMatchObject({
       success: false,
       message: 'invalid access token，请在中转站重新生成系统访问令牌后重新绑定账号',
+    });
+  });
+
+  it('rate limits repeated verify-token attempts from the same client ip', async () => {
+    verifyTokenMock.mockRejectedValue(new Error('invalid access token'));
+
+    const site = await db.insert(schema.sites).values({
+      name: 'AnyRouter',
+      url: 'https://anyrouter.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/accounts/verify-token',
+        remoteAddress: '198.51.100.11',
+        payload: {
+          siteId: site.id,
+          accessToken: 'session-or-cookie-token',
+        },
+      });
+      expect(response.statusCode).toBe(200);
+    }
+
+    const limited = await app.inject({
+      method: 'POST',
+      url: '/api/accounts/verify-token',
+      remoteAddress: '198.51.100.11',
+      payload: {
+        siteId: site.id,
+        accessToken: 'session-or-cookie-token',
+      },
+    });
+
+    expect(limited.statusCode).toBe(429);
+    expect(limited.json()).toMatchObject({
+      success: false,
+      message: '请求过于频繁，请稍后再试',
     });
   });
 
