@@ -534,12 +534,6 @@
           "defaultValue": null,
           "primaryKey": false
         },
-        "downstream_api_key_id": {
-          "logicalType": "integer",
-          "notNull": false,
-          "defaultValue": null,
-          "primaryKey": false
-        },
         "model_requested": {
           "logicalType": "text",
           "notNull": false,
@@ -614,6 +608,12 @@
         },
         "billing_details": {
           "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "downstream_api_key_id": {
+          "logicalType": "integer",
           "notNull": false,
           "defaultValue": null,
           "primaryKey": false
