@@ -93,7 +93,7 @@
     "concurrently": "^9.1.0",
     "cross-env": "^7.0.3",
     "drizzle-kit": "^0.28.1",
-    "electron": "^35.0.1",
+    "electron": "^41.0.2",
     "electron-builder": "^26.0.12",
     "mermaid": "^11.12.3",
     "react": "^18.3.1",
