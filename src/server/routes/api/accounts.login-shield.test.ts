@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { resetRequestRateLimitStore } from '../../middleware/requestRateLimit.js';
 
 const loginMock = vi.fn();
 
@@ -36,6 +37,7 @@ describe('accounts login shield detection', () => {
 
   beforeEach(async () => {
     loginMock.mockReset();
+    resetRequestRateLimitStore();
 
     await db.delete(schema.proxyLogs).run();
     await db.delete(schema.checkinLogs).run();
@@ -81,5 +83,49 @@ describe('accounts login shield detection', () => {
     expect(body.shieldBlocked).toBe(true);
     expect((body.message || '').toLowerCase()).toContain('shield');
     expect(body.message || '').not.toContain('Unexpected token');
+  });
+
+  it('rate limits repeated login attempts from the same client ip', async () => {
+    loginMock.mockResolvedValue({
+      success: false,
+      message: 'invalid credentials',
+    });
+
+    const site = await db.insert(schema.sites).values({
+      name: 'AnyRouter',
+      url: 'https://anyrouter.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/accounts/login',
+        remoteAddress: '198.51.100.10',
+        payload: {
+          siteId: site.id,
+          username: 'demo-user',
+          password: 'demo-password',
+        },
+      });
+      expect(response.statusCode).toBe(200);
+    }
+
+    const limited = await app.inject({
+      method: 'POST',
+      url: '/api/accounts/login',
+      remoteAddress: '198.51.100.10',
+      payload: {
+        siteId: site.id,
+        username: 'demo-user',
+        password: 'demo-password',
+      },
+    });
+
+    expect(limited.statusCode).toBe(429);
+    expect(limited.json()).toMatchObject({
+      success: false,
+      message: '请求过于频繁，请稍后再试',
+    });
   });
 });

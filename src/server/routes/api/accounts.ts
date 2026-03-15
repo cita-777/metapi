@@ -26,6 +26,7 @@ import {
 } from '../../services/accountHealthService.js';
 import { appendSessionTokenRebindHint } from '../../services/alertRules.js';
 import { withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
+import { createRateLimitGuard } from '../../middleware/requestRateLimit.js';
 
 type AccountWithSiteRow = {
   accounts: typeof schema.accounts.$inferSelect;
@@ -48,6 +49,18 @@ type AccountCapabilities = {
 };
 
 type VerifyFailureReason = 'needs-user-id' | 'invalid-user-id' | 'shield-blocked' | null;
+
+const limitAccountLogin = createRateLimitGuard({
+  bucket: 'accounts-login',
+  max: 5,
+  windowMs: 60_000,
+});
+
+const limitAccountVerifyToken = createRateLimitGuard({
+  bucket: 'accounts-verify-token',
+  max: 5,
+  windowMs: 60_000,
+});
 
 function hasSessionTokenValue(value: string | null | undefined): boolean {
   return typeof value === 'string' && value.trim().length > 0;
@@ -421,7 +434,10 @@ export async function accountsRoutes(app: FastifyInstance) {
   });
 
   // Login to a site and auto-create account
-  app.post<{ Body: { siteId: number; username: string; password: string } }>('/api/accounts/login', async (request) => {
+  app.post<{ Body: { siteId: number; username: string; password: string } }>(
+    '/api/accounts/login',
+    { preHandler: [limitAccountLogin] },
+    async (request) => {
     const { siteId, username, password } = request.body;
 
     // Get site info
@@ -529,10 +545,14 @@ export async function accountsRoutes(app: FastifyInstance) {
       tokenCount: apiTokens.length,
       reusedAccount: !!existing,
     };
-  });
+    },
+  );
 
   // Verify credentials against a site.
-  app.post<{ Body: { siteId: number; accessToken: string; platformUserId?: number; credentialMode?: AccountCredentialMode } }>('/api/accounts/verify-token', async (request) => {
+  app.post<{ Body: { siteId: number; accessToken: string; platformUserId?: number; credentialMode?: AccountCredentialMode } }>(
+    '/api/accounts/verify-token',
+    { preHandler: [limitAccountVerifyToken] },
+    async (request) => {
     const { siteId, platformUserId } = request.body;
     const accessToken = (request.body.accessToken || '').trim();
     const credentialMode = resolveRequestedCredentialMode(request.body.credentialMode);
@@ -831,7 +851,8 @@ export async function accountsRoutes(app: FastifyInstance) {
         ? 'Session Token 验证失败'
         : 'Token invalid: cannot use it as session cookie or API key',
     };
-  });
+    },
+  );
 
   app.post<{ Params: { id: string }; Body: { accessToken: string; platformUserId?: number; refreshToken?: string; tokenExpiresAt?: number | string } }>(
     '/api/accounts/:id/rebind-session',

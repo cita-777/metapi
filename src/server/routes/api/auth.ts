@@ -3,10 +3,20 @@ import { db, schema } from '../../db/index.js';
 import { config } from '../../config.js';
 import { eq } from 'drizzle-orm';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
+import { createRateLimitGuard } from '../../middleware/requestRateLimit.js';
+
+const limitAdminTokenChange = createRateLimitGuard({
+  bucket: 'auth-change',
+  max: 3,
+  windowMs: 60_000,
+});
 
 export async function authRoutes(app: FastifyInstance) {
   // Change admin auth token (requires old token verification)
-  app.post<{ Body: { oldToken: string; newToken: string } }>('/api/settings/auth/change', async (request, reply) => {
+  app.post<{ Body: { oldToken: string; newToken: string } }>(
+    '/api/settings/auth/change',
+    { preHandler: [limitAdminTokenChange] },
+    async (request, reply) => {
     const { oldToken, newToken } = request.body;
 
     if (!oldToken || !newToken) {
@@ -45,7 +55,8 @@ export async function authRoutes(app: FastifyInstance) {
     } catch {}
 
     return { success: true, message: 'Token 已更新' };
-  });
+    },
+  );
 
   // Get masked current token (for display)
   app.get('/api/settings/auth/info', async () => {
