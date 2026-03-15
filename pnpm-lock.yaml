@@ -24,7 +24,7 @@ importers:
         specifier: ^9.0.0
         version: 9.0.0
       '@visactor/react-vchart':
-        specifier: ^2.0.16
+        specifier: ^2.0.19
         version: 2.0.19(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       better-sqlite3:
         specifier: ^11.3.0
@@ -34,7 +34,7 @@ importers:
         version: 17.3.1
       drizzle-orm:
         specifier: ^0.36.4
-        version: 0.36.4(@types/better-sqlite3@7.6.13)(@types/pg@8.18.0)(@types/react@18.3.28)(better-sqlite3@11.10.0)(mysql2@3.19.0(@types/node@22.19.15))(pg@8.20.0)(react@18.3.1)
+        version: 0.36.4(@types/better-sqlite3@7.6.13)(@types/pg@8.18.0)(@types/react@18.3.28)(better-sqlite3@11.10.0)(mysql2@3.19.1(@types/node@22.19.15))(pg@8.20.0)(react@18.3.1)
       electron-log:
         specifier: ^5.2.4
         version: 5.4.3
@@ -54,13 +54,13 @@ importers:
         specifier: ^1.2.8
         version: 1.2.8
       mysql2:
-        specifier: ^3.15.3
-        version: 3.19.0(@types/node@22.19.15)
+        specifier: ^3.19.1
+        version: 3.19.1(@types/node@22.19.15)
       node-cron:
         specifier: ^4.2.1
         version: 4.2.1
       nodemailer:
-        specifier: ^8.0.1
+        specifier: ^8.0.2
         version: 8.0.2
       pg:
         specifier: ^8.16.3
@@ -115,7 +115,7 @@ importers:
         specifier: ^26.0.12
         version: 26.8.1(electron-builder-squirrel-windows@26.8.1)
       mermaid:
-        specifier: ^11.12.3
+        specifier: ^11.13.0
         version: 11.13.0
       react:
         specifier: ^18.3.1
@@ -1990,11 +1990,11 @@ packages:
   '@visactor/vchart@2.0.19':
     resolution: {integrity: sha512-pPNAHUuNlw1FNgbSSwT9comeJUXpaTAe8yed1MVI5rT+TspIg9Wpio29ZlUjrevUxosQqka5VAD63jQS6PMaOg==}
 
-  '@visactor/vdataset@1.0.22':
-    resolution: {integrity: sha512-B+Xd7UuXNNLWRsH0ySd9LsvFFBz/S+lFN7ha7GU7SdTYr9P0ZExYyumQPntaa5iOMLxKysFxJw7t/Or70ZA6hQ==}
+  '@visactor/vdataset@1.0.23':
+    resolution: {integrity: sha512-zrLk9FBUWJoW6b30XnPKzXwAXl8USdLDfed6QZLsmdkylRU8V7yZeXE2aKwU8Lg1U4HmQngqmqOx7/QlbX44Tg==}
 
-  '@visactor/vlayouts@1.0.22':
-    resolution: {integrity: sha512-iTPJeROqmwBOBDoewDHYdEAe6MlDPgJ/1V1j+FcWr3zWGPDOSduoIDyjhB/FpkLaUQyhYCTCfCH3p2BDs3Wy4g==}
+  '@visactor/vlayouts@1.0.23':
+    resolution: {integrity: sha512-fK1f5LmuumhYanLArk5yrT4BZxu4IAmdc8WMwfB/KAvV+2dTPFuBUMWbWnDl0siQoU9SX9l/bLozUnI9n7BwBQ==}
 
   '@visactor/vrender-animate@1.0.41':
     resolution: {integrity: sha512-kdMoIh7OEo6z4rZfnJHX7d+izBhGVWq6MR22uppk0LPilfdBd/1hSNAEKO6C9JWAy5uROGFpEkh+kk+ar/zSZg==}
@@ -2008,14 +2008,14 @@ packages:
   '@visactor/vrender-kits@1.0.41':
     resolution: {integrity: sha512-ffJlKkNseOsnRjvBmxKxQ9dsQXu+K288NFCtB0ZZ2N/mtcTsZUlH5SDCcsAvDhPGEvJ22Ye4MFKcXSEDctpGzA==}
 
-  '@visactor/vscale@1.0.22':
-    resolution: {integrity: sha512-DCCqBA9gBZexCsfYmUjRZM1OBp2Qr8dRIGOqWcFerINIDtpQatSS4c8Ah2r8pqkgiizSNeKgDoXOtsiPe9zqBQ==}
+  '@visactor/vscale@1.0.23':
+    resolution: {integrity: sha512-XePhYuRoNAp+8MeSMuEOOvhVAlOwvM1sDT2yFxE6zdwVB2GjZk8mH+5N2xQGQWk75YmGJjlJASFtgwjlb1yWxw==}
 
   '@visactor/vutils-extension@2.0.19':
     resolution: {integrity: sha512-uRYCZFw7bYFdrSPQNIrYYsEGKuVn7lTMd4zDKBA2qnAfAZ/Y4WeXzZhQKdXgTFu5UGa292CqmVqMlVKFNWjC+A==}
 
-  '@visactor/vutils@1.0.22':
-    resolution: {integrity: sha512-n+lKEeSQl1wGqRG829oQ4SwU6UysUiP9rpp0K87TwmERVMupSy6C0KcM2SGXGBLvnp1Cyjjciw5ZtYQXv3ZfKQ==}
+  '@visactor/vutils@1.0.23':
+    resolution: {integrity: sha512-M8SLqgdHhKN8QmQKTWD1gzEaHptpIV9pvMYvC6+VeOsqYvZZ6UdhSCAAczTYVo+m/uwcEC2JHSUspbrs8rzlRQ==}
 
   '@vitejs/plugin-react@4.7.0':
     resolution: {integrity: sha512-gUu9hwfWvvEDBBmgtAowQCojwZmJ5mcLn3aufeCsitijs3+f2NsrPtlAWIR6OPiqljl96GVCUbLe0HyqIpVaoA==}
@@ -2690,8 +2690,8 @@ packages:
   dagre-d3-es@7.0.14:
     resolution: {integrity: sha512-P4rFMVq9ESWqmOgK+dlXvOtLwYg0i7u0HBGJER0LZDJT2VHIPAMZ/riPxqJceWMStH5+E61QxFra9kIS3AqdMg==}
 
-  dayjs@1.11.19:
-    resolution: {integrity: sha512-t5EcLVS6QPBNqM2z8fakk/NKel+Xzshgt8FFKAn+qwlD1pzZWxh0nVCrvFK7ZDb6XucZeF9z8C7CBWTRIVApAw==}
+  dayjs@1.11.20:
+    resolution: {integrity: sha512-YbwwqR/uYpeoP4pu043q+LTDLFBLApUP6VxRihdfNTqu4ubqMlGDLd6ErXhEgsyvY0K6nCs7nggYumAN+9uEuQ==}
 
   debug@4.4.3:
     resolution: {integrity: sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==}
@@ -2770,9 +2770,8 @@ packages:
     os: [darwin]
     hasBin: true
 
-  dompurify@3.3.2:
-    resolution: {integrity: sha512-6obghkliLdmKa56xdbLOpUZ43pAR6xFy1uOrxBaIDjT+yaRuuybLjGS9eVBoSR/UPU5fq3OXClEHLJNGvbxKpQ==}
-    engines: {node: '>=20'}
+  dompurify@3.3.3:
+    resolution: {integrity: sha512-Oj6pzI2+RqBfFG+qOaOLbFXLQ90ARpcGG6UePL82bJLtdsa6CYJD7nmiU8MW9nQNOtCHV3lZ/Bzq1X0QYbBZCA==}
 
   dotenv-expand@11.0.7:
     resolution: {integrity: sha512-zIHwmZPRshsCdpMDyVsqGmgyP0yT8GAgXUnkdAoJisxvf33k7yO6OuoKmcTGuXPWSsm8Oh88nZicRLA9Y0rUeA==}
@@ -3739,8 +3738,8 @@ packages:
   ms@2.1.3:
     resolution: {integrity: sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==}
 
-  mysql2@3.19.0:
-    resolution: {integrity: sha512-760Ay9HViAUT7V8QkYxrIx/LHJPGWtE+D/31VuiDm1eu2IFaUIqMcK7+hVHnmgnC7JnnwreFKsZoa8K6BnGl8Q==}
+  mysql2@3.19.1:
+    resolution: {integrity: sha512-yn4zh+Uxu5J3Zvi6Ao96lJ7BSBRkspHflWQAmOPND+htbpIKDQw99TTvPzgihKO/QyMickZopO4OsnixnpcUwA==}
     engines: {node: '>= 8.0'}
     peerDependencies:
       '@types/node': '>= 8'
@@ -4278,8 +4277,8 @@ packages:
   simple-get@4.0.1:
     resolution: {integrity: sha512-brv7p5WgH0jmQJr1ZDDfKDOSeWWg+OVypG99A/5vYGPqJ6pxiaHLy8nxtFjBA7oMa01ebA9gfh1uMCFqOuXxvA==}
 
-  simple-statistics@7.8.8:
-    resolution: {integrity: sha512-CUtP0+uZbcbsFpqEyvNDYjJCl+612fNgjT8GaVuvMG7tBuJg8gXGpsP5M7X658zy0IcepWOZ6nPBu1Qb9ezA1w==}
+  simple-statistics@7.8.9:
+    resolution: {integrity: sha512-YT6MLqYsz7y1rQZOLFlOCCgSRpCi6bqY417yhoOLI7aVoBi29dD39EPrOE03W9DY25H0J0jizVsHZnkLzyGJFg==}
 
   simple-update-notifier@2.0.0:
     resolution: {integrity: sha512-a2B9Y0KlNXl9u/vsW6sTIu9vGEpfKu2wRV6l1H3XEas/0gUIzGzBoP/IouTcUQbm9JWZLH3COxyn03TYlFax6w==}
@@ -4460,8 +4459,8 @@ packages:
   tinyexec@0.3.2:
     resolution: {integrity: sha512-KQQR9yN7R5+OSwaK0XQoj22pwHoTlgYqmUscPYoknOoWCWfj/5/ABTMRi69FrKU5ffPVh5QcFikpWJI/P1ocHA==}
 
-  tinyexec@1.0.2:
-    resolution: {integrity: sha512-W/KYk+NFhkmsYpuHq5JykngiOCnxeVL8v8dFnqxSD8qEEdRfXk1SDM6JzNqcERbcGYj9tMrDQBYV9cjgnunFIg==}
+  tinyexec@1.0.4:
+    resolution: {integrity: sha512-u9r3uZC0bdpGOXtlxUIdwf9pkmvhqJdrVCH9fapQtgy/OeTTMZ1nqH7agtvEfmGui6e1XxjcdrlxvxJvc3sMqw==}
     engines: {node: '>=18'}
 
   tinyglobby@0.2.15:
@@ -4956,7 +4955,7 @@ snapshots:
   '@antfu/install-pkg@1.1.0':
     dependencies:
       package-manager-detector: 1.6.0
-      tinyexec: 1.0.2
+      tinyexec: 1.0.4
 
   '@babel/code-frame@7.29.0':
     dependencies:
@@ -6418,7 +6417,7 @@ snapshots:
       '@visactor/vchart-extension': 2.0.19
       '@visactor/vrender-core': 1.0.41
       '@visactor/vrender-kits': 1.0.41
-      '@visactor/vutils': 1.0.22
+      '@visactor/vutils': 1.0.23
       react: 18.3.1
       react-dom: 18.3.1(react@18.3.1)
       react-is: 18.3.1
@@ -6426,32 +6425,32 @@ snapshots:
   '@visactor/vchart-extension@2.0.19':
     dependencies:
       '@visactor/vchart': 2.0.19
-      '@visactor/vdataset': 1.0.22
-      '@visactor/vlayouts': 1.0.22
+      '@visactor/vdataset': 1.0.23
+      '@visactor/vlayouts': 1.0.23
       '@visactor/vrender-animate': 1.0.41
       '@visactor/vrender-components': 1.0.41
       '@visactor/vrender-core': 1.0.41
       '@visactor/vrender-kits': 1.0.41
-      '@visactor/vutils': 1.0.22
+      '@visactor/vutils': 1.0.23
 
   '@visactor/vchart@2.0.19':
     dependencies:
-      '@visactor/vdataset': 1.0.22
-      '@visactor/vlayouts': 1.0.22
+      '@visactor/vdataset': 1.0.23
+      '@visactor/vlayouts': 1.0.23
       '@visactor/vrender-animate': 1.0.41
       '@visactor/vrender-components': 1.0.41
       '@visactor/vrender-core': 1.0.41
       '@visactor/vrender-kits': 1.0.41
-      '@visactor/vscale': 1.0.22
-      '@visactor/vutils': 1.0.22
+      '@visactor/vscale': 1.0.23
+      '@visactor/vutils': 1.0.23
       '@visactor/vutils-extension': 2.0.19
 
-  '@visactor/vdataset@1.0.22':
+  '@visactor/vdataset@1.0.23':
     dependencies:
       '@turf/flatten': 6.5.0
       '@turf/helpers': 6.5.0
       '@turf/rewind': 6.5.0
-      '@visactor/vutils': 1.0.22
+      '@visactor/vutils': 1.0.23
       d3-dsv: 2.0.0
       d3-geo: 1.12.1
       d3-hexbin: 0.2.2
@@ -6462,55 +6461,55 @@ snapshots:
       path-browserify: 1.0.1
       pbf: 3.3.0
       point-at-length: 1.1.0
-      simple-statistics: 7.8.8
+      simple-statistics: 7.8.9
       simplify-geojson: 1.0.5
       topojson-client: 3.1.0
 
-  '@visactor/vlayouts@1.0.22':
+  '@visactor/vlayouts@1.0.23':
     dependencies:
       '@turf/helpers': 6.5.0
       '@turf/invariant': 6.5.0
-      '@visactor/vscale': 1.0.22
-      '@visactor/vutils': 1.0.22
+      '@visactor/vscale': 1.0.23
+      '@visactor/vutils': 1.0.23
       eventemitter3: 4.0.7
 
   '@visactor/vrender-animate@1.0.41':
     dependencies:
       '@visactor/vrender-core': 1.0.41
-      '@visactor/vutils': 1.0.22
+      '@visactor/vutils': 1.0.23
 
   '@visactor/vrender-components@1.0.41':
     dependencies:
       '@visactor/vrender-animate': 1.0.41
       '@visactor/vrender-core': 1.0.41
       '@visactor/vrender-kits': 1.0.41
-      '@visactor/vscale': 1.0.22
-      '@visactor/vutils': 1.0.22
+      '@visactor/vscale': 1.0.23
+      '@visactor/vutils': 1.0.23
 
   '@visactor/vrender-core@1.0.41':
     dependencies:
-      '@visactor/vutils': 1.0.22
+      '@visactor/vutils': 1.0.23
       color-convert: 2.0.1
 
   '@visactor/vrender-kits@1.0.41':
     dependencies:
       '@resvg/resvg-js': 2.4.1
       '@visactor/vrender-core': 1.0.41
-      '@visactor/vutils': 1.0.22
+      '@visactor/vutils': 1.0.23
       gifuct-js: 2.1.2
       lottie-web: 5.13.0
       roughjs: 4.6.6
 
-  '@visactor/vscale@1.0.22':
+  '@visactor/vscale@1.0.23':
     dependencies:
-      '@visactor/vutils': 1.0.22
+      '@visactor/vutils': 1.0.23
 
   '@visactor/vutils-extension@2.0.19':
     dependencies:
-      '@visactor/vdataset': 1.0.22
-      '@visactor/vutils': 1.0.22
+      '@visactor/vdataset': 1.0.23
+      '@visactor/vutils': 1.0.23
 
-  '@visactor/vutils@1.0.22':
+  '@visactor/vutils@1.0.23':
     dependencies:
       '@turf/helpers': 6.5.0
       '@turf/invariant': 6.5.0
@@ -7299,7 +7298,7 @@ snapshots:
       d3: 7.9.0
       lodash-es: 4.17.23
 
-  dayjs@1.11.19: {}
+  dayjs@1.11.20: {}
 
   debug@4.4.3:
     dependencies:
@@ -7384,7 +7383,7 @@ snapshots:
       verror: 1.10.1
     optional: true
 
-  dompurify@3.3.2:
+  dompurify@3.3.3:
     optionalDependencies:
       '@types/trusted-types': 2.0.7
 
@@ -7405,13 +7404,13 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  drizzle-orm@0.36.4(@types/better-sqlite3@7.6.13)(@types/pg@8.18.0)(@types/react@18.3.28)(better-sqlite3@11.10.0)(mysql2@3.19.0(@types/node@22.19.15))(pg@8.20.0)(react@18.3.1):
+  drizzle-orm@0.36.4(@types/better-sqlite3@7.6.13)(@types/pg@8.18.0)(@types/react@18.3.28)(better-sqlite3@11.10.0)(mysql2@3.19.1(@types/node@22.19.15))(pg@8.20.0)(react@18.3.1):
     optionalDependencies:
       '@types/better-sqlite3': 7.6.13
       '@types/pg': 8.18.0
       '@types/react': 18.3.28
       better-sqlite3: 11.10.0
-      mysql2: 3.19.0(@types/node@22.19.15)
+      mysql2: 3.19.1(@types/node@22.19.15)
       pg: 8.20.0
       react: 18.3.1
 
@@ -8345,8 +8344,8 @@ snapshots:
       d3: 7.9.0
       d3-sankey: 0.12.3
       dagre-d3-es: 7.0.14
-      dayjs: 1.11.19
-      dompurify: 3.3.2
+      dayjs: 1.11.20
+      dompurify: 3.3.3
       katex: 0.16.38
       khroma: 2.1.0
       lodash-es: 4.17.23
@@ -8464,7 +8463,7 @@ snapshots:
 
   ms@2.1.3: {}
 
-  mysql2@3.19.0(@types/node@22.19.15):
+  mysql2@3.19.1(@types/node@22.19.15):
     dependencies:
       '@types/node': 22.19.15
       aws-ssl-profiles: 1.1.2
@@ -9063,7 +9062,7 @@ snapshots:
       once: 1.4.0
       simple-concat: 1.0.1
 
-  simple-statistics@7.8.8: {}
+  simple-statistics@7.8.9: {}
 
   simple-update-notifier@2.0.0:
     dependencies:
@@ -9247,7 +9246,7 @@ snapshots:
 
   tinyexec@0.3.2: {}
 
-  tinyexec@1.0.2: {}
+  tinyexec@1.0.4: {}
 
   tinyglobby@0.2.15:
     dependencies:
