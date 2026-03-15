@@ -60,7 +60,7 @@
     "@fastify/cors": "^11.2.0",
     "@fastify/static": "^9.0.0",
     "@visactor/react-vchart": "^2.0.16",
-    "better-sqlite3": "^11.3.0",
+    "better-sqlite3": "^12.8.0",
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.36.4",
     "electron-log": "^5.2.4",
