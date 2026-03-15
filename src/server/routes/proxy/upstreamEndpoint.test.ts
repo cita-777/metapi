@@ -614,6 +614,105 @@ describe('buildUpstreamEndpointRequest', () => {
     expect(request.headers['Content-Type']).toBe('application/json');
   });
 
+  it('strips unsupported openai parameters like frequency_penalty for Gemini models on chat endpoints', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'chat',
+      modelName: 'gemini-1.5-pro',
+      stream: false,
+      tokenValue: 'sk-test',
+      sitePlatform: 'gemini',
+      openaiBody: {
+        model: 'gemini-1.5-pro',
+        messages: [{ role: 'user', content: 'hello' }],
+        frequency_penalty: 0.5,
+        presence_penalty: 0.2,
+        logit_bias: { '100': 1 },
+        logprobs: true,
+        top_logprobs: 2,
+        store: true,
+        temperature: 0.8,
+        top_p: 1.0,
+      },
+      downstreamFormat: 'openai',
+    });
+
+    expect(request.path).toBe('/v1beta/openai/chat/completions');
+    expect(request.body.frequency_penalty).toBeUndefined();
+    expect(request.body.presence_penalty).toBeUndefined();
+    expect(request.body.logit_bias).toBeUndefined();
+    expect(request.body.logprobs).toBeUndefined();
+    expect(request.body.top_logprobs).toBeUndefined();
+    expect(request.body.store).toBeUndefined();
+    expect(request.body.temperature).toBe(0.8);
+    expect(request.body.top_p).toBe(1.0);
+  });
+
+  it('strips unsupported openai parameters like frequency_penalty for Gemini models on responses endpoints', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'responses',
+      modelName: 'gemini-1.5-pro',
+      stream: false,
+      tokenValue: 'sk-test',
+      sitePlatform: 'gemini',
+      openaiBody: {
+        model: 'gemini-1.5-pro',
+        messages: [{ role: 'user', content: 'hello' }],
+        frequency_penalty: 0.5,
+        presence_penalty: 0.2,
+        logit_bias: { '100': 1 },
+        logprobs: true,
+        top_logprobs: 2,
+        store: true,
+        temperature: 0.8,
+        top_p: 1.0,
+      },
+      downstreamFormat: 'openai',
+    });
+
+    expect(request.path).toBe('/v1beta/openai/responses');
+    expect(request.body.frequency_penalty).toBeUndefined();
+    expect(request.body.presence_penalty).toBeUndefined();
+    expect(request.body.logit_bias).toBeUndefined();
+    expect(request.body.logprobs).toBeUndefined();
+    expect(request.body.top_logprobs).toBeUndefined();
+    expect(request.body.store).toBeUndefined();
+    expect(request.body.temperature).toBe(0.8);
+  });
+
+  it('strips unsupported openai parameters like frequency_penalty for Gemini models from downstream responses bodies', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'responses',
+      modelName: 'gemini-1.5-pro',
+      stream: false,
+      tokenValue: 'sk-test',
+      sitePlatform: 'gemini',
+      openaiBody: {},
+      downstreamFormat: 'responses',
+      responsesOriginalBody: {
+        model: 'gemini-1.5-pro',
+        input: 'hello',
+        frequency_penalty: 0.5,
+        presence_penalty: 0.2,
+        logit_bias: { '100': 1 },
+        logprobs: true,
+        top_logprobs: 2,
+        store: true,
+        temperature: 0.8,
+        top_p: 1.0,
+      },
+    });
+
+    expect(request.path).toBe('/v1beta/openai/responses');
+    expect(request.body.frequency_penalty).toBeUndefined();
+    expect(request.body.presence_penalty).toBeUndefined();
+    expect(request.body.logit_bias).toBeUndefined();
+    expect(request.body.logprobs).toBeUndefined();
+    expect(request.body.top_logprobs).toBeUndefined();
+    expect(request.body.store).toBeUndefined();
+    expect(request.body.temperature).toBe(0.8);
+    expect(request.body.top_p).toBe(1.0);
+  });
+
   it('preserves structured responses content blocks instead of flattening them', () => {
     const request = buildUpstreamEndpointRequest({
       endpoint: 'responses',
