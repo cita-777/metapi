@@ -10,4 +10,15 @@ describe('App sidebar config', () => {
     expect(source).not.toContain("{ to: '/accounts', label: '账号'");
     expect(source).not.toContain("{ to: '/tokens', label: '令牌管理'");
   });
+
+  it('places downstream key navigation under 控制台 instead of 系统', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/web/App.tsx'), 'utf8');
+    const consoleGroupIndex = source.indexOf("label: '控制台'");
+    const downstreamIndex = source.indexOf("{ to: '/downstream-keys', label: '下游 Key'");
+    const systemGroupIndex = source.indexOf("label: '系统'");
+
+    expect(consoleGroupIndex).toBeGreaterThanOrEqual(0);
+    expect(downstreamIndex).toBeGreaterThan(consoleGroupIndex);
+    expect(systemGroupIndex).toBeGreaterThan(downstreamIndex);
+  });
 });

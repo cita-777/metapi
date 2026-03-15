@@ -1059,71 +1059,14 @@ export default function Settings() {
         </div>
 
         <div className="card animate-slide-up stagger-5" style={{ padding: 20 }}>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>下游 API Key 策略（按项目/分组）</div>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
-            每个下游 Key 可独立配置过期、额度，并通过勾选界面限制可访问的模型与群组。
+          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>下游 Key 管理入口已迁移</div>
+          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12, lineHeight: 1.8 }}>
+            下游 API Key 的新增、编辑、模型白名单、群组限制、趋势与用量分析，现统一收口到「控制台 / 下游 Key」页面，设置页不再保留重复管理入口。
           </div>
-
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-            <button onClick={openCreateDownstreamModal} className="btn btn-primary">
-              + 新增 API Key
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button onClick={() => navigate('/downstream-keys')} className="btn btn-primary">
+              打开下游 Key 管理页
             </button>
-            <button onClick={loadDownstreamKeys} disabled={downstreamLoading} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }}>
-              {downstreamLoading ? '刷新中...' : '刷新列表'}
-            </button>
-            <button onClick={() => navigate('/downstream-keys')} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }}>
-              打开管理页
-            </button>
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {downstreamKeys.length === 0 ? (
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>暂无下游 API Key</div>
-            ) : downstreamKeys.map((item) => {
-              const opLoading = !!downstreamOps[item.id];
-              const quotaText = `${item.usedRequests}${item.maxRequests !== null ? `/${item.maxRequests}` : ''}`;
-              const costText = `$${item.usedCost.toFixed(6)}${item.maxCost !== null ? `/$${item.maxCost}` : ''}`;
-              return (
-                <div key={item.id} style={{ border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)', padding: 10 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                      <strong style={{ fontSize: 13 }}>{item.name}</strong>
-                      <code style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text-secondary)' }}>{item.keyMasked}</code>
-                      <span style={{
-                        fontSize: 12,
-                        padding: '2px 8px',
-                        borderRadius: 999,
-                        background: item.enabled ? 'var(--color-success-bg)' : 'var(--color-danger-bg)',
-                        color: item.enabled ? 'var(--color-success)' : 'var(--color-danger)',
-                      }}>
-                        {item.enabled ? '启用' : '禁用'}
-                      </span>
-                    </div>
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                      <button onClick={() => beginEditDownstream(item)} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }}>
-                        编辑
-                      </button>
-                      <button onClick={() => toggleDownstreamEnabled(item)} disabled={opLoading} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }}>
-                        {item.enabled ? '禁用' : '启用'}
-                      </button>
-                      <button onClick={() => resetDownstreamUsage(item)} disabled={opLoading} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }}>
-                        重置用量
-                      </button>
-                      <button onClick={() => deleteDownstreamKey(item)} disabled={opLoading} className="btn btn-link btn-link-warning">
-                        删除
-                      </button>
-                    </div>
-                  </div>
-                  <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 6, display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-                    <span>请求用量: {quotaText}</span>
-                    <span>费用用量: {costText}</span>
-                    <span>过期: {item.expiresAt ? new Date(item.expiresAt).toLocaleString() : '永久'}</span>
-                    <span>模型规则: {item.supportedModels.length || 0}</span>
-                    <span>群组限制: {item.allowedRouteIds.length || 0}</span>
-                  </div>
-                </div>
-              );
-            })}
           </div>
         </div>
 
