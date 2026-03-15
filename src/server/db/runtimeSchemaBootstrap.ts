@@ -153,6 +153,86 @@ function readSchemaContract(): SchemaContract {
   return JSON.parse(readFileSync(resolveGeneratedSchemaContractPath(), 'utf8')) as SchemaContract;
 }
 
+function cloneContract(contract: SchemaContract): SchemaContract {
+  return JSON.parse(JSON.stringify(contract)) as SchemaContract;
+}
+
+function serializeColumn(column: SchemaContract['tables'][string]['columns'][string]): string {
+  return [
+    column.logicalType,
+    column.notNull ? 'not-null' : 'nullable',
+    column.defaultValue ?? 'default:null',
+    column.primaryKey ? 'pk' : 'non-pk',
+  ].join('|');
+}
+
+function serializeIndex(index: SchemaContract['indexes'][number]): string {
+  return [index.table, index.columns.join(','), index.unique ? 'unique' : 'non-unique'].join('|');
+}
+
+function serializeUnique(unique: SchemaContract['uniques'][number]): string {
+  return [unique.table, unique.columns.join(',')].join('|');
+}
+
+function serializeForeignKey(foreignKey: SchemaContract['foreignKeys'][number]): string {
+  return [
+    foreignKey.table,
+    foreignKey.columns.join(','),
+    foreignKey.referencedTable,
+    foreignKey.referencedColumns.join(','),
+    foreignKey.onDelete ?? 'null',
+  ].join('|');
+}
+
+function buildCompatibleRuntimeBaseline(
+  currentContract: SchemaContract,
+  liveContract: SchemaContract,
+): SchemaContract {
+  const baseline: SchemaContract = {
+    tables: {},
+    indexes: [],
+    uniques: [],
+    foreignKeys: [],
+  };
+
+  for (const [tableName, liveTable] of Object.entries(liveContract.tables)) {
+    const currentTable = currentContract.tables[tableName];
+    if (!currentTable) {
+      continue;
+    }
+
+    const compatibleColumns = Object.fromEntries(
+      Object.entries(liveTable.columns)
+        .filter(([columnName, liveColumn]) => {
+          const currentColumn = currentTable.columns[columnName];
+          return currentColumn && serializeColumn(currentColumn) === serializeColumn(liveColumn);
+        }),
+    );
+
+    baseline.tables[tableName] = { columns: compatibleColumns };
+  }
+
+  const currentIndexes = new Map(currentContract.indexes.map((index) => [index.name, index]));
+  baseline.indexes = liveContract.indexes
+    .filter((index) => {
+      const currentIndex = currentIndexes.get(index.name);
+      return currentIndex && serializeIndex(currentIndex) === serializeIndex(index);
+    });
+
+  const currentUniques = new Map(currentContract.uniques.map((unique) => [unique.name, unique]));
+  baseline.uniques = liveContract.uniques
+    .filter((unique) => {
+      const currentUnique = currentUniques.get(unique.name);
+      return currentUnique && serializeUnique(currentUnique) === serializeUnique(unique);
+    });
+
+  const currentForeignKeys = new Set(currentContract.foreignKeys.map(serializeForeignKey));
+  baseline.foreignKeys = liveContract.foreignKeys
+    .filter((foreignKey) => currentForeignKeys.has(serializeForeignKey(foreignKey)));
+
+  return baseline;
+}
+
 async function createPostgresClient(connectionString: string, ssl: boolean): Promise<RuntimeSchemaClient> {
   const clientOptions: pg.ClientConfig = { connectionString };
   if (ssl) {
@@ -267,7 +347,8 @@ function buildExternalUpgradeStatements(
   currentContract: SchemaContract,
   liveContract: SchemaContract,
 ): string[] {
-  return splitSqlStatements(generateUpgradeSql(dialect, currentContract, liveContract));
+  const compatibleBaseline = buildCompatibleRuntimeBaseline(currentContract, liveContract);
+  return splitSqlStatements(generateUpgradeSql(dialect, currentContract, compatibleBaseline));
 }
 
 export async function ensureRuntimeDatabaseSchema(
@@ -300,6 +381,8 @@ export async function bootstrapRuntimeDatabaseSchema(input: RuntimeSchemaConnect
 }
 
 export const __runtimeSchemaBootstrapTestUtils = {
+  buildCompatibleRuntimeBaseline,
+  cloneContract,
   splitSqlStatements,
   buildExternalUpgradeStatements,
 };

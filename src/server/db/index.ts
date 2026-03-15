@@ -75,6 +75,12 @@ function isVitestRuntime(): boolean {
   return runtimeArgs.some((value) => value.includes('vitest'));
 }
 
+function isDefaultRepoDataDir(value: string | undefined): boolean {
+  const trimmed = (value || '').trim();
+  if (!trimmed) return false;
+  return resolve(trimmed) === resolve('./data');
+}
+
 function resolveVitestSqlitePath(): string | null {
   if (!isVitestRuntime()) {
     return null;
@@ -82,7 +88,7 @@ function resolveVitestSqlitePath(): string | null {
   if ((process.env.DB_URL || '').trim()) {
     return null;
   }
-  if ((process.env.DATA_DIR || '').trim()) {
+  if ((process.env.DATA_DIR || '').trim() && !isDefaultRepoDataDir(process.env.DATA_DIR)) {
     return null;
   }
 

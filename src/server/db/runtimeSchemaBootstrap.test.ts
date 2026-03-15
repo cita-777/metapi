@@ -65,6 +65,27 @@ describe('runtime schema bootstrap', () => {
     expect(executedSql.every((sqlText) => classifyLegacyCompatMutation(sqlText) === 'legacy')).toBe(true);
   });
 
+  it('tolerates non-additive live-schema drift and still emits additive runtime patch statements', () => {
+    const driftedLiveContract = __runtimeSchemaBootstrapTestUtils.cloneContract(currentContract);
+
+    delete driftedLiveContract.tables.model_availability?.columns.is_manual;
+    if (driftedLiveContract.tables.sites?.columns.status) {
+      driftedLiveContract.tables.sites.columns.status.defaultValue = null;
+    }
+    driftedLiveContract.indexes = driftedLiveContract.indexes.filter((index) => index.name !== 'accounts_site_id_idx');
+    driftedLiveContract.uniques = driftedLiveContract.uniques.filter((unique) => unique.name !== 'proxy_files_public_id_unique');
+
+    const statements = __runtimeSchemaBootstrapTestUtils.buildExternalUpgradeStatements(
+      'mysql',
+      currentContract,
+      driftedLiveContract,
+    );
+
+    expect(statements.some((sqlText) => sqlText.includes('ALTER TABLE `model_availability` ADD COLUMN `is_manual`'))).toBe(true);
+    expect(statements.some((sqlText) => sqlText.includes('CREATE INDEX `accounts_site_id_idx`'))).toBe(true);
+    expect(statements.some((sqlText) => sqlText.includes('CREATE UNIQUE INDEX `proxy_files_public_id_unique`'))).toBe(true);
+  });
+
   it('ignores duplicate mysql index and column errors when replaying additive schema statements', async () => {
     const executedSql: string[] = [];
     const duplicateColumnSql = __runtimeSchemaBootstrapTestUtils.splitSqlStatements(
