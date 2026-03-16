@@ -10,6 +10,7 @@ import {
 } from '../api.js';
 import { useToast } from '../components/Toast.js';
 import { ModelBadge } from '../components/BrandIcon.js';
+import SiteBadgeLink from '../components/SiteBadgeLink.js';
 import { MobileCard, MobileField } from '../components/MobileCard.js';
 import { MobileDrawer } from '../components/MobileDrawer.js';
 import { useIsMobile } from '../components/useIsMobile.js';
@@ -329,6 +330,16 @@ export default function ProxyLogs() {
     if (!siteFilter) return '全部站点';
     return siteOptions.find((option) => option.value === String(siteFilter))?.label || `站点 #${siteFilter}`;
   }, [siteFilter, siteOptions]);
+  const siteIdByName = useMemo(() => {
+    const index = new Map<string, number>();
+    for (const site of sites) {
+      const siteName = String(site?.name || '').trim();
+      const siteId = Number(site?.id);
+      if (!siteName || !Number.isFinite(siteId) || siteId <= 0 || index.has(siteName)) continue;
+      index.set(siteName, Math.trunc(siteId));
+    }
+    return index;
+  }, [sites]);
 
   const load = useCallback(async (silent = false) => {
     const seq = ++loadSeq.current;
@@ -608,7 +619,7 @@ export default function ProxyLogs() {
                   )}
                 >
                   <MobileField label="时间" value={formatDateTimeLocal(log.createdAt)} />
-                  <MobileField label="站点" value={log.siteName || '-'} />
+                  <MobileField label="站点" value={<SiteBadgeLink siteId={siteIdByName.get(String(log.siteName || '').trim())} siteName={log.siteName} badgeStyle={{ fontSize: 11 }} />} />
                   {downstreamKeySummary ? <MobileField label="下游 Key" value={downstreamKeySummary} /> : null}
                   <MobileField label="用时" value={formatLatency(log.latencyMs)} />
                   <MobileField label="输入" value={log.promptTokens?.toLocaleString() || '-'} />
@@ -709,7 +720,7 @@ export default function ProxyLogs() {
                         </div>
                       </td>
                       <td style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
-                        {log.siteName || '-'}
+                        <SiteBadgeLink siteId={siteIdByName.get(String(log.siteName || '').trim())} siteName={log.siteName} badgeStyle={{ fontSize: 11 }} />
                       </td>
                       <td>
                         <span className={`badge ${log.status === 'success' ? 'badge-success' : 'badge-error'}`} style={{ fontSize: 11, fontWeight: 600 }}>

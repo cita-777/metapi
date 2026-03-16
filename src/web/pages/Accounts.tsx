@@ -7,6 +7,7 @@ import ModernSelect from '../components/ModernSelect.js';
 import { MobileCard, MobileField } from '../components/MobileCard.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import DeleteConfirmModal from '../components/DeleteConfirmModal.js';
+import SiteBadgeLink from '../components/SiteBadgeLink.js';
 import {
   buildAddAccountPrereqHint,
   buildVerifyFailureHint,
@@ -1634,21 +1635,12 @@ export default function Accounts() {
                           <div className="mobile-card-extra">
                             <MobileField
                               label="站点"
-                              value={a.site?.url ? (
-                                <a
-                                  href={a.site.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="badge-link"
-                                >
-                                  <span className="badge badge-muted" style={{ fontSize: 11 }}>
-                                    {a.site?.name || '-'}
-                                  </span>
-                                </a>
-                              ) : (
-                                <span className="badge badge-muted" style={{ fontSize: 11 }}>
-                                  {a.site?.name || '-'}
-                                </span>
+                              value={(
+                                <SiteBadgeLink
+                                  siteId={a.site?.id}
+                                  siteName={a.site?.name}
+                                  badgeStyle={{ fontSize: 11 }}
+                                />
                               )}
                             />
                             <MobileField
@@ -1803,22 +1795,11 @@ export default function Accounts() {
                           </div>
                         </td>
                         <td>
-                          {a.site?.url ? (
-                            <a
-                              href={a.site.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="badge-link"
-                            >
-                              <span className="badge badge-muted" style={{ fontSize: 11 }}>
-                                {a.site?.name || '-'}
-                              </span>
-                            </a>
-                          ) : (
-                            <span className="badge badge-muted" style={{ fontSize: 11 }}>
-                              {a.site?.name || '-'}
-                            </span>
-                          )}
+                          <SiteBadgeLink
+                            siteId={a.site?.id}
+                            siteName={a.site?.name}
+                            badgeStyle={{ fontSize: 11 }}
+                          />
                         </td>
                         <td>
                           {(() => {

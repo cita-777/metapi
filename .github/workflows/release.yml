@@ -228,7 +228,7 @@ jobs:
       - name: Upload desktop package
         uses: actions/upload-artifact@v7
         with:
-          name: metapi-desktop-${{ github.ref_name }}-${{ runner.os }}-${{ runner.arch }}
+          name: metapi-desktop-${{ github.run_id }}-${{ runner.os }}-${{ runner.arch }}
           path: |
             release/*.exe
             release/*.dmg

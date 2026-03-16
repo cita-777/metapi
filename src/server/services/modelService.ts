@@ -95,7 +95,23 @@ function isApiKeyConnection(account: typeof schema.accounts.$inferSelect): boole
 }
 
 function normalizeModels(models: string[]): string[] {
-  return Array.from(new Set(models.filter((model) => typeof model === 'string' && model.trim().length > 0)));
+  const normalizedModels: string[] = [];
+  const seen = new Set<string>();
+
+  for (const rawModel of models) {
+    if (typeof rawModel !== 'string') continue;
+    const modelName = rawModel.trim();
+    if (!modelName) continue;
+
+    // Keep app/database behavior stable across SQLite/MySQL by deduping with a
+    // case-insensitive key after trimming whitespace.
+    const dedupeKey = modelName.toLowerCase();
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    normalizedModels.push(modelName);
+  }
+
+  return normalizedModels;
 }
 
 function isExactModelPattern(modelPattern: string): boolean {

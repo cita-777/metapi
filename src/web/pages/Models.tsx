@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom';
 import { api } from '../api.js';
 import { BrandGlyph, getBrand, hashColor, BrandIcon, type BrandInfo } from '../components/BrandIcon.js';
+import SiteBadgeLink from '../components/SiteBadgeLink.js';
 import { useToast } from '../components/Toast.js';
 import ModernSelect from '../components/ModernSelect.js';
 import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
@@ -168,6 +169,18 @@ export default function Models() {
   const latestPrimaryRequestRef = useRef(0);
   const latestMetadataRequestRef = useRef(0);
   const location = useLocation();
+  const siteIdByName = useMemo(() => {
+    const index = new Map<string, number>();
+    for (const model of data.models) {
+      for (const source of model.pricingSources || []) {
+        const siteName = String(source.siteName || '').trim();
+        const siteId = Number(source.siteId);
+        if (!siteName || !Number.isFinite(siteId) || siteId <= 0 || index.has(siteName)) continue;
+        index.set(siteName, Math.trunc(siteId));
+      }
+    }
+    return index;
+  }, [data.models]);
 
   const loadBaseMarketplace = useCallback(async (refresh = false) => {
     const requestId = ++latestPrimaryRequestRef.current;
@@ -688,7 +701,7 @@ export default function Models() {
                                 style={{ border: '1px solid var(--color-border-light)', borderRadius: 8, padding: 8 }}
                               >
                                 <div style={{ fontSize: 12, marginBottom: 6 }}>
-                                  <strong>{source.siteName}</strong> · {source.username || `ID:${source.accountId}`}
+                                  <SiteBadgeLink siteId={source.siteId} siteName={source.siteName} badgeStyle={{ fontSize: 11 }} /> · {source.username || `ID:${source.accountId}`}
                                 </div>
                                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                                   {Object.entries(source.groupPricing).map(([group, pricing]) => (
@@ -719,7 +732,7 @@ export default function Models() {
                       <tbody>
                         {m.accounts.map(a => (
                           <tr key={a.id}>
-                            <td><span className="badge badge-info">{a.site}</span></td>
+                            <td><SiteBadgeLink siteId={siteIdByName.get(a.site)} siteName={a.site} badgeClassName="badge badge-info" badgeStyle={{ fontSize: 11 }} /></td>
                             <td style={{ fontSize: 12 }}>{a.username || `ID:${a.id}`}</td>
                             <td style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                               {a.tokens.length > 0 ? a.tokens.map(t => (
@@ -849,7 +862,7 @@ export default function Models() {
                                         style={{ border: '1px solid var(--color-border-light)', borderRadius: 8, padding: 8 }}
                                       >
                                         <div style={{ fontSize: 12, marginBottom: 6 }}>
-                                          <strong>{source.siteName}</strong> · {source.username || `ID:${source.accountId}`}
+                                          <SiteBadgeLink siteId={source.siteId} siteName={source.siteName} badgeStyle={{ fontSize: 11 }} /> · {source.username || `ID:${source.accountId}`}
                                         </div>
                                         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                                           {Object.entries(source.groupPricing).map(([group, pricing]) => (
@@ -878,7 +891,7 @@ export default function Models() {
                               <tbody>
                                 {m.accounts.map(a => (
                                   <tr key={a.id} style={{ borderTop: '1px solid var(--color-border-light)' }}>
-                                    <td style={{ padding: 8 }}>{a.site}</td>
+                                    <td style={{ padding: 8 }}><SiteBadgeLink siteId={siteIdByName.get(a.site)} siteName={a.site} badgeClassName="badge badge-info" badgeStyle={{ fontSize: 11 }} /></td>
                                     <td style={{ padding: 8 }}>{a.username || `ID:${a.id}`}</td>
                                     <td style={{ padding: 8, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                                       {a.tokens.length > 0 ? a.tokens.map(t => (

@@ -170,6 +170,10 @@ function routeTitle(route: RouteSelectorItem): string {
   return displayName || route.modelPattern;
 }
 
+function isGroupRouteOption(route: RouteSelectorItem): boolean {
+  return !isExactModelPattern(route.modelPattern);
+}
+
 function uniqStrings(values: string[]): string[] {
   return [...new Set(values.map((value) => String(value || '').trim()).filter(Boolean))];
 }
@@ -312,7 +316,7 @@ function TagChips({
   maxVisible?: number;
 }) {
   if (!Array.isArray(tags) || tags.length === 0) {
-    return <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>无标签</span>;
+    return <span className="badge badge-muted" style={{ fontSize: 11 }}>无标签</span>;
   }
 
   const visible = tags.slice(0, maxVisible);
@@ -320,11 +324,15 @@ function TagChips({
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
       {visible.map((tag) => (
-        <span key={tag} style={tagChipStyle(accent ? 'accent' : 'normal')}>
+        <span
+          key={tag}
+          className={`badge ${accent ? 'badge-info' : 'badge-muted'}`}
+          style={{ fontSize: 11 }}
+        >
           {tag}
         </span>
       ))}
-      {hidden > 0 ? <span style={tagChipStyle()}>{`+${hidden}`}</span> : null}
+      {hidden > 0 ? <span className="badge badge-muted" style={{ fontSize: 11 }}>{`+${hidden}`}</span> : null}
     </div>
   );
 }
@@ -391,7 +399,7 @@ function TagInput({
             }
           }}
           placeholder={placeholder || '输入标签后按回车或逗号'}
-          style={{ width: '100%', border: 'none', outline: 'none', background: 'transparent', color: 'var(--color-text-primary)', padding: 0 }}
+          style={{ width: '100%', border: 'none', outline: 'none', background: 'transparent', color: 'var(--color-text-primary)', padding: 0, fontSize: 13, lineHeight: 1.45 }}
         />
       </div>
       {suggestionPool.length > 0 ? (
@@ -421,9 +429,9 @@ function SummaryMetric({
   value: string;
 }) {
   return (
-    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, minHeight: 28 }}>
+    <div style={{ minWidth: 112, display: 'grid', gap: 4 }}>
       <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{label}</span>
-      <strong style={{ fontSize: 13, color: 'var(--color-text-primary)', fontWeight: 600 }}>{value}</strong>
+      <strong style={{ fontSize: 14, color: 'var(--color-text-primary)', fontWeight: 700 }}>{value}</strong>
     </div>
   );
 }
@@ -440,15 +448,7 @@ function resolveOverviewUsageByRange(
 
 function TrendChartFallback({ height = 260 }: { height?: number }) {
   return (
-    <div
-      style={{
-        background: 'var(--color-bg-card)',
-        borderRadius: 'var(--radius-md)',
-        border: '1px solid var(--color-border-light)',
-        boxShadow: 'var(--shadow-card)',
-        padding: 16,
-      }}
-    >
+    <div className="card" style={{ padding: 16 }}>
       <div className="skeleton" style={{ width: 140, height: 28, borderRadius: 'var(--radius-sm)', marginBottom: 10 }} />
       <div className="skeleton" style={{ width: '100%', height, borderRadius: 'var(--radius-sm)' }} />
     </div>
@@ -542,29 +542,7 @@ function RangeToggle({ range, onChange }: { range: Range; onChange: (r: Range) =
 
 function StatusBadge({ enabled }: { enabled: boolean }) {
   return (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 6,
-        padding: '2px 8px',
-        borderRadius: 999,
-        fontSize: 11,
-        border: '1px solid var(--color-border-light)',
-        color: enabled ? 'var(--color-success)' : 'var(--color-text-muted)',
-        background: enabled
-          ? 'color-mix(in srgb, var(--color-success) 10%, transparent)'
-          : 'color-mix(in srgb, var(--color-text-muted) 10%, transparent)',
-      }}
-    >
-      <span
-        style={{
-          width: 6,
-          height: 6,
-          borderRadius: 999,
-          background: enabled ? 'var(--color-success)' : 'var(--color-text-muted)',
-        }}
-      />
+    <span className={`badge ${enabled ? 'badge-success' : 'badge-muted'}`} style={{ fontSize: 11 }}>
       {enabled ? '启用' : '禁用'}
     </span>
   );
@@ -660,7 +638,7 @@ function Drawer({
           animation: presence.isVisible ? 'drawer-slide-in 0.3s cubic-bezier(0.22, 1, 0.36, 1) both' : 'drawer-slide-out 0.22s cubic-bezier(0.4, 0, 1, 1) both',
         }}
       >
-        <div className="modal-header" style={{ paddingTop: 18, paddingBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div className="modal-header" style={{ paddingTop: 18, paddingBottom: 12, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <span>{item?.name || '--'}</span>
@@ -670,7 +648,7 @@ function Drawer({
               {item?.keyMasked || '****'}
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
-              <span style={tagChipStyle(item?.groupName ? 'accent' : 'normal')}>
+              <span className={`badge ${item?.groupName ? 'badge-info' : 'badge-muted'}`} style={{ fontSize: 11 }}>
                 {item?.groupName ? `主分组 · ${item.groupName}` : '未分组'}
               </span>
               <TagChips tags={item?.tags || []} accent maxVisible={4} />
@@ -682,22 +660,23 @@ function Drawer({
         </div>
 
         <div className="modal-body" style={{ paddingTop: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', fontWeight: 600, letterSpacing: '0.02em' }}>
-              趋势
+          <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>使用趋势</div>
+                <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>按选定时间窗口查看请求、Tokens 与成本变化。</div>
+              </div>
+              <RangeToggle range={trendRange} onChange={setTrendRange} />
             </div>
-            <RangeToggle range={trendRange} onChange={setTrendRange} />
+
+            <Suspense fallback={<TrendChartFallback height={260} />}>
+              <DownstreamKeyTrendChart buckets={buckets} loading={trendLoading} height={260} />
+            </Suspense>
           </div>
 
-          <Suspense fallback={<TrendChartFallback height={260} />}>
-            <DownstreamKeyTrendChart buckets={buckets} loading={trendLoading} height={260} />
-          </Suspense>
-
-          <div style={{ height: 16 }} />
-
-          <div className="card" style={{ padding: 16 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-primary)', marginBottom: 10 }}>
-              概览
+          <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: 10 }}>
+              基础信息
             </div>
             {overviewLoading ? (
               <div className="skeleton" style={{ width: '100%', height: 72, borderRadius: 'var(--radius-sm)' }} />
@@ -731,10 +710,8 @@ function Drawer({
             )}
           </div>
 
-          <div style={{ height: 16 }} />
-
           <div className="card" style={{ padding: 16 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-primary)', marginBottom: 10 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: 10 }}>
               当前范围汇总
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, fontSize: 12 }}>
@@ -759,9 +736,8 @@ function Drawer({
 
           {overview?.usage ? (
             <>
-              <div style={{ height: 16 }} />
-              <div className="card" style={{ padding: 16 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-primary)', marginBottom: 10 }}>
+              <div className="card" style={{ padding: 16, marginTop: 16 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: 10 }}>
                   固定窗口对比
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, fontSize: 12 }}>
@@ -817,17 +793,31 @@ function EditorModal({
 }) {
   const [modelSearch, setModelSearch] = useState('');
   const [groupSearch, setGroupSearch] = useState('');
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   useEffect(() => {
     if (!open) {
       setModelSearch('');
       setGroupSearch('');
+      setAdvancedOpen(false);
     }
   }, [open]);
 
   const exactModels = useMemo(
     () => uniqStrings(routeOptions.filter((item) => isExactModelPattern(item.modelPattern)).map((item) => item.modelPattern)).sort((a, b) => a.localeCompare(b)),
     [routeOptions],
+  );
+  const groupRouteOptions = useMemo(
+    () => routeOptions.filter(isGroupRouteOption),
+    [routeOptions],
+  );
+  const validGroupRouteIdSet = useMemo(
+    () => new Set(groupRouteOptions.map((route) => route.id)),
+    [groupRouteOptions],
+  );
+  const normalizedSelectedGroupRouteIds = useMemo(
+    () => uniqIds(form.selectedGroupRouteIds.filter((id) => validGroupRouteIdSet.has(id))),
+    [form.selectedGroupRouteIds, validGroupRouteIdSet],
   );
 
   const filteredModels = useMemo(() => {
@@ -838,15 +828,15 @@ function EditorModal({
 
   const filteredGroups = useMemo(() => {
     const keyword = groupSearch.trim().toLowerCase();
-    if (!keyword) return routeOptions;
-    return routeOptions.filter((route) => {
+    if (!keyword) return groupRouteOptions;
+    return groupRouteOptions.filter((route) => {
       const title = routeTitle(route).toLowerCase();
       return title.includes(keyword) || route.modelPattern.toLowerCase().includes(keyword);
     });
-  }, [groupSearch, routeOptions]);
+  }, [groupRouteOptions, groupSearch]);
 
   const selectedModelCount = form.selectedModels.length;
-  const selectedGroupCount = form.selectedGroupRouteIds.length;
+  const selectedGroupCount = normalizedSelectedGroupRouteIds.length;
   const inputStyle: React.CSSProperties = {
     width: '100%',
     padding: '10px 12px',
@@ -854,6 +844,8 @@ function EditorModal({
     borderRadius: 'var(--radius-sm)',
     background: 'var(--color-bg)',
     color: 'var(--color-text-primary)',
+    fontSize: 13,
+    lineHeight: 1.45,
   };
 
   return (
@@ -861,7 +853,7 @@ function EditorModal({
       open={open}
       onClose={onClose}
       title={editingItem ? '编辑下游密钥' : '新增下游密钥'}
-      maxWidth={1040}
+      maxWidth={860}
       bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 12 }}
       footer={(
         <>
@@ -875,20 +867,20 @@ function EditorModal({
       )}
     >
       <div className="info-tip" style={{ marginBottom: 0 }}>
-        支持为每个下游密钥独立配置主分组、标签、过期时间、额度上限、模型白名单与群组范围。留空表示不限制。
+        支持为每个下游密钥独立配置分组、标签、额度与有效期。高级限制项可按需展开。
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>名称</div>
+      <div className="downstream-key-modal-grid" style={{ gridTemplateColumns: '1fr' }}>
+        <div className="downstream-key-modal-field downstream-key-modal-field-full">
+          <div className="downstream-key-modal-label">名称</div>
           <input value={form.name} onChange={(e) => onChange((prev) => ({ ...prev, name: e.target.value }))} placeholder="例如：项目 A / 移动端" style={inputStyle} />
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>下游密钥</div>
+        <div className="downstream-key-modal-field">
+          <div className="downstream-key-modal-label">下游密钥</div>
           <input value={form.key} onChange={(e) => onChange((prev) => ({ ...prev, key: e.target.value }))} placeholder="sk-..." style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }} />
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>主分组</div>
+        <div className="downstream-key-modal-field">
+          <div className="downstream-key-modal-label">主分组</div>
           <input
             value={form.groupName}
             onChange={(e) => onChange((prev) => ({ ...prev, groupName: e.target.value }))}
@@ -897,42 +889,31 @@ function EditorModal({
             style={inputStyle}
           />
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>请求额度</div>
+        <div className="downstream-key-modal-field">
+          <div className="downstream-key-modal-label">请求额度</div>
           <input value={form.maxRequests} onChange={(e) => onChange((prev) => ({ ...prev, maxRequests: e.target.value }))} placeholder="留空表示不限" style={inputStyle} />
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>成本额度</div>
+        <div className="downstream-key-modal-field">
+          <div className="downstream-key-modal-label">成本额度</div>
           <input value={form.maxCost} onChange={(e) => onChange((prev) => ({ ...prev, maxCost: e.target.value }))} placeholder="留空表示不限" style={inputStyle} />
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>过期时间</div>
+        <div className="downstream-key-modal-field">
+          <div className="downstream-key-modal-label">过期时间</div>
           <input type="datetime-local" value={form.expiresAt} onChange={(e) => onChange((prev) => ({ ...prev, expiresAt: e.target.value }))} style={inputStyle} />
         </div>
         <label
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            border: '1px solid var(--color-border)',
-            borderRadius: 'var(--radius-sm)',
-            padding: '10px 12px',
-            background: 'var(--color-bg)',
-            cursor: 'pointer',
-            minHeight: 42,
-            marginTop: 18,
-          }}
+          className="downstream-key-modal-toggle"
         >
           <input type="checkbox" checked={form.enabled} onChange={(e) => onChange((prev) => ({ ...prev, enabled: e.target.checked }))} />
           <div>
-            <div style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>创建后立即启用</div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>关闭后该密钥将无法继续分发请求</div>
+            <div className="downstream-key-modal-toggle-title">创建后立即启用</div>
+            <div className="downstream-key-modal-help">关闭后该密钥将无法继续分发请求</div>
           </div>
         </label>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>备注说明</div>
+      <div className="downstream-key-modal-field downstream-key-modal-field-full">
+        <div className="downstream-key-modal-label">备注说明</div>
         <textarea
           value={form.description}
           onChange={(e) => onChange((prev) => ({ ...prev, description: e.target.value }))}
@@ -941,115 +922,125 @@ function EditorModal({
         />
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>标签</div>
+      <div className="downstream-key-modal-field downstream-key-modal-field-full">
+        <div className="downstream-key-modal-label">标签</div>
         <TagInput
           tags={form.tags}
           onChange={(tags) => onChange((prev) => ({ ...prev, tags }))}
           suggestions={tagSuggestions}
           placeholder="输入标签后按回车或逗号，例如：移动端、VIP、项目A"
         />
-        <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>标签用于搜索、筛选和辅助归类，不影响路由与权限。</div>
+        <div className="downstream-key-modal-help">标签用于搜索、筛选和辅助归类，不影响路由与权限。</div>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>站点倍率 JSON</div>
-        <textarea
-          value={form.siteWeightMultipliersText}
-          onChange={(e) => onChange((prev) => ({ ...prev, siteWeightMultipliersText: e.target.value }))}
-          placeholder={'例如：{\n  "1": 1.2,\n  "7": 0.8\n}'}
-          style={{ ...inputStyle, minHeight: 96, resize: 'vertical', fontFamily: 'var(--font-mono)' }}
-        />
-        <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>用于对特定站点做分发倍率微调；留空或 `{}` 表示走默认倍率。</div>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12 }}>
-        <div style={{ border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-md)', padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-            <div>
-              <div style={{ fontWeight: 700, color: 'var(--color-text-primary)' }}>模型白名单</div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>只展示精确模型，未勾选则视为全部模型可用</div>
+      <div className="downstream-key-advanced">
+        <button type="button" className={`downstream-key-advanced-toggle ${advancedOpen ? 'is-open' : ''}`.trim()} onClick={() => setAdvancedOpen((value) => !value)}>
+          <span>高级配置</span>
+          <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{advancedOpen ? '收起' : '展开'}</span>
+        </button>
+        {advancedOpen ? (
+          <div className="downstream-key-advanced-content">
+            <div className="downstream-key-modal-field downstream-key-modal-field-full">
+              <div className="downstream-key-modal-label">站点倍率 JSON</div>
+              <textarea
+                value={form.siteWeightMultipliersText}
+                onChange={(e) => onChange((prev) => ({ ...prev, siteWeightMultipliersText: e.target.value }))}
+                placeholder={'例如：{\n  "1": 1.2,\n  "7": 0.8\n}'}
+                style={{ ...inputStyle, minHeight: 96, resize: 'vertical', fontFamily: 'var(--font-mono)' }}
+              />
+              <div className="downstream-key-modal-help">用于对特定站点做分发倍率微调；留空或 `{}` 表示走默认倍率。</div>
             </div>
-            <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => onChange((prev) => ({ ...prev, selectedModels: [] }))}>
-              清空
-            </button>
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>已选 {selectedModelCount} 个模型</div>
-          <div className="toolbar-search" style={{ maxWidth: '100%' }}>
-            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            <input value={modelSearch} onChange={(e) => setModelSearch(e.target.value)} placeholder="搜索模型" />
-          </div>
-          <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {filteredModels.length === 0 ? (
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>暂无匹配模型</div>
-            ) : filteredModels.map((model) => {
-              const checked = form.selectedModels.includes(model);
-              return (
-                <label key={model} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', padding: '8px 10px', borderRadius: 10, border: '1px solid var(--color-border-light)', background: checked ? 'color-mix(in srgb, var(--color-primary) 10%, var(--color-bg-card))' : 'var(--color-bg-card)' }}>
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => onChange((prev) => ({
-                      ...prev,
-                      selectedModels: checked ? prev.selectedModels.filter((item) => item !== model) : [...prev.selectedModels, model],
-                    }))}
-                  />
-                  <code style={{ color: 'var(--color-text-primary)', fontSize: 12 }}>{model}</code>
-                </label>
-              );
-            })}
-          </div>
-        </div>
 
-        <div style={{ border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-md)', padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-            <div>
-              <div style={{ fontWeight: 700, color: 'var(--color-text-primary)' }}>群组范围</div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>限制可访问的群组路由，未勾选则视为全部群组可用</div>
-            </div>
-            <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => onChange((prev) => ({ ...prev, selectedGroupRouteIds: [] }))}>
-              清空
-            </button>
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>已选 {selectedGroupCount} 个群组</div>
-          <div className="toolbar-search" style={{ maxWidth: '100%' }}>
-            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            <input value={groupSearch} onChange={(e) => setGroupSearch(e.target.value)} placeholder="搜索群组或模型模式" />
-          </div>
-          <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {filteredGroups.length === 0 ? (
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>暂无匹配群组</div>
-            ) : filteredGroups.map((route) => {
-              const checked = form.selectedGroupRouteIds.includes(route.id);
-              return (
-                <label key={route.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', padding: '8px 10px', borderRadius: 10, border: '1px solid var(--color-border-light)', background: checked ? 'color-mix(in srgb, var(--color-primary) 10%, var(--color-bg-card))' : 'var(--color-bg-card)' }}>
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => onChange((prev) => ({
-                      ...prev,
-                      selectedGroupRouteIds: checked
-                        ? prev.selectedGroupRouteIds.filter((item) => item !== route.id)
-                        : [...prev.selectedGroupRouteIds, route.id],
-                    }))}
-                    style={{ marginTop: 2 }}
-                  />
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ color: 'var(--color-text-primary)', fontSize: 13, fontWeight: 600 }}>
-                      {routeTitle(route)}
-                      {!route.enabled ? <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--color-danger)' }}>已禁用</span> : null}
-                    </div>
-                    <code style={{ display: 'block', marginTop: 4, fontSize: 11, color: 'var(--color-text-muted)' }}>{route.modelPattern}</code>
+            <div className="downstream-key-advanced-grid" style={{ gridTemplateColumns: '1fr' }}>
+              <div className="downstream-key-advanced-panel">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <div>
+                    <div className="downstream-key-modal-section-title">模型白名单</div>
+                    <div className="downstream-key-modal-help">只展示精确模型，未勾选则视为全部模型可用</div>
                   </div>
-                </label>
-              );
-            })}
+                  <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => onChange((prev) => ({ ...prev, selectedModels: [] }))}>
+                    清空
+                  </button>
+                </div>
+                <div className="downstream-key-modal-meta">已选 {selectedModelCount} 个模型</div>
+                <div className="toolbar-search" style={{ maxWidth: '100%' }}>
+                  <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                  <input value={modelSearch} onChange={(e) => setModelSearch(e.target.value)} placeholder="搜索模型" />
+                </div>
+                <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {filteredModels.length === 0 ? (
+                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>暂无匹配模型</div>
+                  ) : filteredModels.map((model) => {
+                    const checked = form.selectedModels.includes(model);
+                    return (
+                      <label key={model} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', padding: '8px 10px', borderRadius: 10, border: '1px solid var(--color-border-light)', background: checked ? 'color-mix(in srgb, var(--color-primary) 10%, var(--color-bg-card))' : 'var(--color-bg-card)' }}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => onChange((prev) => ({
+                            ...prev,
+                            selectedModels: checked ? prev.selectedModels.filter((item) => item !== model) : [...prev.selectedModels, model],
+                          }))}
+                        />
+                        <code style={{ color: 'var(--color-text-primary)', fontSize: 12 }}>{model}</code>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="downstream-key-advanced-panel">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <div>
+                    <div className="downstream-key-modal-section-title">群组范围</div>
+                    <div className="downstream-key-modal-help">限制可访问的群组路由，未勾选则视为全部群组可用</div>
+                  </div>
+                  <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => onChange((prev) => ({ ...prev, selectedGroupRouteIds: [] }))}>
+                    清空
+                  </button>
+                </div>
+                <div className="downstream-key-modal-meta">已选 {selectedGroupCount} 个群组</div>
+                <div className="toolbar-search" style={{ maxWidth: '100%' }}>
+                  <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                  <input value={groupSearch} onChange={(e) => setGroupSearch(e.target.value)} placeholder="搜索群组或模型模式" />
+                </div>
+                <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {filteredGroups.length === 0 ? (
+                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>暂无匹配群组</div>
+                  ) : filteredGroups.map((route) => {
+                    const checked = normalizedSelectedGroupRouteIds.includes(route.id);
+                    return (
+                      <label key={route.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', padding: '8px 10px', borderRadius: 10, border: '1px solid var(--color-border-light)', background: checked ? 'color-mix(in srgb, var(--color-primary) 10%, var(--color-bg-card))' : 'var(--color-bg-card)' }}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => onChange((prev) => ({
+                            ...prev,
+                            selectedGroupRouteIds: checked
+                              ? prev.selectedGroupRouteIds.filter((item) => item !== route.id)
+                              : uniqIds([...prev.selectedGroupRouteIds.filter((item) => validGroupRouteIdSet.has(item)), route.id]),
+                          }))}
+                          style={{ marginTop: 2 }}
+                        />
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ color: 'var(--color-text-primary)', fontSize: 13, fontWeight: 600 }}>
+                            {routeTitle(route)}
+                            {!route.enabled ? <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--color-danger)' }}>已禁用</span> : null}
+                          </div>
+                          <code style={{ display: 'block', marginTop: 4, fontSize: 11, color: 'var(--color-text-muted)' }}>{route.modelPattern}</code>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
+        ) : null}
       </div>
       <datalist id="downstream-group-suggestions">
         {groupSuggestions.map((group) => <option key={group} value={group} />)}
@@ -1318,7 +1309,7 @@ export default function DownstreamKeys() {
         maxCost: editorForm.maxCost.trim() ? Number(editorForm.maxCost.trim()) : null,
         maxRequests: editorForm.maxRequests.trim() ? Number(editorForm.maxRequests.trim()) : null,
         supportedModels: uniqStrings(editorForm.selectedModels),
-        allowedRouteIds: uniqIds(editorForm.selectedGroupRouteIds),
+        allowedRouteIds: uniqIds(editorForm.selectedGroupRouteIds).filter((id) => routeMap.has(id) && isGroupRouteOption(routeMap.get(id)!)),
         siteWeightMultipliers,
       };
       if (editingId) {
@@ -1470,17 +1461,25 @@ export default function DownstreamKeys() {
         </div>
       </div>
 
-      <div className="card" style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <span className="kpi-chip">当前范围</span>
-          <span className="kpi-chip kpi-chip-success">
-            {range === '24h' ? '最近 24 小时' : range === '7d' ? '最近 7 天' : '全部历史'}
-          </span>
-          <span className="kpi-chip kpi-chip-warning">
-            Tokens {formatCompactTokens(totals.tokens)}
-          </span>
+      <div className="card" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>范围概览</div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>
+              基于当前筛选范围查看密钥规模、使用量和成本概况。
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span className="kpi-chip">当前范围</span>
+            <span className="kpi-chip kpi-chip-success">
+              {range === '24h' ? '最近 24 小时' : range === '7d' ? '最近 7 天' : '全部历史'}
+            </span>
+            <span className="kpi-chip kpi-chip-warning">
+              Tokens {formatCompactTokens(totals.tokens)}
+            </span>
+          </div>
         </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 18px', alignItems: 'center' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px 18px', alignItems: 'center' }}>
           <SummaryMetric label="可见密钥" value={String(visibleItems.length)} />
           <SummaryMetric label="启用中" value={String(totals.enabled)} />
           <SummaryMetric label="已选中" value={String(selectedIds.length)} />
@@ -1490,8 +1489,25 @@ export default function DownstreamKeys() {
         </div>
       </div>
 
-      <div className="card" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {selectedIds.length > 0 ? (
+        <div className="card" style={{ padding: 12, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>已选 {selectedIds.length} 个密钥</span>
+          <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={openBatchMetadata} disabled={batchActionLoading}>批量归类/标签</button>
+          <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => void batchRun('批量启用', selectedIds)} disabled={batchActionLoading}>批量启用</button>
+          <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => void batchRun('批量禁用', selectedIds)} disabled={batchActionLoading}>批量禁用</button>
+          <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => void batchRun('批量清零用量', selectedIds)} disabled={batchActionLoading}>批量清零用量</button>
+          <button className="btn btn-link btn-link-danger" onClick={() => setDeleteConfirm({ mode: 'batch', ids: [...selectedIds] })} disabled={batchActionLoading}>批量删除</button>
+        </div>
+      ) : null}
+
+      <div className="card" style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>筛选与列表</div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>按名称、状态、主分组和标签快速定位下游密钥。</div>
+            </div>
+          </div>
           <div className="toolbar" style={{ marginBottom: 0, alignItems: 'center' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: '1 1 420px', minWidth: 280, flexWrap: 'wrap' }}>
               <div className="toolbar-search" style={{ maxWidth: 'unset', flex: '1 1 320px' }}>
@@ -1552,17 +1568,6 @@ export default function DownstreamKeys() {
           ) : null}
         </div>
 
-        {selectedIds.length > 0 ? (
-          <div className="card" style={{ padding: '10px 12px', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', background: 'color-mix(in srgb, var(--color-primary) 5%, var(--color-bg-card))' }}>
-            <span className="kpi-chip kpi-chip-success">已选 {selectedIds.length} 个密钥</span>
-            <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={openBatchMetadata} disabled={batchActionLoading}>批量归类/标签</button>
-            <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => void batchRun('批量启用', selectedIds)} disabled={batchActionLoading}>批量启用</button>
-            <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => void batchRun('批量禁用', selectedIds)} disabled={batchActionLoading}>批量禁用</button>
-            <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => void batchRun('批量清零用量', selectedIds)} disabled={batchActionLoading}>批量清零用量</button>
-            <button className="btn btn-link btn-link-danger" onClick={() => setDeleteConfirm({ mode: 'batch', ids: [...selectedIds] })} disabled={batchActionLoading}>批量删除</button>
-          </div>
-        ) : null}
-
         {loading ? (
           <div className="skeleton" style={{ width: '100%', height: 280, borderRadius: 'var(--radius-sm)' }} />
         ) : empty ? (
@@ -1605,7 +1610,7 @@ export default function DownstreamKeys() {
                         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 4 }}>{row.keyMasked}</div>
                         {row.description ? <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', maxWidth: 320 }}>{row.description}</div> : null}
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
-                          <span style={tagChipStyle(row.groupName ? 'accent' : 'normal')}>
+                          <span className={`badge ${row.groupName ? 'badge-info' : 'badge-muted'}`} style={{ fontSize: 11 }}>
                             {row.groupName ? `主分组 · ${row.groupName}` : '未分组'}
                           </span>
                           <TagChips tags={row.tags || []} maxVisible={3} />
@@ -1631,7 +1636,7 @@ export default function DownstreamKeys() {
                       </td>
                       <td style={{ color: 'var(--color-text-muted)' }}>{formatIso(row.lastUsedAt)}</td>
                       <td onClick={(e) => e.stopPropagation()}>
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
+                        <div className="accounts-row-actions" style={{ justifyContent: 'flex-end' }}>
                           <button className="btn btn-link" onClick={() => { setSelectedId(row.id); setDrawerOpen(true); }}>查看</button>
                           <button className="btn btn-link" onClick={() => openEdit(row)}>编辑</button>
                           <button className="btn btn-link" onClick={() => void toggleEnabled(row)} disabled={loadingToggle}>{loadingToggle ? '处理中...' : (row.enabled ? '禁用' : '启用')}</button>

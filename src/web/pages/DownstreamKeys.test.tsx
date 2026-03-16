@@ -132,7 +132,7 @@ beforeEach(() => {
   apiMock.getDownstreamApiKeysSummary.mockResolvedValue({ success: true, items: [buildSummaryItem()] });
   apiMock.getDownstreamApiKeys.mockResolvedValue({ success: true, items: [buildRawItem()] });
   apiMock.getRoutesLite.mockResolvedValue([
-    { id: 11, modelPattern: 'team/default', displayName: '默认群组', enabled: true },
+    { id: 11, modelPattern: 'claude-*', displayName: '默认群组', enabled: true },
     { id: 12, modelPattern: 'gpt-4.1-mini', displayName: 'GPT 4.1 Mini', enabled: true },
   ]);
   apiMock.getDownstreamApiKeyOverview.mockResolvedValue({
@@ -184,6 +184,8 @@ describe('DownstreamKeys page', () => {
 
       const text = collectText(root!.root);
       expect(text).toContain('下游密钥');
+      expect(text).toContain('范围概览');
+      expect(text).toContain('筛选与列表');
       expect(text).toContain('smoke-key');
       expect(text).toContain('sk-s****0315');
       expect(text).toContain('默认群组');
@@ -264,9 +266,14 @@ describe('DownstreamKeys page', () => {
       });
       await flushMicrotasks();
 
+      expect(collectText(root!.root)).toContain('高级配置');
+      expect(collectText(root!.root)).not.toContain('站点倍率 JSON');
+
       const inputs = root!.root.findAllByType('input');
+      const tagInput = inputs.find((node) => node.props.placeholder === '输入标签后按回车或逗号，例如：移动端、VIP、项目A');
       const nameInput = inputs.find((node) => node.props.placeholder === '例如：项目 A / 移动端');
       const keyInput = inputs.find((node) => node.props.placeholder === 'sk-...');
+      expect(tagInput?.props.style?.fontSize).toBe(13);
       await act(async () => {
         nameInput!.props.onChange({ target: { value: 'new-key' } });
         keyInput!.props.onChange({ target: { value: 'sk-new-key-0315' } });
@@ -310,6 +317,50 @@ describe('DownstreamKeys page', () => {
     }
   });
 
+  it('separates exact models from group routes in advanced config and uses single-column layout', async () => {
+    let root: ReturnType<typeof create> | null = null;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/downstream-keys']}>
+            <ToastProvider>
+              <DownstreamKeys />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const createBtn = root!.root.findAll((node) => node.type === 'button' && collectText(node).includes('新增下游密钥'))[0];
+      await act(async () => {
+        createBtn.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const advancedBtn = root!.root.findAll((node) => node.type === 'button' && collectText(node).includes('高级配置'))[0];
+      await act(async () => {
+        advancedBtn.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const panels = root!.root.findAll((node) => node.props.className === 'downstream-key-advanced-panel');
+      const modelPanel = panels.find((node) => collectText(node).includes('模型白名单'));
+      const groupPanel = panels.find((node) => collectText(node).includes('群组范围'));
+      const advancedGrid = root!.root.findAll((node) => node.props.className === 'downstream-key-advanced-grid')[0];
+
+      expect(modelPanel).toBeTruthy();
+      expect(groupPanel).toBeTruthy();
+      expect(collectText(modelPanel!)).toContain('gpt-4.1-mini');
+      expect(collectText(modelPanel!)).not.toContain('默认群组');
+      expect(collectText(modelPanel!)).not.toContain('claude-*');
+      expect(collectText(groupPanel!)).toContain('默认群组');
+      expect(collectText(groupPanel!)).not.toContain('GPT 4.1 Mini');
+      expect(advancedGrid.props.style?.gridTemplateColumns).toBe('1fr');
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('uses backend batch api for selected rows', async () => {
     let root: ReturnType<typeof create> | null = null;
     try {
@@ -329,6 +380,7 @@ describe('DownstreamKeys page', () => {
         checkbox!.props.onChange({ target: { checked: true } });
       });
       await flushMicrotasks();
+      expect(collectText(root!.root)).toContain('已选 1 个密钥');
 
       const batchButton = root!.root.findAll((node) => node.type === 'button' && collectText(node).includes('批量启用'))[0];
       await act(async () => {
@@ -362,6 +414,12 @@ describe('DownstreamKeys page', () => {
       const createBtn = root!.root.findAll((node) => node.type === 'button' && collectText(node).includes('新增下游密钥'))[0];
       await act(async () => {
         createBtn.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const advancedBtn = root!.root.findAll((node) => node.type === 'button' && collectText(node).includes('高级配置'))[0];
+      await act(async () => {
+        advancedBtn.props.onClick();
       });
       await flushMicrotasks();
 

@@ -100,6 +100,42 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(tokenRows).toHaveLength(0);
   });
 
+  it('deduplicates discovered model names before writing availability rows', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockResolvedValue(['? ', '?', 'GPT-4.1', 'gpt-4.1']);
+
+    const site = await db.insert(schema.sites).values({
+      name: 'site-dedupe',
+      url: 'https://site-dedupe.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'dedupe-user',
+      accessToken: 'session-token',
+      apiToken: null,
+      status: 'active',
+    }).returning().get();
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      status: 'success',
+      modelCount: 2,
+      modelsPreview: ['?', 'GPT-4.1'],
+    });
+
+    const rows = await db.select().from(schema.modelAvailability)
+      .where(eq(schema.modelAvailability.accountId, account.id))
+      .all();
+
+    expect(rows.map((row) => row.modelName).sort()).toEqual(['?', 'GPT-4.1']);
+  });
+
   it('marks runtime health unhealthy when model discovery fails', async () => {
     getApiTokenMock.mockResolvedValue(null);
     getModelsMock.mockRejectedValue(new Error('HTTP 401: invalid token'));

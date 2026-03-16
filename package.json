@@ -1,6 +1,6 @@
 {
   "name": "metapi",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "Meta-layer management and unified proxy for AI API aggregation platforms",
   "main": "dist/desktop/main.js",
   "keywords": [
@@ -64,7 +64,7 @@
     "@fastify/cors": "^11.2.0",
     "@fastify/static": "^9.0.0",
     "@visactor/react-vchart": "^2.0.16",
-    "better-sqlite3": "^11.3.0",
+    "better-sqlite3": "^12.8.0",
     "dotenv": "^17.3.1",
     "drizzle-orm": "^0.36.4",
     "electron-log": "^5.2.4",
