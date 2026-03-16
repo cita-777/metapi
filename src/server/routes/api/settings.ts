@@ -129,6 +129,31 @@ function toStringList(value: unknown): string[] {
   return [];
 }
 
+function parseProxyErrorKeywords(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    const keywords = value.map((item) => {
+      if (typeof item !== 'string') return '';
+      return item.trim();
+    }).filter((item) => item.length > 0);
+    return keywords;
+  }
+
+  if (typeof value === 'string') {
+    const keywords = value
+      .split(',')
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+    return keywords;
+  }
+
+  throw new Error('上游错误关键词格式无效：需要 string 或 string[]');
+}
+
+function parseBooleanFlag(value: unknown, label: string): boolean {
+  if (typeof value === 'boolean') return value;
+  throw new Error(`${label}格式无效：需要 boolean`);
+}
+
 function isValidHttpUrl(raw: string): boolean {
   const value = String(raw || '').trim();
   if (!value) return false;
@@ -200,11 +225,19 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       return;
     }
     case 'proxy_error_keywords': {
-      config.proxyErrorKeywords = toStringList(value);
+      try {
+        config.proxyErrorKeywords = parseProxyErrorKeywords(value);
+      } catch {
+        return;
+      }
       return;
     }
     case 'proxy_empty_content_fail_enabled': {
-      config.proxyEmptyContentFailEnabled = !!value;
+      try {
+        config.proxyEmptyContentFailEnabled = parseBooleanFlag(value, '空内容判定失败开关');
+      } catch {
+        return;
+      }
       return;
     }
     case 'webhook_url': {
@@ -616,7 +649,16 @@ export async function settingsRoutes(app: FastifyInstance) {
     }
 
     if (body.proxyErrorKeywords !== undefined) {
-      const nextKeywords = toStringList(body.proxyErrorKeywords);
+      let nextKeywords: string[] = [];
+      try {
+        nextKeywords = parseProxyErrorKeywords(body.proxyErrorKeywords);
+      } catch (err: any) {
+        return reply.code(400).send({
+          success: false,
+          message: err?.message || '上游错误关键词格式无效',
+        });
+      }
+
       if (nextKeywords.join(',') !== (config.proxyErrorKeywords || []).join(',')) {
         changedLabels.push('上游错误关键词');
       }
@@ -625,7 +667,16 @@ export async function settingsRoutes(app: FastifyInstance) {
     }
 
     if (body.proxyEmptyContentFailEnabled !== undefined) {
-      const nextValue = !!body.proxyEmptyContentFailEnabled;
+      let nextValue = false;
+      try {
+        nextValue = parseBooleanFlag(body.proxyEmptyContentFailEnabled, '空内容判定失败开关');
+      } catch (err: any) {
+        return reply.code(400).send({
+          success: false,
+          message: err?.message || '空内容判定失败开关格式无效',
+        });
+      }
+
       if (nextValue !== config.proxyEmptyContentFailEnabled) {
         changedLabels.push('空内容判定失败');
       }
