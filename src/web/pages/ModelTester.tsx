@@ -1413,6 +1413,8 @@ export default function ModelTester() {
       setActiveDebugTab(DEBUG_TABS.RESPONSE);
       const reader = response.body.getReader();
       let doneReceived = false;
+      let hasAnyContent = false;
+      let hasAnyReasoning = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -1447,6 +1449,12 @@ export default function ModelTester() {
           }
 
           const delta = parseAnyStreamDelta(eventPayload);
+          if (typeof delta.reasoningDelta === 'string' && delta.reasoningDelta.trim().length > 0) {
+            hasAnyReasoning = true;
+          }
+          if (typeof delta.contentDelta === 'string' && delta.contentDelta.trim().length > 0) {
+            hasAnyContent = true;
+          }
           if (delta.reasoningDelta || delta.contentDelta) {
             setMessages((prev) => applyAssistantDelta(prev, {
               reasoningDelta: delta.reasoningDelta,
@@ -1457,21 +1465,38 @@ export default function ModelTester() {
         }
       }
 
+      const emptyOutput = !hasAnyContent && !hasAnyReasoning;
+
       setMessages((prev) => {
         const idx = findLastLoadingAssistantIndex(prev);
         if (idx === -1) return prev;
+        const finalized = finalizeIncompleteMessage(prev[idx]);
+        if (emptyOutput && !(finalized.content || '').trim() && !(finalized.reasoningContent || '').trim()) {
+          return replaceMessageAt(prev, idx, {
+            ...finalized,
+            content: '空回复（上游未返回任何内容）',
+            status: MESSAGE_STATUS.ERROR,
+            isThinkingComplete: true,
+          });
+        }
         return replaceMessageAt(prev, idx, {
-          ...finalizeIncompleteMessage(prev[idx]),
+          ...finalized,
           status: MESSAGE_STATUS.COMPLETE,
           isThinkingComplete: true,
         });
       });
 
       setPendingPayload(null);
-      setError('');
-      pushDebug(doneReceived ? 'info' : 'warn', doneReceived
-        ? '流式传输已成功完成。'
-        : '流式传输未收到 [DONE] 信号，已在本地完成。');
+      if (emptyOutput) {
+        const message = '上游返回空内容';
+        setError(message);
+        pushDebug('error', '流式传输完成但内容为空。');
+      } else {
+        setError('');
+        pushDebug(doneReceived ? 'info' : 'warn', doneReceived
+          ? '流式传输已成功完成。'
+          : '流式传输未收到 [DONE] 信号，已在本地完成。');
+      }
     } catch (streamError: any) {
       const abortedByUser = controller.signal.aborted && streamStopRequestedRef.current;
       const abortedUnexpectedly = controller.signal.aborted
@@ -1539,6 +1564,8 @@ export default function ModelTester() {
 
       const reader = response.body.getReader();
       let doneReceived = false;
+      let hasAnyContent = false;
+      let hasAnyReasoning = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -1571,6 +1598,12 @@ export default function ModelTester() {
           }
 
           const delta = parseAnyStreamDelta(eventPayload);
+          if (typeof delta.reasoningDelta === 'string' && delta.reasoningDelta.trim().length > 0) {
+            hasAnyReasoning = true;
+          }
+          if (typeof delta.contentDelta === 'string' && delta.contentDelta.trim().length > 0) {
+            hasAnyContent = true;
+          }
           if (delta.reasoningDelta || delta.contentDelta) {
             setMessages((prev) => applyAssistantDelta(prev, {
               reasoningDelta: delta.reasoningDelta,
@@ -1581,20 +1614,37 @@ export default function ModelTester() {
         }
       }
 
+      const emptyOutput = !hasAnyContent && !hasAnyReasoning;
+
       setMessages((prev) => {
         const idx = findLastLoadingAssistantIndex(prev);
         if (idx === -1) return prev;
+        const finalized = finalizeIncompleteMessage(prev[idx]);
+        if (emptyOutput && !(finalized.content || '').trim() && !(finalized.reasoningContent || '').trim()) {
+          return replaceMessageAt(prev, idx, {
+            ...finalized,
+            content: '空回复（上游未返回任何内容）',
+            status: MESSAGE_STATUS.ERROR,
+            isThinkingComplete: true,
+          });
+        }
         return replaceMessageAt(prev, idx, {
-          ...finalizeIncompleteMessage(prev[idx]),
+          ...finalized,
           status: MESSAGE_STATUS.COMPLETE,
           isThinkingComplete: true,
         });
       });
 
-      setError('');
-      pushDebug(doneReceived ? 'info' : 'warn', doneReceived
-        ? '代理流式传输已成功完成。'
-        : '代理流式传输未收到 [DONE] 信号，已在本地完成。');
+      if (emptyOutput) {
+        const message = '上游返回空内容';
+        setError(message);
+        pushDebug('error', '代理流式传输完成但内容为空。');
+      } else {
+        setError('');
+        pushDebug(doneReceived ? 'info' : 'warn', doneReceived
+          ? '代理流式传输已成功完成。'
+          : '代理流式传输未收到 [DONE] 信号，已在本地完成。');
+      }
     } catch (streamError: any) {
       const abortedByUser = controller.signal.aborted && streamStopRequestedRef.current;
       const abortedUnexpectedly = controller.signal.aborted
