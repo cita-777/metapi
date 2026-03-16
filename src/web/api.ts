@@ -246,6 +246,40 @@ export type ProxyLogsResponse = {
   summary: ProxyLogsSummary;
 };
 
+export type OAuthProviderInfo = {
+  provider: string;
+  label: string;
+  platform: string;
+  enabled: boolean;
+  loginType: 'oauth';
+};
+
+export type OAuthSessionInfo = {
+  provider: string;
+  state: string;
+  status: 'pending' | 'success' | 'error';
+  accountId?: number;
+  siteId?: number;
+  error?: string;
+};
+
+export type OAuthConnectionInfo = {
+  accountId: number;
+  siteId: number;
+  provider: string;
+  username?: string | null;
+  email?: string | null;
+  accountKey?: string | null;
+  planType?: string | null;
+  modelCount: number;
+  modelsPreview: string[];
+  status: 'healthy' | 'abnormal';
+  routeChannelCount?: number;
+  lastModelSyncAt?: string | null;
+  lastModelSyncError?: string | null;
+  site?: { id: number; name: string; url: string; platform: string } | null;
+};
+
 export const api = {
   // Sites
   getSites: () => request('/api/sites'),
@@ -356,6 +390,22 @@ export const api = {
 
   // Search
   search: (query: string) => request('/api/search', { method: 'POST', body: JSON.stringify({ query, limit: 20 }) }),
+
+  // OAuth
+  getOAuthProviders: () => request('/api/oauth/providers') as Promise<{ providers: OAuthProviderInfo[] }>,
+  startOAuthProvider: (provider: string, data?: { accountId?: number }) => request(`/api/oauth/providers/${encodeURIComponent(provider)}/start`, {
+    method: 'POST',
+    body: JSON.stringify(data || {}),
+  }) as Promise<{ provider: string; state: string; authorizationUrl: string }>,
+  getOAuthSession: (state: string) => request(`/api/oauth/sessions/${encodeURIComponent(state)}`) as Promise<OAuthSessionInfo>,
+  getOAuthConnections: () => request('/api/oauth/connections') as Promise<{ items: OAuthConnectionInfo[] }>,
+  rebindOAuthConnection: (accountId: number) => request(`/api/oauth/connections/${accountId}/rebind`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  }) as Promise<{ provider: string; state: string; authorizationUrl: string }>,
+  deleteOAuthConnection: (accountId: number) => request(`/api/oauth/connections/${accountId}`, {
+    method: 'DELETE',
+  }) as Promise<{ success: true }>,
 
   // Events
   getEvents: (params?: string) => request(`/api/events${params ? '?' + params : ''}`),

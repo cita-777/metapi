@@ -346,7 +346,7 @@ describe('TokenRoutes grouped source models', () => {
       const expandedText = collectText(root.root);
       expect(expandedText).toContain('待注册站点');
       expect(expandedText).toContain('Wong');
-      expect(expandedText).toContain('暂无通道，先补齐令牌后再重建路由。');
+      expect(expandedText).toContain('暂无通道，先补齐连接配置后再重建路由。');
       expect(expandedText).not.toContain('添加通道');
       expect(expandedText).not.toContain('删除路由');
       expect(expandedText).not.toContain('编辑群组');

@@ -172,6 +172,62 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
     });
   });
 
+  it('marks codex oauth connection as proxy-capable but not checkin/balance-capable', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Codex Site',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'codex-user@example.com',
+      accessToken: 'oauth-access-token',
+      apiToken: null,
+      status: 'active',
+      checkinEnabled: false,
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          accountId: 'chatgpt-account-123',
+          email: 'codex-user@example.com',
+          planType: 'plus',
+        },
+      }),
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'gpt-5.2-codex',
+      available: true,
+      checkedAt: '2026-03-16T12:00:00.000Z',
+    }).run();
+
+    const listResponse = await app.inject({
+      method: 'GET',
+      url: '/api/accounts',
+    });
+    expect(listResponse.statusCode).toBe(200);
+
+    const list = listResponse.json() as Array<{
+      id: number;
+      credentialMode?: string;
+      capabilities?: {
+        canCheckin?: boolean;
+        canRefreshBalance?: boolean;
+        proxyOnly?: boolean;
+      };
+    }>;
+    const item = list.find((entry) => entry.id === account.id);
+    expect(item?.credentialMode).toBe('session');
+    expect(item?.capabilities).toMatchObject({
+      canCheckin: false,
+      canRefreshBalance: false,
+      proxyOnly: false,
+    });
+  });
+
   it('stores managed refresh token for sub2api session account', async () => {
     verifyTokenMock.mockResolvedValueOnce({
       tokenType: 'session',

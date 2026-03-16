@@ -137,4 +137,57 @@ describe('search routes', () => {
       ],
     });
   });
+
+  it('includes oauth direct-account model availability in model search results', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'codex site',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'codex-user@example.com',
+      accessToken: 'oauth-access-token',
+      apiToken: null,
+      status: 'active',
+      extraConfig: mergeAccountExtraConfig(null, {
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          accountId: 'chatgpt-account-123',
+          email: 'codex-user@example.com',
+          planType: 'team',
+        },
+      }),
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'gpt-5.2-codex',
+      available: true,
+    }).run();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/search',
+      payload: {
+        query: 'gpt-5.2',
+        limit: 20,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      models: [
+        expect.objectContaining({
+          name: 'gpt-5.2-codex',
+          accountCount: 1,
+          tokenCount: 0,
+          siteCount: 1,
+        }),
+      ],
+    });
+  });
 });

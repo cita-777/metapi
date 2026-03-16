@@ -213,8 +213,10 @@ export function buildResponsesCompatibilityBodies(
     if (temperature !== null) richCandidate.temperature = temperature;
     const topP = toFiniteNumber(body.top_p);
     if (topP !== null) richCandidate.top_p = topP;
-    const instructions = typeof body.instructions === 'string' ? body.instructions.trim() : '';
-    if (instructions) richCandidate.instructions = instructions;
+    const instructions = getExplicitResponsesInstructions(body);
+    if (instructions !== null) richCandidate.instructions = instructions;
+    const store = getExplicitResponsesStore(body);
+    if (store !== null) richCandidate.store = store;
 
     const passthroughFields = [
       'reasoning',
@@ -398,6 +400,15 @@ function parseUpstreamErrorShape(rawText: string): {
   }
 }
 
+function getExplicitResponsesInstructions(body: Record<string, unknown>): string | null {
+  if (!Object.prototype.hasOwnProperty.call(body, 'instructions')) return null;
+  return typeof body.instructions === 'string' ? body.instructions.trim() : '';
+}
+
+function getExplicitResponsesStore(body: Record<string, unknown>): boolean | null {
+  return typeof body.store === 'boolean' ? body.store : null;
+}
+
 function stripResponsesMetadata(
   body: Record<string, unknown>,
 ): Record<string, unknown> | null {
@@ -431,8 +442,10 @@ function buildCoreResponsesBody(
   const topP = toFiniteNumber(body.top_p);
   if (topP !== null) core.top_p = topP;
 
-  const instructions = typeof body.instructions === 'string' ? body.instructions.trim() : '';
-  if (instructions) core.instructions = instructions;
+  const instructions = getExplicitResponsesInstructions(body);
+  if (instructions !== null) core.instructions = instructions;
+  const store = getExplicitResponsesStore(body);
+  if (store !== null) core.store = store;
 
   const passthroughFields = [
     'reasoning',
@@ -462,6 +475,12 @@ function buildStrictResponsesBody(
     model,
     input: body.input,
     stream: body.stream === true,
+    ...(getExplicitResponsesInstructions(body) !== null
+      ? { instructions: getExplicitResponsesInstructions(body) }
+      : {}),
+    ...(getExplicitResponsesStore(body) !== null
+      ? { store: getExplicitResponsesStore(body) }
+      : {}),
   };
 }
 

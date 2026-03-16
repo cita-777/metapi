@@ -19,6 +19,7 @@ import { startBackgroundTask } from '../../services/backgroundTaskService.js';
 import { parseCheckinRewardAmount } from '../../services/checkinRewardParser.js';
 import { estimateRewardWithTodayIncomeFallback } from '../../services/todayIncomeRewardService.js';
 import { getLocalDayRangeUtc } from '../../services/localTimeService.js';
+import { isCodexPlatform } from '../../services/oauth/codexAccount.js';
 import {
   buildRuntimeHealthForAccount,
   setAccountRuntimeHealth,
@@ -79,7 +80,15 @@ function resolveStoredCredentialMode(account: typeof schema.accounts.$inferSelec
 function buildCapabilitiesFromCredentialMode(
   credentialMode: AccountCredentialMode,
   hasSessionToken: boolean,
+  extraConfig?: string | null,
 ): AccountCapabilities {
+  if (isCodexPlatform(extraConfig)) {
+    return {
+      canCheckin: false,
+      canRefreshBalance: false,
+      proxyOnly: false,
+    };
+  }
   const sessionCapable = credentialMode === 'session'
     ? hasSessionToken
     : (credentialMode === 'apikey' ? false : hasSessionToken);
@@ -92,7 +101,7 @@ function buildCapabilitiesFromCredentialMode(
 
 function buildCapabilitiesForAccount(account: typeof schema.accounts.$inferSelect): AccountCapabilities {
   const credentialMode = resolveStoredCredentialMode(account);
-  return buildCapabilitiesFromCredentialMode(credentialMode, hasSessionTokenValue(account.accessToken));
+  return buildCapabilitiesFromCredentialMode(credentialMode, hasSessionTokenValue(account.accessToken), account.extraConfig);
 }
 
 function normalizeBatchIds(input: unknown): number[] {
@@ -410,6 +419,7 @@ export async function accountsRoutes(app: FastifyInstance) {
         capabilities: buildCapabilitiesFromCredentialMode(
           credentialMode,
           hasSessionTokenValue(r.accounts.accessToken),
+          r.accounts.extraConfig,
         ),
         todaySpend: Math.round((spendByAccount[r.accounts.id] || 0) * 1_000_000) / 1_000_000,
         todayReward: Math.round(estimateRewardWithTodayIncomeFallback({
@@ -426,6 +436,7 @@ export async function accountsRoutes(app: FastifyInstance) {
           sessionCapable: buildCapabilitiesFromCredentialMode(
             credentialMode,
             hasSessionTokenValue(r.accounts.accessToken),
+            r.accounts.extraConfig,
           ).canRefreshBalance,
           hasDiscoveredModels: (modelCountByAccount[r.accounts.id] || 0) > 0,
         }),
@@ -968,7 +979,7 @@ export async function accountsRoutes(app: FastifyInstance) {
         account: latest,
         tokenType: 'session',
         credentialMode: 'session',
-        capabilities: latest ? buildCapabilitiesForAccount(latest) : buildCapabilitiesFromCredentialMode('session', true),
+        capabilities: latest ? buildCapabilitiesForAccount(latest) : buildCapabilitiesFromCredentialMode('session', true, null),
         apiTokenFound: !!nextApiToken,
       };
     },
@@ -1138,7 +1149,7 @@ export async function accountsRoutes(app: FastifyInstance) {
     const finalCredentialMode = account ? resolveStoredCredentialMode(account) : resolvedCredentialMode;
     const capabilities = account
       ? buildCapabilitiesForAccount(account)
-      : buildCapabilitiesFromCredentialMode(finalCredentialMode, tokenType === 'session');
+      : buildCapabilitiesFromCredentialMode(finalCredentialMode, tokenType === 'session', null);
     return {
       ...account,
       tokenType,

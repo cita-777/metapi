@@ -6,12 +6,17 @@ import { eq } from 'drizzle-orm';
 
 const getApiTokenMock = vi.fn();
 const getModelsMock = vi.fn();
+const undiciFetchMock = vi.fn();
 
 vi.mock('./platforms/index.js', () => ({
   getAdapter: () => ({
     getApiToken: (...args: unknown[]) => getApiTokenMock(...args),
     getModels: (...args: unknown[]) => getModelsMock(...args),
   }),
+}));
+
+vi.mock('undici', () => ({
+  fetch: (...args: unknown[]) => undiciFetchMock(...args),
 }));
 
 type DbModule = typeof import('../db/index.js');
@@ -39,6 +44,7 @@ describe('refreshModelsForAccount credential discovery', () => {
   beforeEach(async () => {
     getApiTokenMock.mockReset();
     getModelsMock.mockReset();
+    undiciFetchMock.mockReset();
 
     await db.delete(schema.routeChannels).run();
     await db.delete(schema.tokenRoutes).run();
@@ -299,5 +305,180 @@ describe('refreshModelsForAccount credential discovery', () => {
       .all();
     expect(placeholderModels).toEqual([]);
     expect(getModelsMock).not.toHaveBeenCalledWith(site.url, 'sk-mask***tail', account.username);
+  });
+
+  it('discovers codex models from upstream cloud endpoint without adapter model fetch', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockRejectedValue(new Error('codex plan discovery should not call adapter.getModels'));
+    undiciFetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        models: [
+          { id: 'gpt-5.4' },
+          { id: 'gpt-5.3-codex' },
+          { id: 'gpt-5.2-codex' },
+          { id: 'gpt-5.2' },
+          { id: 'gpt-5.1-codex-max' },
+          { id: 'gpt-5.1-codex' },
+          { id: 'gpt-5.1' },
+          { id: 'gpt-5-codex' },
+          { id: 'gpt-5' },
+          { id: 'gpt-5.1-codex-mini' },
+          { id: 'gpt-5-codex-mini' },
+        ],
+      }),
+      text: async () => JSON.stringify({ ok: true }),
+    });
+
+    const site = await db.insert(schema.sites).values({
+      name: 'codex-site',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'codex-user@example.com',
+      accessToken: 'oauth-access-token',
+      apiToken: null,
+      status: 'active',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          accountId: 'chatgpt-account-123',
+          email: 'codex-user@example.com',
+          planType: 'plus',
+        },
+      }),
+    }).returning().get();
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      status: 'success',
+      errorCode: null,
+      tokenScanned: 0,
+      discoveredByCredential: true,
+      modelCount: 11,
+    });
+    expect(result.modelsPreview).toEqual([
+      'gpt-5.4',
+      'gpt-5.3-codex',
+      'gpt-5.2-codex',
+      'gpt-5.2',
+      'gpt-5.1-codex-max',
+      'gpt-5.1-codex',
+      'gpt-5.1',
+      'gpt-5-codex',
+      'gpt-5',
+      'gpt-5.1-codex-mini',
+    ]);
+    expect(getModelsMock).not.toHaveBeenCalled();
+    expect(undiciFetchMock).toHaveBeenCalledTimes(1);
+    expect(String(undiciFetchMock.mock.calls[0]?.[0] || '')).toBe('https://chatgpt.com/backend-api/codex/models?client_version=1.0.0');
+    expect(undiciFetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: 'GET',
+      headers: expect.objectContaining({
+        Authorization: 'Bearer oauth-access-token',
+        'Chatgpt-Account-Id': 'chatgpt-account-123',
+        Originator: 'codex_cli_rs',
+      }),
+    });
+
+    const rows = await db.select().from(schema.modelAvailability)
+      .where(eq(schema.modelAvailability.accountId, account.id))
+      .all();
+    const modelNames = rows.map((row) => row.modelName);
+    expect(modelNames.sort()).toEqual([
+      'gpt-5',
+      'gpt-5-codex',
+      'gpt-5-codex-mini',
+      'gpt-5.1',
+      'gpt-5.1-codex',
+      'gpt-5.1-codex-max',
+      'gpt-5.1-codex-mini',
+      'gpt-5.2',
+      'gpt-5.2-codex',
+      'gpt-5.3-codex',
+      'gpt-5.4',
+    ]);
+  });
+
+  it('marks codex oauth account abnormal when upstream cloud discovery fails', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockRejectedValue(new Error('codex plan discovery should not call adapter.getModels'));
+    undiciFetchMock.mockResolvedValue({
+      ok: false,
+      status: 403,
+      json: async () => ({ error: 'forbidden' }),
+      text: async () => 'forbidden',
+    });
+
+    const site = await db.insert(schema.sites).values({
+      name: 'codex-team-site',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'team-user@example.com',
+      accessToken: 'oauth-access-token',
+      apiToken: null,
+      status: 'active',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          accountId: 'chatgpt-account-team',
+          email: 'team-user@example.com',
+          planType: 'team',
+        },
+      }),
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'gpt-5.2-codex',
+      available: true,
+      checkedAt: '2026-03-16T12:00:00.000Z',
+    }).run();
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      status: 'failed',
+      errorCode: 'unauthorized',
+      tokenScanned: 0,
+      discoveredByCredential: false,
+      modelCount: 0,
+    });
+    expect(getModelsMock).not.toHaveBeenCalled();
+    expect(undiciFetchMock).toHaveBeenCalledTimes(1);
+
+    const rows = await db.select().from(schema.modelAvailability)
+      .where(eq(schema.modelAvailability.accountId, account.id))
+      .all();
+    expect(rows).toEqual([]);
+
+    const latest = await db.select().from(schema.accounts)
+      .where(eq(schema.accounts.id, account.id))
+      .get();
+    const parsed = JSON.parse(latest!.extraConfig || '{}');
+    expect(parsed.oauth).toMatchObject({
+      provider: 'codex',
+      modelDiscoveryStatus: 'abnormal',
+    });
+    expect(parsed.oauth.lastModelSyncError).toContain('HTTP 403');
+    expect(parsed.oauth.lastModelSyncAt).toMatch(/\d{4}-\d{2}-\d{2}T/);
+    expect(parsed.runtimeHealth?.state).toBe('unhealthy');
   });
 });

@@ -20,6 +20,10 @@ const VALID_CREDENTIAL_MODES = new Set<AccountCredentialMode>([
 type AccountExtraConfig = {
   platformUserId?: unknown;
   credentialMode?: unknown;
+  oauth?: {
+    provider?: unknown;
+    [key: string]: unknown;
+  };
   autoRelogin?: AutoReloginConfig;
   sub2apiAuth?: Sub2ApiAuthConfig;
   [key: string]: unknown;
@@ -75,6 +79,43 @@ export function getPlatformUserIdFromExtraConfig(extraConfig?: string | null): n
 export function getCredentialModeFromExtraConfig(extraConfig?: string | null): AccountCredentialMode | undefined {
   const parsed = parseExtraConfig(extraConfig);
   return normalizeCredentialMode(parsed.credentialMode);
+}
+
+export function getOauthProviderFromExtraConfig(extraConfig?: string | null): string | undefined {
+  const parsed = parseExtraConfig(extraConfig);
+  return normalizeNonEmptyString(parsed.oauth?.provider);
+}
+
+export function hasOauthProvider(extraConfig?: string | null): boolean {
+  return !!getOauthProviderFromExtraConfig(extraConfig);
+}
+
+type DirectAccountRoutingInput = {
+  accessToken?: string | null;
+  apiToken?: string | null;
+  extraConfig?: string | null;
+};
+
+function hasCredentialValue(value: string | null | undefined): boolean {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+export function supportsDirectAccountRoutingConnection(account: DirectAccountRoutingInput): boolean {
+  const credentialMode = getCredentialModeFromExtraConfig(account.extraConfig);
+  if (credentialMode === 'apikey') {
+    return hasCredentialValue(account.apiToken);
+  }
+  if (hasOauthProvider(account.extraConfig)) {
+    return hasCredentialValue(account.accessToken);
+  }
+  return false;
+}
+
+export function requiresManagedAccountTokens(account: DirectAccountRoutingInput): boolean {
+  const credentialMode = getCredentialModeFromExtraConfig(account.extraConfig);
+  if (credentialMode === 'apikey') return false;
+  if (hasOauthProvider(account.extraConfig)) return false;
+  return true;
 }
 
 export type ManagedSub2ApiAuth = {

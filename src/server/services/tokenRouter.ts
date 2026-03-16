@@ -10,6 +10,7 @@ import {
 } from './routeRoutingStrategy.js';
 import { type DownstreamRoutingPolicy, EMPTY_DOWNSTREAM_ROUTING_POLICY } from './downstreamPolicyTypes.js';
 import { isUsableAccountToken } from './accountTokenService.js';
+import { isCodexPlatform } from './oauth/codexAccount.js';
 
 interface RouteMatch {
   route: typeof schema.tokenRoutes.$inferSelect;
@@ -1042,7 +1043,14 @@ export class TokenRouter {
     }
 
     const fallback = candidate.account.apiToken?.trim();
-    return fallback || null;
+    if (fallback) return fallback;
+
+    if ((candidate.site?.platform || '').trim().toLowerCase() === 'codex' || isCodexPlatform(candidate.account)) {
+      const accessToken = candidate.account.accessToken?.trim();
+      return accessToken || null;
+    }
+
+    return null;
   }
 
   private getCandidateEligibilityReasons(

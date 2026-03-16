@@ -119,4 +119,49 @@ describe('TokenRouter site status guard', () => {
     const selected = await new TokenRouter().selectChannel('gpt-4.1-mini');
     expect(selected).toBeNull();
   });
+
+  it('uses codex oauth access token when no api token is present', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'codex-site',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'codex-user@example.com',
+      accessToken: 'oauth-access-token',
+      apiToken: null,
+      status: 'active',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          accountId: 'chatgpt-account-123',
+          email: 'codex-user@example.com',
+          planType: 'plus',
+        },
+      }),
+    }).returning().get();
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.2-codex',
+      enabled: true,
+    }).returning().get();
+
+    await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: null,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      manualOverride: false,
+    }).run();
+
+    const selected = await new TokenRouter().selectChannel('gpt-5.2-codex');
+    expect(selected).not.toBeNull();
+    expect(selected?.tokenValue).toBe('oauth-access-token');
+  });
 });

@@ -27,6 +27,11 @@ import {
   hasNonImageFileInputInOpenAiBody,
   resolveResponsesBodyInputFiles,
 } from '../../services/proxyInputFileResolver.js';
+import {
+  buildCodexOauthProviderHeaders,
+  refreshCodexOauthAccessToken,
+} from '../../services/oauth/service.js';
+import { collectResponsesFinalPayloadFromSse } from './responsesSseFinal.js';
 
 const MAX_RETRIES = 2;
 
@@ -176,6 +181,7 @@ export async function responsesProxyRoute(app: FastifyInstance) {
       excludeChannelIds.push(selected.channel.id);
 
       const modelName = selected.actualModel || requestedModel;
+      const isCodexSite = String(selected.site.platform || '').trim().toLowerCase() === 'codex';
       const owner = getProxyResourceOwner(request);
       let normalizedResponsesBody: Record<string, unknown> = {
         ...requestEnvelope.parsed.normalizedBody,
@@ -228,11 +234,20 @@ export async function responsesProxyRoute(app: FastifyInstance) {
       if (endpointCandidates.length === 0) {
         endpointCandidates.push('responses', 'chat', 'messages');
       }
+      const buildProviderHeaders = () => (
+        isCodexSite
+          ? buildCodexOauthProviderHeaders({
+            extraConfig: typeof selected.account.extraConfig === 'string' ? selected.account.extraConfig : null,
+            downstreamHeaders: request.headers as Record<string, unknown>,
+          })
+          : {}
+      );
       const buildEndpointRequest = (endpoint: 'chat' | 'messages' | 'responses') => {
+        const upstreamStream = isStream || (isCodexSite && endpoint === 'responses');
         const endpointRequest = buildUpstreamEndpointRequest({
           endpoint,
           modelName,
-          stream: isStream,
+          stream: upstreamStream,
           tokenValue: selected.tokenValue,
           sitePlatform: selected.site.platform,
           siteUrl: selected.site.url,
@@ -240,6 +255,7 @@ export async function responsesProxyRoute(app: FastifyInstance) {
           downstreamFormat: 'responses',
           responsesOriginalBody: normalizedResponsesBody,
           downstreamHeaders: request.headers as Record<string, unknown>,
+          providerHeaders: buildProviderHeaders(),
         });
         const upstreamPath = (
           isCompactRequest && endpoint === 'responses'
@@ -254,7 +270,7 @@ export async function responsesProxyRoute(app: FastifyInstance) {
         };
       };
       const endpointStrategy = openAiResponsesTransformer.compatibility.createEndpointStrategy({
-        isStream,
+        isStream: isStream || isCodexSite,
         requiresNativeResponsesFileUrl,
         dispatchRequest: (compatibilityRequest, targetUrl) => fetch(
           targetUrl ?? `${selected.site.url}${compatibilityRequest.path}`,
@@ -265,6 +281,37 @@ export async function responsesProxyRoute(app: FastifyInstance) {
           }),
         ),
       });
+      const tryRecover = async (ctx: Parameters<NonNullable<typeof endpointStrategy.tryRecover>>[0]) => {
+        if (ctx.response.status === 401 && String(selected.site.platform || '').trim().toLowerCase() === 'codex') {
+          const refreshed = await refreshCodexOauthAccessToken(selected.account.id);
+          selected.tokenValue = refreshed.accessToken;
+          selected.account = {
+            ...selected.account,
+            accessToken: refreshed.accessToken,
+            extraConfig: refreshed.extraConfig ?? selected.account.extraConfig,
+          };
+          const refreshedRequest = buildEndpointRequest(ctx.request.endpoint);
+          const refreshedTargetUrl = `${selected.site.url}${refreshedRequest.path}`;
+          const refreshedResponse = await fetch(
+            refreshedTargetUrl,
+            withSiteRecordProxyRequestInit(selected.site, {
+              method: 'POST',
+              headers: refreshedRequest.headers,
+              body: JSON.stringify(refreshedRequest.body),
+            }),
+          );
+          if (refreshedResponse.ok) {
+            return {
+              upstream: refreshedResponse,
+              upstreamPath: refreshedRequest.path,
+            };
+          }
+          ctx.request = refreshedRequest;
+          ctx.response = refreshedResponse;
+          ctx.rawErrText = await refreshedResponse.text().catch(() => 'unknown error');
+        }
+        return endpointStrategy.tryRecover(ctx);
+      };
 
       const startTime = Date.now();
 
@@ -274,7 +321,7 @@ export async function responsesProxyRoute(app: FastifyInstance) {
           proxyUrl: resolveProxyUrlForSite(selected.site),
           endpointCandidates,
           buildRequest: (endpoint) => buildEndpointRequest(endpoint),
-          tryRecover: endpointStrategy.tryRecover,
+          tryRecover,
           shouldDowngrade: endpointStrategy.shouldDowngrade,
           onDowngrade: (ctx) => {
             logProxy(
@@ -342,8 +389,8 @@ export async function responsesProxyRoute(app: FastifyInstance) {
           return reply.code(status).send({ error: { message: errText, type: 'upstream_error' } });
         }
 
-        const upstream = endpointResult.upstream;
-        const successfulUpstreamPath = endpointResult.upstreamPath;
+      const upstream = endpointResult.upstream;
+      const successfulUpstreamPath = endpointResult.upstreamPath;
 
         if (isStream) {
           reply.hijack();
@@ -416,12 +463,21 @@ export async function responsesProxyRoute(app: FastifyInstance) {
           return;
         }
 
-        const rawText = await upstream.text();
-        let upstreamData: unknown = rawText;
-        try {
-          upstreamData = JSON.parse(rawText);
-        } catch {
+        const upstreamContentType = (upstream.headers.get('content-type') || '').toLowerCase();
+        let rawText = '';
+        let upstreamData: unknown;
+        if (upstreamContentType.includes('text/event-stream') && successfulUpstreamPath.endsWith('/responses')) {
+          const collected = await collectResponsesFinalPayloadFromSse(upstream, modelName);
+          rawText = collected.rawText;
+          upstreamData = collected.payload;
+        } else {
+          rawText = await upstream.text();
           upstreamData = rawText;
+          try {
+            upstreamData = JSON.parse(rawText);
+          } catch {
+            upstreamData = rawText;
+          }
         }
         const latency = Date.now() - startTime;
         const parsedUsage = parseProxyUsage(upstreamData);

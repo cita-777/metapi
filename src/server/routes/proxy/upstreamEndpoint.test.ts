@@ -151,6 +151,16 @@ describe('resolveUpstreamEndpointCandidates', () => {
       'claude',
     );
     expect(claudeOrder).toEqual(['messages']);
+
+    const codexOrder = await resolveUpstreamEndpointCandidates(
+      {
+        ...baseContext,
+        site: { ...baseContext.site, platform: 'codex', url: 'https://chatgpt.com/backend-api/codex' },
+      },
+      'gpt-5.2-codex',
+      'openai',
+    );
+    expect(codexOrder).toEqual(['responses']);
   });
 
   it('prefers document-capable endpoints when downstream content contains non-image files', async () => {
@@ -311,6 +321,86 @@ describe('buildUpstreamEndpointRequest', () => {
 
     expect(request.path).toBe('/v1/responses');
     expect(request.body.input).toEqual([
+      {
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: 'hello' }],
+      },
+    ]);
+  });
+
+  it('builds codex responses requests against backend-api path and preserves oauth provider headers', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'responses',
+      modelName: 'gpt-5.2-codex',
+      stream: false,
+      tokenValue: 'oauth-access-token',
+      sitePlatform: 'codex',
+      siteUrl: 'https://chatgpt.com/backend-api/codex',
+      openaiBody: {
+        model: 'gpt-5.2-codex',
+        messages: [{ role: 'user', content: 'hello codex' }],
+        temperature: 0.2,
+        top_p: 0.9,
+        user: 'drop-me',
+        service_tier: 'auto',
+      },
+      downstreamFormat: 'openai',
+      providerHeaders: {
+        Originator: 'codex_cli_rs',
+        'Chatgpt-Account-Id': 'chatgpt-account-123',
+      },
+    } as any);
+
+    expect(request.path).toBe('/responses');
+    expect(request.headers.Authorization).toBe('Bearer oauth-access-token');
+    expect(request.headers.Originator).toBe('codex_cli_rs');
+    expect(request.headers['Chatgpt-Account-Id']).toBe('chatgpt-account-123');
+    expect(request.body.instructions).toBe('');
+    expect(request.body.stream).toBe(true);
+    expect(request.body.store).toBe(false);
+    expect(request.body.parallel_tool_calls).toBe(true);
+    expect(request.body.include).toEqual(['reasoning.encrypted_content']);
+    expect(request.body.max_output_tokens).toBeUndefined();
+    expect(request.body.temperature).toBeUndefined();
+    expect(request.body.top_p).toBeUndefined();
+    expect(request.body.user).toBeUndefined();
+    expect(request.body.service_tier).toBeUndefined();
+  });
+
+  it('converts system roles to developer in native codex responses bodies', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'responses',
+      modelName: 'gpt-5.4',
+      stream: false,
+      tokenValue: 'oauth-access-token',
+      sitePlatform: 'codex',
+      siteUrl: 'https://chatgpt.com/backend-api/codex',
+      openaiBody: {},
+      downstreamFormat: 'responses',
+      responsesOriginalBody: {
+        model: 'gpt-5.4',
+        input: [
+          {
+            type: 'message',
+            role: 'system',
+            content: [{ type: 'input_text', text: 'be careful' }],
+          },
+          {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'hello' }],
+          },
+        ],
+      },
+    });
+
+    expect(request.body.input).toEqual([
+      {
+        type: 'message',
+        role: 'developer',
+        content: [{ type: 'input_text', text: 'be careful' }],
+      },
       {
         type: 'message',
         role: 'user',

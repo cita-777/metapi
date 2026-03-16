@@ -50,6 +50,7 @@ async function createSiteAndCollectLocation(createdSite: { id: number; platform?
             <Routes>
               <Route path="/sites" element={<Sites />} />
               <Route path="/accounts" element={<LocationProbe />} />
+              <Route path="/oauth" element={<LocationProbe />} />
             </Routes>
           </MemoryRouter>
         </ToastProvider>,
@@ -123,5 +124,14 @@ describe('Sites create redirect', () => {
     expect(rendered).toContain('segment=apikey');
     expect(rendered).toContain('create=1');
     expect(rendered).toContain('siteId=22');
+  });
+
+  it('redirects a codex site to oauth management instead of legacy account import', async () => {
+    const rendered = await createSiteAndCollectLocation({ id: 23, platform: 'codex' });
+
+    expect(rendered).toContain('/oauth?');
+    expect(rendered).toContain('provider=codex');
+    expect(rendered).toContain('create=1');
+    expect(rendered).toContain('siteId=23');
   });
 });

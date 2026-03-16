@@ -52,6 +52,7 @@ const platformColors: Record<string, string> = {
   'done-hub': 'badge-muted',
   sub2api: 'badge-muted',
   openai: 'badge-success',
+  codex: 'badge-success',
   claude: 'badge-warning',
   gemini: 'badge-info',
   cliproxyapi: 'badge-info',
@@ -67,6 +68,7 @@ const SITE_PLATFORM_OPTIONS = [
   { value: 'done-hub', label: 'done-hub' },
   { value: 'sub2api', label: 'sub2api' },
   { value: 'openai', label: 'openai' },
+  { value: 'codex', label: 'codex' },
   { value: 'claude', label: 'claude' },
   { value: 'gemini', label: 'gemini' },
   { value: 'cliproxyapi', label: 'cliproxyapi' },
@@ -290,11 +292,16 @@ export default function Sites() {
           const createdPlatform = typeof created?.platform === 'string' && created.platform.trim()
             ? created.platform.trim()
             : payload.platform;
-          const initialSegment = resolveInitialConnectionSegment(createdPlatform);
           const params = new URLSearchParams({
             create: '1',
             siteId: String(createdSiteId),
           });
+          if (String(createdPlatform || '').trim().toLowerCase() === 'codex') {
+            params.set('provider', 'codex');
+            navigate(`/oauth?${params.toString()}`);
+            return;
+          }
+          const initialSegment = resolveInitialConnectionSegment(createdPlatform);
           if (initialSegment === 'apikey') {
             params.set('segment', 'apikey');
           }

@@ -1,4 +1,5 @@
 import { and, eq } from 'drizzle-orm';
+import { fetch } from 'undici';
 import { db, schema } from '../db/index.js';
 import { getAdapter } from './platforms/index.js';
 import {
@@ -8,14 +9,22 @@ import {
   isMaskedTokenValue,
   isUsableAccountToken,
 } from './accountTokenService.js';
-import { getCredentialModeFromExtraConfig, resolvePlatformUserId } from './accountExtraConfig.js';
+import {
+  getCredentialModeFromExtraConfig,
+  mergeAccountExtraConfig,
+  resolvePlatformUserId,
+  supportsDirectAccountRoutingConnection,
+} from './accountExtraConfig.js';
 import { invalidateTokenRouterCache } from './tokenRouter.js';
 import { setAccountRuntimeHealth } from './accountHealthService.js';
 import { clearAllRouteDecisionSnapshots } from './routeDecisionSnapshotStore.js';
+import { withSiteRecordProxyRequestInit } from './siteProxy.js';
+import { buildCodexOauthInfo, getCodexOauthInfoFromExtraConfig, isCodexPlatform } from './oauth/codexAccount.js';
 
 const API_TOKEN_DISCOVERY_TIMEOUT_MS = 8_000;
 const MODEL_DISCOVERY_TIMEOUT_MS = 12_000;
 const MODEL_REFRESH_BATCH_SIZE = 3;
+const CODEX_MODELS_CLIENT_VERSION = '1.0.0';
 
 type ModelRefreshErrorCode = 'timeout' | 'unauthorized' | 'empty_models' | 'unknown';
 type ModelRefreshSkipCode = 'site_disabled' | 'adapter_or_status';
@@ -118,6 +127,86 @@ function normalizeModels(models: string[]): string[] {
   }
 
   return normalizedModels;
+}
+
+function buildCodexModelsEndpoint(baseUrl: string): string {
+  const normalized = (baseUrl || '').replace(/\/+$/, '');
+  return `${normalized}/models?client_version=${encodeURIComponent(CODEX_MODELS_CLIENT_VERSION)}`;
+}
+
+function extractCodexModelIds(payload: unknown): string[] {
+  const collection = (() => {
+    if (Array.isArray(payload)) return payload;
+    if (!payload || typeof payload !== 'object') return [];
+    const record = payload as Record<string, unknown>;
+    if (Array.isArray(record.models)) return record.models;
+    if (Array.isArray(record.data)) return record.data;
+    if (Array.isArray(record.items)) return record.items;
+    return [];
+  })();
+
+  return collection.flatMap((item) => {
+    if (typeof item === 'string') return [item];
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+    const record = item as Record<string, unknown>;
+    const id = typeof record.id === 'string'
+      ? record.id
+      : (typeof record.slug === 'string' ? record.slug : (typeof record.model === 'string' ? record.model : ''));
+    return id ? [id] : [];
+  });
+}
+
+async function updateCodexOauthModelDiscoveryState(input: {
+  account: typeof schema.accounts.$inferSelect;
+  checkedAt: string;
+  status: 'healthy' | 'abnormal';
+  lastModelSyncError?: string;
+  lastDiscoveredModels?: string[];
+}) {
+  if (!isCodexPlatform(input.account)) return input.account.extraConfig || null;
+  const extraConfig = mergeAccountExtraConfig(input.account.extraConfig, {
+    oauth: buildCodexOauthInfo(input.account.extraConfig, {
+      modelDiscoveryStatus: input.status,
+      lastModelSyncAt: input.checkedAt,
+      lastModelSyncError: input.lastModelSyncError,
+      lastDiscoveredModels: input.lastDiscoveredModels ?? [],
+    }),
+  });
+  await db.update(schema.accounts).set({
+    extraConfig,
+    updatedAt: input.checkedAt,
+  }).where(eq(schema.accounts.id, input.account.id)).run();
+  input.account.extraConfig = extraConfig;
+  return extraConfig;
+}
+
+async function discoverCodexModelsFromCloud(input: {
+  site: typeof schema.sites.$inferSelect;
+  account: typeof schema.accounts.$inferSelect;
+}): Promise<string[]> {
+  const accessToken = (input.account.accessToken || '').trim();
+  if (!accessToken) {
+    throw new Error('codex oauth access token missing');
+  }
+  const oauth = getCodexOauthInfoFromExtraConfig(input.account.extraConfig);
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${accessToken}`,
+    Accept: 'application/json',
+    Originator: 'codex_cli_rs',
+  };
+  if (oauth?.accountId) {
+    headers['Chatgpt-Account-Id'] = oauth.accountId;
+  }
+
+  const response = await fetch(
+    buildCodexModelsEndpoint(input.site.url),
+    withSiteRecordProxyRequestInit(input.site, { method: 'GET', headers }),
+  );
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`HTTP ${response.status}: ${text || 'codex model discovery failed'}`);
+  }
+  return normalizeModels(extractCodexModelIds(await response.json()));
 }
 
 function isExactModelPattern(modelPattern: string): boolean {
@@ -250,6 +339,76 @@ export async function refreshModelsForAccount(accountId: number): Promise<ModelR
 
   if (!adapter || account.status !== 'active') {
     return buildSkippedRefreshResult(accountId, 'adapter_or_status', '平台不可用或账号未激活');
+  }
+
+  if (isCodexPlatform(account)) {
+    const checkedAt = new Date().toISOString();
+    const startedAt = Date.now();
+    try {
+      const codexModels = await withTimeout(
+        () => discoverCodexModelsFromCloud({ site, account }),
+        MODEL_DISCOVERY_TIMEOUT_MS,
+        `codex model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
+      );
+      if (codexModels.length === 0) {
+        throw new Error('未获取到可用模型');
+      }
+
+      await db.insert(schema.modelAvailability).values(
+        codexModels.map((modelName) => ({
+          accountId,
+          modelName,
+          available: true,
+          latencyMs: Date.now() - startedAt,
+          checkedAt,
+        })),
+      ).run();
+      await updateCodexOauthModelDiscoveryState({
+        account,
+        checkedAt,
+        status: 'healthy',
+        lastDiscoveredModels: codexModels,
+      });
+      await setAccountRuntimeHealth(accountId, {
+        state: 'healthy',
+        reason: 'Codex 云端模型探测成功',
+        source: 'model-discovery',
+        checkedAt,
+      });
+      return buildSuccessfulRefreshResult({
+        accountId,
+        modelCount: codexModels.length,
+        modelsPreview: codexModels.slice(0, 10),
+        tokenScanned: 0,
+        discoveredByCredential: true,
+        discoveredApiToken: false,
+      });
+    } catch (err) {
+      const rawMessage = (err as { message?: string })?.message || 'codex model discovery failed';
+      const errorCode = classifyModelDiscoveryError(rawMessage);
+      const errorMessage = `Codex 模型获取失败（${rawMessage}）`;
+      await updateCodexOauthModelDiscoveryState({
+        account,
+        checkedAt,
+        status: 'abnormal',
+        lastModelSyncError: errorMessage,
+        lastDiscoveredModels: [],
+      });
+      await setAccountRuntimeHealth(account.id, {
+        state: 'unhealthy',
+        reason: errorMessage,
+        source: 'model-discovery',
+        checkedAt,
+      });
+      return buildFailedRefreshResult({
+        accountId,
+        errorCode,
+        errorMessage,
+        tokenScanned: 0,
+        discoveredByCredential: false,
+        discoveredApiToken: false,
+      });
+    }
   }
 
   const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
@@ -513,8 +672,7 @@ export async function rebuildTokenRoutesFromAvailability() {
   }
 
   for (const row of accountRows) {
-    if (!isApiKeyConnection(row.accounts)) continue;
-    if (!(row.accounts.apiToken || '').trim()) continue;
+    if (!supportsDirectAccountRoutingConnection(row.accounts)) continue;
     addModelCandidate(row.model_availability.modelName, row.accounts.id, null, row.accounts.siteId);
   }
 

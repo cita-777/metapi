@@ -17,6 +17,7 @@ import { taskRoutes } from './routes/api/tasks.js';
 import { testRoutes } from './routes/api/test.js';
 import { monitorRoutes } from './routes/api/monitor.js';
 import { downstreamApiKeysRoutes } from './routes/api/downstreamApiKeys.js';
+import { oauthRoutes } from './routes/api/oauth.js';
 import { proxyRoutes } from './routes/proxy/router.js';
 import { startScheduler } from './services/checkinScheduler.js';
 import { setLegacyProxyLogRetentionFallbackEnabled, stopProxyLogRetentionService } from './services/proxyLogRetentionService.js';
@@ -24,6 +25,7 @@ import { buildStartupSummaryLines } from './services/startupInfo.js';
 import { repairStoredCreatedAtValues } from './services/storedTimestampRepairService.js';
 import { migrateSiteApiKeysToAccounts } from './services/siteApiKeyMigrationService.js';
 import { ensureDefaultSitesSeeded } from './services/defaultSiteSeedService.js';
+import { startCodexLoopbackCallbackServer, stopCodexLoopbackCallbackServer } from './services/oauth/localCallbackServer.js';
 import { ensureRuntimeDatabaseReady } from './runtimeDatabaseBootstrap.js';
 import { isPublicApiRoute, registerDesktopRoutes } from './desktop.js';
 import { existsSync } from 'fs';
@@ -312,6 +314,7 @@ await app.register(taskRoutes);
 await app.register(testRoutes);
 await app.register(monitorRoutes);
 await app.register(downstreamApiKeysRoutes);
+await app.register(oauthRoutes);
 
 // Register OpenAI-compatible proxy routes
 await app.register(proxyRoutes);
@@ -345,9 +348,15 @@ if (existsSync(webDir)) {
 
 // Start scheduler
 await startScheduler();
+try {
+  await startCodexLoopbackCallbackServer();
+} catch (error) {
+  console.warn(`Failed to start Codex OAuth callback listener: ${(error as Error)?.message || 'unknown error'}`);
+}
 setLegacyProxyLogRetentionFallbackEnabled(!config.logCleanupConfigured);
 app.addHook('onClose', async () => {
   stopProxyLogRetentionService();
+  await stopCodexLoopbackCallbackServer();
 });
 
 // Start server

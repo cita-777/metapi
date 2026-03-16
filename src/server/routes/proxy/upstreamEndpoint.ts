@@ -186,6 +186,84 @@ function toFiniteNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function ensureCodexResponsesInstructions(
+  body: Record<string, unknown>,
+  sitePlatform: string,
+): Record<string, unknown> {
+  if (sitePlatform !== 'codex') return body;
+  if (typeof body.instructions === 'string') return body;
+  return {
+    ...body,
+    instructions: '',
+  };
+}
+
+function ensureCodexResponsesStoreFalse(
+  body: Record<string, unknown>,
+  sitePlatform: string,
+): Record<string, unknown> {
+  if (sitePlatform !== 'codex') return body;
+  if (body.store === false) return body;
+  return {
+    ...body,
+    store: false,
+  };
+}
+
+function convertCodexSystemRoleToDeveloper(input: unknown): unknown {
+  if (!Array.isArray(input)) return input;
+  return input.map((item) => {
+    if (!isRecord(item)) return item;
+    if (asTrimmedString(item.type).toLowerCase() !== 'message') return item;
+    if (asTrimmedString(item.role).toLowerCase() !== 'system') return item;
+    return {
+      ...item,
+      role: 'developer',
+    };
+  });
+}
+
+function applyCodexResponsesCompatibility(
+  body: Record<string, unknown>,
+  sitePlatform: string,
+): Record<string, unknown> {
+  if (sitePlatform !== 'codex') return body;
+
+  const next: Record<string, unknown> = {
+    ...body,
+    stream: true,
+    store: false,
+    parallel_tool_calls: true,
+    include: ['reasoning.encrypted_content'],
+    input: convertCodexSystemRoleToDeveloper(body.input),
+  };
+
+  if (typeof next.instructions !== 'string') {
+    next.instructions = '';
+  }
+
+  for (const key of [
+    'max_output_tokens',
+    'max_completion_tokens',
+    'temperature',
+    'top_p',
+    'truncation',
+    'user',
+    'context_management',
+    'previous_response_id',
+    'prompt_cache_retention',
+    'safety_identifier',
+  ]) {
+    delete next[key];
+  }
+
+  if (asTrimmedString(next.service_tier).toLowerCase() !== 'priority') {
+    delete next.service_tier;
+  }
+
+  return next;
+}
+
 
 function normalizeEndpointTypes(value: unknown): UpstreamEndpoint[] {
   const raw = asTrimmedString(value).toLowerCase();
@@ -236,6 +314,10 @@ function preferredEndpointOrder(
   preferMessagesForClaudeModel = false,
 ): UpstreamEndpoint[] {
   const platform = normalizePlatformName(sitePlatform);
+
+  if (platform === 'codex') {
+    return ['responses'];
+  }
 
   if (platform === 'gemini') {
     // Gemini upstream is routed through OpenAI-compatible chat endpoint.
@@ -430,6 +512,7 @@ export function buildUpstreamEndpointRequest(input: {
   forceNormalizeClaudeBody?: boolean;
   responsesOriginalBody?: Record<string, unknown>;
   downstreamHeaders?: Record<string, unknown>;
+  providerHeaders?: Record<string, string>;
 }): {
   path: string;
   headers: Record<string, string>;
@@ -463,6 +546,10 @@ export function buildUpstreamEndpointRequest(input: {
       return '/v1/chat/completions';
     }
 
+    if (sitePlatform === 'codex') {
+      return '/responses';
+    }
+
     if (sitePlatform === 'claude') {
       return '/v1/messages';
     }
@@ -476,6 +563,7 @@ export function buildUpstreamEndpointRequest(input: {
   const commonHeaders: Record<string, string> = {
     ...passthroughHeaders,
     'Content-Type': 'application/json',
+    ...(input.providerHeaders || {}),
   };
   if (!isClaudeUpstream) {
     commonHeaders.Authorization = `Bearer ${input.tokenValue}`;
@@ -564,7 +652,16 @@ export function buildUpstreamEndpointRequest(input: {
         }
         : convertOpenAiBodyToResponsesBodyViaTransformer(openaiBody, input.modelName, input.stream)
     );
-    const body = sanitizeResponsesBodyForProxyViaTransformer(rawBody, input.modelName, input.stream);
+    const body = ensureCodexResponsesStoreFalse(
+      ensureCodexResponsesInstructions(
+        applyCodexResponsesCompatibility(
+          sanitizeResponsesBodyForProxyViaTransformer(rawBody, input.modelName, input.stream),
+          sitePlatform,
+        ),
+        sitePlatform,
+      ),
+      sitePlatform,
+    );
 
     const headers = ensureStreamAcceptHeader({
       ...commonHeaders,
