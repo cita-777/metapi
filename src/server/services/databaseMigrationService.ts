@@ -336,13 +336,14 @@ function buildStatements(snapshot: BackupSnapshot): InsertStatement[] {
   for (const row of snapshot.accounts.accountTokens) {
     statements.push({
       table: 'account_tokens',
-      columns: ['id', 'account_id', 'name', 'token', 'token_group', 'source', 'enabled', 'is_default', 'created_at', 'updated_at'],
+      columns: ['id', 'account_id', 'name', 'token', 'token_group', 'value_status', 'source', 'enabled', 'is_default', 'created_at', 'updated_at'],
       values: [
         asNumber(row.id, 0),
         asNumber(row.accountId, 0),
         asNullableString(row.name),
         asNullableString(row.token),
         asNullableString(row.tokenGroup),
+        asNullableString((row as { valueStatus?: unknown }).valueStatus) ?? 'ready',
         asNullableString(row.source) ?? 'manual',
         asBoolean(row.enabled, true),
         asBoolean(row.isDefault, false),

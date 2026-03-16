@@ -11,6 +11,11 @@ describe('schema contract generation', () => {
       primaryKey: false,
     });
     expect(contract.tables.account_tokens.columns.token_group).toBeDefined();
+    expect(contract.tables.account_tokens.columns.value_status).toMatchObject({
+      logicalType: 'text',
+      notNull: true,
+      defaultValue: "'ready'",
+    });
     expect(contract.tables.site_disabled_models).toBeDefined();
     expect(contract.tables.downstream_api_keys).toBeDefined();
     expect(contract.tables.proxy_files).toBeDefined();

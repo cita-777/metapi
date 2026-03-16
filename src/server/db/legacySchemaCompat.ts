@@ -46,6 +46,7 @@ const LEGACY_COMPAT_COLUMNS = new Set([
   'sites.external_checkin_url',
   'sites.global_weight',
   'account_tokens.token_group',
+  'account_tokens.value_status',
   'token_routes.display_name',
   'token_routes.display_icon',
   'token_routes.decision_snapshot',

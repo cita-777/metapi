@@ -23,6 +23,15 @@ const ACCOUNT_TOKEN_COLUMN_COMPATIBILITY_SPECS: AccountTokenColumnCompatibilityS
       postgres: 'ALTER TABLE "account_tokens" ADD COLUMN "token_group" TEXT',
     },
   },
+  {
+    table: 'account_tokens',
+    column: 'value_status',
+    addSql: {
+      sqlite: "ALTER TABLE account_tokens ADD COLUMN value_status text NOT NULL DEFAULT 'ready';",
+      mysql: "ALTER TABLE `account_tokens` ADD COLUMN `value_status` VARCHAR(191) NOT NULL DEFAULT 'ready'",
+      postgres: "ALTER TABLE \"account_tokens\" ADD COLUMN \"value_status\" TEXT NOT NULL DEFAULT 'ready'",
+    },
+  },
 ];
 
 function normalizeSchemaErrorMessage(error: unknown): string {

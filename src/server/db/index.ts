@@ -137,6 +137,7 @@ function ensureTokenManagementSchema() {
       name text NOT NULL,
       token text NOT NULL,
       token_group text,
+      value_status text NOT NULL DEFAULT 'ready',
       source text DEFAULT 'manual',
       enabled integer DEFAULT true,
       is_default integer DEFAULT false,
@@ -151,6 +152,9 @@ function ensureTokenManagementSchema() {
 
   if (!tableColumnExists('account_tokens', 'token_group')) {
     execSqliteLegacyCompat('ALTER TABLE account_tokens ADD COLUMN token_group text;');
+  }
+  if (!tableColumnExists('account_tokens', 'value_status')) {
+    execSqliteLegacyCompat("ALTER TABLE account_tokens ADD COLUMN value_status text NOT NULL DEFAULT 'ready';");
   }
 
   execSqliteStatement(`

@@ -23,8 +23,11 @@ type AccountTokenSyncResult = {
   success?: boolean;
   synced?: boolean;
   message?: string;
+  reason?: string;
   created?: number;
   updated?: number;
+  maskedPending?: number;
+  pendingTokenIds?: number[];
   accountId?: number;
   accountName?: string;
   account?: {
@@ -64,6 +67,12 @@ const resolveSyncMessage = (result: AccountTokenSyncResult | null | undefined, f
   const message = typeof result?.message === 'string' ? result.message.trim() : '';
   return message || fallback;
 };
+
+const isMaskedPendingToken = (token: any): boolean => token?.valueStatus === 'masked_pending';
+
+const isMaskedPendingSyncResult = (result: AccountTokenSyncResult | null | undefined) =>
+  String(result?.reason || '').trim().toLowerCase() === 'upstream_masked_tokens'
+  && Number(result?.maskedPending || 0) > 0;
 
 const resolveAccountLabel = (result: AccountTokenSyncResult | null | undefined) => {
   const name = typeof result?.accountName === 'string' ? result.accountName.trim() : '';
@@ -130,8 +139,10 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
   const [savingEdit, setSavingEdit] = useState(false);
   const [editingToken, setEditingToken] = useState<any | null>(null);
   const [editingTokenValueLoading, setEditingTokenValueLoading] = useState(false);
+  const [editingTokenPendingMessage, setEditingTokenPendingMessage] = useState('');
   const [createHintModelName, setCreateHintModelName] = useState('');
   const [highlightTokenId, setHighlightTokenId] = useState<number | null>(null);
+  const [pendingAutoOpenTokenId, setPendingAutoOpenTokenId] = useState<number | null>(null);
   const [rowLoading, setRowLoading] = useState<Record<string, boolean>>({});
   const [selectedTokenIds, setSelectedTokenIds] = useState<number[]>([]);
   const [batchActionLoading, setBatchActionLoading] = useState(false);
@@ -173,8 +184,16 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
       if (!hasCurrentSelected) {
         setSyncingAccountId(syncableAccounts[0]?.id || 0);
       }
+      return {
+        tokens: nextTokens,
+        accounts: latestAccounts,
+      };
     } catch (e: any) {
       toast.error(e.message || '加载令牌失败');
+      return {
+        tokens: [] as any[],
+        accounts: [] as any[],
+      };
     } finally {
       setLoading(false);
     }
@@ -346,6 +365,18 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
     navigate({ pathname: location.pathname, search: cleanedSearch }, { replace: true });
   }, [loading, location.pathname, location.search, navigate, tokens]);
 
+  const focusTokenRow = useCallback((tokenId: number) => {
+    const row = rowRefs.current.get(tokenId);
+    if (row) {
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    setHighlightTokenId(tokenId);
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    highlightTimerRef.current = setTimeout(() => {
+      setHighlightTokenId((current) => (current === tokenId ? null : current));
+    }, 2200);
+  }, []);
+
   const withRowLoading = async (key: string, fn: () => Promise<void>) => {
     setRowLoading((prev) => ({ ...prev, [key]: true }));
     try {
@@ -422,13 +453,24 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
     setCreateHintModelName('');
     setEditingToken(token);
     editingTokenIdRef.current = token.id;
+    setEditingTokenPendingMessage(
+      isMaskedPendingToken(token)
+        ? '请粘贴完整明文 token；当前本地仅保存了上游返回的脱敏占位值。'
+        : '',
+    );
     setEditForm({
       name: token?.name || '',
       token: '',
       group: (token?.tokenGroup || '').trim() || 'default',
-      enabled: token?.enabled !== false,
+      enabled: isMaskedPendingToken(token) ? true : token?.enabled !== false,
       isDefault: !!token?.isDefault,
     });
+
+    if (isMaskedPendingToken(token)) {
+      setEditingTokenValueLoading(false);
+      return;
+    }
+
     setEditingTokenValueLoading(true);
 
     void api.getAccountTokenValue(token.id)
@@ -454,6 +496,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
     setEditingToken(null);
     setSavingEdit(false);
     setEditingTokenValueLoading(false);
+    setEditingTokenPendingMessage('');
     setEditForm({
       name: '',
       token: '',
@@ -465,6 +508,10 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
 
   const saveEditPanel = async () => {
     if (!editingToken) return;
+    if (isMaskedPendingToken(editingToken) && !editForm.token.trim()) {
+      toast.error('请粘贴完整明文 token 后再保存');
+      return;
+    }
     setSavingEdit(true);
     try {
       await api.updateAccountToken(editingToken.id, {
@@ -483,6 +530,15 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
       setSavingEdit(false);
     }
   };
+
+  useEffect(() => {
+    if (!pendingAutoOpenTokenId || loading) return;
+    const token = tokens.find((item: any) => item.id === pendingAutoOpenTokenId);
+    if (!token) return;
+    focusTokenRow(token.id);
+    openEditPanel(token);
+    setPendingAutoOpenTokenId(null);
+  }, [focusTokenRow, loading, openEditPanel, pendingAutoOpenTokenId, tokens]);
 
   const handleTokenRowClick = (tokenId: number, event: React.MouseEvent<HTMLTableRowElement>) => {
     if (shouldIgnoreRowSelectionClick(event.target)) return;
@@ -551,6 +607,25 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
       const status = resolveSyncStatus(res);
       if (status === 'failed') {
         toast.error(`同步失败：${resolveSyncMessage(res, '请检查账号令牌或站点状态')}`);
+      } else if (isMaskedPendingSyncResult(res)) {
+        toast.info(resolveSyncMessage(res, '上游返回了脱敏令牌，请补全明文 token'));
+        const loaded = await load();
+        const pendingIds = Array.isArray(res.pendingTokenIds)
+          ? res.pendingTokenIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+          : [];
+        const nextTokens = Array.isArray(loaded?.tokens) ? loaded.tokens : [];
+        if (pendingIds.length === 1) {
+          const pendingToken = nextTokens.find((token: any) => token.id === pendingIds[0]);
+          if (pendingToken) {
+            focusTokenRow(pendingToken.id);
+            openEditPanel(pendingToken);
+          } else {
+            setPendingAutoOpenTokenId(pendingIds[0] || null);
+          }
+        } else if (pendingIds.length > 1) {
+          focusTokenRow(pendingIds[0]!);
+        }
+        return;
       } else if (status === 'skipped') {
         toast.info(`同步已跳过：${resolveSyncMessage(res, '账号缺少可用 Session Cookie')}`);
       } else {
@@ -562,7 +637,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
     } finally {
       setSyncing(false);
     }
-  }, [load, syncingAccountId, toast]);
+  }, [focusTokenRow, load, openEditPanel, syncingAccountId, toast]);
 
   const handleSyncAll = useCallback(async () => {
     setSyncingAll(true);
@@ -594,11 +669,15 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
         const failedRows = syncResults.filter((item) => resolveSyncStatus(item) === 'failed');
         const skippedRows = syncResults.filter((item) => resolveSyncStatus(item) === 'skipped');
         const successRows = syncResults.filter((item) => resolveSyncStatus(item) === 'success');
+        const maskedRows = syncResults.filter((item) => isMaskedPendingSyncResult(item));
 
         toast.success(`全部同步完成：成功 ${successRows.length}，跳过 ${skippedRows.length}，失败 ${failedRows.length}`);
 
         failedRows.slice(0, 3).forEach((item) => {
           toast.error(`${resolveAccountLabel(item)} 同步失败：${resolveSyncMessage(item, '请检查账号配置')}`);
+        });
+        maskedRows.slice(0, 3).forEach((item) => {
+          toast.info(`${resolveAccountLabel(item)} 需要补全明文 token：${resolveSyncMessage(item, '上游返回脱敏令牌')}`);
         });
         skippedRows.slice(0, 3).forEach((item) => {
           toast.info(`${resolveAccountLabel(item)} 已跳过：${resolveSyncMessage(item, '不满足同步条件')}`);
@@ -771,6 +850,20 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
             >
               账号: {editingToken.account?.username || `account-${editingToken.accountId}`} @ {editingToken.site?.name || '-'}
             </div>
+            {editingTokenPendingMessage ? (
+              <div
+                style={{
+                  fontSize: 12,
+                  color: 'var(--color-text-secondary)',
+                  background: 'color-mix(in srgb, var(--color-warning) 12%, var(--color-bg))',
+                  border: '1px solid color-mix(in srgb, var(--color-warning) 28%, transparent)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '8px 10px',
+                }}
+              >
+                {editingTokenPendingMessage}
+              </div>
+            ) : null}
             <div style={sectionCardStyle}>
               <div style={sectionLabelStyle}>基本信息</div>
               <div>
@@ -1008,6 +1101,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
             <div className="mobile-card-list">
               {accountClusteredTokens.map((token: any) => {
                 const loadingPrefix = `token-${token.id}`;
+                const isPending = isMaskedPendingToken(token);
                 return (
                   <MobileCard
                     key={token.id}
@@ -1049,8 +1143,8 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                     <MobileField
                       label="状态"
                       value={(
-                        <span className={`badge ${token.enabled ? 'badge-success' : 'badge-muted'}`} style={{ fontSize: 11 }}>
-                          {token.enabled ? '启用' : '禁用'}
+                        <span className={`badge ${isPending ? 'badge-warning' : (token.enabled ? 'badge-success' : 'badge-muted')}`} style={{ fontSize: 11 }}>
+                          {isPending ? '待补全' : (token.enabled ? '启用' : '禁用')}
                         </span>
                       )}
                     />
@@ -1060,7 +1154,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                     />
                     <MobileField label="更新时间" value={formatDateTimeLocal(token.updatedAt)} />
                     <div className="mobile-card-actions">
-                      {!token.isDefault && (
+                      {!isPending && !token.isDefault && (
                         <button
                           onClick={() => withRowLoading(`${loadingPrefix}-default`, async () => {
                             await api.setDefaultAccountToken(token.id);
@@ -1073,31 +1167,35 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                           {rowLoading[`${loadingPrefix}-default`] ? <span className="spinner spinner-sm" /> : '设默认'}
                         </button>
                       )}
-                      <button
-                        onClick={() => handleCopyToken(token.id, token.name || '')}
-                        disabled={!!rowLoading[`${loadingPrefix}-copy`]}
-                        className="btn btn-link btn-link-primary"
-                        data-testid={`token-copy-${token.id}`}
-                      >
-                        {rowLoading[`${loadingPrefix}-copy`] ? <span className="spinner spinner-sm" /> : '复制'}
-                      </button>
+                      {!isPending ? (
+                        <button
+                          onClick={() => handleCopyToken(token.id, token.name || '')}
+                          disabled={!!rowLoading[`${loadingPrefix}-copy`]}
+                          className="btn btn-link btn-link-primary"
+                          data-testid={`token-copy-${token.id}`}
+                        >
+                          {rowLoading[`${loadingPrefix}-copy`] ? <span className="spinner spinner-sm" /> : '复制'}
+                        </button>
+                      ) : null}
                       <button
                         onClick={() => openEditPanel(token)}
                         className="btn btn-link btn-link-info"
                       >
-                        编辑
+                        {isPending ? '编辑补全' : '编辑'}
                       </button>
-                      <button
-                        onClick={() => withRowLoading(`${loadingPrefix}-toggle`, async () => {
-                          await api.updateAccountToken(token.id, { enabled: !token.enabled });
-                          toast.success(token.enabled ? '令牌已禁用' : '令牌已启用');
-                          await load();
-                        })}
-                        disabled={!!rowLoading[`${loadingPrefix}-toggle`]}
-                        className={`btn btn-link ${token.enabled ? 'btn-link-warning' : 'btn-link-primary'}`}
-                      >
-                        {rowLoading[`${loadingPrefix}-toggle`] ? <span className="spinner spinner-sm" /> : (token.enabled ? '禁用' : '启用')}
-                      </button>
+                      {!isPending ? (
+                        <button
+                          onClick={() => withRowLoading(`${loadingPrefix}-toggle`, async () => {
+                            await api.updateAccountToken(token.id, { enabled: !token.enabled });
+                            toast.success(token.enabled ? '令牌已禁用' : '令牌已启用');
+                            await load();
+                          })}
+                          disabled={!!rowLoading[`${loadingPrefix}-toggle`]}
+                          className={`btn btn-link ${token.enabled ? 'btn-link-warning' : 'btn-link-primary'}`}
+                        >
+                          {rowLoading[`${loadingPrefix}-toggle`] ? <span className="spinner spinner-sm" /> : (token.enabled ? '禁用' : '启用')}
+                        </button>
+                      ) : null}
                       <button
                         onClick={() => setDeleteConfirm({ mode: 'single', tokenId: token.id, tokenName: token.name || '' })}
                         disabled={!!rowLoading[`${loadingPrefix}-delete`]}
@@ -1135,6 +1233,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
             <tbody>
               {accountClusteredTokens.map((token: any, i: number) => {
                 const loadingPrefix = `token-${token.id}`;
+                const isPending = isMaskedPendingToken(token);
                 return (
                   <tr
                     key={token.id}
@@ -1179,15 +1278,19 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                     <td>{token.account?.username || `account-${token.accountId}`}</td>
                     <td>{token.tokenGroup || 'default'}</td>
                     <td>
-                      <span className={`badge ${token.enabled ? 'badge-success' : 'badge-muted'}`} style={{ fontSize: 11 }}>
-                        {token.enabled ? '启用' : '禁用'}
-                      </span>
+                      {isPending ? (
+                        <span className="badge badge-warning" style={{ fontSize: 11 }}>待补全</span>
+                      ) : (
+                        <span className={`badge ${token.enabled ? 'badge-success' : 'badge-muted'}`} style={{ fontSize: 11 }}>
+                          {token.enabled ? '启用' : '禁用'}
+                        </span>
+                      )}
                     </td>
                     <td>{token.isDefault ? <span className="badge badge-warning" style={{ fontSize: 11 }}>默认</span> : '-'}</td>
                     <td style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{formatDateTimeLocal(token.updatedAt)}</td>
                     <td className="token-actions-cell" style={{ textAlign: 'right' }}>
                       <div className="token-table-actions">
-                        {!token.isDefault && (
+                        {!isPending && !token.isDefault && (
                           <button
                             onClick={() => withRowLoading(`${loadingPrefix}-default`, async () => {
                               await api.setDefaultAccountToken(token.id);
@@ -1200,31 +1303,35 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                             {rowLoading[`${loadingPrefix}-default`] ? <span className="spinner spinner-sm" /> : '设默认'}
                           </button>
                         )}
-                        <button
-                          onClick={() => handleCopyToken(token.id, token.name || '')}
-                          disabled={!!rowLoading[`${loadingPrefix}-copy`]}
-                          className="btn btn-link btn-link-primary token-table-action-btn"
-                          data-testid={`token-copy-${token.id}`}
-                        >
-                          {rowLoading[`${loadingPrefix}-copy`] ? <span className="spinner spinner-sm" /> : '复制'}
-                        </button>
+                        {!isPending ? (
+                          <button
+                            onClick={() => handleCopyToken(token.id, token.name || '')}
+                            disabled={!!rowLoading[`${loadingPrefix}-copy`]}
+                            className="btn btn-link btn-link-primary token-table-action-btn"
+                            data-testid={`token-copy-${token.id}`}
+                          >
+                            {rowLoading[`${loadingPrefix}-copy`] ? <span className="spinner spinner-sm" /> : '复制'}
+                          </button>
+                        ) : null}
                         <button
                           onClick={() => openEditPanel(token)}
                           className="btn btn-link btn-link-info token-table-action-btn"
                         >
-                          编辑
+                          {isPending ? '编辑补全' : '编辑'}
                         </button>
-                        <button
-                          onClick={() => withRowLoading(`${loadingPrefix}-toggle`, async () => {
-                            await api.updateAccountToken(token.id, { enabled: !token.enabled });
-                            toast.success(token.enabled ? '令牌已禁用' : '令牌已启用');
-                            await load();
-                          })}
-                          disabled={!!rowLoading[`${loadingPrefix}-toggle`]}
-                          className={`btn btn-link ${token.enabled ? 'btn-link-warning' : 'btn-link-primary'} token-table-action-btn`}
-                        >
-                          {rowLoading[`${loadingPrefix}-toggle`] ? <span className="spinner spinner-sm" /> : (token.enabled ? '禁用' : '启用')}
-                        </button>
+                        {!isPending ? (
+                          <button
+                            onClick={() => withRowLoading(`${loadingPrefix}-toggle`, async () => {
+                              await api.updateAccountToken(token.id, { enabled: !token.enabled });
+                              toast.success(token.enabled ? '令牌已禁用' : '令牌已启用');
+                              await load();
+                            })}
+                            disabled={!!rowLoading[`${loadingPrefix}-toggle`]}
+                            className={`btn btn-link ${token.enabled ? 'btn-link-warning' : 'btn-link-primary'} token-table-action-btn`}
+                          >
+                            {rowLoading[`${loadingPrefix}-toggle`] ? <span className="spinner spinner-sm" /> : (token.enabled ? '禁用' : '启用')}
+                          </button>
+                        ) : null}
                         <button
                           onClick={() => setDeleteConfirm({ mode: 'single', tokenId: token.id, tokenName: token.name || '' })}
                           disabled={!!rowLoading[`${loadingPrefix}-delete`]}

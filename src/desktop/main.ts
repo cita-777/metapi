@@ -21,6 +21,7 @@ import {
   resolveDesktopServerWorkingDir,
   waitForServerReady,
 } from './runtime.js';
+import { getDesktopRuntimeIconPath } from './iconAssets.js';
 
 const { autoUpdater } = electronUpdater;
 
@@ -51,7 +52,7 @@ function getServerEntryPath() {
 }
 
 function getTrayIconPath() {
-  return join(app.getAppPath(), 'dist', 'web', 'logo.png');
+  return getDesktopRuntimeIconPath(app.getAppPath());
 }
 
 function getWindowIconPath() {

@@ -18,6 +18,7 @@ import {
   withProxyLogSelectFields,
 } from '../../services/proxyLogStore.js';
 import { getCredentialModeFromExtraConfig } from '../../services/accountExtraConfig.js';
+import { ACCOUNT_TOKEN_VALUE_STATUS_READY } from '../../services/accountTokenService.js';
 import {
   formatLocalDateTime,
   formatUtcSqlDateTime,
@@ -724,6 +725,15 @@ export async function statsRoutes(app: FastifyInstance) {
       .innerJoin(schema.accountTokens, eq(schema.tokenModelAvailability.tokenId, schema.accountTokens.id))
       .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
       .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+      .where(
+        and(
+          eq(schema.tokenModelAvailability.available, true),
+          eq(schema.accountTokens.enabled, true),
+          eq(schema.accountTokens.valueStatus, ACCOUNT_TOKEN_VALUE_STATUS_READY),
+          eq(schema.accounts.status, 'active'),
+          eq(schema.sites.status, 'active'),
+        ),
+      )
       .all();
     const accountAvailability = await db.select().from(schema.modelAvailability)
       .innerJoin(schema.accounts, eq(schema.modelAvailability.accountId, schema.accounts.id))
@@ -989,6 +999,7 @@ export async function statsRoutes(app: FastifyInstance) {
         and(
           eq(schema.tokenModelAvailability.available, true),
           eq(schema.accountTokens.enabled, true),
+          eq(schema.accountTokens.valueStatus, ACCOUNT_TOKEN_VALUE_STATUS_READY),
           eq(schema.accounts.status, 'active'),
           eq(schema.sites.status, 'active'),
         ),

@@ -2,12 +2,17 @@
 import { and, eq } from 'drizzle-orm';
 import { db, schema } from '../../db/index.js';
 import {
+  ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING,
+  ACCOUNT_TOKEN_VALUE_STATUS_READY,
   ensureDefaultTokenForAccount,
+  isMaskedPendingAccountToken,
   isMaskedTokenValue,
+  isUsableAccountToken,
   listTokensWithRelations,
   normalizeTokenForDisplay,
   maskToken,
   repairDefaultToken,
+  resolveAccountTokenValueStatus,
   setDefaultToken,
   syncTokensFromUpstream,
 } from '../../services/accountTokenService.js';
@@ -38,7 +43,8 @@ type SyncExecutionResult = {
   synced: boolean;
   created: number;
   updated: number;
-  maskedSkipped?: number;
+  maskedPending?: number;
+  pendingTokenIds?: number[];
   total: number;
   defaultTokenId?: number | null;
 };
@@ -287,13 +293,13 @@ async function executeAccountTokenSync(row: AccountWithSiteRow): Promise<SyncExe
     }
 
     const synced = await syncTokensFromUpstream(accountId, tokens);
-    if ((synced.created + synced.updated) === 0 && synced.maskedSkipped > 0) {
+    if ((synced.maskedPending || 0) > 0) {
       return {
         ...base,
-        status: 'skipped',
+        status: 'synced',
         reason: 'upstream_masked_tokens',
-        message: `上游仅返回脱敏令牌（含*），跳过 ${synced.maskedSkipped} 条，无法同步明文令牌`,
-        synced: false,
+        message: `上游返回 ${synced.maskedPending} 条脱敏令牌，已保存为待补全记录，请手动补全明文 token。`,
+        synced: true,
         ...synced,
       };
     }
@@ -326,7 +332,7 @@ async function appendTokenSyncEvent(result: SyncExecutionResult) {
     ? 'info'
     : (result.status === 'skipped' ? 'warning' : 'error');
   const detail = result.status === 'synced'
-    ? `新增 ${result.created}，更新 ${result.updated}，总数 ${result.total}`
+    ? `新增 ${result.created}，更新 ${result.updated}，待补全 ${result.maskedPending || 0}，总数 ${result.total}`
     : (result.message || result.reason || 'sync skipped');
 
   try {
@@ -485,15 +491,25 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       const existing = await db.select().from(schema.accountTokens)
         .where(eq(schema.accountTokens.accountId, body.accountId))
         .all();
+      const valueStatus = isMaskedTokenValue(tokenValue)
+        ? ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING
+        : ACCOUNT_TOKEN_VALUE_STATUS_READY;
+      const enabled = valueStatus === ACCOUNT_TOKEN_VALUE_STATUS_READY
+        ? (body.enabled ?? true)
+        : false;
+      const isDefault = valueStatus === ACCOUNT_TOKEN_VALUE_STATUS_READY
+        ? (body.isDefault ?? false)
+        : false;
 
       const inserted = await db.insert(schema.accountTokens).values({
         accountId: body.accountId,
         name: (body.name || '').trim() || (existing.length === 0 ? 'default' : `token-${existing.length + 1}`),
         token: tokenValue,
         tokenGroup: (body.group || '').trim() || null,
+        valueStatus,
         source: body.source || 'manual',
-        enabled: body.enabled ?? true,
-        isDefault: body.isDefault ?? false,
+        enabled,
+        isDefault,
         createdAt: now,
         updatedAt: now,
       }).run();
@@ -506,9 +522,9 @@ export async function accountTokensRoutes(app: FastifyInstance) {
         return reply.code(500).send({ success: false, message: '创建令牌失败' });
       }
 
-      if (body.isDefault || (existing.length === 0 && (body.enabled ?? true))) {
+      if (valueStatus === ACCOUNT_TOKEN_VALUE_STATUS_READY && (body.isDefault || (existing.length === 0 && enabled))) {
         await setDefaultToken(created.id);
-      } else if (existing.every((token) => !token.isDefault) && (body.enabled ?? true)) {
+      } else if (valueStatus === ACCOUNT_TOKEN_VALUE_STATUS_READY && existing.every((token) => !token.isDefault) && enabled) {
         await setDefaultToken(created.id);
       }
       const coverageRefresh = await refreshCoverageForAccounts([body.accountId]);
@@ -629,7 +645,10 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     const account = row.accounts;
     const site = row.sites;
     const adapter = getAdapter(site.platform);
-    const shouldDeleteUpstream = !isSiteDisabled(site.status) && !!account.accessToken?.trim() && !!adapter;
+    const shouldDeleteUpstream = !isMaskedPendingAccountToken(existing)
+      && !isSiteDisabled(site.status)
+      && !!account.accessToken?.trim()
+      && !!adapter;
 
     if (shouldDeleteUpstream) {
       const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
@@ -690,6 +709,10 @@ export async function accountTokensRoutes(app: FastifyInstance) {
             continue;
           }
         } else {
+          if (isMaskedPendingAccountToken(existing)) {
+            failedItems.push({ id, message: '待补全令牌不能修改启用状态，请先补全明文 token' });
+            continue;
+          }
           await db.update(schema.accountTokens)
             .set({
               enabled: action === 'enable',
@@ -736,6 +759,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
 
     const body = request.body;
     const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
+    let nextValueStatus = resolveAccountTokenValueStatus(existing);
 
     if (body.name !== undefined) {
       updates.name = (body.name || '').trim() || existing.name;
@@ -747,15 +771,24 @@ export async function accountTokensRoutes(app: FastifyInstance) {
         return reply.code(400).send({ success: false, message: '令牌不能为空' });
       }
       updates.token = tokenValue;
+      nextValueStatus = isMaskedTokenValue(tokenValue)
+        ? ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING
+        : ACCOUNT_TOKEN_VALUE_STATUS_READY;
+      updates.valueStatus = nextValueStatus;
     }
 
     if (body.group !== undefined) {
       updates.tokenGroup = (body.group || '').trim() || null;
     }
 
-    if (body.enabled !== undefined) updates.enabled = body.enabled;
+    if (nextValueStatus === ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING) {
+      updates.enabled = false;
+      updates.isDefault = false;
+    } else {
+      if (body.enabled !== undefined) updates.enabled = body.enabled;
+      if (body.isDefault !== undefined) updates.isDefault = body.isDefault;
+    }
     if (body.source !== undefined) updates.source = body.source;
-    if (body.isDefault !== undefined) updates.isDefault = body.isDefault;
 
     await db.update(schema.accountTokens).set(updates).where(eq(schema.accountTokens.id, tokenId)).run();
 
@@ -764,11 +797,11 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       return reply.code(500).send({ success: false, message: '更新失败' });
     }
 
-    if (body.isDefault === true) {
+    if (body.isDefault === true && isUsableAccountToken(latest)) {
       setDefaultToken(tokenId);
-    } else if (latest.isDefault && latest.enabled) {
+    } else if (latest.isDefault && isUsableAccountToken(latest)) {
       setDefaultToken(tokenId);
-    } else if (existing.isDefault && !latest.enabled) {
+    } else if (existing.isDefault && !isUsableAccountToken(latest)) {
       repairDefaultToken(existing.accountId);
     } else if (body.isDefault === false && existing.isDefault) {
       repairDefaultToken(existing.accountId);
@@ -792,6 +825,9 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     }
     if (isApiKeyConnection(owner)) {
       return reply.code(400).send({ success: false, message: 'API Key 连接不支持管理账号令牌' });
+    }
+    if (isMaskedPendingAccountToken(tokenRow)) {
+      return reply.code(400).send({ success: false, message: '待补全令牌不能设为默认，请先补全明文 token' });
     }
     const success = await setDefaultToken(tokenId);
     if (!success) {
@@ -820,7 +856,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: 'API Key 连接不支持管理账号令牌' });
     }
 
-    if (isMaskedTokenValue(row.account_tokens.token)) {
+    if (isMaskedPendingAccountToken(row.account_tokens) || isMaskedTokenValue(row.account_tokens.token)) {
       return reply.code(409).send({
         success: false,
         message: '当前仅保存了脱敏令牌，无法展开/复制。请在站点重新生成并同步，或手动更新为完整令牌。',

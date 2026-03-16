@@ -3,6 +3,7 @@ import { act, create, type ReactTestInstance } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
 import Accounts from './Accounts.js';
+import { TokensPanel } from './Tokens.js';
 
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
@@ -11,6 +12,7 @@ const { apiMock } = vi.hoisted(() => ({
     getAccountTokens: vi.fn(),
     getAccountTokenValue: vi.fn(),
     getAccountTokenGroups: vi.fn(),
+    syncAccountTokens: vi.fn(),
     updateAccountToken: vi.fn(),
   },
 }));
@@ -41,6 +43,26 @@ function buildRoot() {
     <MemoryRouter initialEntries={['/accounts?segment=tokens']}>
       <ToastProvider>
         <Accounts />
+      </ToastProvider>
+    </MemoryRouter>,
+    {
+      createNodeMock: (element) => {
+        if (element.type === 'tr' || element.type === 'div') {
+          return {
+            scrollIntoView: () => undefined,
+          };
+        }
+        return {};
+      },
+    },
+  );
+}
+
+function buildTokensRoot() {
+  return create(
+    <MemoryRouter initialEntries={['/accounts?segment=tokens']}>
+      <ToastProvider>
+        <TokensPanel />
       </ToastProvider>
     </MemoryRouter>,
     {
@@ -87,6 +109,7 @@ describe('Tokens edit modal and row selection', () => {
         id: 22,
         name: 'focus-token',
         tokenMasked: 'sk-focus****',
+        valueStatus: 'ready',
         enabled: true,
         isDefault: false,
         updatedAt: '2026-03-07 10:00:00',
@@ -105,6 +128,13 @@ describe('Tokens edit modal and row selection', () => {
     });
     apiMock.updateAccountToken.mockResolvedValue({
       success: true,
+    });
+    apiMock.syncAccountTokens.mockResolvedValue({
+      success: true,
+      synced: true,
+      status: 'synced',
+      created: 0,
+      updated: 0,
     });
   });
 
@@ -224,6 +254,135 @@ describe('Tokens edit modal and row selection', () => {
       await flushMicrotasks();
 
       expect(apiMock.getAccountTokenGroups).toHaveBeenCalledTimes(1);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('shows placeholder guidance and saves masked_pending tokens as ready values', async () => {
+    apiMock.getAccountTokens.mockResolvedValue([
+      {
+        id: 33,
+        name: 'masked-token',
+        tokenMasked: 'sk-abc***xyz',
+        valueStatus: 'masked_pending',
+        enabled: false,
+        isDefault: false,
+        updatedAt: '2026-03-16 08:00:00',
+        accountId: 1,
+        account: { username: 'session-user' },
+        site: { name: 'Session Site', url: 'https://session.example.com' },
+      },
+    ]);
+    apiMock.getAccountTokenValue.mockRejectedValueOnce(new Error('当前仅保存了脱敏令牌，无法展开/复制。请在站点重新生成并同步，或手动更新为完整令牌。'));
+
+    let root: ReturnType<typeof create> | null = null;
+    try {
+      await act(async () => {
+        root = buildTokensRoot();
+      });
+      await flushMicrotasks();
+
+      const rendered = JSON.stringify(root.toJSON());
+      expect(rendered).toContain('待补全');
+      expect(rendered).not.toContain('复制');
+      expect(rendered).not.toContain('设默认');
+
+      const editButton = root.root
+        .findAll((node) => node.type === 'button')
+        .find((node) => collectText(node).includes('编辑'));
+      expect(editButton).toBeTruthy();
+
+      await act(async () => {
+        editButton!.props.onClick({ stopPropagation: () => undefined });
+      });
+      await flushMicrotasks();
+      await flushMicrotasks();
+
+      const afterOpen = JSON.stringify(root.toJSON());
+      expect(afterOpen).toContain('请粘贴完整明文 token');
+      expect(afterOpen).toContain('编辑令牌');
+
+      const textarea = root.root.findAll((node) => node.type === 'textarea')[0];
+      expect(textarea).toBeTruthy();
+
+      await act(async () => {
+        textarea.props.onChange({ target: { value: 'sk-complete-real-token' } });
+      });
+      await flushMicrotasks();
+
+      const saveButton = root.root
+        .findAll((node) => node.type === 'button')
+        .find((node) => collectText(node).includes('保存修改'));
+      expect(saveButton).toBeTruthy();
+
+      await act(async () => {
+        saveButton!.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.updateAccountToken).toHaveBeenCalledWith(33, expect.objectContaining({
+        token: 'sk-complete-real-token',
+        enabled: true,
+      }));
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('opens the placeholder edit modal automatically after a sync creates one pending token', async () => {
+    apiMock.getAccountTokens.mockResolvedValue([
+      {
+        id: 44,
+        name: 'masked-after-sync',
+        tokenMasked: 'sk-xyz***123',
+        valueStatus: 'masked_pending',
+        enabled: false,
+        isDefault: false,
+        updatedAt: '2026-03-16 09:00:00',
+        accountId: 1,
+        account: { username: 'session-user' },
+        site: { name: 'Session Site', url: 'https://session.example.com' },
+      },
+    ]);
+    apiMock.syncAccountTokens.mockResolvedValueOnce({
+      success: true,
+      synced: true,
+      status: 'synced',
+      reason: 'upstream_masked_tokens',
+      message: '上游返回 1 条脱敏令牌，已保存为待补全记录，请手动补全明文 token。',
+      maskedPending: 1,
+      pendingTokenIds: [44],
+      created: 1,
+      updated: 0,
+    });
+    apiMock.getAccountTokenValue.mockRejectedValueOnce(new Error('当前仅保存了脱敏令牌，无法展开/复制。请在站点重新生成并同步，或手动更新为完整令牌。'));
+
+    let root: ReturnType<typeof create> | null = null;
+    try {
+      await act(async () => {
+        root = buildTokensRoot();
+      });
+      await flushMicrotasks();
+
+      const syncButton = root.root
+        .findAll((node) => node.type === 'button')
+        .find((node) => collectText(node).trim() === '同步站点令牌');
+      expect(syncButton).toBeTruthy();
+
+      await act(async () => {
+        await syncButton!.props.onClick();
+      });
+      await flushMicrotasks();
+      await flushMicrotasks();
+      await flushMicrotasks();
+
+      const rendered = JSON.stringify(root.toJSON());
+      expect(rendered).toContain('编辑令牌');
+      expect(rendered).toContain('请粘贴完整明文 token');
+      expect(rendered).toContain('上游返回 1 条脱敏令牌');
+      expect(apiMock.syncAccountTokens).toHaveBeenCalledWith(1);
+      expect(apiMock.getAccountTokenGroups).toHaveBeenCalledWith(1);
     } finally {
       root?.unmount();
     }

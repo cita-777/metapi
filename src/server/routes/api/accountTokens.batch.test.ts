@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { eq } from 'drizzle-orm';
 
 const { deleteApiTokenMock } = vi.hoisted(() => ({
   deleteApiTokenMock: vi.fn(),
@@ -103,6 +104,43 @@ describe('account token batch routes', () => {
 
     const rows = await db.select().from(schema.accountTokens).all();
     expect(rows.every((row) => row.enabled === true)).toBe(true);
+  });
+
+  it('rejects enabling masked_pending placeholders until they are completed', async () => {
+    await db.update(schema.accountTokens)
+      .set({
+        enabled: false,
+        valueStatus: 'masked_pending' as any,
+        token: 'sk-mask***tail',
+      })
+      .where(eq(schema.accountTokens.id, 1))
+      .run();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/account-tokens/batch',
+      payload: {
+        ids: [1, 2],
+        action: 'enable',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      successIds?: number[];
+      failedItems?: Array<{ id: number; message: string }>;
+    };
+    expect(body.successIds).toEqual([2]);
+    expect(body.failedItems).toEqual([
+      expect.objectContaining({
+        id: 1,
+        message: expect.stringContaining('待补全令牌'),
+      }),
+    ]);
+
+    const rows = await db.select().from(schema.accountTokens).all();
+    expect(rows.find((row) => row.id === 1)?.enabled).toBe(false);
+    expect(rows.find((row) => row.id === 2)?.enabled).toBe(true);
   });
 
   it('deletes selected account tokens through the upstream adapter', async () => {

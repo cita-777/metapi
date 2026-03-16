@@ -2,6 +2,10 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import { db, schema } from '../../db/index.js';
 import { rebuildTokenRoutesFromAvailability, refreshModelsAndRebuildRoutes } from '../../services/modelService.js';
+import {
+  ACCOUNT_TOKEN_VALUE_STATUS_READY,
+  isUsableAccountToken,
+} from '../../services/accountTokenService.js';
 import { normalizeRouteRoutingStrategy } from '../../services/routeRoutingStrategy.js';
 import { invalidateTokenRouterCache, matchesModelPattern, tokenRouter } from '../../services/tokenRouter.js';
 import { startBackgroundTask } from '../../services/backgroundTaskService.js';
@@ -21,9 +25,14 @@ function isExactModelPattern(modelPattern: string): boolean {
 
 async function getDefaultTokenId(accountId: number): Promise<number | null> {
   const token = await db.select().from(schema.accountTokens)
-    .where(and(eq(schema.accountTokens.accountId, accountId), eq(schema.accountTokens.enabled, true), eq(schema.accountTokens.isDefault, true)))
+    .where(and(
+      eq(schema.accountTokens.accountId, accountId),
+      eq(schema.accountTokens.enabled, true),
+      eq(schema.accountTokens.isDefault, true),
+      eq(schema.accountTokens.valueStatus, ACCOUNT_TOKEN_VALUE_STATUS_READY),
+    ))
     .get();
-  return token?.id ?? null;
+  return isUsableAccountToken(token ?? null) ? token!.id : null;
 }
 
 function canonicalModelAlias(modelName: string): string {
@@ -62,7 +71,7 @@ async function checkTokenBelongsToAccount(tokenId: number, accountId: number): P
   const row = await db.select().from(schema.accountTokens)
     .where(and(eq(schema.accountTokens.id, tokenId), eq(schema.accountTokens.accountId, accountId)))
     .get();
-  return !!row;
+  return isUsableAccountToken(row ?? null);
 }
 
 async function getPatternTokenCandidates(modelPattern: string): Promise<Array<{ tokenId: number; accountId: number; sourceModel: string }>> {
@@ -74,6 +83,7 @@ async function getPatternTokenCandidates(modelPattern: string): Promise<Array<{ 
       and(
         eq(schema.tokenModelAvailability.available, true),
         eq(schema.accountTokens.enabled, true),
+        eq(schema.accountTokens.valueStatus, ACCOUNT_TOKEN_VALUE_STATUS_READY),
         eq(schema.accounts.status, 'active'),
         eq(schema.sites.status, 'active'),
       ),
@@ -82,6 +92,7 @@ async function getPatternTokenCandidates(modelPattern: string): Promise<Array<{ 
 
   const result: Array<{ tokenId: number; accountId: number; sourceModel: string }> = [];
   for (const row of rows) {
+    if (!isUsableAccountToken(row.account_tokens)) continue;
     const modelName = row.token_model_availability.modelName?.trim();
     if (!modelName) continue;
     if (!matchesModelPattern(modelName, modelPattern)) continue;

@@ -61,6 +61,12 @@
           "notNull": false,
           "defaultValue": null,
           "primaryKey": false
+        },
+        "value_status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'ready'",
+          "primaryKey": false
         }
       }
     },

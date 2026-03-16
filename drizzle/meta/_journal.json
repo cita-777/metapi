@@ -78,6 +78,13 @@
       "when": 1773605400000,
       "tag": "0011_downstream_api_key_metadata",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1773665311013,
+      "tag": "0012_account_token_value_status",
+      "breakpoints": true
     }
   ]
 }

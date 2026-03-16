@@ -208,6 +208,64 @@ describe('sqlite migrate bootstrap', () => {
     sqlite.close();
   });
 
+  it('recovers duplicate-column errors when the failed SQL contains quoted literals', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-recover-quoted-'));
+    process.env.DATA_DIR = dataDir;
+    vi.resetModules();
+
+    const migrateModule = await import('./migrate.js');
+    const { __migrateTestUtils } = migrateModule;
+
+    const sqlite = new Database(':memory:');
+    sqlite.exec(`
+      CREATE TABLE account_tokens (
+        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        value_status text DEFAULT 'ready' NOT NULL
+      );
+    `);
+
+    const tempMigrationsDir = mkdtempSync(join(tmpdir(), 'metapi-migration-files-quoted-'));
+    mkdirSync(join(tempMigrationsDir, 'meta'), { recursive: true });
+
+    writeFileSync(
+      join(tempMigrationsDir, 'meta', '_journal.json'),
+      JSON.stringify({
+        entries: [
+          {
+            tag: '0012_account_token_value_status',
+            when: 1773665311013,
+          },
+        ],
+      }),
+    );
+
+    writeFileSync(
+      join(tempMigrationsDir, '0012_account_token_value_status.sql'),
+      "ALTER TABLE `account_tokens` ADD `value_status` text DEFAULT 'ready' NOT NULL;\n",
+    );
+
+    const duplicateColumnError = new Error(
+      "DrizzleError: Failed to run the query 'ALTER TABLE `account_tokens` ADD `value_status` text DEFAULT 'ready' NOT NULL;\n' duplicate column name: value_status",
+    );
+
+    const recovered = __migrateTestUtils.tryRecoverDuplicateColumnMigrationError(
+      sqlite,
+      tempMigrationsDir,
+      duplicateColumnError,
+    );
+
+    expect(recovered).toBe(true);
+
+    const applied = sqlite
+      .prepare('SELECT hash, created_at FROM __drizzle_migrations')
+      .all() as Array<{ hash: string; created_at: number }>;
+
+    expect(applied).toHaveLength(1);
+    expect(Number(applied[0].created_at)).toBe(1773665311013);
+
+    sqlite.close();
+  });
+
   it('recovers duplicate-column errors inside multi-statement migrations by replaying the full migration', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-recover-multi-'));
     process.env.DATA_DIR = dataDir;
@@ -285,6 +343,7 @@ describe('sqlite migrate bootstrap', () => {
       '0009_model_availability_is_manual',
       '0010_proxy_logs_downstream_api_key',
       '0011_downstream_api_key_metadata',
+      '0012_account_token_value_status',
     ]);
     const appliedEntries = journalEntries.filter((entry) => !missingTags.has(entry.tag));
 

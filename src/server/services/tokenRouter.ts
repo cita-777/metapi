@@ -9,6 +9,7 @@ import {
   type RouteRoutingStrategy,
 } from './routeRoutingStrategy.js';
 import { type DownstreamRoutingPolicy, EMPTY_DOWNSTREAM_ROUTING_POLICY } from './downstreamPolicyTypes.js';
+import { isUsableAccountToken } from './accountTokenService.js';
 
 interface RouteMatch {
   route: typeof schema.tokenRoutes.$inferSelect;
@@ -1035,7 +1036,7 @@ export class TokenRouter {
   }): string | null {
     if (candidate.channel.tokenId) {
       if (!candidate.token) return null;
-      if (!candidate.token.enabled) return null;
+      if (!isUsableAccountToken(candidate.token)) return null;
       const token = candidate.token.token?.trim();
       return token ? token : null;
     }

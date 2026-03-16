@@ -1,7 +1,13 @@
 import { and, eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { getAdapter } from './platforms/index.js';
-import { ensureDefaultTokenForAccount, getPreferredAccountToken } from './accountTokenService.js';
+import {
+  ACCOUNT_TOKEN_VALUE_STATUS_READY,
+  ensureDefaultTokenForAccount,
+  getPreferredAccountToken,
+  isMaskedTokenValue,
+  isUsableAccountToken,
+} from './accountTokenService.js';
 import { getCredentialModeFromExtraConfig, resolvePlatformUserId } from './accountExtraConfig.js';
 import { invalidateTokenRouterCache } from './tokenRouter.js';
 import { setAccountRuntimeHealth } from './accountHealthService.js';
@@ -256,20 +262,27 @@ export async function refreshModelsForAccount(accountId: number): Promise<ModelR
         API_TOKEN_DISCOVERY_TIMEOUT_MS,
         `api token discovery timeout (${Math.round(API_TOKEN_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
       );
-      if (discoveredApiToken) {
+      if (discoveredApiToken && !isMaskedTokenValue(discoveredApiToken)) {
         ensureDefaultTokenForAccount(account.id, discoveredApiToken, { name: 'default', source: 'sync' });
         await db.update(schema.accounts).set({
           apiToken: discoveredApiToken,
           updatedAt: new Date().toISOString(),
         }).where(eq(schema.accounts.id, account.id)).run();
+      } else {
+        discoveredApiToken = null;
       }
     } catch { }
   }
 
   let enabledTokens = await db.select()
     .from(schema.accountTokens)
-    .where(and(eq(schema.accountTokens.accountId, account.id), eq(schema.accountTokens.enabled, true)))
+    .where(and(
+      eq(schema.accountTokens.accountId, account.id),
+      eq(schema.accountTokens.enabled, true),
+      eq(schema.accountTokens.valueStatus, ACCOUNT_TOKEN_VALUE_STATUS_READY),
+    ))
     .all();
+  enabledTokens = enabledTokens.filter(isUsableAccountToken);
 
   // Last fallback: if still no managed token but account has a legacy apiToken, mirror it into token table.
   if (!isApiKeyConnection(account) && enabledTokens.length === 0) {
@@ -278,8 +291,13 @@ export async function refreshModelsForAccount(accountId: number): Promise<ModelR
       ensureDefaultTokenForAccount(account.id, fallback, { name: 'default', source: 'legacy' });
       enabledTokens = await db.select()
         .from(schema.accountTokens)
-        .where(and(eq(schema.accountTokens.accountId, account.id), eq(schema.accountTokens.enabled, true)))
+        .where(and(
+          eq(schema.accountTokens.accountId, account.id),
+          eq(schema.accountTokens.enabled, true),
+          eq(schema.accountTokens.valueStatus, ACCOUNT_TOKEN_VALUE_STATUS_READY),
+        ))
         .all();
+      enabledTokens = enabledTokens.filter(isUsableAccountToken);
     }
   }
 
@@ -310,6 +328,7 @@ export async function refreshModelsForAccount(accountId: number): Promise<ModelR
   const discoverModelsWithCredential = async (credentialRaw: string | null | undefined) => {
     const credential = (credentialRaw || '').trim();
     if (!credential) return;
+    if (isMaskedTokenValue(credential)) return;
     if (attemptedCredentials.has(credential)) return;
     attemptedCredentials.add(credential);
 
@@ -446,11 +465,13 @@ export async function rebuildTokenRoutesFromAvailability() {
       and(
         eq(schema.tokenModelAvailability.available, true),
         eq(schema.accountTokens.enabled, true),
+        eq(schema.accountTokens.valueStatus, ACCOUNT_TOKEN_VALUE_STATUS_READY),
         eq(schema.accounts.status, 'active'),
         eq(schema.sites.status, 'active'),
       ),
     )
     .all();
+  const usableTokenRows = tokenRows.filter((row) => isUsableAccountToken(row.account_tokens));
 
   const accountRows = await db.select().from(schema.modelAvailability)
     .innerJoin(schema.accounts, eq(schema.modelAvailability.accountId, schema.accounts.id))
@@ -487,7 +508,7 @@ export async function rebuildTokenRoutesFromAvailability() {
     modelCandidates.get(modelName)!.set(candidateKey, { accountId, tokenId });
   };
 
-  for (const row of tokenRows) {
+  for (const row of usableTokenRows) {
     addModelCandidate(row.token_model_availability.modelName, row.accounts.id, row.account_tokens.id, row.accounts.siteId);
   }
 

@@ -9,6 +9,14 @@ type UpstreamApiToken = {
   tokenGroup?: string | null;
 };
 
+type AccountTokenRow = typeof schema.accountTokens.$inferSelect;
+
+export const ACCOUNT_TOKEN_VALUE_STATUS_READY = 'ready' as const;
+export const ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING = 'masked_pending' as const;
+export type AccountTokenValueStatus =
+  | typeof ACCOUNT_TOKEN_VALUE_STATUS_READY
+  | typeof ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING;
+
 export function normalizeTokenForDisplay(token?: string | null, platform?: string | null): string {
   if (!token) return '';
   const value = token.trim();
@@ -52,6 +60,45 @@ export function isMaskedTokenValue(token: string | null | undefined): boolean {
   return value.includes('*') || value.includes('•');
 }
 
+function normalizeTokenValueStatus(value: string | null | undefined): AccountTokenValueStatus {
+  const normalized = (value || '').trim().toLowerCase();
+  return normalized === ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING
+    ? ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING
+    : ACCOUNT_TOKEN_VALUE_STATUS_READY;
+}
+
+export function resolveAccountTokenValueStatus(
+  value: Pick<AccountTokenRow, 'token' | 'valueStatus'> | string | null | undefined,
+): AccountTokenValueStatus {
+  if (typeof value === 'string' || value == null) {
+    return normalizeTokenValueStatus(value);
+  }
+
+  const explicit = normalizeTokenValueStatus(value.valueStatus);
+  if (explicit === ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING) {
+    return ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING;
+  }
+  return isMaskedTokenValue(value.token)
+    ? ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING
+    : ACCOUNT_TOKEN_VALUE_STATUS_READY;
+}
+
+export function isReadyAccountToken(token: Pick<AccountTokenRow, 'token' | 'valueStatus'> | null | undefined): boolean {
+  if (!token) return false;
+  return resolveAccountTokenValueStatus(token) === ACCOUNT_TOKEN_VALUE_STATUS_READY
+    && !isMaskedTokenValue(token.token);
+}
+
+export function isMaskedPendingAccountToken(token: Pick<AccountTokenRow, 'token' | 'valueStatus'> | null | undefined): boolean {
+  if (!token) return false;
+  return resolveAccountTokenValueStatus(token) === ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING;
+}
+
+export function isUsableAccountToken(token: AccountTokenRow | null | undefined): boolean {
+  if (!token) return false;
+  return token.enabled === true && isReadyAccountToken(token);
+}
+
 function normalizeTokenGroup(value: string | null | undefined, tokenName?: string | null): string | null {
   const explicit = (value || '').trim();
   if (explicit.length > 0) return explicit;
@@ -64,6 +111,15 @@ function normalizeTokenGroup(value: string | null | undefined, tokenName?: strin
   }
   if (/^token-\d+$/.test(normalized)) return null;
   return name;
+}
+
+function sameTokenGroup(
+  leftGroup: string | null | undefined,
+  leftName: string | null | undefined,
+  rightGroup: string | null | undefined,
+  rightName: string | null | undefined,
+): boolean {
+  return normalizeTokenGroup(leftGroup, leftName) === normalizeTokenGroup(rightGroup, rightName);
 }
 
 async function updateAccountApiToken(accountId: number, tokenValue: string | null) {
@@ -85,9 +141,10 @@ export async function getPreferredAccountToken(accountId: number) {
     .where(and(eq(schema.accountTokens.accountId, accountId), eq(schema.accountTokens.enabled, true)))
     .all();
 
-  if (tokens.length === 0) return null;
+  const usableTokens = tokens.filter(isUsableAccountToken);
+  if (usableTokens.length === 0) return null;
 
-  const preferred = tokens.find((t) => t.isDefault) || tokens[0];
+  const preferred = usableTokens.find((t) => t.isDefault) || usableTokens[0];
   return preferred;
 }
 
@@ -98,6 +155,7 @@ export async function ensureDefaultTokenForAccount(
 ): Promise<number | null> {
   const normalizedToken = normalizeTokenValue(tokenValue);
   if (!normalizedToken) return null;
+  if (isMaskedTokenValue(normalizedToken)) return null;
   const tokenGroup = normalizeTokenGroup(options?.tokenGroup, options?.name) || 'default';
 
   const now = new Date().toISOString();
@@ -114,6 +172,7 @@ export async function ensureDefaultTokenForAccount(
         name: normalizeTokenName(options?.name, tokens.length + 1),
         token: normalizedToken,
         tokenGroup,
+        valueStatus: ACCOUNT_TOKEN_VALUE_STATUS_READY,
         source: options?.source || 'manual',
         enabled: options?.enabled ?? true,
         isDefault: true,
@@ -131,6 +190,7 @@ export async function ensureDefaultTokenForAccount(
       .set({
         name: options?.name ? normalizeTokenName(options.name) : target.name,
         tokenGroup,
+        valueStatus: ACCOUNT_TOKEN_VALUE_STATUS_READY,
         source: options?.source || target.source || 'manual',
         enabled: options?.enabled ?? target.enabled,
         isDefault: true,
@@ -151,7 +211,7 @@ export async function ensureDefaultTokenForAccount(
 
 export async function setDefaultToken(tokenId: number): Promise<boolean> {
   const target = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, tokenId)).get();
-  if (!target) return false;
+  if (!target || !isUsableAccountToken(target)) return false;
 
   const now = new Date().toISOString();
   await db.update(schema.accountTokens)
@@ -174,7 +234,7 @@ export async function repairDefaultToken(accountId: number) {
     .where(eq(schema.accountTokens.accountId, accountId))
     .all();
 
-  const enabled = tokens.filter((t) => t.enabled);
+  const enabled = tokens.filter(isUsableAccountToken);
   if (enabled.length === 0) {
     await updateAccountApiToken(accountId, null);
     return null;
@@ -206,27 +266,30 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
 
   let created = 0;
   let updated = 0;
-  let maskedSkipped = 0;
+  let maskedPending = 0;
+  const pendingTokenIds: number[] = [];
   let index = existing.length + 1;
 
   for (const upstream of upstreamTokens) {
     const tokenValue = normalizeTokenValue(upstream.key);
     if (!tokenValue) continue;
-    if (isMaskedTokenValue(tokenValue)) {
-      maskedSkipped++;
-      continue;
-    }
-
     const tokenName = normalizeTokenName(upstream.name, index);
     const enabled = upstream.enabled ?? true;
     const tokenGroup = normalizeTokenGroup(upstream.tokenGroup, tokenName);
+    const nextValueStatus = isMaskedTokenValue(tokenValue)
+      ? ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING
+      : ACCOUNT_TOKEN_VALUE_STATUS_READY;
 
-    const byToken = existing.find((row) => row.token === tokenValue);
+    const byToken = existing.find((row) => (
+      row.token === tokenValue
+      && resolveAccountTokenValueStatus(row) === ACCOUNT_TOKEN_VALUE_STATUS_READY
+    ));
     if (byToken) {
       await db.update(schema.accountTokens)
         .set({
           name: tokenName,
           tokenGroup,
+          valueStatus: ACCOUNT_TOKEN_VALUE_STATUS_READY,
           source: 'sync',
           enabled,
           updatedAt: now,
@@ -235,10 +298,48 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
         .run();
       byToken.name = tokenName;
       byToken.tokenGroup = tokenGroup;
+      byToken.valueStatus = ACCOUNT_TOKEN_VALUE_STATUS_READY;
       byToken.enabled = enabled;
       byToken.source = 'sync';
       byToken.updatedAt = now;
       updated++;
+      continue;
+    }
+
+    const matchingPlaceholder = existing.find((row) => (
+      isMaskedPendingAccountToken(row)
+      && row.name === tokenName
+      && sameTokenGroup(row.tokenGroup, row.name, tokenGroup, tokenName)
+    ));
+
+    if (matchingPlaceholder) {
+      const nextEnabled = nextValueStatus === ACCOUNT_TOKEN_VALUE_STATUS_READY ? enabled : false;
+      await db.update(schema.accountTokens)
+        .set({
+          name: tokenName,
+          token: tokenValue,
+          tokenGroup,
+          valueStatus: nextValueStatus,
+          source: 'sync',
+          enabled: nextEnabled,
+          isDefault: false,
+          updatedAt: now,
+        })
+        .where(eq(schema.accountTokens.id, matchingPlaceholder.id))
+        .run();
+      matchingPlaceholder.name = tokenName;
+      matchingPlaceholder.token = tokenValue;
+      matchingPlaceholder.tokenGroup = tokenGroup;
+      matchingPlaceholder.valueStatus = nextValueStatus;
+      matchingPlaceholder.source = 'sync';
+      matchingPlaceholder.enabled = nextEnabled;
+      matchingPlaceholder.isDefault = false;
+      matchingPlaceholder.updatedAt = now;
+      updated++;
+      if (nextValueStatus === ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING) {
+        maskedPending++;
+        pendingTokenIds.push(matchingPlaceholder.id);
+      }
       continue;
     }
 
@@ -248,8 +349,9 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
         name: tokenName,
         token: tokenValue,
         tokenGroup,
+        valueStatus: nextValueStatus,
         source: 'sync',
-        enabled,
+        enabled: nextValueStatus === ACCOUNT_TOKEN_VALUE_STATUS_READY ? enabled : false,
         isDefault: false,
         createdAt: now,
         updatedAt: now,
@@ -263,6 +365,10 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
     existing.push(createdRow);
     created++;
     index++;
+    if (nextValueStatus === ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING) {
+      maskedPending++;
+      pendingTokenIds.push(createdRow.id);
+    }
   }
 
   const repaired = await repairDefaultToken(accountId);
@@ -270,7 +376,8 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
   return {
     created,
     updated,
-    maskedSkipped,
+    maskedPending,
+    pendingTokenIds,
     total: existing.length,
     defaultTokenId: repaired?.id || null,
   };
@@ -292,6 +399,7 @@ export async function listTokensWithRelations(accountId?: number) {
     const { token, ...tokenMeta } = row.account_tokens;
     return {
       ...tokenMeta,
+      valueStatus: resolveAccountTokenValueStatus(row.account_tokens),
       tokenMasked: maskToken(token, row.sites.platform),
       account: {
         id: row.accounts.id,
