@@ -258,13 +258,6 @@ async function handleChatProxyRequest(
       const successfulUpstreamPath = endpointResult.upstreamPath;
 
       if (isStream) {
-        reply.hijack();
-        reply.raw.statusCode = 200;
-        reply.raw.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-        reply.raw.setHeader('Cache-Control', 'no-cache, no-transform');
-        reply.raw.setHeader('Connection', 'keep-alive');
-        reply.raw.setHeader('X-Accel-Buffering', 'no');
-
         let parsedUsage: ReturnType<typeof parseProxyUsage> = {
           promptTokens: 0,
           completionTokens: 0,
@@ -274,10 +267,9 @@ async function handleChatProxyRequest(
           promptTokensIncludeCache: null,
         };
 
+        const outputChunks: string[] = [];
         const writeLines = (lines: string[]) => {
-          for (const line of lines) {
-            reply.raw.write(line);
-          }
+          outputChunks.push(...lines);
         };
         const streamSession = openAiChatTransformer.proxyStream.createSession({
           downstreamFormat,
@@ -289,73 +281,85 @@ async function handleChatProxyRequest(
           },
           writeLines,
           writeRaw: (chunk) => {
-            reply.raw.write(chunk);
+            outputChunks.push(chunk);
           },
         });
 
         const upstreamContentType = (upstream.headers.get('content-type') || '').toLowerCase();
+        let rawText = '';
+
         if (!upstreamContentType.includes('text/event-stream')) {
-          const fallbackText = await upstream.text();
+          rawText = await upstream.text();
           let fallbackData: unknown = null;
           try {
-            fallbackData = JSON.parse(fallbackText);
+            fallbackData = JSON.parse(rawText);
           } catch {
-            fallbackData = fallbackText;
+            fallbackData = rawText;
           }
-          streamSession.consumeUpstreamFinalPayload(fallbackData, fallbackText, reply.raw);
+          streamSession.consumeUpstreamFinalPayload(fallbackData, rawText);
+        } else {
+          rawText = await upstream.text();
 
-          const latency = Date.now() - startTime;
-          const resolvedUsage = await resolveProxyUsageWithSelfLogFallback({
-            site: selected.site,
-            account: selected.account,
-            tokenValue: selected.tokenValue,
-            tokenName: selected.tokenName,
-            modelName,
-            requestStartedAtMs: startTime,
-            requestEndedAtMs: startTime + latency,
-            localLatencyMs: latency,
-            usage: {
-              promptTokens: parsedUsage.promptTokens,
-              completionTokens: parsedUsage.completionTokens,
-              totalTokens: parsedUsage.totalTokens,
+          const bytes = new TextEncoder().encode(rawText);
+          const chunkSize = 64 * 1024;
+          let cursor = 0;
+          const reader = {
+            async read() {
+              if (cursor >= bytes.length) {
+                return { done: true, value: undefined };
+              }
+              const next = bytes.slice(cursor, Math.min(bytes.length, cursor + chunkSize));
+              cursor += next.length;
+              return { done: false, value: next };
             },
-          });
+            async cancel() {
+              cursor = bytes.length;
+            },
+            releaseLock() {},
+          } as any;
 
-          const { estimatedCost, billingDetails } = await resolveProxyLogBilling({
-            site: selected.site,
-            account: selected.account,
-            modelName,
-            parsedUsage,
-            resolvedUsage,
-          });
+          await streamSession.run(reader, { end() {} });
+        }
 
-          tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost);
-          recordDownstreamCostUsage(request, estimatedCost);
+        const latency = Date.now() - startTime;
+        const failure = detectProxyFailure({ rawText, totalTokens: parsedUsage.totalTokens });
+        if (failure) {
+          const errText = withUpstreamPath(successfulUpstreamPath, failure.reason);
+          tokenRouter.recordFailure(selected.channel.id);
           logProxy(
             selected,
             requestedModel,
-            'success',
-            200,
+            'failed',
+            failure.status,
             latency,
-            null,
+            errText,
             retryCount,
             downstreamPath,
-            resolvedUsage.promptTokens,
-            resolvedUsage.completionTokens,
-            resolvedUsage.totalTokens,
-            estimatedCost,
-            billingDetails,
-            successfulUpstreamPath,
+            0,
+            0,
+            0,
+            0,
+            null,
+            null,
             clientContext,
             logDownstreamApiKeyId ? downstreamApiKeyId : null,
           );
-          return;
+
+          if (shouldRetryProxyRequest(failure.status, errText) && retryCount < MAX_RETRIES) {
+            retryCount += 1;
+            continue;
+          }
+
+          await reportProxyAllFailed({
+            model: requestedModel,
+            reason: failure.reason,
+          });
+
+          return reply.code(failure.status).send({
+            error: { message: errText, type: 'upstream_error' },
+          });
         }
 
-        const reader = upstream.body?.getReader();
-        await streamSession.run(reader, reply.raw);
-
-        const latency = Date.now() - startTime;
         const resolvedUsage = await resolveProxyUsageWithSelfLogFallback({
           site: selected.site,
           account: selected.account,
@@ -400,6 +404,17 @@ async function handleChatProxyRequest(
           clientContext,
           logDownstreamApiKeyId ? downstreamApiKeyId : null,
         );
+
+        reply.hijack();
+        reply.raw.statusCode = 200;
+        reply.raw.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+        reply.raw.setHeader('Cache-Control', 'no-cache, no-transform');
+        reply.raw.setHeader('Connection', 'keep-alive');
+        reply.raw.setHeader('X-Accel-Buffering', 'no');
+        for (const chunk of outputChunks) {
+          reply.raw.write(chunk);
+        }
+        reply.raw.end();
         return;
       }
 
