@@ -191,7 +191,7 @@ export async function completionsProxyRoute(app: FastifyInstance) {
         }
         const latency = Date.now() - startTime;
         const parsedUsage = parseProxyUsage(data);
-        const failure = detectProxyFailure({ rawText, totalTokens: parsedUsage.totalTokens });
+        const failure = detectProxyFailure({ rawText, usage: parsedUsage });
         if (failure) {
           const errText = failure.reason;
           tokenRouter.recordFailure(selected.channel.id);

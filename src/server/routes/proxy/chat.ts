@@ -322,7 +322,7 @@ async function handleChatProxyRequest(
         }
 
         const latency = Date.now() - startTime;
-        const failure = detectProxyFailure({ rawText, totalTokens: parsedUsage.totalTokens });
+        const failure = detectProxyFailure({ rawText, usage: parsedUsage });
         if (failure) {
           const errText = withUpstreamPath(successfulUpstreamPath, failure.reason);
           tokenRouter.recordFailure(selected.channel.id);
@@ -428,7 +428,7 @@ async function handleChatProxyRequest(
 
       const latency = Date.now() - startTime;
       const parsedUsage = parseProxyUsage(upstreamData);
-      const failure = detectProxyFailure({ rawText, totalTokens: parsedUsage.totalTokens });
+      const failure = detectProxyFailure({ rawText, usage: parsedUsage });
       if (failure) {
         const errText = withUpstreamPath(successfulUpstreamPath, failure.reason);
         tokenRouter.recordFailure(selected.channel.id);
