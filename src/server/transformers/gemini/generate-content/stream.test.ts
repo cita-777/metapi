@@ -5,8 +5,10 @@ import { extractResponseMetadata, serializeGeminiAggregateResponse } from './out
 import {
   applyJsonPayloadToAggregate,
   applySsePayloadsToAggregate,
+  consumeUpstreamSseBuffer,
   geminiGenerateContentStream,
   parseGeminiStreamPayload,
+  serializeUpstreamJsonPayload,
   serializeAggregateSsePayload,
 } from './stream.js';
 import { extractGeminiUsage } from './usage.js';
@@ -169,6 +171,56 @@ describe('geminiGenerateContentStream', () => {
     });
   });
 
+  it('returns raw upstream sse blocks while aggregating tool-calling state', () => {
+    const state = createGeminiGenerateContentAggregateState();
+    const firstBlock = 'data: {"promptFeedback":{"blockReason":"BLOCK_REASON_UNSPECIFIED"},"candidates":[{"content":{"parts":[{"functionCall":{"id":"tool-1","name":"lookup","args":{"q":"cat"}},"thoughtSignature":"sig-tool-1"}]}}]}\r\n\r\n';
+    const secondBlock = 'data: {"candidates":[{"content":{"parts":[{"text":"answer"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":4,"totalTokenCount":14}}\r\n\r\n';
+    const doneBlock = 'data: [DONE]\r\n\r\n';
+    const result = consumeUpstreamSseBuffer(
+      state,
+      `${firstBlock}${secondBlock}${doneBlock}data: {"responseId":"partial"`,
+    );
+
+    expect(result.lines).toEqual([firstBlock, secondBlock, doneBlock]);
+    expect(result.events).toEqual([
+      {
+        promptFeedback: { blockReason: 'BLOCK_REASON_UNSPECIFIED' },
+        candidates: [
+          {
+            content: {
+              parts: [{ functionCall: { id: 'tool-1', name: 'lookup', args: { q: 'cat' } }, thoughtSignature: 'sig-tool-1' }],
+            },
+          },
+        ],
+      },
+      {
+        candidates: [
+          {
+            content: {
+              parts: [{ text: 'answer' }],
+            },
+            finishReason: 'STOP',
+          },
+        ],
+        usageMetadata: {
+          promptTokenCount: 10,
+          candidatesTokenCount: 4,
+          totalTokenCount: 14,
+        },
+      },
+    ]);
+    expect(result.rest).toBe('data: {"responseId":"partial"');
+    expect(extractGeminiUsage(result.state)).toEqual({
+      promptTokens: 10,
+      completionTokens: 4,
+      totalTokens: 14,
+      cachedTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      reasoningTokens: 0,
+    });
+  });
+
   it('normalizes object payloads through the JSON-array path', () => {
     const state = createGeminiGenerateContentAggregateState();
 
@@ -201,6 +253,49 @@ describe('geminiGenerateContentStream', () => {
           },
         },
       ],
+    });
+  });
+
+  it('keeps json stream chunks raw while still aggregating usage', () => {
+    const state = createGeminiGenerateContentAggregateState();
+    const payload = [
+      {
+        promptFeedback: { blockReason: 'BLOCK_REASON_UNSPECIFIED' },
+        candidates: [
+          {
+            content: {
+              parts: [{ functionCall: { id: 'tool-1', name: 'lookup', args: { q: 'cat' } } }],
+            },
+          },
+        ],
+      },
+      {
+        serverContent: { modelTurn: { parts: [{ text: 'tool result received' }] } },
+        candidates: [
+          {
+            content: {
+              parts: [{ text: 'final answer' }],
+            },
+            finishReason: 'STOP',
+          },
+        ],
+        usageMetadata: {
+          promptTokenCount: 8,
+          candidatesTokenCount: 5,
+          totalTokenCount: 13,
+        },
+      },
+    ];
+
+    expect(serializeUpstreamJsonPayload(state, payload, true)).toEqual(payload);
+    expect(extractGeminiUsage(state)).toEqual({
+      promptTokens: 8,
+      completionTokens: 5,
+      totalTokens: 13,
+      cachedTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      reasoningTokens: 0,
     });
   });
 });

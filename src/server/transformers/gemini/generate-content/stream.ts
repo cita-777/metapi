@@ -7,6 +7,7 @@ import { serializeGeminiAggregateResponse } from './outbound.js';
 
 type ParsedSsePayloads = {
   events: unknown[];
+  lines: string[];
   rest: string;
 };
 
@@ -15,10 +16,11 @@ type GeminiGenerateContentStreamFormat = 'sse' | 'json';
 type ParsedGeminiStreamPayload = {
   format: GeminiGenerateContentStreamFormat;
   events: unknown[];
+  lines?: string[];
   rest: string;
 };
 
-type AppliedGeminiStreamPayloads = ParsedSsePayloads & {
+type AppliedGeminiStreamPayloads = ParsedGeminiStreamPayload & {
   state: GeminiGenerateContentAggregateState;
 };
 
@@ -27,19 +29,24 @@ function serializeSsePayload(payload: unknown): string {
 }
 
 function parseSsePayloads(buffer: string): ParsedSsePayloads {
-  const normalized = buffer.replace(/\r\n/g, '\n');
   const events: unknown[] = [];
-  let rest = normalized;
+  const lines: string[] = [];
+  let cursor = 0;
 
-  while (true) {
-    const boundary = rest.indexOf('\n\n');
-    if (boundary < 0) break;
+  while (cursor < buffer.length) {
+    const boundaryMatch = /\r?\n\r?\n/.exec(buffer.slice(cursor));
+    if (!boundaryMatch || typeof boundaryMatch.index !== 'number') break;
 
-    const block = rest.slice(0, boundary);
-    rest = rest.slice(boundary + 2);
+    const boundary = cursor + boundaryMatch.index;
+    const block = buffer.slice(cursor, boundary);
+    const rawBlock = buffer.slice(cursor, boundary + boundaryMatch[0].length);
+    cursor = boundary + boundaryMatch[0].length;
+
     if (!block.trim()) continue;
+    lines.push(rawBlock);
 
     const data = block
+      .replace(/\r\n/g, '\n')
       .split('\n')
       .filter((line) => line.startsWith('data:'))
       .map((line) => line.slice(5).trimStart())
@@ -55,7 +62,11 @@ function parseSsePayloads(buffer: string): ParsedSsePayloads {
     }
   }
 
-  return { events, rest };
+  return {
+    events,
+    lines,
+    rest: buffer.slice(cursor),
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -77,6 +88,7 @@ function parseGeminiStreamPayload(
     return {
       format: 'sse',
       events: parsed.events,
+      lines: parsed.lines,
       rest: parsed.rest,
     };
   }
@@ -123,8 +135,7 @@ function applyParsedPayloadToAggregate(
   }
 
   return {
-    events: parsed.events,
-    rest: parsed.rest,
+    ...parsed,
     state,
   };
 }
@@ -151,7 +162,7 @@ function consumeUpstreamSseBuffer(
   const applied = applySsePayloadsToAggregate(state, buffer);
   return {
     ...applied,
-    lines: applied.events.map((event) => serializeAggregateSsePayload(event)),
+    lines: applied.lines ?? [],
   };
 }
 
@@ -182,10 +193,11 @@ function serializeUpstreamJsonPayload(
   streamAction = false,
 ): unknown {
   if (streamAction) {
-    return parseJsonArrayPayload(payload).map((event) => {
+    const events = parseJsonArrayPayload(payload);
+    for (const event of events) {
       applyGeminiGenerateContentAggregate(state, event);
-      return serializeAggregateJsonPayload(event);
-    });
+    }
+    return payload;
   }
 
   applyJsonPayloadToAggregate(state, payload);

@@ -22,6 +22,7 @@ import {
   type MissingTokenModelsByName,
 } from './helpers/routeMissingTokenHints.js';
 import { buildVisibleRouteList } from './helpers/routeListVisibility.js';
+import { buildZeroChannelPlaceholderRoutes } from './helpers/zeroChannelRoutes.js';
 
 import type {
   RouteSortBy,
@@ -80,6 +81,7 @@ export default function TokenRoutes() {
   const [activeGroupFilter, setActiveGroupFilter] = useState<GroupFilter>(null);
   const [filterCollapsed, setFilterCollapsed] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
+  const [showZeroChannelRoutes, setShowZeroChannelRoutes] = useState(false);
   const [sortBy, setSortBy] = useState<RouteSortBy>('channelCount');
   const [sortDir, setSortDir] = useState<RouteSortDir>('desc');
 
@@ -251,6 +253,16 @@ export default function TokenRoutes() {
     [routeSummaries],
   );
 
+  const zeroChannelPlaceholderRoutes = useMemo(
+    () => buildZeroChannelPlaceholderRoutes(routeSummaries, missingTokenModelsByName, missingTokenGroupModelsByName),
+    [routeSummaries, missingTokenModelsByName, missingTokenGroupModelsByName],
+  );
+
+  const visibleRouteRows = useMemo(
+    () => (showZeroChannelRoutes ? [...routeSummaries, ...zeroChannelPlaceholderRoutes] : routeSummaries),
+    [routeSummaries, showZeroChannelRoutes, zeroChannelPlaceholderRoutes],
+  );
+
   const canSaveRoute = !saving
     && !!form.modelPattern.trim()
     && !getModelPatternError(form.modelPattern);
@@ -391,22 +403,22 @@ export default function TokenRoutes() {
 
   // Stable derived value: only changes when route patterns change (not on enabled toggle)
   const routePatterns = useMemo(
-    () => routeSummaries.map((r) => ({ id: r.id, modelPattern: r.modelPattern })),
+    () => visibleRouteRows.map((r) => ({ id: r.id, modelPattern: r.modelPattern })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [routeSummaries.map((r) => `${r.id}:${r.modelPattern}`).join(',')],
+    [visibleRouteRows.map((r) => `${r.id}:${r.modelPattern}`).join(',')],
   );
 
   const routeBrandById = useMemo(() => {
     const next = new Map<number, BrandInfo | null>();
-    for (const route of routeSummaries) {
+    for (const route of visibleRouteRows) {
       next.set(route.id, resolveRouteBrand(route));
     }
     return next;
-  }, [routeSummaries]);
+  }, [visibleRouteRows]);
 
   const listVisibleRoutes = useMemo(
-    () => buildVisibleRouteList(routeSummaries, isExactModelPattern, matchesModelPattern),
-    [routeSummaries],
+    () => buildVisibleRouteList(visibleRouteRows, isExactModelPattern, matchesModelPattern),
+    [visibleRouteRows],
   );
 
   const brandList = useMemo(() => {
@@ -503,7 +515,7 @@ export default function TokenRoutes() {
   const routeBrandIconCandidates = useMemo(() => {
     const byIcon = new Map<string, BrandInfo>();
 
-    for (const route of routeSummaries) {
+    for (const route of visibleRouteRows) {
       const brand = resolveRouteBrand(route);
       if (brand) byIcon.set(brand.icon, brand);
     }
@@ -515,7 +527,7 @@ export default function TokenRoutes() {
 
     return Array.from(byIcon.values())
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-  }, [routeSummaries, modelCandidates]);
+  }, [visibleRouteRows, modelCandidates]);
 
   const routeIconSelectOptions = useMemo<RouteIconOption[]>(() => ([
     ...ROUTE_ICON_OPTIONS,
@@ -656,6 +668,11 @@ export default function TokenRoutes() {
     return routeModelCandidateIndex[routeId] || EMPTY_ROUTE_CANDIDATE_VIEW;
   };
 
+  const routeById = useMemo(
+    () => new Map(visibleRouteRows.map((route) => [route.id, route])),
+    [visibleRouteRows],
+  );
+
   const handleCreateTokenForMissingAccount = (accountId: number, modelName: string) => {
     if (!Number.isFinite(accountId) || accountId <= 0) return;
     const params = new URLSearchParams();
@@ -758,7 +775,9 @@ export default function TokenRoutes() {
     } else {
       setExpandedRouteIds((prev) => [...prev, routeId]);
       // Load channels on demand
-      if (!channelsByRouteId[routeId]) {
+      const route = routeById.get(routeId) || null;
+      const isReadOnlyRoute = route?.kind === 'zero_channel' || route?.readOnly === true || route?.isVirtual === true;
+      if (!channelsByRouteId[routeId] && !isReadOnlyRoute) {
         try {
           await loadChannels(routeId);
         } catch {
@@ -1004,6 +1023,16 @@ export default function TokenRoutes() {
               ? tr('取消编辑')
               : (showManual ? tr('收起群组创建') : tr('新建群组'))}
           </button>
+
+          <button
+            type="button"
+            aria-pressed={showZeroChannelRoutes}
+            onClick={() => setShowZeroChannelRoutes((prev) => !prev)}
+            className="btn btn-ghost"
+            style={{ border: '1px solid var(--color-border)', padding: '8px 14px' }}
+          >
+            {showZeroChannelRoutes ? tr('隐藏 0 通道路由') : tr('显示 0 通道路由')}
+          </button>
         </div>
 
         <span className="badge badge-info" style={{ fontSize: 12, fontWeight: 500, marginLeft: 'auto' }}>
@@ -1086,6 +1115,7 @@ export default function TokenRoutes() {
       <div className={isMobile ? 'mobile-card-list' : 'route-card-grid'}>
         {visibleRoutes.map((route) => {
           const isExpanded = expandedRouteIds.includes(route.id);
+          const isReadOnlyRoute = route.kind === 'zero_channel' || route.readOnly === true || route.isVirtual === true;
 
           if (isMobile) {
             return (
@@ -1093,15 +1123,15 @@ export default function TokenRoutes() {
                 key={route.id}
                 title={resolveRouteTitle(route)}
                 actions={(
-                  <span className={`badge ${route.enabled ? 'badge-success' : 'badge-muted'}`} style={{ fontSize: 10 }}>
-                    {route.enabled ? tr('启用') : tr('禁用')}
+                  <span className={`badge ${isReadOnlyRoute ? 'badge-muted' : (route.enabled ? 'badge-success' : 'badge-muted')}`} style={{ fontSize: 10 }}>
+                    {isReadOnlyRoute ? tr('未生成') : (route.enabled ? tr('启用') : tr('禁用'))}
                   </span>
                 )}
               >
                 <MobileField label="模型" value={route.modelPattern} />
                 <MobileField label="通道" value={route.channelCount} />
-                <MobileField label="策略" value={route.routingStrategy === 'round_robin' ? tr('轮询') : tr('权重随机')} />
-                <MobileField label="状态" value={route.enabled ? tr('启用') : tr('禁用')} />
+                <MobileField label="策略" value={isReadOnlyRoute ? tr('未生成') : (route.routingStrategy === 'round_robin' ? tr('轮询') : tr('权重随机'))} />
+                <MobileField label="状态" value={isReadOnlyRoute ? tr('未生成') : (route.enabled ? tr('启用') : tr('禁用'))} />
                 <div className="mobile-card-actions">
                   <button
                     type="button"

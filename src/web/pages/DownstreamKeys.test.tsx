@@ -317,6 +317,49 @@ describe('DownstreamKeys page', () => {
     }
   });
 
+  it('does not refetch drawer trend repeatedly after a trend error toast', async () => {
+    apiMock.getDownstreamApiKeyTrend
+      .mockRejectedValueOnce(new Error('function date_trunc(unknown, text) does not exist'))
+      .mockResolvedValue({
+        success: true,
+        buckets: [
+          { startUtc: '2026-03-15T08:00:00.000Z', totalRequests: 2, totalTokens: 1200, totalCost: 0.12, successRate: 100 },
+        ],
+      });
+
+    let root: ReturnType<typeof create> | null = null;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/downstream-keys']}>
+            <ToastProvider>
+              <DownstreamKeys />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const row = root!.root.findAll((node) => node.type === 'tr' && typeof node.props.onClick === 'function')[0];
+      await act(async () => {
+        row.props.onClick();
+      });
+      await flushMicrotasks();
+      await flushMicrotasks();
+
+      expect(apiMock.getDownstreamApiKeyOverview).toHaveBeenCalledTimes(1);
+      expect(apiMock.getDownstreamApiKeyTrend).toHaveBeenCalledTimes(1);
+
+      const toastMessages = root!.root.findAll((node) => {
+        if (typeof node.props.className !== 'string') return false;
+        return node.props.className.includes('toast-error') && collectText(node).includes('function date_trunc(unknown, text) does not exist');
+      });
+      expect(toastMessages).toHaveLength(1);
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('separates exact models from group routes in advanced config and uses single-column layout', async () => {
     let root: ReturnType<typeof create> | null = null;
     try {

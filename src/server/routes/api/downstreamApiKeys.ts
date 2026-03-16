@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify';
-import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
+import { and, eq, inArray, sql, type SQL, type SQLWrapper } from 'drizzle-orm';
 import { db, hasProxyLogDownstreamApiKeyIdColumn, runtimeDbDialect, schema } from '../../db/index.js';
 import {
   getDownstreamApiKeyById,
@@ -95,18 +95,27 @@ function resolveBucketSeconds(range: DownstreamKeyRange): number {
   return range === 'all' ? 86400 : 3600;
 }
 
-function resolveBucketTsExpression(bucketSeconds: number) {
-  if (runtimeDbDialect === 'mysql') {
-    return sql<number>`floor(unix_timestamp(${schema.proxyLogs.createdAt}) / ${bucketSeconds}) * ${bucketSeconds}`;
+export function buildBucketTsExpressionForDialect(
+  dialect: 'sqlite' | 'mysql' | 'postgres',
+  createdAtColumn: SQLWrapper,
+  bucketSeconds: number,
+) {
+  if (dialect === 'mysql') {
+    return sql<number>`floor(unix_timestamp(${createdAtColumn}) / ${bucketSeconds}) * ${bucketSeconds}`;
   }
-  if (runtimeDbDialect === 'postgres') {
+  if (dialect === 'postgres') {
+    const createdAtTimestamp = sql`cast(${createdAtColumn} as timestamp)`;
     if (bucketSeconds === 86400) {
-      return sql<number>`extract(epoch from date_trunc('day', ${schema.proxyLogs.createdAt}))::bigint`;
+      return sql<number>`extract(epoch from date_trunc('day', ${createdAtTimestamp}))::bigint`;
     }
-    return sql<number>`extract(epoch from date_trunc('hour', ${schema.proxyLogs.createdAt}))::bigint`;
+    return sql<number>`extract(epoch from date_trunc('hour', ${createdAtTimestamp}))::bigint`;
   }
   // sqlite
-  return sql<number>`cast(cast(strftime('%s', ${schema.proxyLogs.createdAt}) as integer) / ${bucketSeconds} as integer) * ${bucketSeconds}`;
+  return sql<number>`cast(cast(strftime('%s', ${createdAtColumn}) as integer) / ${bucketSeconds} as integer) * ${bucketSeconds}`;
+}
+
+function resolveBucketTsExpression(bucketSeconds: number) {
+  return buildBucketTsExpressionForDialect(runtimeDbDialect, schema.proxyLogs.createdAt, bucketSeconds);
 }
 
 async function validatePolicyReferences(input: {

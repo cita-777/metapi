@@ -1,0 +1,32 @@
+{
+  "apiData": {
+    "data": {
+      "page": 1,
+      "page_size": 10,
+      "total": 1,
+      "items": [
+        {
+          "id": 6051,
+          "user_id": 2434,
+          "key": "MoKu**********lPxz",
+          "status": 1,
+          "name": "metapi",
+          "created_time": 1772628598,
+          "accessed_time": 1772628683,
+          "expired_time": -1,
+          "remain_quota": -882,
+          "unlimited_quota": true,
+          "model_limits_enabled": false,
+          "model_limits": "",
+          "allow_ips": "",
+          "used_quota": 882,
+          "group": "gemini",
+          "cross_group_retry": false,
+          "DeletedAt": null
+        }
+      ]
+    },
+    "message": "",
+    "success": true
+  }
+}

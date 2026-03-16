@@ -4,6 +4,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 
 type DbModule = typeof import('../../db/index.js');
 
@@ -37,6 +38,19 @@ describe('downstream api keys routes', () => {
   afterAll(async () => {
     await app.close();
     delete process.env.DATA_DIR;
+  });
+
+  it('builds postgres trend buckets by casting text timestamps before date_trunc', async () => {
+    const routesModule = await import('./downstreamApiKeys.js') as Record<string, any>;
+
+    expect(typeof routesModule.buildBucketTsExpressionForDialect).toBe('function');
+
+    const expression = routesModule.buildBucketTsExpressionForDialect('postgres', schema.proxyLogs.createdAt, 3600);
+    const rendered = new PgDialect().sqlToQuery(expression).sql;
+
+    expect(rendered).toContain('date_trunc');
+    expect(rendered).toContain('cast');
+    expect(rendered).toContain('timestamp');
   });
 
   it('creates, updates, resets and deletes downstream api keys', async () => {

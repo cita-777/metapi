@@ -250,6 +250,112 @@ describe('TokenRoutes grouped source models', () => {
     }
   });
 
+  it('keeps zero-channel placeholder routes hidden by default', async () => {
+    apiMock.getRoutesSummary.mockResolvedValue([]);
+    apiMock.getModelTokenCandidates.mockResolvedValue({
+      models: {},
+      modelsWithoutToken: {
+        'gpt-5.2-codex': [
+          { accountId: 101, username: 'linuxdo_11494', siteId: 11, siteName: 'Wong' },
+        ],
+      },
+    });
+
+    let root: ReturnType<typeof create> | null = null;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const text = collectText(root.root);
+      expect(text).toContain('显示 0 通道路由');
+      expect(text).not.toContain('gpt-5.2-codex');
+      expect(text).not.toContain('未生成');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('shows read-only zero-channel placeholder routes after toggle without loading channels', async () => {
+    apiMock.getRoutesSummary.mockResolvedValue([]);
+    apiMock.getModelTokenCandidates.mockResolvedValue({
+      models: {},
+      modelsWithoutToken: {
+        'gpt-5.2-codex': [
+          { accountId: 101, username: 'linuxdo_11494', siteId: 11, siteName: 'Wong' },
+        ],
+      },
+      modelsMissingTokenGroups: {
+        'claude-opus-4-6': [
+          {
+            accountId: 201,
+            username: 'linuxdo_4677',
+            siteId: 12,
+            siteName: '香草api',
+            missingGroups: ['opus'],
+            requiredGroups: ['default', 'opus'],
+            availableGroups: ['default'],
+          },
+        ],
+      },
+    });
+
+    let root: ReturnType<typeof create> | null = null;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const toggle = findButtonByText(root.root, '显示 0 通道路由');
+      await act(async () => {
+        toggle.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('隐藏 0 通道路由');
+      expect(collectText(root.root)).toContain('gpt-5.2-codex');
+      expect(collectText(root.root)).toContain('claude-opus-4-6');
+      expect(collectText(root.root)).toContain('未生成');
+      expect(collectText(root.root)).toContain('0 通道');
+
+      const expandCards = root.root.findAll((node) =>
+        node.type === 'div' && String(node.props.className || '').includes('route-card-collapsed'),
+      );
+      const gptCard = expandCards.find((node) => collectText(node).includes('gpt-5.2-codex'));
+      expect(gptCard).toBeTruthy();
+
+      await act(async () => {
+        gptCard!.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const expandedText = collectText(root.root);
+      expect(expandedText).toContain('待注册站点');
+      expect(expandedText).toContain('Wong');
+      expect(expandedText).toContain('暂无通道，先补齐令牌后再重建路由。');
+      expect(expandedText).not.toContain('添加通道');
+      expect(expandedText).not.toContain('删除路由');
+      expect(expandedText).not.toContain('编辑群组');
+      expect(apiMock.getRouteChannels).not.toHaveBeenCalled();
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('does not render missing-token site tags when the hint lacks a valid account id', async () => {
     apiMock.getRoutesSummary.mockResolvedValue([
       {
@@ -570,6 +676,52 @@ describe('TokenRoutes grouped source models', () => {
       const normalizedText = collectText(root.root).replace(/\s+/g, '');
       expect(normalizedText).toContain('共1条路由');
       expect(normalizedText).not.toContain('共3条路由');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('still hides zero-channel placeholders when a named group route covers the exact model', async () => {
+    apiMock.getRoutesSummary.mockResolvedValue([
+      {
+        id: 3, modelPattern: 're:^(gpt-5\\.2-codex)$', displayName: 'Codex',
+        displayIcon: null, modelMapping: null, enabled: true,
+        channelCount: 0, enabledChannelCount: 0, siteNames: [],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+    ]);
+    apiMock.getModelTokenCandidates.mockResolvedValue({
+      models: {},
+      modelsWithoutToken: {
+        'gpt-5.2-codex': [
+          { accountId: 101, username: 'linuxdo_11494', siteId: 11, siteName: 'Wong' },
+        ],
+      },
+    });
+
+    let root: ReturnType<typeof create> | null = null;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const toggle = findButtonByText(root.root, '显示 0 通道路由');
+      await act(async () => {
+        toggle.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const normalizedText = collectText(root.root).replace(/\s+/g, '');
+      expect(normalizedText).toContain('共1条路由');
+      expect(normalizedText).toContain('Codex');
+      expect(normalizedText).not.toContain('gpt-5.2-codex0通道');
     } finally {
       root?.unmount();
     }

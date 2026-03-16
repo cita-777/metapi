@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo, useRef } from 'react';
 
 type ToastType = 'success' | 'error' | 'info';
 
@@ -47,12 +47,18 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     setTimeout(() => removeToast(id), 3200);
   }, [removeToast]);
 
-  const value: ToastContextValue = {
+  const success = useCallback((msg: string) => addToast('success', msg), [addToast]);
+  const error = useCallback((msg: string) => addToast('error', msg), [addToast]);
+  const info = useCallback((msg: string) => addToast('info', msg), [addToast]);
+
+  // Keep the context object stable so effect dependencies on `useToast()` do not refire
+  // every time the toast list changes.
+  const value = useMemo<ToastContextValue>(() => ({
     toast: addToast,
-    success: useCallback((msg: string) => addToast('success', msg), [addToast]),
-    error: useCallback((msg: string) => addToast('error', msg), [addToast]),
-    info: useCallback((msg: string) => addToast('info', msg), [addToast]),
-  };
+    success,
+    error,
+    info,
+  }), [addToast, error, info, success]);
 
   return (
     <ToastContext.Provider value={value}>
