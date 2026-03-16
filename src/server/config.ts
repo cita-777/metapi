@@ -32,7 +32,11 @@ function parseDbType(value: string | undefined): 'sqlite' | 'mysql' | 'postgres'
 }
 
 function parseListenHost(env: NodeJS.ProcessEnv): string {
-  return (env.HOST || '0.0.0.0').trim() || '0.0.0.0';
+  const host = (env.HOST || '').trim();
+  if (host) return host;
+  // Default to IPv6 any-address so the service is reachable via IPv6 public network.
+  // On most Linux systems this also accepts IPv4-mapped connections.
+  return '::';
 }
 
 export function buildConfig(env: NodeJS.ProcessEnv) {
