@@ -71,6 +71,25 @@ describe('siteProxy', () => {
     expect('dispatcher' in requestInit).toBe(true);
   });
 
+  it('injects a working dispatcher for socks5 system proxies', async () => {
+    await db.insert(schema.settings).values({
+      key: 'system_proxy_url',
+      value: JSON.stringify('socks5://127.0.0.1:1080'),
+    }).run();
+    await db.run(sql`
+      INSERT INTO sites (name, url, platform, use_system_proxy)
+      VALUES ('proxy-site', 'https://proxy-site.example.com', 'new-api', 1)
+    `);
+
+    const { withSiteProxyRequestInit } = await import('./siteProxy.js');
+    const requestInit = await withSiteProxyRequestInit('https://proxy-site.example.com/v1/chat/completions', {
+      method: 'POST',
+    });
+
+    expect('dispatcher' in requestInit).toBe(true);
+    expect((requestInit as any).dispatcher?.constructor?.name).toBe('Agent');
+  });
+
   it('merges site custom headers by matched request url and keeps explicit headers authoritative', async () => {
     await db.insert(schema.sites).values({
       name: 'headers-site',

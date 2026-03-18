@@ -60,6 +60,39 @@ export function isMaskedTokenValue(token: string | null | undefined): boolean {
   return value.includes('*') || value.includes('•');
 }
 
+function normalizeMaskedTokenForCompare(token: string | null | undefined): string {
+  return normalizeTokenForDisplay(token).replace(/•/g, '*');
+}
+
+function matchesMaskedTokenValue(
+  fullToken: string | null | undefined,
+  maskedToken: string | null | undefined,
+): boolean {
+  const normalizedFull = normalizeTokenForDisplay(fullToken);
+  const normalizedMasked = normalizeMaskedTokenForCompare(maskedToken);
+  if (!normalizedFull || !normalizedMasked) return false;
+
+  if (!isMaskedTokenValue(normalizedMasked)) {
+    return normalizedFull === normalizedMasked;
+  }
+
+  const firstMaskIndex = normalizedMasked.search(/[\*]/);
+  const lastMaskIndex = Math.max(
+    normalizedMasked.lastIndexOf('*'),
+    normalizedMasked.lastIndexOf('•'),
+  );
+  if (firstMaskIndex < 0 || lastMaskIndex < firstMaskIndex) {
+    return normalizedFull === normalizedMasked;
+  }
+
+  const prefix = normalizedMasked.slice(0, firstMaskIndex);
+  const suffix = normalizedMasked.slice(lastMaskIndex + 1);
+  if (normalizedFull.length < prefix.length + suffix.length) return false;
+  if (prefix && !normalizedFull.startsWith(prefix)) return false;
+  if (suffix && !normalizedFull.endsWith(suffix)) return false;
+  return true;
+}
+
 function normalizeTokenValueStatus(value: string | null | undefined): AccountTokenValueStatus {
   const normalized = (value || '').trim().toLowerCase();
   return normalized === ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING
@@ -302,6 +335,37 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
       byToken.enabled = enabled;
       byToken.source = 'sync';
       byToken.updatedAt = now;
+      updated++;
+      continue;
+    }
+
+    const matchingReadyByMaskedValue = nextValueStatus === ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING
+      ? existing.filter((row) => (
+        resolveAccountTokenValueStatus(row) === ACCOUNT_TOKEN_VALUE_STATUS_READY
+        && matchesMaskedTokenValue(row.token, tokenValue)
+      ))
+      : [];
+    const readyMaskedMatch = matchingReadyByMaskedValue.length === 1
+      ? matchingReadyByMaskedValue[0]
+      : null;
+    if (readyMaskedMatch) {
+      await db.update(schema.accountTokens)
+        .set({
+          name: tokenName,
+          tokenGroup,
+          valueStatus: ACCOUNT_TOKEN_VALUE_STATUS_READY,
+          source: 'sync',
+          enabled,
+          updatedAt: now,
+        })
+        .where(eq(schema.accountTokens.id, readyMaskedMatch.id))
+        .run();
+      readyMaskedMatch.name = tokenName;
+      readyMaskedMatch.tokenGroup = tokenGroup;
+      readyMaskedMatch.valueStatus = ACCOUNT_TOKEN_VALUE_STATUS_READY;
+      readyMaskedMatch.enabled = enabled;
+      readyMaskedMatch.source = 'sync';
+      readyMaskedMatch.updatedAt = now;
       updated++;
       continue;
     }
