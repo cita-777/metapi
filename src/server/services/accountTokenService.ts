@@ -351,6 +351,12 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
       ? matchingReadyByMaskedValue[0]
       : null;
     if (readyMaskedMatch) {
+      const staleMaskedPlaceholders = existing.filter((row) => (
+        row.id !== readyMaskedMatch.id
+        && resolveAccountTokenValueStatus(row) === ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING
+        && matchesMaskedTokenValue(row.token, tokenValue)
+      ));
+
       await db.update(schema.accountTokens)
         .set({
           name: tokenName,
@@ -368,6 +374,21 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
       readyMaskedMatch.enabled = enabled;
       readyMaskedMatch.source = 'sync';
       readyMaskedMatch.updatedAt = now;
+
+      if (staleMaskedPlaceholders.length > 0) {
+        for (const placeholder of staleMaskedPlaceholders) {
+          await db.delete(schema.accountTokens)
+            .where(eq(schema.accountTokens.id, placeholder.id))
+            .run();
+        }
+        for (const placeholder of staleMaskedPlaceholders) {
+          const placeholderIndex = existing.findIndex((row) => row.id === placeholder.id);
+          if (placeholderIndex >= 0) {
+            existing.splice(placeholderIndex, 1);
+          }
+        }
+      }
+
       updated++;
       continue;
     }
