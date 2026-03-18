@@ -157,6 +157,52 @@ describe('/api/models/token-candidates', () => {
     expect(body.modelsMissingTokenGroups['gpt-5.2-codex']).toBeUndefined();
   });
 
+  it('does not report oauth direct connections as missing account tokens', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'codex-site',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'codex-user@example.com',
+      accessToken: 'oauth-access-token',
+      apiToken: null,
+      status: 'active',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          accountId: 'chatgpt-account-123',
+          email: 'codex-user@example.com',
+          planType: 'team',
+        },
+      }),
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'gpt-5.2-codex',
+      available: true,
+    }).run();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/models/token-candidates',
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      modelsWithoutToken: Record<string, Array<{ accountId: number }>>;
+      modelsMissingTokenGroups: Record<string, Array<{ accountId: number }>>;
+    };
+
+    expect(body.modelsWithoutToken['gpt-5.2-codex']).toBeUndefined();
+    expect(body.modelsMissingTokenGroups['gpt-5.2-codex']).toBeUndefined();
+  });
+
   it('returns modelsMissingTokenGroups when account has partial group token coverage', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'site-b',

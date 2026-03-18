@@ -194,14 +194,22 @@ export const geminiGenerateContentInbound = {
       next.generationConfig = generationConfig;
     }
 
-    const strippedKeys = new Set([
-      'reasoning',
-      'reasoning_effort',
-      'reasoning_budget',
+    // Only forward fields that Gemini API supports. Unknown fields
+    // (e.g. requestId, frequency_penalty) cause upstream 400 errors.
+    const allowedPassthroughKeys = new Set([
+      'contents',
+      'systemInstruction',
+      'cachedContent',
+      'safetySettings',
+      'generationConfig',
+      'tools',
+      'toolConfig',
+      'labels',
+      'model',
     ]);
 
     for (const [key, value] of Object.entries(body)) {
-      if (strippedKeys.has(key)) continue;
+      if (!allowedPassthroughKeys.has(key)) continue;
       if (next[key] !== undefined) continue;
       next[key] = cloneJsonValue(value);
     }

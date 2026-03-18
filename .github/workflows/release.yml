@@ -46,14 +46,30 @@ jobs:
           if-no-files-found: error
 
   build-packages:
-    name: Build Desktop Package (${{ matrix.os }})
+    name: Build Desktop Package (${{ matrix.platform }})
     needs: verify
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - platform: linux
+            runner: ubuntu-latest
+            artifactLabel: linux-x64
+          - platform: windows
+            runner: windows-latest
+            artifactLabel: windows-x64
+          - platform: mac-arm64
+            runner: macos-15
+            artifactLabel: mac-arm64
+            packageCommand: npm run package:desktop -- --mac --arm64
+            expectedMacArch: arm64
+          - platform: mac-x64
+            runner: macos-15-intel
+            artifactLabel: mac-x64
+            packageCommand: npm run package:desktop:mac:intel
+            expectedMacArch: x64
 
     steps:
       - name: Checkout
@@ -183,7 +199,7 @@ jobs:
           done
 
       - name: Build desktop artifacts (macOS)
-        if: runner.os == 'macOS'
+        if: startsWith(matrix.platform, 'mac-')
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -195,14 +211,15 @@ jobs:
           APPLE_ID_INPUT: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD_INPUT: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID_INPUT: ${{ secrets.APPLE_TEAM_ID }}
+          PACKAGE_COMMAND: ${{ matrix.packageCommand }}
         run: |
           set -euo pipefail
           if [ -n "${APPLE_ID_INPUT:-}" ]; then export APPLE_ID="$APPLE_ID_INPUT"; fi
           if [ -n "${APPLE_APP_SPECIFIC_PASSWORD_INPUT:-}" ]; then export APPLE_APP_SPECIFIC_PASSWORD="$APPLE_APP_SPECIFIC_PASSWORD_INPUT"; fi
           if [ -n "${APPLE_TEAM_ID_INPUT:-}" ]; then export APPLE_TEAM_ID="$APPLE_TEAM_ID_INPUT"; fi
           for attempt in 1 2; do
-            echo "Desktop build (host arch) attempt ${attempt}/2"
-            if npm run package:desktop; then
+            echo "Desktop build (${PACKAGE_COMMAND}) attempt ${attempt}/2"
+            if eval "${PACKAGE_COMMAND}"; then
               break
             fi
             if [ "$attempt" -eq 2 ]; then
@@ -210,25 +227,45 @@ jobs:
             fi
             sleep 90
           done
-          if [ "${RUNNER_ARCH:-}" != "X64" ]; then
-            for attempt in 1 2; do
-              echo "Desktop build (mac intel x64) attempt ${attempt}/2"
-              if npm run package:desktop:mac:intel; then
-                break
-              fi
-              if [ "$attempt" -eq 2 ]; then
-                exit 1
-              fi
-              sleep 90
-            done
-          else
-            echo "Runner is already X64, skip extra Intel build"
+
+      - name: Verify packaged macOS architecture
+        if: startsWith(matrix.platform, 'mac-')
+        shell: bash
+        env:
+          expectedMacArch: ${{ matrix.expectedMacArch }}
+        run: |
+          set -euo pipefail
+          mapfile -t app_binaries < <(find release -type f -path '*/Metapi.app/Contents/MacOS/Metapi')
+          if [ "${#app_binaries[@]}" -eq 0 ]; then
+            echo "No packaged macOS app binary found under release/"
+            exit 1
           fi
+
+          for binary in "${app_binaries[@]}"; do
+            archs="$(lipo -archs "$binary" 2>/dev/null | xargs)"
+            echo "$binary => ${archs:-unknown}"
+            if [ -z "${archs}" ]; then
+              echo "Unable to detect architecture via lipo"
+              exit 1
+            fi
+
+            if [ "${expectedMacArch}" = "x64" ]; then
+              [ "${archs}" = "x86_64" ] || {
+                echo "Expected x86_64-only binary but got: ${archs}"
+                exit 1
+              }
+            else
+              [ "${archs}" = "arm64" ] || {
+                echo "Expected arm64-only binary but got: ${archs}"
+                exit 1
+              }
+            fi
+          done
 
       - name: Upload desktop package
         uses: actions/upload-artifact@v7
         with:
-          name: metapi-desktop-${{ github.run_id }}-${{ runner.os }}-${{ runner.arch }}
+          name: metapi-desktop-${{ github.run_id }}-${{ matrix.artifactLabel }}
           path: |
             release/*.exe
             release/*.dmg

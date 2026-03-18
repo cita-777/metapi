@@ -17,7 +17,7 @@ import {
   parseProxyLogBillingDetails,
   withProxyLogSelectFields,
 } from '../../services/proxyLogStore.js';
-import { getCredentialModeFromExtraConfig } from '../../services/accountExtraConfig.js';
+import { requiresManagedAccountTokens } from '../../services/accountExtraConfig.js';
 import { ACCOUNT_TOKEN_VALUE_STATUS_READY } from '../../services/accountTokenService.js';
 import {
   formatLocalDateTime,
@@ -27,6 +27,7 @@ import {
   parseStoredUtcDateTime,
   toLocalDayKeyFromStoredUtc,
 } from '../../services/localTimeService.js';
+import { createRateLimitGuard } from '../../middleware/requestRateLimit.js';
 
 function parseBooleanFlag(raw?: string): boolean {
   if (!raw) return false;
@@ -34,14 +35,13 @@ function parseBooleanFlag(raw?: string): boolean {
   return normalized === '1' || normalized === 'true' || normalized === 'yes';
 }
 
-function isApiKeyConnection(account: { accessToken?: string | null; extraConfig?: string | null }): boolean {
-  const explicit = getCredentialModeFromExtraConfig(account.extraConfig);
-  if (explicit && explicit !== 'auto') return explicit === 'apikey';
-  return !(account.accessToken || '').trim();
-}
-
 const MODELS_MARKETPLACE_BASE_TTL_MS = 15_000;
 const MODELS_MARKETPLACE_PRICING_TTL_MS = 90_000;
+const limitModelTokenCandidatesRead = createRateLimitGuard({
+  bucket: 'models-token-candidates-read',
+  max: 30,
+  windowMs: 60_000,
+});
 
 type ModelsMarketplaceCacheEntry = {
   expiresAt: number;
@@ -976,7 +976,7 @@ export async function statsRoutes(app: FastifyInstance) {
     };
   });
 
-  app.get('/api/models/token-candidates', async () => {
+  app.get('/api/models/token-candidates', { preHandler: [limitModelTokenCandidatesRead] }, async () => {
     const resolveTokenGroupLabel = (tokenGroup: string | null, tokenName: string | null): string | null => {
       const explicit = (tokenGroup || '').trim();
       if (explicit) return explicit;
@@ -1012,6 +1012,7 @@ export async function statsRoutes(app: FastifyInstance) {
       siteId: schema.sites.id,
       siteName: schema.sites.name,
       accessToken: schema.accounts.accessToken,
+      apiToken: schema.accounts.apiToken,
       extraConfig: schema.accounts.extraConfig,
     })
       .from(schema.modelAvailability)
@@ -1090,7 +1091,7 @@ export async function statsRoutes(app: FastifyInstance) {
     }
 
     for (const row of availableModelRows) {
-      if (isApiKeyConnection(row)) continue;
+      if (!requiresManagedAccountTokens(row)) continue;
       const modelName = (row.modelName || '').trim();
       if (!modelName) continue;
       const coverageKey = `${row.accountId}::${modelName.toLowerCase()}`;
@@ -1107,7 +1108,7 @@ export async function statsRoutes(app: FastifyInstance) {
 
     const accountIdsForGroupHints = new Set(
       availableModelRows
-        .filter((row) => !isApiKeyConnection(row))
+        .filter((row) => requiresManagedAccountTokens(row))
         .map((row) => row.accountId),
     );
     const requiredGroupsByAccountModel = new Map<string, Map<string, string>>();
@@ -1169,7 +1170,7 @@ export async function statsRoutes(app: FastifyInstance) {
     }
 
     for (const row of availableModelRows) {
-      if (isApiKeyConnection(row)) continue;
+      if (!requiresManagedAccountTokens(row)) continue;
       const modelName = (row.modelName || '').trim();
       if (!modelName) continue;
       const accountModelKey = `${row.accountId}::${modelName.toLowerCase()}`;

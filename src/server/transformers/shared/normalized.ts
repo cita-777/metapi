@@ -88,7 +88,7 @@ export type TransformerMetadata = {
 };
 
 export type NormalizedRequest = {
-  protocol: import('./chatFormatsCore.js').DownstreamFormat | 'responses' | 'gemini';
+  protocol: import('./chatFormatsCore.js').DownstreamFormat | 'responses' | 'gemini' | 'gemini-cli';
   model: string;
   stream: boolean;
   rawBody: unknown;
@@ -98,7 +98,7 @@ export type NormalizedRequest = {
 };
 
 export type NormalizedResponseEnvelope = {
-  protocol: import('./chatFormatsCore.js').DownstreamFormat | 'responses' | 'gemini';
+  protocol: import('./chatFormatsCore.js').DownstreamFormat | 'responses' | 'gemini' | 'gemini-cli';
   model: string;
   final: import('./chatFormatsCore.js').NormalizedFinalResponse;
   usage?: unknown;
@@ -107,7 +107,7 @@ export type NormalizedResponseEnvelope = {
 };
 
 export type NormalizedStreamEnvelope = {
-  protocol: import('./chatFormatsCore.js').DownstreamFormat | 'responses' | 'gemini';
+  protocol: import('./chatFormatsCore.js').DownstreamFormat | 'responses' | 'gemini' | 'gemini-cli';
   model: string;
   event: import('./chatFormatsCore.js').NormalizedStreamEvent;
   metadata?: TransformerMetadata;

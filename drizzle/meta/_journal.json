@@ -85,6 +85,13 @@
       "when": 1773665311013,
       "tag": "0012_account_token_value_status",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1773682200000,
+      "tag": "0013_oauth_multi_provider",
+      "breakpoints": true
     }
   ]
 }

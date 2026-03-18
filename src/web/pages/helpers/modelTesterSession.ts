@@ -226,7 +226,7 @@ const isExactModelPattern = (modelPattern: string): boolean => {
   const normalized = modelPattern.trim();
   if (!normalized) return false;
   if (normalized.toLowerCase().startsWith('re:')) return false;
-  return !/[\*\?\[]/.test(normalized);
+  return !/[\*\?]/.test(normalized);
 };
 
 const splitCommaSeparated = (value: string): string[] =>

@@ -231,4 +231,74 @@ describe('runtime schema bootstrap', () => {
       'CREATE INDEX `proxy_logs_downstream_api_key_created_at_idx` ON `proxy_logs` (`downstream_api_key_id`, `created_at`(191))',
     );
   });
+
+  it('does not add mysql text prefixes when live indexed text columns are varchar-backed', async () => {
+    const executedSql: string[] = [];
+    const minimalContract: SchemaContract = {
+      tables: {
+        sites: {
+          columns: {
+            platform: makeColumn({ logicalType: 'text', notNull: true }),
+            url: makeColumn({ logicalType: 'text', notNull: true }),
+          },
+        },
+      },
+      indexes: [],
+      uniques: [
+        {
+          name: 'sites_platform_url_unique',
+          table: 'sites',
+          columns: ['platform', 'url'],
+        },
+      ],
+      foreignKeys: [],
+    };
+
+    await ensureRuntimeDatabaseSchema({
+      ...createStubClient('mysql', executedSql),
+      execute: async (sqlText: string) => {
+        if (sqlText.includes('FROM information_schema.columns')) {
+          return [[
+            {
+              table_name: 'sites',
+              column_name: 'platform',
+              data_type: 'varchar',
+              column_type: 'varchar(32)',
+            },
+            {
+              table_name: 'sites',
+              column_name: 'url',
+              data_type: 'varchar',
+              column_type: 'varchar(255)',
+            },
+          ]];
+        }
+
+        executedSql.push(sqlText);
+        return [];
+      },
+      queryScalar: async (sqlText: string, params: unknown[] = []) => {
+        if (sqlText.includes('information_schema.tables')) {
+          return params[0] === 'sites' ? 1 : 0;
+        }
+        if (sqlText.includes('information_schema.columns')) {
+          return 1;
+        }
+        return 0;
+      },
+    }, {
+      currentContract: minimalContract,
+      liveContract: {
+        ...minimalContract,
+        uniques: [],
+      },
+    });
+
+    expect(executedSql).toContain(
+      'CREATE UNIQUE INDEX `sites_platform_url_unique` ON `sites` (`platform`, `url`)',
+    );
+    expect(executedSql).not.toContain(
+      'CREATE UNIQUE INDEX `sites_platform_url_unique` ON `sites` (`platform`(191), `url`(191))',
+    );
+  });
 });

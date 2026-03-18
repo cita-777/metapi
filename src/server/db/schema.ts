@@ -6,7 +6,7 @@ export const sites = sqliteTable('sites', {
   name: text('name').notNull(),
   url: text('url').notNull(),
   externalCheckinUrl: text('external_checkin_url'),
-  platform: text('platform').notNull(), // 'new-api' | 'one-api' | 'veloera' | 'one-hub' | 'done-hub' | 'sub2api' | 'openai' | 'claude' | 'gemini'
+  platform: text('platform').notNull(), // 'new-api' | 'one-api' | 'veloera' | 'one-hub' | 'done-hub' | 'sub2api' | 'openai' | 'claude' | 'gemini' | 'codex' | 'gemini-cli' | 'antigravity'
   proxyUrl: text('proxy_url'),
   useSystemProxy: integer('use_system_proxy', { mode: 'boolean' }).default(false),
   customHeaders: text('custom_headers'),
@@ -19,6 +19,7 @@ export const sites = sqliteTable('sites', {
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
 }, (table) => ({
   statusIdx: index('sites_status_idx').on(table.status),
+  platformUrlUnique: uniqueIndex('sites_platform_url_unique').on(table.platform, table.url),
 }));
 
 export const siteDisabledModels = sqliteTable('site_disabled_models', {
@@ -48,6 +49,9 @@ export const accounts = sqliteTable('accounts', {
   checkinEnabled: integer('checkin_enabled', { mode: 'boolean' }).default(true),
   lastCheckinAt: text('last_checkin_at'),
   lastBalanceRefresh: text('last_balance_refresh'),
+  oauthProvider: text('oauth_provider'),
+  oauthAccountKey: text('oauth_account_key'),
+  oauthProjectId: text('oauth_project_id'),
   extraConfig: text('extra_config'), // JSON string
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
@@ -55,6 +59,8 @@ export const accounts = sqliteTable('accounts', {
   siteIdIdx: index('accounts_site_id_idx').on(table.siteId),
   statusIdx: index('accounts_status_idx').on(table.status),
   siteStatusIdx: index('accounts_site_status_idx').on(table.siteId, table.status),
+  oauthProviderIdx: index('accounts_oauth_provider_idx').on(table.oauthProvider),
+  oauthIdentityIdx: index('accounts_oauth_identity_idx').on(table.oauthProvider, table.oauthAccountKey, table.oauthProjectId),
 }));
 
 export const accountTokens = sqliteTable('account_tokens', {

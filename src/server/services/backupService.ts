@@ -2,6 +2,7 @@ import { asc } from 'drizzle-orm';
 import cron from 'node-cron';
 import { db, schema } from '../db/index.js';
 import { upsertSetting } from '../db/upsertSetting.js';
+import { getOauthInfoFromExtraConfig } from './oauth/oauthAccount.js';
 
 const BACKUP_VERSION = '2.0';
 
@@ -102,6 +103,18 @@ function normalizeLegacyQuota(raw: unknown): number {
   // Convert obvious raw values to display currency units.
   if (value >= 10_000) return value / 500_000;
   return value;
+}
+
+function resolveImportedOauthColumns(row: Pick<AccountRow, 'oauthProvider' | 'oauthAccountKey' | 'oauthProjectId' | 'extraConfig'>) {
+  const oauth = getOauthInfoFromExtraConfig(row.extraConfig);
+  const oauthProvider = row.oauthProvider || oauth?.provider || null;
+  const oauthAccountKey = row.oauthAccountKey || oauth?.accountKey || oauth?.accountId || null;
+  const oauthProjectId = row.oauthProjectId || oauth?.projectId || null;
+  return {
+    oauthProvider,
+    oauthAccountKey,
+    oauthProjectId,
+  };
 }
 
 function normalizeLegacyPlatform(raw: string): string {
@@ -215,6 +228,9 @@ function buildAccountsSectionFromRefBackup(data: RawBackupData): AccountsBackupS
       username,
       accessToken: accountAccessToken,
       apiToken,
+      oauthProvider: null,
+      oauthAccountKey: null,
+      oauthProjectId: null,
       balance: importedBalance,
       balanceUsed: importedUsed,
       quota: importedQuota > 0 ? importedQuota : importedBalance,
@@ -491,12 +507,16 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
     }
 
     for (const row of section.accounts) {
+      const oauthColumns = resolveImportedOauthColumns(row);
       await tx.insert(schema.accounts).values({
         id: row.id,
         siteId: row.siteId,
         username: row.username,
         accessToken: row.accessToken,
         apiToken: row.apiToken,
+        oauthProvider: oauthColumns.oauthProvider,
+        oauthAccountKey: oauthColumns.oauthAccountKey,
+        oauthProjectId: oauthColumns.oauthProjectId,
         balance: row.balance,
         balanceUsed: row.balanceUsed,
         quota: row.quota,

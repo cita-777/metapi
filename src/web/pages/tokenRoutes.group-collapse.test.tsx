@@ -79,6 +79,54 @@ describe('TokenRoutes grouped source models', () => {
     vi.clearAllMocks();
   });
 
+  it('does not treat bracket-prefixed exact model routes as group filters', async () => {
+    apiMock.getRoutesSummary.mockResolvedValue([
+      {
+        id: 4386, modelPattern: '[NV]deepseek-v3.1-terminus', displayName: null,
+        displayIcon: null, modelMapping: null, enabled: true,
+        channelCount: 1, enabledChannelCount: 1, siteNames: ['test'],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+      {
+        id: 3383, modelPattern: 're:^claude-(opus|sonnet)-4-5$', displayName: 'claude-opus-4-6',
+        displayIcon: null, modelMapping: null, enabled: true,
+        channelCount: 4, enabledChannelCount: 4, siteNames: ['site-a', 'site-b'],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+    ]);
+
+    let root: ReturnType<typeof create> | null = null;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const filterToggle = findButtonByText(root.root, '筛选');
+      await act(async () => {
+        filterToggle.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const text = collectText(root.root);
+      expect(text).toContain('全部群组1');
+
+      const bracketGroupButtons = root.root.findAll((node) => (
+        node.type === 'button'
+        && collectText(node).includes('[NV]deepseek-v3.1-terminus')
+      ));
+      expect(bracketGroupButtons).toHaveLength(0);
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('collapses source-model groups by default for wildcard routes', async () => {
     const channels = [
       {
@@ -346,7 +394,7 @@ describe('TokenRoutes grouped source models', () => {
       const expandedText = collectText(root.root);
       expect(expandedText).toContain('待注册站点');
       expect(expandedText).toContain('Wong');
-      expect(expandedText).toContain('暂无通道，先补齐令牌后再重建路由。');
+      expect(expandedText).toContain('暂无通道，先补齐连接配置后再重建路由。');
       expect(expandedText).not.toContain('添加通道');
       expect(expandedText).not.toContain('删除路由');
       expect(expandedText).not.toContain('编辑群组');

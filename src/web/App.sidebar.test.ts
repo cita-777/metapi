@@ -21,4 +21,12 @@ describe('App sidebar config', () => {
     expect(downstreamIndex).toBeGreaterThan(consoleGroupIndex);
     expect(systemGroupIndex).toBeGreaterThan(downstreamIndex);
   });
+
+  it('adds standalone OAuth 管理 navigation entry', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/web/App.tsx'), 'utf8');
+
+    expect(source).toContain("{ to: '/oauth', label: 'OAuth 管理'");
+    expect(source).toContain("const OAuthManagement = lazy(() => import('./pages/OAuthManagement.js'));");
+    expect(source).toContain('<Route path="/oauth" element={<OAuthManagement />} />');
+  });
 });

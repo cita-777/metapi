@@ -4,6 +4,8 @@ import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fetchMock = vi.fn();
+const fetchModelPricingCatalogMock = vi.fn();
+const refreshModelsAndRebuildRoutesMock = vi.fn();
 const selectChannelMock = vi.fn();
 const selectNextChannelMock = vi.fn();
 const recordSuccessMock = vi.fn();
@@ -13,6 +15,8 @@ const invalidateTokenRouterCacheMock = vi.fn();
 const authorizeDownstreamTokenMock = vi.fn();
 const consumeManagedKeyRequestMock = vi.fn();
 const isModelAllowedByPolicyOrAllowedRoutesMock = vi.fn();
+const dbSelectAllMock = vi.fn();
+const dbSelectGetMock = vi.fn();
 const dbInsertValuesMock = vi.fn((_values?: unknown) => ({
   run: () => undefined,
 }));
@@ -20,8 +24,32 @@ const dbInsertMock = vi.fn((_table?: unknown) => ({
   values: (values: unknown) => dbInsertValuesMock(values),
 }));
 
+function createDbSelectChain() {
+  return {
+    from() {
+      return this;
+    },
+    innerJoin() {
+      return this;
+    },
+    where() {
+      return this;
+    },
+    all: (...args: unknown[]) => dbSelectAllMock(...args),
+    get: (...args: unknown[]) => dbSelectGetMock(...args),
+  };
+}
+
 vi.mock('undici', () => ({
   fetch: (...args: unknown[]) => fetchMock(...args),
+}));
+
+vi.mock('../../services/modelPricingService.js', () => ({
+  fetchModelPricingCatalog: (...args: unknown[]) => fetchModelPricingCatalogMock(...args),
+}));
+
+vi.mock('../../services/modelService.js', () => ({
+  refreshModelsAndRebuildRoutes: (...args: unknown[]) => refreshModelsAndRebuildRoutesMock(...args),
 }));
 
 vi.mock('../../services/tokenRouter.js', () => ({
@@ -43,10 +71,29 @@ vi.mock('../../services/downstreamApiKeyService.js', () => ({
 
 vi.mock('../../db/index.js', () => ({
   db: {
+    select: (..._args: unknown[]) => createDbSelectChain(),
     insert: (arg: unknown) => dbInsertMock(arg),
   },
   schema: {
     proxyLogs: {},
+    modelAvailability: {
+      modelName: Symbol('modelAvailability.modelName'),
+      accountId: Symbol('modelAvailability.accountId'),
+      available: Symbol('modelAvailability.available'),
+    },
+    accounts: {
+      id: Symbol('accounts.id'),
+      siteId: Symbol('accounts.siteId'),
+      status: Symbol('accounts.status'),
+    },
+    sites: {
+      id: Symbol('sites.id'),
+      status: Symbol('sites.status'),
+    },
+    tokenRoutes: {
+      displayName: Symbol('tokenRoutes.displayName'),
+      enabled: Symbol('tokenRoutes.enabled'),
+    },
   },
 }));
 
@@ -101,6 +148,8 @@ describe('gemini native proxy routes', () => {
 
   beforeEach(() => {
     fetchMock.mockReset();
+    fetchModelPricingCatalogMock.mockReset();
+    refreshModelsAndRebuildRoutesMock.mockReset();
     selectChannelMock.mockReset();
     selectNextChannelMock.mockReset();
     recordSuccessMock.mockReset();
@@ -111,6 +160,8 @@ describe('gemini native proxy routes', () => {
     isModelAllowedByPolicyOrAllowedRoutesMock.mockReset();
     dbInsertMock.mockClear();
     dbInsertValuesMock.mockClear();
+    dbSelectAllMock.mockReset();
+    dbSelectGetMock.mockReset();
 
     authorizeDownstreamTokenMock.mockResolvedValue({
       ok: true,
@@ -118,6 +169,10 @@ describe('gemini native proxy routes', () => {
       token: 'sk-managed-gemini',
       policy: {},
     });
+    fetchModelPricingCatalogMock.mockResolvedValue(null);
+    refreshModelsAndRebuildRoutesMock.mockResolvedValue(undefined);
+    dbSelectGetMock.mockResolvedValue(null);
+    dbSelectAllMock.mockResolvedValue([]);
 
     selectChannelMock.mockReturnValue({
       channel: { id: 11, routeId: 22 },
@@ -210,6 +265,98 @@ describe('gemini native proxy routes', () => {
     expect(secondUrl).toContain('key=gemini-key-2');
   });
 
+  it('serves gemini-cli model list from local static catalog without upstream fetch', async () => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 21, routeId: 22 },
+      site: { id: 55, name: 'gemini-cli-site', url: 'https://cloudcode-pa.googleapis.com', platform: 'gemini-cli' },
+      account: {
+        id: 35,
+        username: 'gemini-cli-user@example.com',
+        extraConfig: JSON.stringify({
+          credentialMode: 'session',
+          oauth: {
+            provider: 'gemini-cli',
+            email: 'gemini-cli-user@example.com',
+            projectId: 'project-demo',
+          },
+        }),
+      },
+      tokenName: 'default',
+      tokenValue: 'oauth-access-token',
+      actualModel: 'gemini-2.5-pro',
+    });
+    explainSelectionMock.mockImplementation(async (modelName: string) => (
+      modelName === 'gemini-2.5-pro'
+        ? { selectedChannelId: 21 }
+        : { selectedChannelId: undefined }
+    ));
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1beta/models',
+      headers: {
+        authorization: 'Bearer sk-managed-gemini',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(response.json()).toMatchObject({
+      models: expect.arrayContaining([
+        {
+          name: 'models/gemini-2.5-pro',
+          displayName: 'Gemini 2.5 Pro',
+        },
+      ]),
+    });
+  });
+
+  it('synthesizes /v1beta/models from locally available routed models for non-gemini upstreams', async () => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 41, routeId: 22 },
+      site: { id: 77, name: 'openai-site', url: 'https://api.openai.com', platform: 'openai' },
+      account: { id: 37, username: 'openai-user@example.com' },
+      tokenName: 'default',
+      tokenValue: 'openai-access-token',
+      actualModel: 'gpt-4.1',
+    });
+    dbSelectAllMock
+      .mockResolvedValueOnce([
+        { modelName: 'gpt-4.1' },
+        { modelName: 'claude-sonnet-4-5-20250929' },
+      ])
+      .mockResolvedValueOnce([
+        { displayName: 'gemini-2.5-flash' },
+      ]);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1beta/models',
+      headers: {
+        authorization: 'Bearer sk-managed-gemini',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(response.json()).toEqual({
+      models: [
+        {
+          name: 'models/claude-sonnet-4-5-20250929',
+          displayName: 'claude-sonnet-4-5-20250929',
+        },
+        {
+          name: 'models/gemini-2.5-flash',
+          displayName: 'gemini-2.5-flash',
+        },
+        {
+          name: 'models/gpt-4.1',
+          displayName: 'gpt-4.1',
+        },
+      ],
+    });
+  });
+
   it('forwards native generateContent requests through the gemini route group', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({
       candidates: [
@@ -265,6 +412,507 @@ describe('gemini native proxy routes', () => {
             role: 'model',
           },
           finishReason: 'STOP',
+        },
+      ],
+    });
+  });
+
+  it('wraps gemini-cli native generateContent requests and unwraps the response payload', async () => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 31, routeId: 22 },
+      site: { id: 66, name: 'gemini-cli-site', url: 'https://cloudcode-pa.googleapis.com', platform: 'gemini-cli' },
+      account: {
+        id: 36,
+        username: 'gemini-cli-user@example.com',
+        extraConfig: JSON.stringify({
+          credentialMode: 'session',
+          oauth: {
+            provider: 'gemini-cli',
+            email: 'gemini-cli-user@example.com',
+            projectId: 'project-demo',
+          },
+        }),
+      },
+      tokenName: 'default',
+      tokenValue: 'oauth-access-token',
+      actualModel: 'gemini-2.5-pro',
+    });
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      response: {
+        candidates: [
+          {
+            content: {
+              parts: [{ text: 'hello from gemini cli' }],
+              role: 'model',
+            },
+            finishReason: 'STOP',
+          },
+        ],
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1beta/models/gemini-2.5-pro:generateContent',
+      headers: {
+        authorization: 'Bearer sk-managed-gemini',
+      },
+      payload: {
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: 'hello' }],
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const [targetUrl, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(targetUrl).toBe('https://cloudcode-pa.googleapis.com/v1internal:generateContent');
+    expect(requestInit.headers).toMatchObject({
+      Authorization: 'Bearer oauth-access-token',
+    });
+    expect((requestInit.headers as Record<string, string>)['User-Agent']).toContain('GeminiCLI/');
+    expect((requestInit.headers as Record<string, string>)['X-Goog-Api-Client']).toContain('google-genai-sdk/');
+    expect(JSON.parse(String(requestInit.body))).toEqual({
+      project: 'project-demo',
+      model: 'gemini-2.5-pro',
+      request: {
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: 'hello' }],
+          },
+        ],
+      },
+    });
+    expect(response.json()).toEqual({
+      responseId: '',
+      modelVersion: '',
+      candidates: [
+        {
+          index: 0,
+          content: {
+            parts: [{ text: 'hello from gemini cli' }],
+            role: 'model',
+          },
+          finishReason: 'STOP',
+        },
+      ],
+    });
+  });
+
+  it('routes Gemini native generateContent requests to openai upstreams and serializes the response back to Gemini shape', async () => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 41, routeId: 22 },
+      site: { id: 77, name: 'openai-site', url: 'https://api.openai.com', platform: 'openai' },
+      account: { id: 37, username: 'openai-user@example.com' },
+      tokenName: 'default',
+      tokenValue: 'openai-access-token',
+      actualModel: 'gpt-4.1',
+    });
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'chatcmpl-openai-1',
+      object: 'chat.completion',
+      created: 1_742_160_000,
+      model: 'gpt-4.1',
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: 'assistant',
+            content: 'hello from openai',
+          },
+          finish_reason: 'stop',
+        },
+      ],
+      usage: {
+        prompt_tokens: 4,
+        completion_tokens: 3,
+        total_tokens: 7,
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1beta/models/gemini-2.5-flash:generateContent',
+      headers: {
+        authorization: 'Bearer sk-managed-gemini',
+      },
+      payload: {
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: 'hello' }],
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const [targetUrl, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(targetUrl).toBe('https://api.openai.com/v1/chat/completions');
+    expect(requestInit.headers).toMatchObject({
+      Authorization: 'Bearer openai-access-token',
+      'Content-Type': 'application/json',
+    });
+    expect(JSON.parse(String(requestInit.body))).toEqual({
+      model: 'gpt-4.1',
+      stream: false,
+      messages: [
+        {
+          role: 'user',
+          content: 'hello',
+        },
+      ],
+    });
+    expect(response.json()).toEqual({
+      responseId: 'chatcmpl-openai-1',
+      modelVersion: 'gpt-4.1',
+      candidates: [
+        {
+          index: 0,
+          content: {
+            role: 'model',
+            parts: [{ text: 'hello from openai' }],
+          },
+          finishReason: 'STOP',
+        },
+      ],
+      usageMetadata: {
+        promptTokenCount: 4,
+        candidatesTokenCount: 3,
+        totalTokenCount: 7,
+      },
+    });
+  });
+
+  it('exposes GeminiCLI downstream generateContent endpoint and wraps the downstream response payload', async () => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 42, routeId: 22 },
+      site: { id: 78, name: 'openai-site', url: 'https://api.openai.com', platform: 'openai' },
+      account: { id: 38, username: 'openai-user@example.com' },
+      tokenName: 'default',
+      tokenValue: 'openai-access-token',
+      actualModel: 'gpt-4.1',
+    });
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'chatcmpl-openai-2',
+      object: 'chat.completion',
+      created: 1_742_160_001,
+      model: 'gpt-4.1',
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: 'assistant',
+            content: 'hello from gemini cli downstream',
+          },
+          finish_reason: 'stop',
+        },
+      ],
+      usage: {
+        prompt_tokens: 6,
+        completion_tokens: 5,
+        total_tokens: 11,
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1internal:generateContent',
+      headers: {
+        authorization: 'Bearer sk-managed-gemini',
+      },
+      payload: {
+        model: 'gpt-4.1',
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: 'hello' }],
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const [targetUrl, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(targetUrl).toBe('https://api.openai.com/v1/chat/completions');
+    expect(JSON.parse(String(requestInit.body))).toEqual({
+      model: 'gpt-4.1',
+      stream: false,
+      messages: [
+        {
+          role: 'user',
+          content: 'hello',
+        },
+      ],
+    });
+    expect(response.json()).toEqual({
+      response: {
+        responseId: 'chatcmpl-openai-2',
+        modelVersion: 'gpt-4.1',
+        candidates: [
+          {
+            index: 0,
+            content: {
+              role: 'model',
+              parts: [{ text: 'hello from gemini cli downstream' }],
+            },
+            finishReason: 'STOP',
+          },
+        ],
+        usageMetadata: {
+          promptTokenCount: 6,
+          candidatesTokenCount: 5,
+          totalTokenCount: 11,
+        },
+      },
+    });
+  });
+
+  it('routes Gemini native generateContent requests to antigravity upstreams through the internal content endpoint', async () => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 43, routeId: 22 },
+      site: { id: 79, name: 'antigravity-site', url: 'https://cloudcode-pa.googleapis.com', platform: 'antigravity' },
+      account: {
+        id: 39,
+        username: 'antigravity-user@example.com',
+        extraConfig: JSON.stringify({
+          oauth: {
+            provider: 'antigravity',
+            email: 'antigravity-user@example.com',
+            projectId: 'project-demo',
+          },
+        }),
+      },
+      tokenName: 'default',
+      tokenValue: 'antigravity-access-token',
+      actualModel: 'gemini-3-pro-preview',
+    });
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      response: {
+        responseId: 'antigravity-response-1',
+        modelVersion: 'gemini-3-pro-preview',
+        candidates: [
+          {
+            content: {
+              role: 'model',
+              parts: [{ text: 'hello from antigravity' }],
+            },
+            finishReason: 'STOP',
+          },
+        ],
+        usageMetadata: {
+          promptTokenCount: 8,
+          candidatesTokenCount: 4,
+          totalTokenCount: 12,
+        },
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1beta/models/gemini-3-pro-preview:generateContent',
+      headers: {
+        authorization: 'Bearer sk-managed-gemini',
+      },
+      payload: {
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: 'hello' }],
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const [targetUrl, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(targetUrl).toBe('https://daily-cloudcode-pa.googleapis.com/v1internal:generateContent');
+    expect(requestInit.headers).toMatchObject({
+      Authorization: 'Bearer antigravity-access-token',
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'User-Agent': 'antigravity/1.19.6 darwin/arm64',
+    });
+    const upstreamBody = JSON.parse(String(requestInit.body));
+    expect(upstreamBody).toMatchObject({
+      project: 'project-demo',
+      model: 'gemini-3-pro-preview',
+      userAgent: 'antigravity',
+      requestType: 'agent',
+      request: {
+        sessionId: expect.any(String),
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: 'hello' }],
+          },
+        ],
+      },
+    });
+    expect(upstreamBody.requestId).toMatch(/^agent-[0-9a-f-]{36}$/i);
+    expect(String(upstreamBody.request.sessionId)).toMatch(/^-\d+$/);
+    expect(response.json()).toEqual({
+      responseId: 'antigravity-response-1',
+      modelVersion: 'gemini-3-pro-preview',
+      candidates: [
+        {
+          index: 0,
+          content: {
+            role: 'model',
+            parts: [{ text: 'hello from antigravity' }],
+          },
+          finishReason: 'STOP',
+        },
+      ],
+      usageMetadata: {
+        promptTokenCount: 8,
+        candidatesTokenCount: 4,
+        totalTokenCount: 12,
+      },
+    });
+  });
+
+  it('exposes GeminiCLI downstream streamGenerateContent endpoint and preserves GeminiCLI response envelopes', async () => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 44, routeId: 22 },
+      site: { id: 80, name: 'gemini-cli-site', url: 'https://cloudcode-pa.googleapis.com', platform: 'gemini-cli' },
+      account: {
+        id: 40,
+        username: 'gemini-cli-user@example.com',
+        extraConfig: JSON.stringify({
+          oauth: {
+            provider: 'gemini-cli',
+            email: 'gemini-cli-user@example.com',
+            projectId: 'project-demo',
+          },
+        }),
+      },
+      tokenName: 'default',
+      tokenValue: 'gemini-cli-access-token',
+      actualModel: 'gemini-2.5-pro',
+    });
+
+    const encoder = new TextEncoder();
+    const upstreamBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"response":{"responseId":"cli-stream-1","candidates":[{"content":{"role":"model","parts":[{"text":"hello from cli stream"}]},"finishReason":"STOP"}]}}\n\n'));
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      },
+    });
+
+    fetchMock.mockResolvedValue(new Response(upstreamBody, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1internal:streamGenerateContent',
+      headers: {
+        authorization: 'Bearer sk-managed-gemini',
+      },
+      payload: {
+        model: 'gemini-2.5-pro',
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: 'hello' }],
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/event-stream');
+    expect(response.body).toContain('data: {"response":{"responseId":"cli-stream-1"');
+    expect(response.body).toContain('hello from cli stream');
+  });
+
+  it('exposes GeminiCLI downstream countTokens endpoint', async () => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 45, routeId: 22 },
+      site: { id: 81, name: 'gemini-cli-site', url: 'https://cloudcode-pa.googleapis.com', platform: 'gemini-cli' },
+      account: {
+        id: 41,
+        username: 'gemini-cli-user@example.com',
+        extraConfig: JSON.stringify({
+          oauth: {
+            provider: 'gemini-cli',
+            email: 'gemini-cli-user@example.com',
+            projectId: 'project-demo',
+          },
+        }),
+      },
+      tokenName: 'default',
+      tokenValue: 'gemini-cli-access-token',
+      actualModel: 'gemini-2.5-pro',
+    });
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      totalTokens: 13,
+      promptTokensDetails: [
+        {
+          modality: 'TEXT',
+          tokenCount: 13,
+        },
+      ],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1internal:countTokens',
+      headers: {
+        authorization: 'Bearer sk-managed-gemini',
+      },
+      payload: {
+        model: 'gemini-2.5-pro',
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: 'hello' }],
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const [targetUrl, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(targetUrl).toBe('https://cloudcode-pa.googleapis.com/v1internal:countTokens');
+    expect(JSON.parse(String(requestInit.body))).toEqual({
+      request: {
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: 'hello' }],
+          },
+        ],
+      },
+    });
+    expect(response.json()).toEqual({
+      totalTokens: 13,
+      promptTokensDetails: [
+        {
+          modality: 'TEXT',
+          tokenCount: 13,
         },
       ],
     });

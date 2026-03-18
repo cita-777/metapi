@@ -45,7 +45,7 @@ export function isExactModelPattern(modelPattern: string): boolean {
   const normalized = modelPattern.trim();
   if (!normalized) return false;
   if (isRegexModelPattern(normalized)) return false;
-  return !/[\*\?\[]/.test(normalized);
+  return !/[\*\?]/.test(normalized);
 }
 
 export function parseRegexModelPattern(modelPattern: string): { regex: RegExp | null; error: string | null } {

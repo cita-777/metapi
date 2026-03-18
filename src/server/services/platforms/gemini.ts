@@ -42,7 +42,7 @@ function resolveGeminiNativeModelsUrl(baseUrl: string, apiToken: string): string
 }
 
 export class GeminiAdapter extends BasePlatformAdapter {
-  readonly platformName = 'gemini';
+  readonly platformName: string = 'gemini';
 
   async detect(url: string): Promise<boolean> {
     const normalized = (url || '').toLowerCase();

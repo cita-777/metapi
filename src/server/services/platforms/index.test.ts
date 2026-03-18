@@ -58,6 +58,16 @@ describe('getAdapter platform aliases', () => {
     expect(getAdapter('gemini')?.platformName).toBe('gemini');
   });
 
+  it('supports antigravity adapter aliases', () => {
+    expect(getAdapter('antigravity')?.platformName).toBe('antigravity');
+    expect(getAdapter('anti-gravity')?.platformName).toBe('antigravity');
+  });
+
+  it('supports dedicated codex adapter and aliases', () => {
+    expect(getAdapter('codex')?.platformName).toBe('codex');
+    expect(getAdapter('chatgpt-codex')?.platformName).toBe('codex');
+  });
+
   it('detects anyrouter URL before generic new-api adapter', async () => {
     const adapter = await detectPlatform('https://anyrouter.top');
     expect(adapter?.platformName).toBe('anyrouter');

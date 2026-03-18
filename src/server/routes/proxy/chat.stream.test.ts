@@ -3193,6 +3193,8 @@ describe('chat proxy stream behavior', () => {
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain('"finish_reason":"error"');
     expect(response.body).toContain('[DONE]');
+    expect(recordSuccessMock).not.toHaveBeenCalled();
+    expect(recordFailureMock).toHaveBeenCalledTimes(1);
   });
 
   it('preserves non-stream function_call output when /v1/chat/completions falls back to /v1/responses', async () => {

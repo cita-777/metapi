@@ -312,12 +312,8 @@ async function resolveMySqlIndexPrefixRequirements(
     }
 
     const declaredType = String(row.column_type || row.data_type || '');
-    if (!requiresMysqlIndexPrefixForColumnType(declaredType)) {
-      continue;
-    }
-
     requirements[tableName] ??= {};
-    requirements[tableName][columnName] = true;
+    requirements[tableName][columnName] = requiresMysqlIndexPrefixForColumnType(declaredType);
   }
 
   return requirements;

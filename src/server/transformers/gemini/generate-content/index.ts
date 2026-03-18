@@ -83,6 +83,7 @@ import { geminiGenerateContentStream } from './stream.js';
 import { createGeminiGenerateContentAggregateState, applyGeminiGenerateContentAggregate } from './aggregator.js';
 import { geminiGenerateContentUsage } from './usage.js';
 import { reasoningEffortToGeminiThinkingConfig, geminiThinkingConfigToReasoning } from './convert.js';
+import { buildOpenAiBodyFromGeminiRequest, serializeNormalizedFinalToGemini } from './compatibility.js';
 
 export const geminiGenerateContentTransformer = {
   protocol: 'gemini/generate-content' as const,
@@ -97,6 +98,10 @@ export const geminiGenerateContentTransformer = {
   convert: {
     reasoningEffortToGeminiThinkingConfig,
     geminiThinkingConfigToReasoning,
+  },
+  compatibility: {
+    buildOpenAiBodyFromGeminiRequest,
+    serializeNormalizedFinalToGemini,
   },
   parseProxyRequestPath: parseGeminiProxyRequestPath,
   resolveProxyApiVersion: resolveGeminiProxyApiVersion,
@@ -114,4 +119,6 @@ export {
   geminiGenerateContentUsage,
   reasoningEffortToGeminiThinkingConfig,
   geminiThinkingConfigToReasoning,
+  buildOpenAiBodyFromGeminiRequest,
+  serializeNormalizedFinalToGemini,
 };

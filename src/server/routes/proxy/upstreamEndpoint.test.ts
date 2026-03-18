@@ -151,6 +151,16 @@ describe('resolveUpstreamEndpointCandidates', () => {
       'claude',
     );
     expect(claudeOrder).toEqual(['messages']);
+
+    const codexOrder = await resolveUpstreamEndpointCandidates(
+      {
+        ...baseContext,
+        site: { ...baseContext.site, platform: 'codex', url: 'https://chatgpt.com/backend-api/codex' },
+      },
+      'gpt-5.2-codex',
+      'openai',
+    );
+    expect(codexOrder).toEqual(['responses']);
   });
 
   it('prefers document-capable endpoints when downstream content contains non-image files', async () => {
@@ -311,6 +321,339 @@ describe('buildUpstreamEndpointRequest', () => {
 
     expect(request.path).toBe('/v1/responses');
     expect(request.body.input).toEqual([
+      {
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: 'hello' }],
+      },
+    ]);
+  });
+
+  it('builds codex responses requests against backend-api path and preserves oauth provider headers', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'responses',
+      modelName: 'gpt-5.2-codex',
+      stream: false,
+      tokenValue: 'oauth-access-token',
+      sitePlatform: 'codex',
+      siteUrl: 'https://chatgpt.com/backend-api/codex',
+      openaiBody: {
+        model: 'gpt-5.2-codex',
+        messages: [{ role: 'user', content: 'hello codex' }],
+        temperature: 0.2,
+        top_p: 0.9,
+        user: 'drop-me',
+        service_tier: 'auto',
+      },
+      downstreamFormat: 'openai',
+      providerHeaders: {
+        Originator: 'codex_cli_rs',
+        'Chatgpt-Account-Id': 'chatgpt-account-123',
+      },
+      codexSessionCacheKey: 'gpt-5.2-codex:proxy:test-key',
+    } as any);
+
+    expect(request.path).toBe('/responses');
+    expect(request.headers.Authorization).toBe('Bearer oauth-access-token');
+    expect(request.headers.Originator).toBe('codex_cli_rs');
+    expect(request.headers['Chatgpt-Account-Id']).toBe('chatgpt-account-123');
+    expect(request.headers.Version).toBe('0.101.0');
+    expect(request.headers.Session_id).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(request.headers.Conversation_id).toBe(request.headers.Session_id);
+    expect(request.headers['User-Agent']).toBe('codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464');
+    expect(request.headers.Accept).toBe('text/event-stream');
+    expect(request.headers.Connection).toBe('Keep-Alive');
+    expect(request.body.instructions).toBe('');
+    expect(request.body.prompt_cache_key).toBe(request.headers.Session_id);
+    expect(request.body.stream).toBe(true);
+    expect(request.body.store).toBe(false);
+    expect(request.body.parallel_tool_calls).toBe(true);
+    expect(request.body.include).toEqual(['reasoning.encrypted_content']);
+    expect(request.body.max_output_tokens).toBeUndefined();
+    expect(request.body.temperature).toBeUndefined();
+    expect(request.body.top_p).toBeUndefined();
+    expect(request.body.user).toBeUndefined();
+    expect(request.body.service_tier).toBeUndefined();
+  });
+
+  it('reuses a stable codex session id when the same downstream continuity key is provided', () => {
+    const firstRequest = buildUpstreamEndpointRequest({
+      endpoint: 'responses',
+      modelName: 'gpt-5.4',
+      stream: false,
+      tokenValue: 'oauth-access-token',
+      sitePlatform: 'codex',
+      siteUrl: 'https://chatgpt.com/backend-api/codex',
+      openaiBody: {
+        model: 'gpt-5.4',
+        messages: [{ role: 'user', content: 'hello codex' }],
+      },
+      downstreamFormat: 'openai',
+      providerHeaders: {
+        Originator: 'codex_cli_rs',
+      },
+      codexSessionCacheKey: 'gpt-5.4:user-123',
+    } as any);
+
+    const secondRequest = buildUpstreamEndpointRequest({
+      endpoint: 'responses',
+      modelName: 'gpt-5.4',
+      stream: false,
+      tokenValue: 'oauth-access-token',
+      sitePlatform: 'codex',
+      siteUrl: 'https://chatgpt.com/backend-api/codex',
+      openaiBody: {
+        model: 'gpt-5.4',
+        messages: [{ role: 'user', content: 'hello again codex' }],
+      },
+      downstreamFormat: 'openai',
+      providerHeaders: {
+        Originator: 'codex_cli_rs',
+      },
+      codexSessionCacheKey: 'gpt-5.4:user-123',
+    } as any);
+
+    expect(firstRequest.headers.Session_id).toBe(secondRequest.headers.Session_id);
+    expect(firstRequest.headers.Conversation_id).toBe(secondRequest.headers.Conversation_id);
+    expect(firstRequest.body.prompt_cache_key).toBe(secondRequest.body.prompt_cache_key);
+  });
+
+  it('does not synthesize prompt_cache_key or conversation_id for native codex responses requests without one', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'responses',
+      modelName: 'gpt-5.4',
+      stream: false,
+      tokenValue: 'oauth-access-token',
+      sitePlatform: 'codex',
+      siteUrl: 'https://chatgpt.com/backend-api/codex',
+      openaiBody: {},
+      downstreamFormat: 'responses',
+      responsesOriginalBody: {
+        model: 'gpt-5.4',
+        input: 'hello codex',
+      },
+      providerHeaders: {
+        Originator: 'codex_cli_rs',
+      },
+    } as any);
+
+    expect(request.headers.Session_id).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(request.headers.Conversation_id).toBeUndefined();
+    expect(request.body.prompt_cache_key).toBeUndefined();
+  });
+
+  it('preserves explicit prompt_cache_key for native codex responses requests', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'responses',
+      modelName: 'gpt-5.4',
+      stream: false,
+      tokenValue: 'oauth-access-token',
+      sitePlatform: 'codex',
+      siteUrl: 'https://chatgpt.com/backend-api/codex',
+      openaiBody: {},
+      downstreamFormat: 'responses',
+      responsesOriginalBody: {
+        model: 'gpt-5.4',
+        prompt_cache_key: 'codex-cache-123',
+        input: 'hello codex',
+      },
+      providerHeaders: {
+        Originator: 'codex_cli_rs',
+      },
+      codexExplicitSessionId: 'codex-cache-123',
+    } as any);
+
+    expect(request.headers.Session_id).toBe('codex-cache-123');
+    expect(request.headers.Conversation_id).toBe('codex-cache-123');
+    expect(request.body.prompt_cache_key).toBe('codex-cache-123');
+  });
+
+  it('builds gemini-cli native requests with project envelope and bearer headers', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'responses',
+      modelName: 'gemini-2.5-pro',
+      stream: true,
+      tokenValue: 'oauth-access-token',
+      oauthProvider: 'gemini-cli',
+      oauthProjectId: 'project-demo',
+      sitePlatform: 'gemini-cli',
+      siteUrl: 'https://cloudcode-pa.googleapis.com',
+      openaiBody: {
+        model: 'gemini-2.5-pro',
+        messages: [
+          { role: 'system', content: 'be concise' },
+          { role: 'user', content: 'hello gemini cli' },
+        ],
+        temperature: 0.4,
+      },
+      downstreamFormat: 'openai',
+      providerHeaders: {
+        'User-Agent': 'GeminiCLI/0.31.0/unknown (win32; x64)',
+        'X-Goog-Api-Client': 'google-genai-sdk/1.41.0 gl-node/v22.19.0',
+      },
+    });
+
+    expect(request.path).toBe('/v1internal:streamGenerateContent?alt=sse');
+    expect(request.headers.Authorization).toBe('Bearer oauth-access-token');
+    expect(request.headers['User-Agent']).toBe('GeminiCLI/0.31.0/gemini-2.5-pro (win32; x64)');
+    expect(request.headers['X-Goog-Api-Client']).toContain('google-genai-sdk/');
+    expect(request.body.project).toBe('project-demo');
+    expect(request.body.model).toBe('gemini-2.5-pro');
+    expect(request.body.request).toMatchObject({
+      generationConfig: {
+        temperature: 0.4,
+      },
+      systemInstruction: {
+        role: 'user',
+      },
+      contents: [
+        {
+          role: 'user',
+          parts: [{ text: 'hello gemini cli' }],
+        },
+      ],
+    });
+  });
+
+  it('builds antigravity native requests with the same internal Gemini envelope', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'chat',
+      modelName: 'gemini-3-pro-preview',
+      stream: false,
+      tokenValue: 'oauth-access-token',
+      oauthProvider: 'antigravity',
+      oauthProjectId: 'project-demo',
+      sitePlatform: 'antigravity',
+      siteUrl: 'https://cloudcode-pa.googleapis.com',
+      openaiBody: {
+        model: 'gemini-3-pro-preview',
+        messages: [
+          { role: 'system', content: 'be concise' },
+          { role: 'user', content: 'hello antigravity' },
+        ],
+      },
+      downstreamFormat: 'openai',
+      providerHeaders: {
+        'User-Agent': 'google-api-nodejs-client/9.15.1',
+        'X-Goog-Api-Client': 'google-cloud-sdk vscode_cloudshelleditor/0.1',
+      },
+    });
+
+    expect(request.path).toBe('/v1internal:generateContent');
+    expect(request.headers.Authorization).toBe('Bearer oauth-access-token');
+    expect(request.headers['User-Agent']).toBe('antigravity/1.19.6 darwin/arm64');
+    expect(request.headers['X-Goog-Api-Client']).toBeUndefined();
+    expect(request.headers['Client-Metadata']).toBeUndefined();
+    expect(request.body).toEqual({
+      project: 'project-demo',
+      model: 'gemini-3-pro-preview',
+      request: {
+        systemInstruction: {
+          role: 'user',
+          parts: [{ text: 'be concise' }],
+        },
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: 'hello antigravity' }],
+          },
+        ],
+      },
+    });
+  });
+
+  it('uses claude-code runtime headers for claude oauth upstream requests', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'messages',
+      modelName: 'claude-opus-4-6',
+      stream: true,
+      tokenValue: 'oauth-access-token',
+      oauthProvider: 'claude',
+      sitePlatform: 'claude',
+      siteUrl: 'https://api.anthropic.com',
+      openaiBody: {
+        model: 'claude-opus-4-6',
+        messages: [{ role: 'user', content: 'hello claude oauth' }],
+      },
+      downstreamFormat: 'openai',
+    });
+
+    expect(request.path).toBe('/v1/messages');
+    expect(request.headers.Authorization).toBe('Bearer oauth-access-token');
+    expect(request.headers['x-api-key']).toBeUndefined();
+    expect(request.headers['anthropic-version']).toBe('2023-06-01');
+    expect(request.headers['Anthropic-Dangerous-Direct-Browser-Access']).toBe('true');
+    expect(request.headers['X-App']).toBe('cli');
+    expect(request.headers['X-Stainless-Retry-Count']).toBe('0');
+    expect(request.headers['X-Stainless-Runtime-Version']).toBe('v24.3.0');
+    expect(request.headers['X-Stainless-Package-Version']).toBe('0.74.0');
+    expect(request.headers['X-Stainless-Runtime']).toBe('node');
+    expect(request.headers['X-Stainless-Lang']).toBe('js');
+    expect(request.headers['X-Stainless-Arch']).toBe('x64');
+    expect(request.headers['X-Stainless-Os']).toBe('Windows');
+    expect(request.headers['X-Stainless-Timeout']).toBe('600');
+    expect(request.headers['User-Agent']).toBe('claude-cli/2.1.63 (external, cli)');
+    expect(request.headers.Connection).toBe('keep-alive');
+    expect(request.headers.Accept).toBe('text/event-stream');
+    expect(request.headers['Accept-Encoding']).toBe('identity');
+  });
+
+  it('uses claude-code beta headers and compressed non-stream responses for claude upstream requests', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'messages',
+      modelName: 'claude-opus-4-6',
+      stream: false,
+      tokenValue: 'oauth-access-token',
+      oauthProvider: 'claude',
+      sitePlatform: 'claude',
+      siteUrl: 'https://api.anthropic.com',
+      openaiBody: {
+        model: 'claude-opus-4-6',
+        messages: [{ role: 'user', content: 'hello claude oauth' }],
+      },
+      downstreamFormat: 'openai',
+    });
+
+    expect(request.headers['anthropic-beta']).toContain('claude-code-20250219');
+    expect(request.headers['anthropic-beta']).toContain('oauth-2025-04-20');
+    expect(request.headers['anthropic-beta']).toContain('context-management-2025-06-27');
+    expect(request.headers.Accept).toBe('application/json');
+    expect(request.headers['Accept-Encoding']).toBe('gzip, deflate, br, zstd');
+  });
+
+  it('converts system roles to developer in native codex responses bodies', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'responses',
+      modelName: 'gpt-5.4',
+      stream: false,
+      tokenValue: 'oauth-access-token',
+      sitePlatform: 'codex',
+      siteUrl: 'https://chatgpt.com/backend-api/codex',
+      openaiBody: {},
+      downstreamFormat: 'responses',
+      responsesOriginalBody: {
+        model: 'gpt-5.4',
+        input: [
+          {
+            type: 'message',
+            role: 'system',
+            content: [{ type: 'input_text', text: 'be careful' }],
+          },
+          {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'hello' }],
+          },
+        ],
+      },
+    });
+
+    expect(request.body.input).toEqual([
+      {
+        type: 'message',
+        role: 'developer',
+        content: [{ type: 'input_text', text: 'be careful' }],
+      },
       {
         type: 'message',
         role: 'user',

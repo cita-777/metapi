@@ -185,6 +185,24 @@
           "notNull": false,
           "defaultValue": "0",
           "primaryKey": false
+        },
+        "oauth_provider": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "oauth_account_key": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "oauth_project_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
         }
       }
     },
@@ -1126,6 +1144,24 @@
       "unique": false
     },
     {
+      "name": "accounts_oauth_identity_idx",
+      "table": "accounts",
+      "columns": [
+        "oauth_provider",
+        "oauth_account_key",
+        "oauth_project_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "accounts_oauth_provider_idx",
+      "table": "accounts",
+      "columns": [
+        "oauth_provider"
+      ],
+      "unique": false
+    },
+    {
       "name": "accounts_site_id_idx",
       "table": "accounts",
       "columns": [
@@ -1405,6 +1441,15 @@
       "unique": true
     },
     {
+      "name": "sites_platform_url_unique",
+      "table": "sites",
+      "columns": [
+        "platform",
+        "url"
+      ],
+      "unique": true
+    },
+    {
       "name": "sites_status_idx",
       "table": "sites",
       "columns": [
@@ -1499,6 +1544,14 @@
       "columns": [
         "site_id",
         "model_name"
+      ]
+    },
+    {
+      "name": "sites_platform_url_unique",
+      "table": "sites",
+      "columns": [
+        "platform",
+        "url"
       ]
     },
     {

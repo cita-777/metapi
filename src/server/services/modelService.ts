@@ -1,4 +1,5 @@
 import { and, eq } from 'drizzle-orm';
+import { fetch } from 'undici';
 import { db, schema } from '../db/index.js';
 import { getAdapter } from './platforms/index.js';
 import {
@@ -8,14 +9,56 @@ import {
   isMaskedTokenValue,
   isUsableAccountToken,
 } from './accountTokenService.js';
-import { getCredentialModeFromExtraConfig, resolvePlatformUserId } from './accountExtraConfig.js';
+import {
+  getCredentialModeFromExtraConfig,
+  mergeAccountExtraConfig,
+  resolvePlatformUserId,
+  supportsDirectAccountRoutingConnection,
+} from './accountExtraConfig.js';
 import { invalidateTokenRouterCache } from './tokenRouter.js';
 import { setAccountRuntimeHealth } from './accountHealthService.js';
 import { clearAllRouteDecisionSnapshots } from './routeDecisionSnapshotStore.js';
+import { withSiteRecordProxyRequestInit } from './siteProxy.js';
+import { getCodexOauthInfoFromExtraConfig, isCodexPlatform } from './oauth/codexAccount.js';
+import { buildOauthInfo, getOauthInfoFromExtraConfig } from './oauth/oauthAccount.js';
+import { CLAUDE_DEFAULT_ANTHROPIC_VERSION } from './oauth/claudeProvider.js';
+import {
+  ANTIGRAVITY_DAILY_UPSTREAM_BASE_URL,
+  ANTIGRAVITY_MODELS_USER_AGENT,
+  ANTIGRAVITY_SANDBOX_DAILY_UPSTREAM_BASE_URL,
+  ANTIGRAVITY_UPSTREAM_BASE_URL,
+} from './oauth/antigravityProvider.js';
+import {
+  GEMINI_CLI_GOOGLE_API_CLIENT,
+  GEMINI_CLI_REQUIRED_SERVICE,
+  GEMINI_CLI_USER_AGENT,
+} from './oauth/geminiCliProvider.js';
 
 const API_TOKEN_DISCOVERY_TIMEOUT_MS = 8_000;
 const MODEL_DISCOVERY_TIMEOUT_MS = 12_000;
 const MODEL_REFRESH_BATCH_SIZE = 3;
+const CODEX_MODELS_CLIENT_VERSION = '1.0.0';
+const CLAUDE_STATIC_MODELS = [
+  'claude-haiku-4-5-20251001',
+  'claude-sonnet-4-5-20250929',
+  'claude-sonnet-4-6',
+  'claude-opus-4-6',
+  'claude-opus-4-5-20251101',
+  'claude-opus-4-1-20250805',
+  'claude-opus-4-20250514',
+  'claude-sonnet-4-20250514',
+  'claude-3-7-sonnet-20250219',
+  'claude-3-5-haiku-20241022',
+];
+const GEMINI_CLI_STATIC_MODELS = [
+  'gemini-2.5-pro',
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
+  'gemini-3-pro-preview',
+  'gemini-3.1-pro-preview',
+  'gemini-3-flash-preview',
+  'gemini-3.1-flash-lite-preview',
+];
 
 type ModelRefreshErrorCode = 'timeout' | 'unauthorized' | 'empty_models' | 'unknown';
 type ModelRefreshSkipCode = 'site_disabled' | 'adapter_or_status';
@@ -120,11 +163,234 @@ function normalizeModels(models: string[]): string[] {
   return normalizedModels;
 }
 
+function buildCodexModelsEndpoint(baseUrl: string): string {
+  const normalized = (baseUrl || '').replace(/\/+$/, '');
+  return `${normalized}/models?client_version=${encodeURIComponent(CODEX_MODELS_CLIENT_VERSION)}`;
+}
+
+function extractCodexModelIds(payload: unknown): string[] {
+  const collection = (() => {
+    if (Array.isArray(payload)) return payload;
+    if (!payload || typeof payload !== 'object') return [];
+    const record = payload as Record<string, unknown>;
+    if (Array.isArray(record.models)) return record.models;
+    if (Array.isArray(record.data)) return record.data;
+    if (Array.isArray(record.items)) return record.items;
+    return [];
+  })();
+
+  return collection.flatMap((item) => {
+    if (typeof item === 'string') return [item];
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+    const record = item as Record<string, unknown>;
+    const id = typeof record.id === 'string'
+      ? record.id
+      : (typeof record.slug === 'string' ? record.slug : (typeof record.model === 'string' ? record.model : ''));
+    return id ? [id] : [];
+  });
+}
+
+function normalizeBaseUrl(baseUrl: string): string {
+  return (baseUrl || '').replace(/\/+$/, '');
+}
+
+function extractAntigravityModelIds(payload: unknown): string[] {
+  if (!payload || typeof payload !== 'object') return [];
+  const record = payload as { models?: unknown };
+  if (record.models && typeof record.models === 'object' && !Array.isArray(record.models)) {
+    return Object.keys(record.models).map((name) => name.trim()).filter(Boolean);
+  }
+  if (!Array.isArray(record.models)) return [];
+  return record.models.flatMap((item) => {
+    if (typeof item === 'string') {
+      const trimmed = item.trim();
+      return trimmed ? [trimmed] : [];
+    }
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+    const value = item as { id?: unknown; name?: unknown };
+    const id = typeof value.id === 'string'
+      ? value.id.trim()
+      : (typeof value.name === 'string' ? value.name.trim() : '');
+    return id ? [id] : [];
+  });
+}
+
+function buildAntigravityDiscoveryBaseUrls(siteUrl: string): string[] {
+  const seen = new Set<string>();
+  return [
+    siteUrl,
+    ANTIGRAVITY_UPSTREAM_BASE_URL,
+    ANTIGRAVITY_DAILY_UPSTREAM_BASE_URL,
+    ANTIGRAVITY_SANDBOX_DAILY_UPSTREAM_BASE_URL,
+  ].flatMap((candidate) => {
+    const normalized = normalizeBaseUrl(candidate);
+    if (!normalized || seen.has(normalized)) return [];
+    seen.add(normalized);
+    return [normalized];
+  });
+}
+
+async function updateOauthModelDiscoveryState(input: {
+  account: typeof schema.accounts.$inferSelect;
+  checkedAt: string;
+  status: 'healthy' | 'abnormal';
+  lastModelSyncError?: string;
+  lastDiscoveredModels?: string[];
+}) {
+  const oauth = getOauthInfoFromExtraConfig(input.account.extraConfig);
+  if (!oauth) return input.account.extraConfig || null;
+  const extraConfig = mergeAccountExtraConfig(input.account.extraConfig, {
+    oauth: buildOauthInfo(input.account.extraConfig, {
+      provider: oauth.provider,
+      modelDiscoveryStatus: input.status,
+      lastModelSyncAt: input.checkedAt,
+      lastModelSyncError: input.lastModelSyncError,
+      lastDiscoveredModels: input.lastDiscoveredModels ?? [],
+    }),
+  });
+  await db.update(schema.accounts).set({
+    extraConfig,
+    updatedAt: input.checkedAt,
+  }).where(eq(schema.accounts.id, input.account.id)).run();
+  return extraConfig;
+}
+
+async function discoverCodexModelsFromCloud(input: {
+  site: typeof schema.sites.$inferSelect;
+  account: typeof schema.accounts.$inferSelect;
+}): Promise<string[]> {
+  const accessToken = (input.account.accessToken || '').trim();
+  if (!accessToken) {
+    throw new Error('codex oauth access token missing');
+  }
+  const oauth = getCodexOauthInfoFromExtraConfig(input.account.extraConfig);
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${accessToken}`,
+    Accept: 'application/json',
+    Originator: 'codex_cli_rs',
+  };
+  if (oauth?.accountId) {
+    headers['Chatgpt-Account-Id'] = oauth.accountId;
+  }
+
+  const response = await fetch(
+    buildCodexModelsEndpoint(input.site.url),
+    withSiteRecordProxyRequestInit(input.site, { method: 'GET', headers }),
+  );
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`HTTP ${response.status}: ${text || 'codex model discovery failed'}`);
+  }
+  return normalizeModels(extractCodexModelIds(await response.json()));
+}
+
+async function validateClaudeOauthConnection(input: {
+  site: typeof schema.sites.$inferSelect;
+  account: typeof schema.accounts.$inferSelect;
+}): Promise<void> {
+  const accessToken = (input.account.accessToken || '').trim();
+  if (!accessToken) {
+    throw new Error('claude oauth access token missing');
+  }
+  const response = await fetch(
+    `${input.site.url.replace(/\/+$/, '')}/v1/models`,
+    withSiteRecordProxyRequestInit(input.site, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/json',
+        'anthropic-version': CLAUDE_DEFAULT_ANTHROPIC_VERSION,
+      },
+    }),
+  );
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`HTTP ${response.status}: ${text || 'claude oauth validation failed'}`);
+  }
+}
+
+async function validateGeminiCliOauthConnection(input: {
+  account: typeof schema.accounts.$inferSelect;
+}): Promise<void> {
+  const accessToken = (input.account.accessToken || '').trim();
+  if (!accessToken) {
+    throw new Error('gemini cli oauth access token missing');
+  }
+  const oauth = getOauthInfoFromExtraConfig(input.account.extraConfig);
+  const projectId = (oauth?.projectId || '').trim();
+  if (!projectId) {
+    throw new Error('gemini cli oauth project id missing');
+  }
+  const response = await fetch(
+    `https://serviceusage.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(GEMINI_CLI_REQUIRED_SERVICE)}`,
+    {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/json',
+        'User-Agent': GEMINI_CLI_USER_AGENT,
+        'X-Goog-Api-Client': GEMINI_CLI_GOOGLE_API_CLIENT,
+      },
+    },
+  );
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`HTTP ${response.status}: ${text || 'gemini cli oauth validation failed'}`);
+  }
+  const payload = await response.json() as { state?: unknown };
+  if (String(payload.state || '').trim().toUpperCase() !== 'ENABLED') {
+    throw new Error(`Cloud AI API not enabled for project ${projectId}`);
+  }
+}
+
+async function discoverAntigravityModelsFromCloud(input: {
+  site: typeof schema.sites.$inferSelect;
+  account: typeof schema.accounts.$inferSelect;
+}): Promise<string[]> {
+  const accessToken = (input.account.accessToken || '').trim();
+  if (!accessToken) {
+    throw new Error('antigravity oauth access token missing');
+  }
+
+  const oauth = getOauthInfoFromExtraConfig(input.account.extraConfig);
+  const requestBody = oauth?.projectId ? { project: oauth.projectId } : {};
+  let lastError = '';
+
+  for (const baseUrl of buildAntigravityDiscoveryBaseUrls(input.site.url || ANTIGRAVITY_UPSTREAM_BASE_URL)) {
+    const response = await fetch(
+      `${baseUrl}/v1internal:fetchAvailableModels`,
+      withSiteRecordProxyRequestInit(input.site, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          'User-Agent': ANTIGRAVITY_MODELS_USER_AGENT,
+        },
+        body: JSON.stringify(requestBody),
+      }),
+    );
+    if (!response.ok) {
+      lastError = await response.text().catch(() => '') || `HTTP ${response.status}`;
+      continue;
+    }
+
+    const payload = await response.json();
+    const models = normalizeModels(extractAntigravityModelIds(payload));
+    if (models.length > 0) {
+      return models;
+    }
+    lastError = '未获取到可用模型';
+  }
+
+  throw new Error(lastError || '未获取到可用模型');
+}
+
 function isExactModelPattern(modelPattern: string): boolean {
   const normalized = modelPattern.trim();
   if (!normalized) return false;
   if (normalized.toLowerCase().startsWith('re:')) return false;
-  return !/[\*\?\[]/.test(normalized);
+  return !/[\*\?]/.test(normalized);
 }
 
 async function withTimeout<T>(fn: () => Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
@@ -227,6 +493,7 @@ export async function refreshModelsForAccount(accountId: number): Promise<ModelR
 
   const account = row.accounts;
   const site = row.sites;
+  const oauth = getOauthInfoFromExtraConfig(account.extraConfig);
   const adapter = getAdapter(site.platform);
 
   const accountTokens = await db.select()
@@ -248,7 +515,283 @@ export async function refreshModelsForAccount(accountId: number): Promise<ModelR
     return buildSkippedRefreshResult(accountId, 'site_disabled', '站点已禁用');
   }
 
-  if (!adapter || account.status !== 'active') {
+  if (account.status !== 'active') {
+    return buildSkippedRefreshResult(accountId, 'adapter_or_status', '平台不可用或账号未激活');
+  }
+
+  if (oauth?.provider === 'codex') {
+    const checkedAt = new Date().toISOString();
+    const startedAt = Date.now();
+    try {
+      const codexModels = await withTimeout(
+        () => discoverCodexModelsFromCloud({ site, account }),
+        MODEL_DISCOVERY_TIMEOUT_MS,
+        `codex model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
+      );
+      if (codexModels.length === 0) {
+        throw new Error('未获取到可用模型');
+      }
+
+      await db.insert(schema.modelAvailability).values(
+        codexModels.map((modelName) => ({
+          accountId,
+          modelName,
+          available: true,
+          latencyMs: Date.now() - startedAt,
+          checkedAt,
+        })),
+      ).run();
+      await updateOauthModelDiscoveryState({
+        account,
+        checkedAt,
+        status: 'healthy',
+        lastDiscoveredModels: codexModels,
+      });
+      await setAccountRuntimeHealth(accountId, {
+        state: 'healthy',
+        reason: 'Codex 云端模型探测成功',
+        source: 'model-discovery',
+        checkedAt,
+      });
+      return buildSuccessfulRefreshResult({
+        accountId,
+        modelCount: codexModels.length,
+        modelsPreview: codexModels.slice(0, 10),
+        tokenScanned: 0,
+        discoveredByCredential: true,
+        discoveredApiToken: false,
+      });
+    } catch (err) {
+      const rawMessage = (err as { message?: string })?.message || 'codex model discovery failed';
+      const errorCode = classifyModelDiscoveryError(rawMessage);
+      const errorMessage = `Codex 模型获取失败（${rawMessage}）`;
+      await updateOauthModelDiscoveryState({
+        account,
+        checkedAt,
+        status: 'abnormal',
+        lastModelSyncError: errorMessage,
+        lastDiscoveredModels: [],
+      });
+      await setAccountRuntimeHealth(account.id, {
+        state: 'unhealthy',
+        reason: errorMessage,
+        source: 'model-discovery',
+        checkedAt,
+      });
+      return buildFailedRefreshResult({
+        accountId,
+        errorCode,
+        errorMessage,
+        tokenScanned: 0,
+        discoveredByCredential: false,
+        discoveredApiToken: false,
+      });
+    }
+  }
+
+  if (oauth?.provider === 'claude') {
+    const checkedAt = new Date().toISOString();
+    const startedAt = Date.now();
+    try {
+      await withTimeout(
+        () => validateClaudeOauthConnection({ site, account }),
+        MODEL_DISCOVERY_TIMEOUT_MS,
+        `claude oauth validation timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
+      );
+      await db.insert(schema.modelAvailability).values(
+        CLAUDE_STATIC_MODELS.map((modelName) => ({
+          accountId,
+          modelName,
+          available: true,
+          latencyMs: Date.now() - startedAt,
+          checkedAt,
+        })),
+      ).run();
+      await updateOauthModelDiscoveryState({
+        account,
+        checkedAt,
+        status: 'healthy',
+        lastDiscoveredModels: CLAUDE_STATIC_MODELS,
+      });
+      await setAccountRuntimeHealth(accountId, {
+        state: 'healthy',
+        reason: 'Claude OAuth 健康探测成功',
+        source: 'model-discovery',
+        checkedAt,
+      });
+      return buildSuccessfulRefreshResult({
+        accountId,
+        modelCount: CLAUDE_STATIC_MODELS.length,
+        modelsPreview: CLAUDE_STATIC_MODELS.slice(0, 10),
+        tokenScanned: 0,
+        discoveredByCredential: true,
+        discoveredApiToken: false,
+      });
+    } catch (err) {
+      const rawMessage = (err as { message?: string })?.message || 'claude oauth validation failed';
+      const errorCode = classifyModelDiscoveryError(rawMessage);
+      const errorMessage = `Claude 模型获取失败（${rawMessage}）`;
+      await updateOauthModelDiscoveryState({
+        account,
+        checkedAt,
+        status: 'abnormal',
+        lastModelSyncError: errorMessage,
+        lastDiscoveredModels: [],
+      });
+      await setAccountRuntimeHealth(account.id, {
+        state: 'unhealthy',
+        reason: errorMessage,
+        source: 'model-discovery',
+        checkedAt,
+      });
+      return buildFailedRefreshResult({
+        accountId,
+        errorCode,
+        errorMessage,
+        tokenScanned: 0,
+        discoveredByCredential: false,
+        discoveredApiToken: false,
+      });
+    }
+  }
+
+  if (oauth?.provider === 'gemini-cli') {
+    const checkedAt = new Date().toISOString();
+    const startedAt = Date.now();
+    try {
+      await withTimeout(
+        () => validateGeminiCliOauthConnection({ account }),
+        MODEL_DISCOVERY_TIMEOUT_MS,
+        `gemini cli oauth validation timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
+      );
+      await db.insert(schema.modelAvailability).values(
+        GEMINI_CLI_STATIC_MODELS.map((modelName) => ({
+          accountId,
+          modelName,
+          available: true,
+          latencyMs: Date.now() - startedAt,
+          checkedAt,
+        })),
+      ).run();
+      await updateOauthModelDiscoveryState({
+        account,
+        checkedAt,
+        status: 'healthy',
+        lastDiscoveredModels: GEMINI_CLI_STATIC_MODELS,
+      });
+      await setAccountRuntimeHealth(accountId, {
+        state: 'healthy',
+        reason: 'Gemini CLI OAuth 健康探测成功',
+        source: 'model-discovery',
+        checkedAt,
+      });
+      return buildSuccessfulRefreshResult({
+        accountId,
+        modelCount: GEMINI_CLI_STATIC_MODELS.length,
+        modelsPreview: GEMINI_CLI_STATIC_MODELS.slice(0, 10),
+        tokenScanned: 0,
+        discoveredByCredential: true,
+        discoveredApiToken: false,
+      });
+    } catch (err) {
+      const rawMessage = (err as { message?: string })?.message || 'gemini cli oauth validation failed';
+      const errorCode = classifyModelDiscoveryError(rawMessage);
+      const errorMessage = `Gemini CLI 模型获取失败（${rawMessage}）`;
+      await updateOauthModelDiscoveryState({
+        account,
+        checkedAt,
+        status: 'abnormal',
+        lastModelSyncError: errorMessage,
+        lastDiscoveredModels: [],
+      });
+      await setAccountRuntimeHealth(account.id, {
+        state: 'unhealthy',
+        reason: errorMessage,
+        source: 'model-discovery',
+        checkedAt,
+      });
+      return buildFailedRefreshResult({
+        accountId,
+        errorCode,
+        errorMessage,
+        tokenScanned: 0,
+        discoveredByCredential: false,
+        discoveredApiToken: false,
+      });
+    }
+  }
+
+  if (oauth?.provider === 'antigravity') {
+    const checkedAt = new Date().toISOString();
+    const startedAt = Date.now();
+    try {
+      const antigravityModels = await withTimeout(
+        () => discoverAntigravityModelsFromCloud({ site, account }),
+        MODEL_DISCOVERY_TIMEOUT_MS,
+        `antigravity model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
+      );
+      if (antigravityModels.length === 0) {
+        throw new Error('未获取到可用模型');
+      }
+
+      await db.insert(schema.modelAvailability).values(
+        antigravityModels.map((modelName) => ({
+          accountId,
+          modelName,
+          available: true,
+          latencyMs: Date.now() - startedAt,
+          checkedAt,
+        })),
+      ).run();
+      await updateOauthModelDiscoveryState({
+        account,
+        checkedAt,
+        status: 'healthy',
+        lastDiscoveredModels: antigravityModels,
+      });
+      await setAccountRuntimeHealth(accountId, {
+        state: 'healthy',
+        reason: 'Antigravity OAuth 健康探测成功',
+        source: 'model-discovery',
+        checkedAt,
+      });
+      return buildSuccessfulRefreshResult({
+        accountId,
+        modelCount: antigravityModels.length,
+        modelsPreview: antigravityModels.slice(0, 10),
+        tokenScanned: 0,
+        discoveredByCredential: true,
+        discoveredApiToken: false,
+      });
+    } catch (err) {
+      const rawMessage = (err as { message?: string })?.message || 'antigravity model discovery failed';
+      const errorCode = classifyModelDiscoveryError(rawMessage);
+      const errorMessage = `Antigravity 模型获取失败（${rawMessage}）`;
+      await updateOauthModelDiscoveryState({
+        account,
+        checkedAt,
+        status: 'abnormal',
+        lastModelSyncError: errorMessage,
+        lastDiscoveredModels: [],
+      });
+      await setAccountRuntimeHealth(account.id, {
+        state: 'unhealthy',
+        reason: errorMessage,
+        source: 'model-discovery',
+        checkedAt,
+      });
+      return buildFailedRefreshResult({
+        accountId,
+        errorCode,
+        errorMessage,
+        tokenScanned: 0,
+        discoveredByCredential: false,
+        discoveredApiToken: false,
+      });
+    }
+  }
+
+  if (!adapter) {
     return buildSkippedRefreshResult(accountId, 'adapter_or_status', '平台不可用或账号未激活');
   }
 
@@ -513,8 +1056,7 @@ export async function rebuildTokenRoutesFromAvailability() {
   }
 
   for (const row of accountRows) {
-    if (!isApiKeyConnection(row.accounts)) continue;
-    if (!(row.accounts.apiToken || '').trim()) continue;
+    if (!supportsDirectAccountRoutingConnection(row.accounts)) continue;
     addModelCandidate(row.model_availability.modelName, row.accounts.id, null, row.accounts.siteId);
   }
 

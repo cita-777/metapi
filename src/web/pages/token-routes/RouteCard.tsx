@@ -473,7 +473,7 @@ function RouteCardInner({
         </div>
       ) : (
         <div style={{ fontSize: 13, color: 'var(--color-text-muted)', paddingLeft: 4 }}>
-          {readOnlyRoute ? tr('暂无通道，先补齐令牌后再重建路由。') : tr('暂无通道')}
+          {readOnlyRoute ? tr('暂无通道，先补齐连接配置后再重建路由。') : tr('暂无通道')}
         </div>
       )}
     </div>

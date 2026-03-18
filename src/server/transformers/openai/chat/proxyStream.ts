@@ -14,6 +14,7 @@ type StreamReader = {
 type ChatProxyStreamSessionInput = {
   downstreamFormat: DownstreamFormat;
   modelName: string;
+  successfulUpstreamPath: string;
   onParsedPayload?: (payload: unknown) => void;
   writeLines: (lines: string[]) => void;
   writeRaw: (chunk: string) => void;
@@ -21,6 +22,11 @@ type ChatProxyStreamSessionInput = {
 
 type ResponseSink = {
   end(): void;
+};
+
+type ChatProxyStreamResult = {
+  status: 'completed' | 'failed';
+  errorMessage: string | null;
 };
 
 export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput) {
@@ -39,6 +45,36 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
     ? createOpenAiChatAggregateState()
     : null;
   let finalized = false;
+  let terminalResult: ChatProxyStreamResult = {
+    status: 'completed',
+    errorMessage: null,
+  };
+
+  const extractFailureMessage = (payload: unknown, fallback = 'upstream stream failed'): string => {
+    if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+      const record = payload as Record<string, unknown>;
+      if (record.error && typeof record.error === 'object' && !Array.isArray(record.error)) {
+        const message = (record.error as Record<string, unknown>).message;
+        if (typeof message === 'string' && message.trim()) return message.trim();
+      }
+      if (typeof record.message === 'string' && record.message.trim()) return record.message.trim();
+      if (record.response && typeof record.response === 'object' && !Array.isArray(record.response)) {
+        const responseError = (record.response as Record<string, unknown>).error;
+        if (responseError && typeof responseError === 'object' && !Array.isArray(responseError)) {
+          const message = (responseError as Record<string, unknown>).message;
+          if (typeof message === 'string' && message.trim()) return message.trim();
+        }
+      }
+    }
+    return fallback;
+  };
+
+  const markFailed = (payload: unknown, fallbackMessage?: string) => {
+    terminalResult = {
+      status: 'failed',
+      errorMessage: extractFailureMessage(payload, fallbackMessage),
+    };
+  };
 
   const finalize = () => {
     if (finalized) return;
@@ -51,7 +87,12 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
       return;
     }
 
-    if (input.downstreamFormat === 'openai' && chatAggregateState && chatAggregateState.choices.size > 0) {
+    if (
+      input.downstreamFormat === 'openai'
+      && terminalResult.status !== 'failed'
+      && chatAggregateState
+      && chatAggregateState.choices.size > 0
+    ) {
       const needsTerminalFinishChunk = Array.from(chatAggregateState.choices.values())
         .some((choice) => !choice.finishReason);
       if (needsTerminalFinishChunk) {
@@ -109,6 +150,12 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
     }
 
     if (parsedPayload && typeof parsedPayload === 'object') {
+      const payloadType = typeof (parsedPayload as Record<string, unknown>).type === 'string'
+        ? String((parsedPayload as Record<string, unknown>).type)
+        : '';
+      if (payloadType === 'response.failed' || payloadType === 'error') {
+        markFailed(parsedPayload);
+      }
       const normalizedEvent = downstreamTransformer.transformStreamEvent(parsedPayload, streamContext, input.modelName);
       if (input.downstreamFormat === 'openai' && chatAggregateState) {
         applyOpenAiChatStreamEvent(chatAggregateState, normalizedEvent);
@@ -129,9 +176,17 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
   };
 
   return {
-    consumeUpstreamFinalPayload(payload: unknown, fallbackText: string, response?: ResponseSink) {
+    consumeUpstreamFinalPayload(payload: unknown, fallbackText: string, response?: ResponseSink): ChatProxyStreamResult {
       if (payload && typeof payload === 'object') {
         input.onParsedPayload?.(payload);
+      }
+      if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+        const payloadType = typeof (payload as Record<string, unknown>).type === 'string'
+          ? String((payload as Record<string, unknown>).type)
+          : '';
+        if (payloadType === 'response.failed' || payloadType === 'error') {
+          markFailed(payload);
+        }
       }
       if (input.downstreamFormat === 'openai') {
         const normalizedFinal = openAiChatOutbound.normalizeFinal(payload, input.modelName, fallbackText);
@@ -156,8 +211,9 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
       }
       finalize();
       response?.end();
+      return terminalResult;
     },
-    async run(reader: StreamReader | null | undefined, response: ResponseSink) {
+    async run(reader: StreamReader | null | undefined, response: ResponseSink): Promise<ChatProxyStreamResult> {
       const lifecycle = createProxyStreamLifecycle<ParsedSseEvent>({
         reader,
         response,
@@ -166,6 +222,7 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
         onEof: finalize,
       });
       await lifecycle.run();
+      return terminalResult;
     },
   };
 }

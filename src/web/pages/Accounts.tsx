@@ -358,7 +358,9 @@ export default function Accounts() {
         skipModelFetch: tokenForm.skipModelFetch,
       });
       closeAddPanel();
-      if (result.tokenType === 'apikey') {
+      if (result.queued) {
+        toast.info(result.message || '账号已添加，后台正在同步初始化信息。');
+      } else if (result.tokenType === 'apikey') {
         toast.success('已添加为 API Key 账号（可用于代理转发）');
       } else {
         const parts: string[] = [];

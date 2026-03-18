@@ -524,6 +524,44 @@ describe('convertOpenAiBodyToAnthropicMessagesBody', () => {
     ]);
   });
 
+  it('preserves tool_reference blocks inside tool_result content arrays', () => {
+    const result = sanitizeAnthropicMessagesBody({
+      model: 'claude-opus-4-6',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'tool_1',
+              content: [
+                { type: 'tool_reference', tool_name: 'lookup' },
+                { type: 'text', text: 'follow-up' },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(result.messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'tool_1',
+            content: [
+              { type: 'tool_reference', tool_name: 'lookup' },
+              { type: 'text', text: 'follow-up' },
+            ],
+            cache_control: { type: 'ephemeral' },
+          },
+        ],
+      },
+    ]);
+  });
+
   it('adds a second message cache anchor around the 20-block window for long prompts', () => {
     const longContent = Array.from({ length: 25 }, (_, index) => ({
       type: 'text',

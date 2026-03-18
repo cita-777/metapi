@@ -8,6 +8,7 @@ import { ensureDefaultTokenForAccount, syncTokensFromUpstream } from '../../serv
 import {
   getCredentialModeFromExtraConfig,
   guessPlatformUserIdFromUsername,
+  hasOauthProvider,
   getSub2ApiAuthFromExtraConfig,
   mergeAccountExtraConfig,
   normalizeCredentialMode as normalizeCredentialModeInput,
@@ -48,6 +49,17 @@ type AccountCapabilities = {
   proxyOnly: boolean;
 };
 
+type AccountInitializationParams = {
+  accountId: number;
+  site: typeof schema.sites.$inferSelect;
+  adapter: NonNullable<ReturnType<typeof getAdapter>>;
+  tokenType: 'session' | 'apikey' | 'unknown';
+  accessToken: string;
+  apiToken: string;
+  platformUserId?: number;
+  skipModelFetch?: boolean;
+};
+
 type VerifyFailureReason = 'needs-user-id' | 'invalid-user-id' | 'shield-blocked' | null;
 
 const limitAccountLogin = createRateLimitGuard({
@@ -79,7 +91,15 @@ function resolveStoredCredentialMode(account: typeof schema.accounts.$inferSelec
 function buildCapabilitiesFromCredentialMode(
   credentialMode: AccountCredentialMode,
   hasSessionToken: boolean,
+  extraConfig?: string | null,
 ): AccountCapabilities {
+  if (hasOauthProvider(extraConfig)) {
+    return {
+      canCheckin: false,
+      canRefreshBalance: false,
+      proxyOnly: true,
+    };
+  }
   const sessionCapable = credentialMode === 'session'
     ? hasSessionToken
     : (credentialMode === 'apikey' ? false : hasSessionToken);
@@ -92,7 +112,7 @@ function buildCapabilitiesFromCredentialMode(
 
 function buildCapabilitiesForAccount(account: typeof schema.accounts.$inferSelect): AccountCapabilities {
   const credentialMode = resolveStoredCredentialMode(account);
-  return buildCapabilitiesFromCredentialMode(credentialMode, hasSessionTokenValue(account.accessToken));
+  return buildCapabilitiesFromCredentialMode(credentialMode, hasSessionTokenValue(account.accessToken), account.extraConfig);
 }
 
 function normalizeBatchIds(input: unknown): number[] {
@@ -112,6 +132,75 @@ function normalizePinnedFlag(input: unknown): boolean | null {
     if (normalized === 'false' || normalized === '0') return false;
   }
   return null;
+}
+
+async function initializeAccountInBackground({
+  accountId,
+  site,
+  adapter,
+  tokenType,
+  accessToken,
+  apiToken,
+  platformUserId,
+  skipModelFetch,
+}: AccountInitializationParams) {
+  const summary = {
+    accountId,
+    syncedTokenCount: 0,
+    refreshedBalance: false,
+    refreshedModels: false,
+    rebuiltRoutes: false,
+  };
+
+  if (tokenType === 'session' && apiToken) {
+    try {
+      await ensureDefaultTokenForAccount(accountId, apiToken, { name: 'default', source: 'manual' });
+    } catch {}
+  }
+
+  if (tokenType === 'session' && accessToken) {
+    try {
+      const syncedTokens = await adapter.getApiTokens(site.url, accessToken, platformUserId);
+      summary.syncedTokenCount = Array.isArray(syncedTokens) ? syncedTokens.length : 0;
+      if (summary.syncedTokenCount > 0) {
+        await syncTokensFromUpstream(accountId, syncedTokens);
+      }
+    } catch {}
+  }
+
+  if (tokenType === 'session') {
+    try {
+      await refreshBalance(accountId);
+      summary.refreshedBalance = true;
+    } catch {}
+  }
+
+  if (skipModelFetch !== true) {
+    try {
+      await refreshModelsForAccount(accountId);
+      summary.refreshedModels = true;
+      await rebuildTokenRoutesFromAvailability();
+      summary.rebuiltRoutes = true;
+    } catch {}
+  }
+
+  return summary;
+}
+
+function buildQueuedAccountInitializationMessage(
+  tokenType: 'session' | 'apikey' | 'unknown',
+  skipModelFetch?: boolean,
+) {
+  if (tokenType === 'session' && skipModelFetch === true) {
+    return '账号已添加，后台正在同步令牌和余额信息。';
+  }
+  if (tokenType === 'session') {
+    return '账号已添加，后台正在同步令牌、余额和模型信息。';
+  }
+  if (skipModelFetch === true) {
+    return '已添加为 API Key 账号（可用于代理转发）。';
+  }
+  return '已添加为 API Key 账号，后台正在同步模型和路由信息。';
 }
 
 function normalizeSortOrder(input: unknown): number | null {
@@ -410,6 +499,7 @@ export async function accountsRoutes(app: FastifyInstance) {
         capabilities: buildCapabilitiesFromCredentialMode(
           credentialMode,
           hasSessionTokenValue(r.accounts.accessToken),
+          r.accounts.extraConfig,
         ),
         todaySpend: Math.round((spendByAccount[r.accounts.id] || 0) * 1_000_000) / 1_000_000,
         todayReward: Math.round(estimateRewardWithTodayIncomeFallback({
@@ -426,6 +516,7 @@ export async function accountsRoutes(app: FastifyInstance) {
           sessionCapable: buildCapabilitiesFromCredentialMode(
             credentialMode,
             hasSessionTokenValue(r.accounts.accessToken),
+            r.accounts.extraConfig,
           ).canRefreshBalance,
           hasDiscoveredModels: (modelCountByAccount[r.accounts.id] || 0) > 0,
         }),
@@ -968,7 +1059,7 @@ export async function accountsRoutes(app: FastifyInstance) {
         account: latest,
         tokenType: 'session',
         credentialMode: 'session',
-        capabilities: latest ? buildCapabilitiesForAccount(latest) : buildCapabilitiesFromCredentialMode('session', true),
+        capabilities: latest ? buildCapabilitiesForAccount(latest) : buildCapabilitiesFromCredentialMode('session', true, null),
         apiTokenFound: !!nextApiToken,
       };
     },
@@ -1106,39 +1197,40 @@ export async function accountsRoutes(app: FastifyInstance) {
       return reply.code(500).send({ success: false, message: '创建账号失败' });
     }
 
-    if (tokenType === 'session' && apiToken) {
-      try {
-        await ensureDefaultTokenForAccount(result.id, apiToken, { name: 'default', source: 'manual' });
-      } catch { }
-    }
-
-    if (tokenType === 'session' && accessToken) {
-      try {
-        const syncedTokens = await adapter.getApiTokens(site.url, accessToken, resolvedPlatformUserId);
-        if (syncedTokens.length > 0) {
-          await syncTokensFromUpstream(result.id, syncedTokens);
-        }
-      } catch { }
-    }
-
-    // Try to refresh balance
-    if (tokenType === 'session') {
-      try { await refreshBalance(result.id); } catch { }
-    }
-
-    // Try to refresh models only if not skipping.
-    if (body.skipModelFetch !== true) {
-      try {
-        await refreshModelsForAccount(result.id);
-        await rebuildTokenRoutesFromAvailability();
-      } catch { }
+    const shouldQueueInitialization = tokenType === 'session' || body.skipModelFetch !== true;
+    let queuedTaskId: string | undefined;
+    let queuedMessage: string | undefined;
+    if (shouldQueueInitialization) {
+      const taskTitle = `初始化连接 #${result.id}`;
+      const { task } = startBackgroundTask(
+        {
+          type: 'account-init',
+          title: taskTitle,
+          dedupeKey: `account-init-${result.id}`,
+          notifyOnFailure: true,
+          successMessage: () => `${taskTitle}已完成`,
+          failureMessage: (currentTask) => `${taskTitle}失败：${currentTask.error || 'unknown error'}`,
+        },
+        async () => initializeAccountInBackground({
+          accountId: result.id,
+          site,
+          adapter,
+          tokenType,
+          accessToken,
+          apiToken,
+          platformUserId: resolvedPlatformUserId,
+          skipModelFetch: body.skipModelFetch,
+        }),
+      );
+      queuedTaskId = task.id;
+      queuedMessage = buildQueuedAccountInitializationMessage(tokenType, body.skipModelFetch);
     }
 
     const account = await db.select().from(schema.accounts).where(eq(schema.accounts.id, result.id)).get();
     const finalCredentialMode = account ? resolveStoredCredentialMode(account) : resolvedCredentialMode;
     const capabilities = account
       ? buildCapabilitiesForAccount(account)
-      : buildCapabilitiesFromCredentialMode(finalCredentialMode, tokenType === 'session');
+      : buildCapabilitiesFromCredentialMode(finalCredentialMode, tokenType === 'session', null);
     return {
       ...account,
       tokenType,
@@ -1147,6 +1239,9 @@ export async function accountsRoutes(app: FastifyInstance) {
       modelCount: verifiedModels.length,
       apiTokenFound: !!apiToken,
       usernameDetected: !!(!body.username && username),
+      queued: !!queuedTaskId,
+      jobId: queuedTaskId,
+      message: queuedMessage,
     };
   });
 

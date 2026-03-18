@@ -344,6 +344,7 @@ describe('sqlite migrate bootstrap', () => {
       '0010_proxy_logs_downstream_api_key',
       '0011_downstream_api_key_metadata',
       '0012_account_token_value_status',
+      '0013_oauth_multi_provider',
     ]);
     const appliedEntries = journalEntries.filter((entry) => !missingTags.has(entry.tag));
 
@@ -380,6 +381,86 @@ describe('sqlite migrate bootstrap', () => {
     expect(appliedRows.map((row) => Number(row.created_at))).toEqual(
       journalEntries.map((entry) => entry.when),
     );
+
+    verified.close();
+  });
+
+  it('deduplicates legacy duplicate sites before applying the oauth site unique index', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-duplicate-sites-'));
+    const dbPath = join(dataDir, 'hub.db');
+    const sqlite = new Database(dbPath);
+    const journalEntries = readMigrationJournalEntries();
+    const appliedEntries = journalEntries.filter((entry) => entry.tag !== '0013_oauth_multi_provider');
+
+    for (const entry of appliedEntries) {
+      const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
+      applyMigrationSql(sqlite, sqlText);
+    }
+    recordAppliedMigrations(sqlite, appliedEntries);
+
+    sqlite.exec(`
+      INSERT INTO sites (id, name, url, platform, status, is_pinned, sort_order, global_weight)
+      VALUES
+        (101, 'Primary Codex', 'https://chatgpt.com/backend-api/codex', 'codex', 'active', 0, 0, 1),
+        (202, 'Duplicate Codex', 'https://chatgpt.com/backend-api/codex', 'codex', 'disabled', 1, 9, 3);
+
+      INSERT INTO accounts (site_id, username, access_token, status, checkin_enabled)
+      VALUES
+        (101, 'first@example.com', 'token-a', 'active', 0),
+        (202, 'second@example.com', 'token-b', 'disabled', 0);
+
+      INSERT INTO site_disabled_models (site_id, model_name)
+      VALUES
+        (101, 'gpt-5'),
+        (202, 'gpt-5'),
+        (202, 'gpt-5-mini');
+    `);
+
+    sqlite.close();
+
+    process.env.DATA_DIR = dataDir;
+    vi.resetModules();
+
+    await expect(import('./migrate.js')).resolves.toMatchObject({
+      runSqliteMigrations: expect.any(Function),
+    });
+
+    const verified = new Database(dbPath, { readonly: true });
+    const sites = verified
+      .prepare('SELECT id, name, url, platform, status, is_pinned, sort_order, global_weight FROM sites ORDER BY id ASC')
+      .all() as Array<{
+      id: number;
+      name: string;
+      url: string;
+      platform: string;
+      status: string;
+      is_pinned: number;
+      sort_order: number;
+      global_weight: number;
+    }>;
+    const accounts = verified
+      .prepare('SELECT username, site_id FROM accounts ORDER BY username ASC')
+      .all() as Array<{ username: string; site_id: number }>;
+    const disabledModels = verified
+      .prepare('SELECT site_id, model_name FROM site_disabled_models ORDER BY site_id ASC, model_name ASC')
+      .all() as Array<{ site_id: number; model_name: string }>;
+
+    expect(sites).toEqual([
+      expect.objectContaining({
+        id: 101,
+        name: 'Primary Codex',
+        url: 'https://chatgpt.com/backend-api/codex',
+        platform: 'codex',
+      }),
+    ]);
+    expect(accounts).toEqual([
+      { username: 'first@example.com', site_id: 101 },
+      { username: 'second@example.com', site_id: 101 },
+    ]);
+    expect(disabledModels).toEqual([
+      { site_id: 101, model_name: 'gpt-5' },
+      { site_id: 101, model_name: 'gpt-5-mini' },
+    ]);
 
     verified.close();
   });

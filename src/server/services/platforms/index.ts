@@ -7,16 +7,22 @@ import { OneHubAdapter } from './oneHub.js';
 import { DoneHubAdapter } from './doneHub.js';
 import { Sub2ApiAdapter } from './sub2api.js';
 import { OpenAiAdapter } from './openai.js';
+import { CodexAdapter } from './codex.js';
 import { ClaudeAdapter } from './claude.js';
 import { GeminiAdapter } from './gemini.js';
+import { GeminiCliAdapter } from './geminiCli.js';
+import { AntigravityAdapter } from './antigravity.js';
 import { CliProxyApiAdapter } from './cliproxyapi.js';
 import { detectPlatformByTitle } from './titleHint.js';
 
 const adapters: PlatformAdapter[] = [
   // Specific forks before generic adapters for better auto-detection.
   new OpenAiAdapter(),
+  new CodexAdapter(),
   new ClaudeAdapter(),
   new GeminiAdapter(),
+  new GeminiCliAdapter(),
+  new AntigravityAdapter(),
   new CliProxyApiAdapter(),
   new AnyRouterAdapter(),
   new DoneHubAdapter(),
@@ -49,9 +55,15 @@ const platformAliases: Record<string, string> = {
   sub2api: 'sub2api',
   // Official upstream APIs
   openai: 'openai',
+  codex: 'codex',
+  'chatgpt-codex': 'codex',
+  'chatgpt codex': 'codex',
   anthropic: 'claude',
   claude: 'claude',
   gemini: 'gemini',
+  'gemini-cli': 'gemini-cli',
+  antigravity: 'antigravity',
+  'anti-gravity': 'antigravity',
   google: 'gemini',
   // CLIProxyAPI aliases
   cliproxyapi: 'cliproxyapi',
@@ -83,6 +95,7 @@ function detectPlatformByUrlHint(url: string): string | undefined {
 
   // Official upstream endpoints.
   if (normalized.includes('api.openai.com')) return 'openai';
+  if (normalized.includes('chatgpt.com/backend-api/codex')) return 'codex';
   if (normalized.includes('api.anthropic.com') || normalized.includes('anthropic.com/v1')) return 'claude';
   if (
     normalized.includes('generativelanguage.googleapis.com')
@@ -91,6 +104,7 @@ function detectPlatformByUrlHint(url: string): string | undefined {
   ) {
     return 'gemini';
   }
+  if (normalized.includes('cloudcode-pa.googleapis.com')) return 'gemini-cli';
 
   // NewAPI-family forks and common aliases.
   if (normalized.includes('anyrouter')) return 'anyrouter';
