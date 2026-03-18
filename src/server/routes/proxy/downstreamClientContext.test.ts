@@ -19,13 +19,17 @@ describe('extractClaudeCodeSessionId', () => {
 });
 
 describe('isCodexResponsesSurface', () => {
-  it('detects Codex responses surface from originator and stainless headers', () => {
+  it('detects Codex responses surface from originator, stainless, and turn-state headers', () => {
     expect(isCodexResponsesSurface({
       originator: 'codex_cli_rs',
     })).toBe(true);
 
     expect(isCodexResponsesSurface({
       'x-stainless-lang': 'typescript',
+    })).toBe(true);
+
+    expect(isCodexResponsesSurface({
+      'x-codex-turn-state': 'turn-state-123',
     })).toBe(true);
   });
 
@@ -107,6 +111,23 @@ describe('detectDownstreamClientContext', () => {
       },
     })).toEqual({
       clientKind: 'generic',
+    });
+  });
+
+  it('recognizes Gemini CLI internal routes as a first-class downstream client kind', () => {
+    expect(detectDownstreamClientContext({
+      downstreamPath: '/v1internal:generateContent',
+      body: {
+        model: 'gpt-4.1',
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: 'hello' }],
+          },
+        ],
+      },
+    })).toEqual({
+      clientKind: 'gemini_cli',
     });
   });
 });
