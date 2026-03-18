@@ -34,6 +34,8 @@ type RuntimeSettings = {
   routingFallbackUnitCost: number;
   routingWeights: RoutingWeights;
   systemProxyUrl: string;
+  proxyErrorKeywords: string[];
+  proxyEmptyContentFailEnabled: boolean;
   proxyTokenMasked?: string;
   adminIpAllowlist?: string[];
   currentAdminIp?: string;
@@ -193,13 +195,17 @@ export default function Settings() {
     routingFallbackUnitCost: 1,
     routingWeights: defaultWeights,
     systemProxyUrl: '',
+    proxyErrorKeywords: [],
+    proxyEmptyContentFailEnabled: false,
   });
   const [proxyTokenSuffix, setProxyTokenSuffix] = useState('');
+  const [proxyErrorKeywordsText, setProxyErrorKeywordsText] = useState('');
   const [maskedToken, setMaskedToken] = useState('');
   const [loading, setLoading] = useState(true);
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [savingToken, setSavingToken] = useState(false);
   const [savingSystemProxy, setSavingSystemProxy] = useState(false);
+  const [savingProxyFailureRules, setSavingProxyFailureRules] = useState(false);
   const [savingRouting, setSavingRouting] = useState(false);
   const [showAdvancedRouting, setShowAdvancedRouting] = useState(false);
   const [savingSecurity, setSavingSecurity] = useState(false);
@@ -406,12 +412,21 @@ export default function Settings() {
           ...(runtimeInfo.routingWeights || {}),
         },
         systemProxyUrl: typeof runtimeInfo.systemProxyUrl === 'string' ? runtimeInfo.systemProxyUrl : '',
+        proxyErrorKeywords: Array.isArray(runtimeInfo.proxyErrorKeywords)
+          ? runtimeInfo.proxyErrorKeywords.filter((item: unknown) => typeof item === 'string')
+          : [],
+        proxyEmptyContentFailEnabled: !!runtimeInfo.proxyEmptyContentFailEnabled,
         proxyTokenMasked: runtimeInfo.proxyTokenMasked || '',
         adminIpAllowlist: Array.isArray(runtimeInfo.adminIpAllowlist)
           ? runtimeInfo.adminIpAllowlist.filter((item: unknown) => typeof item === 'string')
           : [],
         currentAdminIp: typeof runtimeInfo.currentAdminIp === 'string' ? runtimeInfo.currentAdminIp : '',
       });
+      setProxyErrorKeywordsText(
+        Array.isArray(runtimeInfo.proxyErrorKeywords)
+          ? runtimeInfo.proxyErrorKeywords.filter((item: unknown) => typeof item === 'string').join('\n')
+          : '',
+      );
       setAdminIpAllowlistText(
         Array.isArray(runtimeInfo.adminIpAllowlist)
           ? runtimeInfo.adminIpAllowlist.join('\n')
@@ -462,6 +477,11 @@ export default function Settings() {
     }
     return compact;
   };
+
+  const parseProxyErrorKeywords = (raw: string) => raw
+    .split(/\r?\n|,/g)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
 
   const saveSchedule = async () => {
     setSavingSchedule(true);
@@ -518,6 +538,33 @@ export default function Settings() {
       toast.error(err?.message || '保存失败');
     } finally {
       setSavingSystemProxy(false);
+    }
+  };
+
+  const saveProxyFailureRules = async () => {
+    setSavingProxyFailureRules(true);
+    try {
+      const keywords = parseProxyErrorKeywords(proxyErrorKeywordsText);
+      const res = await api.updateRuntimeSettings({
+        proxyErrorKeywords: keywords,
+        proxyEmptyContentFailEnabled: runtime.proxyEmptyContentFailEnabled,
+      });
+      const nextKeywords = Array.isArray(res?.proxyErrorKeywords)
+        ? res.proxyErrorKeywords
+        : keywords;
+      setRuntime((prev) => ({
+        ...prev,
+        proxyErrorKeywords: nextKeywords,
+        proxyEmptyContentFailEnabled: typeof res?.proxyEmptyContentFailEnabled === 'boolean'
+          ? res.proxyEmptyContentFailEnabled
+          : prev.proxyEmptyContentFailEnabled,
+      }));
+      setProxyErrorKeywordsText(nextKeywords.join('\n'));
+      toast.success('代理失败规则已保存');
+    } catch (err: any) {
+      toast.error(err?.message || '保存失败');
+    } finally {
+      setSavingProxyFailureRules(false);
     }
   };
 
@@ -1005,6 +1052,38 @@ export default function Settings() {
           <button onClick={saveSystemProxy} disabled={savingSystemProxy} className="btn btn-primary">
             {savingSystemProxy ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存系统代理'}
           </button>
+        </div>
+
+        <div className="card animate-slide-up stagger-4" style={{ padding: 20 }}>
+          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>代理失败判定</div>
+          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
+            命中任一关键词或空内容时判定失败，可触发重试。
+          </div>
+          <textarea
+            value={proxyErrorKeywordsText}
+            onChange={(e) => setProxyErrorKeywordsText(e.target.value)}
+            placeholder="一行一个关键词，或逗号分隔"
+            style={{
+              ...inputStyle,
+              fontFamily: 'var(--font-mono)',
+              minHeight: 96,
+              resize: 'vertical',
+              marginBottom: 12,
+            }}
+          />
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 12 }}>
+            <input
+              type="checkbox"
+              checked={runtime.proxyEmptyContentFailEnabled}
+              onChange={(e) => setRuntime((prev) => ({ ...prev, proxyEmptyContentFailEnabled: e.target.checked }))}
+            />
+            空内容（completion=0，即使 prompt 有 token 也算）判定失败
+          </label>
+          <div>
+            <button onClick={saveProxyFailureRules} disabled={savingProxyFailureRules} className="btn btn-primary">
+              {savingProxyFailureRules ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存失败规则'}
+            </button>
+          </div>
         </div>
 
         <div className="card animate-slide-up stagger-4" style={{ padding: 20 }}>

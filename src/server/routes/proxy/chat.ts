@@ -20,7 +20,8 @@ import {
   recordDownstreamCostUsage,
 } from './downstreamPolicy.js';
 import { composeProxyLogMessage } from './logPathMeta.js';
-import { executeEndpointFlow, type BuiltEndpointRequest } from './endpointFlow.js';
+import { executeEndpointFlow, withUpstreamPath, type BuiltEndpointRequest } from './endpointFlow.js';
+import { detectProxyFailure } from './proxyFailureJudge.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { resolveProxyLogBilling } from './proxyBilling.js';
 import { openAiChatTransformer } from '../../transformers/openai/chat/index.js';
@@ -342,12 +343,15 @@ async function handleChatProxyRequest(
       const successfulUpstreamPath = endpointResult.upstreamPath;
 
       if (isStream) {
-        reply.hijack();
-        reply.raw.statusCode = 200;
-        reply.raw.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-        reply.raw.setHeader('Cache-Control', 'no-cache, no-transform');
-        reply.raw.setHeader('Connection', 'keep-alive');
-        reply.raw.setHeader('X-Accel-Buffering', 'no');
+        const upstreamContentType = (upstream.headers.get('content-type') || '').toLowerCase();
+        const startSseResponse = () => {
+          reply.hijack();
+          reply.raw.statusCode = 200;
+          reply.raw.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+          reply.raw.setHeader('Cache-Control', 'no-cache, no-transform');
+          reply.raw.setHeader('Connection', 'keep-alive');
+          reply.raw.setHeader('X-Accel-Buffering', 'no');
+        };
 
         let parsedUsage: ReturnType<typeof parseProxyUsage> = {
           promptTokens: 0,
@@ -377,10 +381,11 @@ async function handleChatProxyRequest(
             reply.raw.write(chunk);
           },
         });
+        let rawText = '';
 
-        const upstreamContentType = (upstream.headers.get('content-type') || '').toLowerCase();
         if (!upstreamContentType.includes('text/event-stream')) {
           const fallbackText = await upstream.text();
+          rawText = fallbackText;
           let fallbackData: unknown = null;
           try {
             fallbackData = JSON.parse(fallbackText);
@@ -390,7 +395,96 @@ async function handleChatProxyRequest(
           if (String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli') {
             fallbackData = unwrapGeminiCliPayload(fallbackData);
           }
+          parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(fallbackData));
+          const latency = Date.now() - startTime;
+          const failure = detectProxyFailure({ rawText, usage: parsedUsage });
+          if (failure) {
+            tokenRouter.recordFailure(selected.channel.id);
+            logProxy(
+              selected,
+              requestedModel,
+              'failed',
+              failure.status,
+              latency,
+              failure.reason,
+              retryCount,
+              downstreamPath,
+              parsedUsage.promptTokens,
+              parsedUsage.completionTokens,
+              parsedUsage.totalTokens,
+              0,
+              null,
+              successfulUpstreamPath,
+              clientContext,
+              logDownstreamApiKeyId ? downstreamApiKeyId : null,
+            );
+
+            if (shouldRetryProxyRequest(failure.status, failure.reason) && retryCount < MAX_RETRIES) {
+              retryCount += 1;
+              continue;
+            }
+
+            await reportProxyAllFailed({
+              model: requestedModel,
+              reason: failure.reason,
+            });
+
+            return reply.code(failure.status).send({
+              error: { message: failure.reason, type: 'upstream_error' },
+            });
+          }
+
+          startSseResponse();
           const streamResult = streamSession.consumeUpstreamFinalPayload(fallbackData, fallbackText, reply.raw);
+          if (streamResult.status === 'failed') {
+            tokenRouter.recordFailure(selected.channel.id);
+            logProxy(
+              selected,
+              requestedModel,
+              'failed',
+              200,
+              latency,
+              streamResult.errorMessage,
+              retryCount,
+              downstreamPath,
+              parsedUsage.promptTokens,
+              parsedUsage.completionTokens,
+              parsedUsage.totalTokens,
+              0,
+              null,
+              successfulUpstreamPath,
+              clientContext,
+              logDownstreamApiKeyId ? downstreamApiKeyId : null,
+            );
+            return;
+          }
+        } else {
+          startSseResponse();
+          // Preserve real SSE streaming instead of buffering the whole upstream body.
+          const upstreamReader = upstream.body?.getReader();
+          const baseReader = String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli' && upstreamReader
+            ? createGeminiCliStreamReader(upstreamReader)
+            : upstreamReader;
+          const decoder = new TextDecoder();
+          const reader = baseReader
+            ? {
+              async read() {
+                const result = await baseReader.read();
+                if (result.value) {
+                  rawText += decoder.decode(result.value, { stream: true });
+                }
+                return result;
+              },
+              async cancel(reason?: unknown) {
+                return baseReader.cancel(reason);
+              },
+              releaseLock() {
+                return baseReader.releaseLock();
+              },
+            }
+            : baseReader;
+          const streamResult = await streamSession.run(reader, reply.raw);
+          rawText += decoder.decode();
 
           const latency = Date.now() - startTime;
           if (streamResult.status === 'failed') {
@@ -416,83 +510,13 @@ async function handleChatProxyRequest(
             return;
           }
 
-          const resolvedUsage = await resolveProxyUsageWithSelfLogFallback({
-            site: selected.site,
-            account: selected.account,
-            tokenValue: selected.tokenValue,
-            tokenName: selected.tokenName,
-            modelName,
-            requestStartedAtMs: startTime,
-            requestEndedAtMs: startTime + latency,
-            localLatencyMs: latency,
-            usage: {
-              promptTokens: parsedUsage.promptTokens,
-              completionTokens: parsedUsage.completionTokens,
-              totalTokens: parsedUsage.totalTokens,
-            },
-          });
-
-          const { estimatedCost, billingDetails } = await resolveProxyLogBilling({
-            site: selected.site,
-            account: selected.account,
-            modelName,
-            parsedUsage,
-            resolvedUsage,
-          });
-
-          tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost);
-          recordDownstreamCostUsage(request, estimatedCost);
-          logProxy(
-            selected,
-            requestedModel,
-            'success',
-            200,
-            latency,
-            null,
-            retryCount,
-            downstreamPath,
-            resolvedUsage.promptTokens,
-            resolvedUsage.completionTokens,
-            resolvedUsage.totalTokens,
-            estimatedCost,
-            billingDetails,
-            successfulUpstreamPath,
-            clientContext,
-            logDownstreamApiKeyId ? downstreamApiKeyId : null,
-          );
-          return;
+          // Once SSE has been hijacked and streamed downstream, we can no longer
+          // safely fall back to an HTTP error response or retry by switching the
+          // channel mid-flight. Stream-level failures must be handled in-band by
+          // the proxy stream session itself.
         }
-
-        const upstreamReader = upstream.body?.getReader();
-        const reader = String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli' && upstreamReader
-          ? createGeminiCliStreamReader(upstreamReader)
-          : upstreamReader;
-        const streamResult = await streamSession.run(reader, reply.raw);
 
         const latency = Date.now() - startTime;
-        if (streamResult.status === 'failed') {
-          tokenRouter.recordFailure(selected.channel.id);
-          logProxy(
-            selected,
-            requestedModel,
-            'failed',
-            200,
-            latency,
-            streamResult.errorMessage,
-            retryCount,
-            downstreamPath,
-            parsedUsage.promptTokens,
-            parsedUsage.completionTokens,
-            parsedUsage.totalTokens,
-            0,
-            null,
-            successfulUpstreamPath,
-            clientContext,
-            logDownstreamApiKeyId ? downstreamApiKeyId : null,
-          );
-          return;
-        }
-
         const resolvedUsage = await resolveProxyUsageWithSelfLogFallback({
           site: selected.site,
           account: selected.account,
@@ -562,6 +586,42 @@ async function handleChatProxyRequest(
 
       const latency = Date.now() - startTime;
       const parsedUsage = parseProxyUsage(upstreamData);
+      const failure = detectProxyFailure({ rawText, usage: parsedUsage });
+      if (failure) {
+        tokenRouter.recordFailure(selected.channel.id);
+        logProxy(
+          selected,
+          requestedModel,
+          'failed',
+          failure.status,
+          latency,
+          failure.reason,
+          retryCount,
+          downstreamPath,
+          parsedUsage.promptTokens,
+          parsedUsage.completionTokens,
+          parsedUsage.totalTokens,
+          0,
+          null,
+          successfulUpstreamPath,
+          clientContext,
+          logDownstreamApiKeyId ? downstreamApiKeyId : null,
+        );
+
+        if (shouldRetryProxyRequest(failure.status, failure.reason) && retryCount < MAX_RETRIES) {
+          retryCount += 1;
+          continue;
+        }
+
+        await reportProxyAllFailed({
+          model: requestedModel,
+          reason: failure.reason,
+        });
+
+        return reply.code(failure.status).send({
+          error: { message: failure.reason, type: 'upstream_error' },
+        });
+      }
       const normalizedFinal = downstreamTransformer.transformFinalResponse(upstreamData, modelName, rawText);
       const downstreamResponse = downstreamTransformer.serializeFinalResponse(normalizedFinal, parsedUsage);
 
