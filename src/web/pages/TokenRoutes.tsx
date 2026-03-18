@@ -563,6 +563,15 @@ export default function TokenRoutes() {
     }) as [string, number][];
   }, [listVisibleRoutes, routeEndpointTypesByRouteId]);
 
+  const sourceEndpointTypesByRouteId = useMemo(() => {
+    const next: Record<number, string[]> = {};
+    for (const route of exactSourceRouteOptions) {
+      next[route.id] = Array.from(routeEndpointTypesByRouteId[route.id] || new Set<string>())
+        .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    }
+    return next;
+  }, [exactSourceRouteOptions, routeEndpointTypesByRouteId]);
+
   const routeBrandIconCandidates = useMemo(() => {
     const byIcon = new Map<string, BrandInfo>();
 
@@ -600,6 +609,7 @@ export default function TokenRoutes() {
         brand: routeBrandById.get(route.id) || null,
         modelPattern: route.modelPattern,
         channelCount: route.channelCount,
+        sourceRouteCount: Array.isArray(route.sourceRouteIds) ? route.sourceRouteIds.length : 0,
       }))
       .sort((a, b) => {
         if (a.channelCount === b.channelCount) return a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
@@ -1152,6 +1162,7 @@ export default function TokenRoutes() {
         routeIconSelectOptions={routeIconSelectOptions}
         previewModelSamples={previewModelSamples}
         exactSourceRouteOptions={exactSourceRouteOptions}
+        sourceEndpointTypesByRouteId={sourceEndpointTypesByRouteId}
         onSave={handleAddRoute}
         onCancel={handleCancelEditRoute}
       />

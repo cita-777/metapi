@@ -203,7 +203,7 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
                 key={groupRoute.id}
                 active={activeGroupFilter === groupRoute.id}
                 label={groupRoute.title}
-                count={groupRoute.channelCount}
+                count={groupRoute.sourceRouteCount > 0 ? groupRoute.sourceRouteCount : groupRoute.channelCount}
                 icon={
                   groupRoute.icon.kind === 'brand' ? (
                     <BrandGlyph icon={groupRoute.icon.value} alt={groupRoute.title} size={12} fallbackText={groupRoute.title} />

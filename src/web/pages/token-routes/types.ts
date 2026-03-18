@@ -150,6 +150,7 @@ export type SortableChannelRowProps = {
   isExactRoute: boolean;
   loadingDecision: boolean;
   isSavingPriority: boolean;
+  readOnly?: boolean;
   tokenOptions: RouteTokenOption[];
   activeTokenId: number;
   isUpdatingToken: boolean;
@@ -165,4 +166,5 @@ export type GroupRouteItem = {
   brand: BrandInfo | null;
   modelPattern: string;
   channelCount: number;
+  sourceRouteCount: number;
 };

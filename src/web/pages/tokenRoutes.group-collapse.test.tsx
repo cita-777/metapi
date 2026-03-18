@@ -48,6 +48,23 @@ function findButtonByText(root: ReactTestInstance, text: string): ReactTestInsta
   ));
 }
 
+function findButtonByClassAndText(root: ReactTestInstance, className: string, text: string): ReactTestInstance {
+  return root.find((node) => (
+    node.type === 'button'
+    && typeof node.props.onClick === 'function'
+    && String(node.props.className || '').includes(className)
+    && collectText(node).includes(text)
+  ));
+}
+
+function findButtonByAriaLabel(root: ReactTestInstance, label: string): ReactTestInstance {
+  return root.find((node) => (
+    node.type === 'button'
+    && typeof node.props['aria-label'] === 'string'
+    && node.props['aria-label'] === label
+  ));
+}
+
 function findInputByPlaceholder(root: ReactTestInstance, placeholderText: string): ReactTestInstance {
   return root.find((node) => (
     node.type === 'input'
@@ -865,6 +882,195 @@ describe('TokenRoutes grouped source models', () => {
     }
   });
 
+  it('renders the source picker like the route page with brand, site, ability filters and a card grid', async () => {
+    getBrandMock.mockImplementation((modelName: string) => {
+      const model = String(modelName);
+      if (model.includes('gpt')) {
+        return { name: 'OpenAI', icon: 'openai', color: 'linear-gradient(135deg,#111,#555)' };
+      }
+      if (model.includes('claude')) {
+        return { name: 'Anthropic', icon: 'anthropic', color: 'linear-gradient(135deg,#d97706,#f59e0b)' };
+      }
+      if (model.includes('gemini')) {
+        return { name: 'Gemini', icon: 'gemini', color: 'linear-gradient(135deg,#2563eb,#7c3aed)' };
+      }
+      return null;
+    });
+    apiMock.getRoutesSummary.mockResolvedValue([
+      {
+        id: 11, modelPattern: 'gpt-5.4', displayName: null,
+        displayIcon: null, modelMapping: null, enabled: true,
+        routeMode: 'pattern', sourceRouteIds: [],
+        channelCount: 3, enabledChannelCount: 3, siteNames: ['Wong'],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+      {
+        id: 12, modelPattern: 'claude-sonnet-4-5', displayName: null,
+        displayIcon: null, modelMapping: null, enabled: true,
+        routeMode: 'pattern', sourceRouteIds: [],
+        channelCount: 2, enabledChannelCount: 2, siteNames: ['Alpha'],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+      {
+        id: 13, modelPattern: 'gemini-2.5-pro', displayName: null,
+        displayIcon: null, modelMapping: null, enabled: true,
+        routeMode: 'pattern', sourceRouteIds: [],
+        channelCount: 1, enabledChannelCount: 1, siteNames: ['Wong'],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+    ]);
+    apiMock.getModelTokenCandidates.mockResolvedValue({
+      models: {},
+      endpointTypesByModel: {
+        'gpt-5.4': ['openai'],
+        'claude-sonnet-4-5': ['anthropic'],
+        'gemini-2.5-pro': ['gemini'],
+      },
+    });
+
+    let root: ReturnType<typeof create> | null = null;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findButtonByText(root.root, '新建群组').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findButtonByText(root.root, '选择来源模型').props.onClick();
+      });
+      await flushMicrotasks();
+
+      const pickerGrid = root.root.find((node) => (
+        node.type === 'div'
+        && String(node.props.className || '').includes('source-route-picker-grid')
+      ));
+      expect(String(pickerGrid.props.style?.display || '')).toBe('grid');
+      expect(String(pickerGrid.props.style?.gridTemplateColumns || '')).toContain('repeat(');
+
+      expect(findButtonByClassAndText(root.root, 'filter-chip', 'OpenAI')).toBeTruthy();
+      expect(findButtonByClassAndText(root.root, 'filter-chip', 'Wong')).toBeTruthy();
+      expect(findButtonByClassAndText(root.root, 'filter-chip', 'gemini')).toBeTruthy();
+
+      await act(async () => {
+        findButtonByClassAndText(root.root, 'filter-chip', 'Wong').props.onClick();
+      });
+      await flushMicrotasks();
+      expect(collectText(pickerGrid)).toContain('gpt-5.4');
+      expect(collectText(pickerGrid)).toContain('gemini-2.5-pro');
+      expect(collectText(pickerGrid)).not.toContain('claude-sonnet-4-5');
+
+      await act(async () => {
+        findButtonByClassAndText(root.root, 'filter-chip', 'Wong').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findButtonByClassAndText(root.root, 'filter-chip', 'OpenAI').props.onClick();
+      });
+      await flushMicrotasks();
+      expect(collectText(pickerGrid)).toContain('OpenAI');
+      expect(collectText(pickerGrid)).toContain('gpt-5.4');
+      expect(collectText(pickerGrid)).not.toContain('claude-sonnet-4-5');
+      expect(collectText(pickerGrid)).not.toContain('gemini-2.5-pro');
+
+      await act(async () => {
+        findButtonByClassAndText(root.root, 'filter-chip', 'OpenAI').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findButtonByClassAndText(root.root, 'filter-chip', 'anthropic').props.onClick();
+      });
+      await flushMicrotasks();
+      expect(collectText(pickerGrid)).toContain('Anthropic');
+      expect(collectText(pickerGrid)).toContain('claude-sonnet-4-5');
+      expect(collectText(pickerGrid)).not.toContain('gpt-5.4');
+      expect(collectText(pickerGrid)).not.toContain('gemini-2.5-pro');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('shows explicit-group source counts instead of aggregated channel counts in the route list and filter chips', async () => {
+    apiMock.getRoutesSummary.mockResolvedValue([
+      {
+        id: 11, modelPattern: 'deepseek-chat', displayName: null,
+        displayIcon: null, modelMapping: null, enabled: true,
+        routeMode: 'pattern', sourceRouteIds: [],
+        channelCount: 40, enabledChannelCount: 40, siteNames: ['Wong'],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+      {
+        id: 12, modelPattern: 'deepseek-reasoner', displayName: null,
+        displayIcon: null, modelMapping: null, enabled: true,
+        routeMode: 'pattern', sourceRouteIds: [],
+        channelCount: 55, enabledChannelCount: 55, siteNames: ['Wong'],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+      {
+        id: 21, modelPattern: 'deepseekv1', displayName: 'deepseekv1',
+        displayIcon: '', modelMapping: null, enabled: true,
+        routeMode: 'explicit_group', sourceRouteIds: [11, 12],
+        channelCount: 95, enabledChannelCount: 95, siteNames: ['Wong'],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+    ]);
+    apiMock.getRouteChannels.mockResolvedValue([
+      {
+        id: 101, accountId: 1, tokenId: 1, sourceModel: 'deepseek-chat',
+        priority: 0, weight: 1, enabled: true, manualOverride: false,
+        successCount: 0, failCount: 0,
+        account: { username: 'user-a' }, site: { name: 'Wong' }, token: null,
+      },
+    ]);
+
+    let root: ReturnType<typeof create> | null = null;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const filterSummary = root.root.find((node) =>
+        node.type === 'button' && String(node.props.className || '').includes('route-filter-bar-summary'),
+      );
+      await act(async () => {
+        filterSummary.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const groupChip = findButtonByClassAndText(root.root, 'filter-chip', 'deepseekv1');
+      expect(collectText(groupChip)).toContain('2');
+      expect(collectText(groupChip)).not.toContain('95');
+
+      const routeCard = root.root.find((node) =>
+        node.type === 'div'
+        && String(node.props.className || '').includes('route-card-collapsed')
+        && collectText(node).includes('deepseekv1'),
+      );
+      expect(collectText(routeCard).replace(/\s+/g, '')).toContain('2来源模型');
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('uses a dedicated source picker modal and submits explicit-group sourceRouteIds', async () => {
     apiMock.getRoutesSummary.mockResolvedValue([
       {
@@ -1165,6 +1371,82 @@ describe('TokenRoutes grouped source models', () => {
         sourceRouteIds: [11, 12],
       }));
       expect(apiMock.getRoutesSummary).toHaveBeenCalledTimes(2);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('reuses the standard channel row presentation for explicit-group details in read-only mode', async () => {
+    apiMock.getRoutesSummary.mockResolvedValue([
+      {
+        id: 11, modelPattern: 'claude-haiku-4-5-20251001', displayName: null,
+        displayIcon: null, modelMapping: null, enabled: true,
+        routeMode: 'pattern', sourceRouteIds: [],
+        channelCount: 6, enabledChannelCount: 6, siteNames: ['Wong'],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+      {
+        id: 21, modelPattern: 'claude-haiku-proxy', displayName: 'claude-haiku-proxy',
+        displayIcon: '', modelMapping: null, enabled: true,
+        routeMode: 'explicit_group', sourceRouteIds: [11],
+        channelCount: 6, enabledChannelCount: 6, siteNames: ['Wong'],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+    ]);
+    apiMock.getRouteChannels.mockResolvedValue([
+      {
+        id: 101,
+        routeId: 11,
+        accountId: 301,
+        tokenId: 401,
+        sourceModel: 'claude-haiku-4-5-20251001',
+        priority: 0,
+        weight: 10,
+        enabled: true,
+        manualOverride: false,
+        successCount: 6,
+        failCount: 1,
+        account: { username: 'linuxdo_131936' },
+        site: { name: 'Wong' },
+        token: { id: 401, name: 'token-a', accountId: 301, enabled: true, isDefault: true },
+      },
+    ]);
+
+    let root: ReturnType<typeof create> | null = null;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const expandBtn = root.root.find((node) =>
+        node.type === 'div'
+        && String(node.props.className || '').includes('route-card-collapsed')
+        && collectText(node).includes('claude-haiku-proxy'),
+      );
+      await act(async () => {
+        expandBtn.props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findButtonByText(root.root, 'claude-haiku-4-5-20251001').props.onClick();
+      });
+      await flushMicrotasks();
+
+      const expandedText = collectText(root.root);
+      expect(expandedText).toContain('P0');
+      expect(expandedText).toContain('当前生效：token-a');
+      expect(expandedText).toContain('选中概率');
+      expect(findButtonByAriaLabel(root.root, '拖拽调整优先级').props.disabled).toBe(true);
+      expect(expandedText).not.toContain('保存');
+      expect(expandedText).not.toContain('移除');
     } finally {
       root?.unmount();
     }

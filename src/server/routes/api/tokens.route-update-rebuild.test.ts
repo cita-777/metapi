@@ -244,6 +244,75 @@ describe('PUT /api/routes/:id route rebuild', () => {
     ]));
   });
 
+  it('fills missing sourceModel from source exact routes when loading explicit-group channels', async () => {
+    const sourceA = await seedAccountWithToken('deepseek-chat');
+    const sourceB = await seedAccountWithToken('deepseek-reasoner');
+
+    const exactRouteA = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'deepseek-chat',
+      enabled: true,
+    }).returning().get();
+    const exactRouteB = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'deepseek-reasoner',
+      enabled: true,
+    }).returning().get();
+
+    await db.insert(schema.routeChannels).values([
+      {
+        routeId: exactRouteA.id,
+        accountId: sourceA.account.id,
+        tokenId: sourceA.token.id,
+        sourceModel: null,
+        priority: 0,
+        weight: 10,
+        enabled: true,
+        manualOverride: false,
+      },
+      {
+        routeId: exactRouteB.id,
+        accountId: sourceB.account.id,
+        tokenId: sourceB.token.id,
+        sourceModel: null,
+        priority: 1,
+        weight: 8,
+        enabled: true,
+        manualOverride: false,
+      },
+    ]).run();
+
+    const createResponse = await app.inject({
+      method: 'POST',
+      url: '/api/routes',
+      payload: {
+        routeMode: 'explicit_group',
+        displayName: 'deepseekv1',
+        sourceRouteIds: [exactRouteA.id, exactRouteB.id],
+      },
+    });
+
+    expect(createResponse.statusCode).toBe(200);
+    const createdRouteId = (createResponse.json() as { id: number }).id;
+
+    const channelsResponse = await app.inject({
+      method: 'GET',
+      url: `/api/routes/${createdRouteId}/channels`,
+    });
+
+    expect(channelsResponse.statusCode).toBe(200);
+    expect(channelsResponse.json()).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        routeId: exactRouteA.id,
+        accountId: sourceA.account.id,
+        sourceModel: 'deepseek-chat',
+      }),
+      expect.objectContaining({
+        routeId: exactRouteB.id,
+        accountId: sourceB.account.id,
+        sourceModel: 'deepseek-reasoner',
+      }),
+    ]));
+  });
+
   it('rejects invalid explicit-group payloads', async () => {
     const response = await app.inject({
       method: 'POST',

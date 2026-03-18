@@ -116,6 +116,7 @@ function RouteCardInner({
   const routeIcon = resolveRouteIcon(route);
   const exactRoute = isRouteExactModel(route);
   const explicitGroupRoute = isExplicitGroupRoute(route);
+  const explicitGroupSourceCount = Array.isArray(route.sourceRouteIds) ? route.sourceRouteIds.length : 0;
   const readOnlyRoute = route.kind === 'zero_channel' || route.readOnly === true || route.isVirtual === true;
   const channelManagementDisabled = explicitGroupRoute;
   const title = resolveRouteTitle(route);
@@ -206,9 +207,20 @@ function RouteCardInner({
             </button>
           )}
 
-          <span className="badge badge-info" style={{ fontSize: 10, flexShrink: 0 }}>
-            {route.channelCount} {tr('通道')}
-          </span>
+          {explicitGroupRoute && explicitGroupSourceCount > 0 ? (
+            <>
+              <span className="badge badge-info" style={{ fontSize: 10, flexShrink: 0 }}>
+                {explicitGroupSourceCount} {tr('来源模型')}
+              </span>
+              <span className="badge badge-muted" style={{ fontSize: 10, flexShrink: 0 }}>
+                {route.channelCount} {tr('通道')}
+              </span>
+            </>
+          ) : (
+            <span className="badge badge-info" style={{ fontSize: 10, flexShrink: 0 }}>
+              {route.channelCount} {tr('通道')}
+            </span>
+          )}
 
           {readOnlyRoute ? (
             <span className="badge badge-warning" style={{ fontSize: 10, flexShrink: 0 }}>
@@ -269,9 +281,20 @@ function RouteCardInner({
               {route.enabled ? tr('启用') : tr('禁用')}
             </button>
           )}
-          <span className="badge badge-info" style={{ fontSize: 10 }}>
-            {route.channelCount} {tr('通道')}
-          </span>
+          {explicitGroupRoute && explicitGroupSourceCount > 0 ? (
+            <>
+              <span className="badge badge-info" style={{ fontSize: 10 }}>
+                {explicitGroupSourceCount} {tr('来源模型')}
+              </span>
+              <span className="badge badge-muted" style={{ fontSize: 10 }}>
+                {route.channelCount} {tr('通道')}
+              </span>
+            </>
+          ) : (
+            <span className="badge badge-info" style={{ fontSize: 10 }}>
+              {route.channelCount} {tr('通道')}
+            </span>
+          )}
           {readOnlyRoute && (
             <span className="badge badge-warning" style={{ fontSize: 10 }}>
               {tr('0 通道')}
@@ -445,35 +468,29 @@ function RouteCardInner({
 
                     <AnimatedCollapseSection open={isGroupExpanded}>
                       {explicitGroupRoute ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                          {group.channels.map((channel) => (
-                            <div
-                              key={channel.id}
-                              style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 8,
-                                flexWrap: 'wrap',
-                                padding: '8px 12px',
-                                borderLeft: '2px solid var(--color-primary)',
-                                borderRadius: '0 var(--radius-sm) var(--radius-sm) 0',
-                                background: 'rgba(79,70,229,0.02)',
-                              }}
-                            >
-                              <span style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>
-                                {channel.account?.username || `account-${channel.accountId}`}
-                              </span>
-                              <span className="badge badge-muted" style={{ fontSize: 10 }}>
-                                {channel.site?.name || 'unknown'}
-                              </span>
-                              {channel.sourceModel ? (
-                                <span className="badge badge-info" style={{ fontSize: 10 }}>
-                                  {channel.sourceModel}
-                                </span>
-                              ) : null}
-                            </div>
-                          ))}
-                        </div>
+                        <SortableContext items={group.channels.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+                          {group.channels.map((channel) => {
+                            const tokenOptions = candidateView.tokenOptionsByAccountId[channel.accountId] || [];
+                            const activeTokenId = channelTokenDraft[channel.id] ?? channel.tokenId ?? 0;
+                            return (
+                              <SortableChannelRow
+                                key={channel.id}
+                                channel={channel}
+                                decisionCandidate={decisionMap.get(channel.id)}
+                                isExactRoute={exactRoute}
+                                loadingDecision={loadingDecision}
+                                isSavingPriority={!!savingPriority}
+                                readOnly
+                                tokenOptions={tokenOptions}
+                                activeTokenId={activeTokenId}
+                                isUpdatingToken={!!updatingChannel[channel.id]}
+                                onTokenDraftChange={onTokenDraftChange}
+                                onSaveToken={() => onSaveToken(route.id, channel.id, channel.accountId)}
+                                onDeleteChannel={() => onDeleteChannel(channel.id, route.id)}
+                              />
+                            );
+                          })}
+                        </SortableContext>
                       ) : (
                         <SortableContext items={group.channels.map((c) => c.id)} strategy={verticalListSortingStrategy}>
                           {group.channels.map((channel) => {
