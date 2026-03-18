@@ -343,12 +343,15 @@ async function handleChatProxyRequest(
       const successfulUpstreamPath = endpointResult.upstreamPath;
 
       if (isStream) {
-        reply.hijack();
-        reply.raw.statusCode = 200;
-        reply.raw.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-        reply.raw.setHeader('Cache-Control', 'no-cache, no-transform');
-        reply.raw.setHeader('Connection', 'keep-alive');
-        reply.raw.setHeader('X-Accel-Buffering', 'no');
+        const upstreamContentType = (upstream.headers.get('content-type') || '').toLowerCase();
+        const startSseResponse = () => {
+          reply.hijack();
+          reply.raw.statusCode = 200;
+          reply.raw.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+          reply.raw.setHeader('Cache-Control', 'no-cache, no-transform');
+          reply.raw.setHeader('Connection', 'keep-alive');
+          reply.raw.setHeader('X-Accel-Buffering', 'no');
+        };
 
         let parsedUsage: ReturnType<typeof parseProxyUsage> = {
           promptTokens: 0,
@@ -378,8 +381,6 @@ async function handleChatProxyRequest(
             reply.raw.write(chunk);
           },
         });
-
-        const upstreamContentType = (upstream.headers.get('content-type') || '').toLowerCase();
         let rawText = '';
 
         if (!upstreamContentType.includes('text/event-stream')) {
@@ -394,9 +395,47 @@ async function handleChatProxyRequest(
           if (String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli') {
             fallbackData = unwrapGeminiCliPayload(fallbackData);
           }
-          const streamResult = streamSession.consumeUpstreamFinalPayload(fallbackData, fallbackText, reply.raw);
-
+          parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(fallbackData));
           const latency = Date.now() - startTime;
+          const failure = detectProxyFailure({ rawText, usage: parsedUsage });
+          if (failure) {
+            tokenRouter.recordFailure(selected.channel.id);
+            logProxy(
+              selected,
+              requestedModel,
+              'failed',
+              failure.status,
+              latency,
+              failure.reason,
+              retryCount,
+              downstreamPath,
+              parsedUsage.promptTokens,
+              parsedUsage.completionTokens,
+              parsedUsage.totalTokens,
+              0,
+              null,
+              successfulUpstreamPath,
+              clientContext,
+              logDownstreamApiKeyId ? downstreamApiKeyId : null,
+            );
+
+            if (shouldRetryProxyRequest(failure.status, failure.reason) && retryCount < MAX_RETRIES) {
+              retryCount += 1;
+              continue;
+            }
+
+            await reportProxyAllFailed({
+              model: requestedModel,
+              reason: failure.reason,
+            });
+
+            return reply.code(failure.status).send({
+              error: { message: failure.reason, type: 'upstream_error' },
+            });
+          }
+
+          startSseResponse();
+          const streamResult = streamSession.consumeUpstreamFinalPayload(fallbackData, fallbackText, reply.raw);
           if (streamResult.status === 'failed') {
             tokenRouter.recordFailure(selected.channel.id);
             logProxy(
@@ -420,6 +459,7 @@ async function handleChatProxyRequest(
             return;
           }
         } else {
+          startSseResponse();
           // Preserve real SSE streaming instead of buffering the whole upstream body.
           const upstreamReader = upstream.body?.getReader();
           const baseReader = String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli' && upstreamReader
@@ -546,6 +586,42 @@ async function handleChatProxyRequest(
 
       const latency = Date.now() - startTime;
       const parsedUsage = parseProxyUsage(upstreamData);
+      const failure = detectProxyFailure({ rawText, usage: parsedUsage });
+      if (failure) {
+        tokenRouter.recordFailure(selected.channel.id);
+        logProxy(
+          selected,
+          requestedModel,
+          'failed',
+          failure.status,
+          latency,
+          failure.reason,
+          retryCount,
+          downstreamPath,
+          parsedUsage.promptTokens,
+          parsedUsage.completionTokens,
+          parsedUsage.totalTokens,
+          0,
+          null,
+          successfulUpstreamPath,
+          clientContext,
+          logDownstreamApiKeyId ? downstreamApiKeyId : null,
+        );
+
+        if (shouldRetryProxyRequest(failure.status, failure.reason) && retryCount < MAX_RETRIES) {
+          retryCount += 1;
+          continue;
+        }
+
+        await reportProxyAllFailed({
+          model: requestedModel,
+          reason: failure.reason,
+        });
+
+        return reply.code(failure.status).send({
+          error: { message: failure.reason, type: 'upstream_error' },
+        });
+      }
       const normalizedFinal = downstreamTransformer.transformFinalResponse(upstreamData, modelName, rawText);
       const downstreamResponse = downstreamTransformer.serializeFinalResponse(normalizedFinal, parsedUsage);
 

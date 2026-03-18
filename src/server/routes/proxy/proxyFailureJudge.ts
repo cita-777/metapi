@@ -22,7 +22,7 @@ function normalizeKeywords(values: string[]): string[] {
 function toNonNegativeInt(value: unknown): number {
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n)) return 0;
-  return Math.max(0, Math.round(n));
+  return Math.max(0, Math.trunc(n));
 }
 
 function hasNonEmptyString(value: unknown): boolean {
@@ -189,10 +189,9 @@ export function detectProxyFailure(input: {
 
   if (config.proxyEmptyContentFailEnabled) {
     const completionTokens = toNonNegativeInt(input.usage?.completionTokens ?? input.completionTokens);
-    const totalTokens = toNonNegativeInt(input.usage?.totalTokens ?? input.totalTokens);
     const hasOutput = detectHasUpstreamOutput(rawText);
 
-    if (!hasOutput && completionTokens <= 0 && totalTokens >= 0) {
+    if (!hasOutput && completionTokens <= 0) {
       return {
         status: 502,
         reason: 'Upstream returned empty content',

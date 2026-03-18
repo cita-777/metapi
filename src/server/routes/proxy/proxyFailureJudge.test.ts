@@ -114,4 +114,26 @@ describe('detectProxyFailure (empty content)', () => {
 
     expect(failure).toMatchObject({ status: 502 });
   });
+
+  it('truncates fractional token counts before empty-content detection', () => {
+    config.proxyEmptyContentFailEnabled = true;
+
+    const rawText = JSON.stringify({
+      id: 'chatcmpl_fractional_empty',
+      object: 'chat.completion',
+      choices: [{
+        index: 0,
+        message: { role: 'assistant', content: '' },
+        finish_reason: 'stop',
+      }],
+      usage: { prompt_tokens: 3.9, completion_tokens: 0.6, total_tokens: 4.5 },
+    });
+
+    const failure = detectProxyFailure({
+      rawText,
+      usage: { promptTokens: 3.9, completionTokens: 0.6, totalTokens: 4.5 } as any,
+    });
+
+    expect(failure).toMatchObject({ status: 502 });
+  });
 });

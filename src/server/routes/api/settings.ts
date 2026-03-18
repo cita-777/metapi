@@ -130,19 +130,21 @@ function toStringList(value: unknown): string[] {
 }
 
 function parseProxyErrorKeywords(value: unknown): string[] {
+  const splitKeywords = (input: string): string[] => input
+    .split(/\r?\n|,/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+
   if (Array.isArray(value)) {
-    const keywords = value.map((item) => {
-      if (typeof item !== 'string') return '';
-      return item.trim();
-    }).filter((item) => item.length > 0);
+    const keywords = value.flatMap((item) => {
+      if (typeof item !== 'string') return [];
+      return splitKeywords(item);
+    });
     return keywords;
   }
 
   if (typeof value === 'string') {
-    const keywords = value
-      .split(',')
-      .map((item) => item.trim())
-      .filter((item) => item.length > 0);
+    const keywords = splitKeywords(value);
     return keywords;
   }
 
