@@ -504,46 +504,10 @@ export async function responsesProxyRoute(app: FastifyInstance) {
             return;
           }
 
-          const failure = detectProxyFailure({ rawText, usage: parsedUsage });
-          if (failure) {
-            const errText = withUpstreamPath(successfulUpstreamPath, failure.reason);
-            tokenRouter.recordFailure(selected.channel.id);
-            logProxy(
-              selected,
-              requestedModel,
-              'failed',
-              failure.status,
-              latency,
-              errText,
-              retryCount,
-              downstreamPath,
-              0,
-              0,
-              0,
-              0,
-              null,
-              null,
-              clientContext,
-              logDownstreamApiKeyId ? downstreamApiKeyId : null,
-            );
-
-            await recordOauthQuotaResetHint({
-              accountId: selected.account.id,
-              statusCode: failure.status,
-              errorText: errText,
-            });
-
-            if (shouldRetryProxyRequest(failure.status, errText) && retryCount < MAX_RETRIES) {
-              retryCount += 1;
-              continue;
-            }
-
-            await reportProxyAllFailed({
-              model: requestedModel,
-              reason: failure.reason,
-            });
-            return reply.code(failure.status).send({ error: { message: errText, type: 'upstream_error' } });
-          }
+          // Once SSE has been hijacked and bytes may already be on the wire, we
+          // must not attempt to convert stream failures into a fresh HTTP error
+          // response or retry on another channel. Responses stream failures are
+          // handled in-band by the proxy stream session.
 
           const resolvedUsage = await resolveProxyUsageWithSelfLogFallback({
             site: selected.site,

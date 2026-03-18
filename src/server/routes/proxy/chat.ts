@@ -470,43 +470,10 @@ async function handleChatProxyRequest(
             return;
           }
 
-          const failure = detectProxyFailure({ rawText, usage: parsedUsage });
-          if (failure) {
-            const errText = withUpstreamPath(successfulUpstreamPath, failure.reason);
-            tokenRouter.recordFailure(selected.channel.id);
-            logProxy(
-              selected,
-              requestedModel,
-              'failed',
-              failure.status,
-              latency,
-              errText,
-              retryCount,
-              downstreamPath,
-              0,
-              0,
-              0,
-              0,
-              null,
-              null,
-              clientContext,
-              logDownstreamApiKeyId ? downstreamApiKeyId : null,
-            );
-
-            if (shouldRetryProxyRequest(failure.status, errText) && retryCount < MAX_RETRIES) {
-              retryCount += 1;
-              continue;
-            }
-
-            await reportProxyAllFailed({
-              model: requestedModel,
-              reason: failure.reason,
-            });
-
-            return reply.code(failure.status).send({
-              error: { message: errText, type: 'upstream_error' },
-            });
-          }
+          // Once SSE has been hijacked and streamed downstream, we can no longer
+          // safely fall back to an HTTP error response or retry by switching the
+          // channel mid-flight. Stream-level failures must be handled in-band by
+          // the proxy stream session itself.
         }
 
         const latency = Date.now() - startTime;
