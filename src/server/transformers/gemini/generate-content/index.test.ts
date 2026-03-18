@@ -15,6 +15,86 @@ import {
 } from './stream.js';
 
 describe('geminiGenerateContentTransformer.inbound', () => {
+  it('parses native Gemini requests into canonical envelopes', () => {
+    const result = geminiGenerateContentTransformer.parseRequest({
+      model: 'gemini-2.5-pro',
+      contents: [
+        {
+          role: 'user',
+          parts: [{ text: 'hello' }],
+        },
+      ],
+      generationConfig: {
+        thinkingConfig: {
+          thinkingBudget: 512,
+        },
+      },
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.value).toMatchObject({
+      operation: 'generate',
+      surface: 'gemini-generate-content',
+      cliProfile: 'generic',
+      requestedModel: 'gemini-2.5-pro',
+      stream: false,
+      messages: [
+        {
+          role: 'user',
+          parts: [{ type: 'text', text: 'hello' }],
+        },
+      ],
+      reasoning: {
+        budgetTokens: 512,
+      },
+    });
+  });
+
+  it('builds native Gemini requests from canonical envelopes', () => {
+    const body = geminiGenerateContentTransformer.buildProtocolRequest({
+      operation: 'generate',
+      surface: 'gemini-generate-content',
+      cliProfile: 'gemini_cli',
+      requestedModel: 'gemini-2.5-pro',
+      stream: false,
+      messages: [{ role: 'user', parts: [{ type: 'text', text: 'hello' }] }],
+      reasoning: {
+        budgetTokens: 512,
+      },
+      tools: [{ name: 'lookup', inputSchema: { type: 'object' } }],
+      toolChoice: 'required',
+    });
+
+    expect(body).toMatchObject({
+      contents: [
+        {
+          role: 'user',
+          parts: [{ text: 'hello' }],
+        },
+      ],
+      tools: [
+        {
+          functionDeclarations: [
+            {
+              name: 'lookup',
+              parameters: { type: 'object' },
+            },
+          ],
+        },
+      ],
+      toolConfig: {
+        functionCallingConfig: {
+          mode: 'ANY',
+        },
+      },
+      generationConfig: {
+        thinkingConfig: {
+          thinkingBudget: 512,
+        },
+      },
+    });
+  });
+
   it('preserves native Gemini request fields through normalization', () => {
     const body = geminiGenerateContentTransformer.inbound.normalizeRequest({
       contents: [

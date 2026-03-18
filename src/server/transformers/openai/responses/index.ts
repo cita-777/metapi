@@ -1,3 +1,6 @@
+import { canonicalRequestFromOpenAiBody, canonicalRequestToOpenAiChatBody } from '../../canonical/request.js';
+import type { CanonicalRequestEnvelope } from '../../canonical/types.js';
+import type { ProtocolBuildContext, ProtocolParseContext } from '../../contracts.js';
 import { type StreamTransformContext } from '../../shared/normalized.js';
 import {
   convertOpenAiBodyToResponsesBody,
@@ -60,6 +63,64 @@ export const openAiResponsesTransformer = {
   },
   proxyStream: {
     createSession: createResponsesProxyStreamSession,
+  },
+  parseRequest(
+    body: unknown,
+    ctx?: ProtocolParseContext,
+  ): { value?: CanonicalRequestEnvelope; error?: { statusCode: number; payload: unknown } } {
+    const parsed = openAiResponsesInbound.parse(body, {
+      defaultEncryptedReasoningInclude: ctx?.defaultEncryptedReasoningInclude,
+    });
+    if (parsed.error) {
+      return { error: parsed.error };
+    }
+    if (!parsed.value) {
+      return {
+        error: {
+          statusCode: 400,
+          payload: {
+            error: {
+              message: 'invalid responses request',
+              type: 'invalid_request_error',
+            },
+          },
+        },
+      };
+    }
+
+    const responsesBody = parsed.value.parsed.normalizedBody;
+    const openAiBody = convertResponsesBodyToOpenAiBody(
+      responsesBody,
+      typeof responsesBody.model === 'string' ? responsesBody.model : parsed.value.model,
+      responsesBody.stream === true,
+      { defaultEncryptedReasoningInclude: ctx?.defaultEncryptedReasoningInclude },
+    );
+
+    return {
+      value: canonicalRequestFromOpenAiBody({
+        body: openAiBody,
+        surface: 'openai-responses',
+        cliProfile: ctx?.cliProfile,
+        operation: ctx?.operation,
+        metadata: ctx?.metadata,
+        passthrough: ctx?.passthrough,
+        continuation: ctx?.continuation,
+      }),
+    };
+  },
+  buildProtocolRequest(
+    request: CanonicalRequestEnvelope,
+    _ctx?: ProtocolBuildContext,
+  ): Record<string, unknown> {
+    const openAiBody = canonicalRequestToOpenAiChatBody(request);
+    if (request.reasoning) {
+      openAiBody.reasoning = {
+        ...(request.reasoning.effort ? { effort: request.reasoning.effort } : {}),
+        ...(request.reasoning.budgetTokens !== undefined ? { budget_tokens: request.reasoning.budgetTokens } : {}),
+        ...(request.reasoning.summary ? { summary: request.reasoning.summary } : {}),
+      };
+    }
+    return convertOpenAiBodyToResponsesBody(openAiBody, request.requestedModel, request.stream);
   },
   transformRequest(
     body: unknown,

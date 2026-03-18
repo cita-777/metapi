@@ -1,11 +1,18 @@
+import { canonicalRequestFromOpenAiBody, canonicalRequestToOpenAiChatBody } from '../../canonical/request.js';
+import type { CanonicalRequestEnvelope } from '../../canonical/types.js';
+import type { ProtocolBuildContext, ProtocolParseContext } from '../../contracts.js';
 import { type NormalizedFinalResponse, type NormalizedStreamEvent, type ParsedDownstreamChatRequest, type StreamTransformContext, type ClaudeDownstreamContext } from '../../shared/normalized.js';
 import { createChatEndpointStrategy } from '../../shared/chatEndpointStrategy.js';
 import { anthropicMessagesInbound } from './inbound.js';
+import { convertOpenAiBodyToAnthropicMessagesBody } from './conversion.js';
 import { anthropicMessagesOutbound } from './outbound.js';
 import { anthropicMessagesStream, consumeAnthropicSseEvent } from './stream.js';
 import { anthropicMessagesUsage } from './usage.js';
 import { createAnthropicMessagesAggregateState } from './aggregator.js';
-import { isMessagesRequiredError, shouldRetryNormalizedMessagesBody } from './compatibility.js';
+import {
+  isMessagesRequiredError,
+  shouldRetryNormalizedMessagesBody,
+} from './compatibility.js';
 export {
   ANTHROPIC_RAW_SSE_EVENT_NAMES,
   consumeAnthropicSseEvent,
@@ -29,6 +36,47 @@ export const anthropicMessagesTransformer = {
   },
   aggregator: {
     createState: createAnthropicMessagesAggregateState,
+  },
+  parseRequest(
+    body: unknown,
+    ctx?: ProtocolParseContext,
+  ): { value?: CanonicalRequestEnvelope; error?: { statusCode: number; payload: unknown } } {
+    const parsed = anthropicMessagesInbound.parse(body);
+    if (parsed.error) {
+      return { error: parsed.error };
+    }
+    if (!parsed.value) {
+      return {
+        error: {
+          statusCode: 400,
+          payload: {
+            error: {
+              message: 'invalid messages request',
+              type: 'invalid_request_error',
+            },
+          },
+        },
+      };
+    }
+
+    return {
+      value: canonicalRequestFromOpenAiBody({
+        body: parsed.value.parsed.upstreamBody,
+        surface: 'anthropic-messages',
+        cliProfile: ctx?.cliProfile,
+        operation: ctx?.operation,
+        metadata: ctx?.metadata,
+        passthrough: ctx?.passthrough,
+        continuation: ctx?.continuation,
+      }),
+    };
+  },
+  buildProtocolRequest(
+    request: CanonicalRequestEnvelope,
+    _ctx?: ProtocolBuildContext,
+  ): Record<string, unknown> {
+    const openAiBody = canonicalRequestToOpenAiChatBody(request);
+    return convertOpenAiBodyToAnthropicMessagesBody(openAiBody, request.requestedModel, request.stream);
   },
   transformRequest(body: unknown): ReturnType<typeof anthropicMessagesInbound.parse> {
     return anthropicMessagesInbound.parse(body);

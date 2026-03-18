@@ -11,6 +11,66 @@ function parseSsePayloads(lines: string[]): Array<Record<string, unknown>> {
 }
 
 describe('openAiChatTransformer.inbound', () => {
+  it('parses chat requests into canonical envelopes', () => {
+    const result = openAiChatTransformer.parseRequest({
+      model: 'gpt-5',
+      stream: true,
+      messages: [{ role: 'user', content: 'hello' }],
+      prompt_cache_key: 'cache-key',
+      reasoning_effort: 'high',
+      reasoning_budget: 1024,
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.value).toMatchObject({
+      operation: 'generate',
+      surface: 'openai-chat',
+      cliProfile: 'generic',
+      requestedModel: 'gpt-5',
+      stream: true,
+      messages: [
+        {
+          role: 'user',
+          parts: [{ type: 'text', text: 'hello' }],
+        },
+      ],
+      continuation: {
+        promptCacheKey: 'cache-key',
+      },
+      reasoning: {
+        effort: 'high',
+        budgetTokens: 1024,
+      },
+    });
+  });
+
+  it('builds chat requests from canonical envelopes', () => {
+    const body = openAiChatTransformer.buildProtocolRequest({
+      operation: 'generate',
+      surface: 'openai-chat',
+      cliProfile: 'codex',
+      requestedModel: 'gpt-5',
+      stream: true,
+      messages: [{ role: 'user', parts: [{ type: 'text', text: 'hello' }] }],
+      reasoning: {
+        effort: 'medium',
+        budgetTokens: 512,
+      },
+      continuation: {
+        promptCacheKey: 'cache-key',
+      },
+    });
+
+    expect(body).toMatchObject({
+      model: 'gpt-5',
+      stream: true,
+      messages: [{ role: 'user', content: 'hello' }],
+      prompt_cache_key: 'cache-key',
+      reasoning_effort: 'medium',
+      reasoning_budget: 512,
+    });
+  });
+
   it('captures chat request metadata fields without changing upstream body', () => {
     const result = openAiChatTransformer.transformRequest({
       model: 'gpt-5',

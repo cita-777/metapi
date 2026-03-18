@@ -1,3 +1,6 @@
+import { canonicalRequestFromOpenAiBody, canonicalRequestToOpenAiChatBody } from '../../canonical/request.js';
+import type { CanonicalRequestEnvelope } from '../../canonical/types.js';
+import type { ProtocolBuildContext, ProtocolParseContext } from '../../contracts.js';
 import { type NormalizedFinalResponse, type NormalizedStreamEvent, type StreamTransformContext } from '../../shared/normalized.js';
 import { createChatEndpointStrategy } from '../../shared/chatEndpointStrategy.js';
 import { openAiChatInbound } from './inbound.js';
@@ -27,6 +30,46 @@ export const openAiChatTransformer = {
   },
   proxyStream: {
     createSession: createChatProxyStreamSession,
+  },
+  parseRequest(
+    body: unknown,
+    ctx?: ProtocolParseContext,
+  ): { value?: CanonicalRequestEnvelope; error?: { statusCode: number; payload: unknown } } {
+    const parsed = openAiChatInbound.parse(body);
+    if (parsed.error) {
+      return { error: parsed.error };
+    }
+    if (!parsed.value) {
+      return {
+        error: {
+          statusCode: 400,
+          payload: {
+            error: {
+              message: 'invalid chat request',
+              type: 'invalid_request_error',
+            },
+          },
+        },
+      };
+    }
+
+    return {
+      value: canonicalRequestFromOpenAiBody({
+        body: parsed.value.parsed.upstreamBody,
+        surface: 'openai-chat',
+        cliProfile: ctx?.cliProfile,
+        operation: ctx?.operation,
+        metadata: ctx?.metadata,
+        passthrough: ctx?.passthrough,
+        continuation: ctx?.continuation,
+      }),
+    };
+  },
+  buildProtocolRequest(
+    request: CanonicalRequestEnvelope,
+    _ctx?: ProtocolBuildContext,
+  ): Record<string, unknown> {
+    return canonicalRequestToOpenAiChatBody(request);
   },
   transformRequest(body: unknown): ReturnType<typeof openAiChatInbound.parse> {
     return openAiChatInbound.parse(body);
