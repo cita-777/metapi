@@ -345,6 +345,8 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
       ? existing.filter((row) => (
         resolveAccountTokenValueStatus(row) === ACCOUNT_TOKEN_VALUE_STATUS_READY
         && matchesMaskedTokenValue(row.token, tokenValue)
+        && row.name === tokenName
+        && sameTokenGroup(row.tokenGroup, row.name, tokenGroup, tokenName)
       ))
       : [];
     const readyMaskedMatch = matchingReadyByMaskedValue.length === 1
@@ -355,6 +357,8 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
         row.id !== readyMaskedMatch.id
         && resolveAccountTokenValueStatus(row) === ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING
         && matchesMaskedTokenValue(row.token, tokenValue)
+        && row.name === tokenName
+        && sameTokenGroup(row.tokenGroup, row.name, tokenGroup, tokenName)
       ));
 
       await db.update(schema.accountTokens)
