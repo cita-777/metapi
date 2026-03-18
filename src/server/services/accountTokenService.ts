@@ -87,6 +87,8 @@ function matchesMaskedTokenValue(
 
   const prefix = normalizedMasked.slice(0, firstMaskIndex);
   const suffix = normalizedMasked.slice(lastMaskIndex + 1);
+  const visiblePrefix = prefix.replace(/^sk-/i, '');
+  if (!visiblePrefix && !suffix) return false;
   if (normalizedFull.length < prefix.length + suffix.length) return false;
   if (prefix && !normalizedFull.startsWith(prefix)) return false;
   if (suffix && !normalizedFull.endsWith(suffix)) return false;

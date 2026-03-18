@@ -248,6 +248,59 @@ describe('account tokens sync routes with site status', () => {
     expect((tokenRows[0] as any).valueStatus).toBe('ready');
   });
 
+  it('keeps fully ambiguous short masks as masked_pending instead of reusing a ready token', async () => {
+    const { account } = await seedAccount({ siteStatus: 'active' });
+    const fullToken = 'sk-abcd';
+    await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'short-token',
+      token: fullToken,
+      source: 'manual',
+      enabled: true,
+      isDefault: true,
+      tokenGroup: 'default',
+      valueStatus: 'ready' as any,
+    }).run();
+
+    getApiTokensMock.mockResolvedValue([
+      { name: 'short-token', key: maskToken(fullToken), enabled: true, tokenGroup: 'default' },
+    ]);
+    getApiTokenMock.mockResolvedValue(null);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/account-tokens/sync/${account.id}`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      success: true,
+      synced: true,
+      status: 'synced',
+      reason: 'upstream_masked_tokens',
+      created: 1,
+      updated: 0,
+      maskedPending: 1,
+      total: 2,
+    });
+
+    const tokenRows = await db.select()
+      .from(schema.accountTokens)
+      .where(eq(schema.accountTokens.accountId, account.id))
+      .all();
+    expect(tokenRows).toHaveLength(2);
+    expect(tokenRows.find((row) => row.token === fullToken)).toBeDefined();
+    const maskedRow = tokenRows.find((row) => row.token === 'sk-***');
+    expect(maskedRow).toMatchObject({
+      name: 'short-token',
+      source: 'sync',
+      enabled: false,
+      isDefault: false,
+      tokenGroup: 'default',
+    });
+    expect((maskedRow as any)?.valueStatus).toBe('masked_pending');
+  });
+
   it('rejects sync and token management for apikey connections', async () => {
     const { account } = await seedAccount({ siteStatus: 'active', accessToken: '' });
     await db.update(schema.accounts)
