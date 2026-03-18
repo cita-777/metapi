@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { resolveProviderProfile } from '../../proxy-core/providers/registry.js';
 import { fetchModelPricingCatalog } from '../../services/modelPricingService.js';
 import type { DownstreamFormat } from '../../transformers/shared/normalized.js';
 import {
@@ -11,7 +12,6 @@ import {
 } from '../../transformers/anthropic/messages/conversion.js';
 import {
   buildGeminiGenerateContentRequestFromOpenAi,
-  wrapGeminiCliRequest,
 } from './geminiCliCompat.js';
 export {
   buildMinimalJsonHeadersForCompatibility,
@@ -790,6 +790,7 @@ export function buildUpstreamEndpointRequest(input: {
   };
 } {
   const sitePlatform = normalizePlatformName(input.sitePlatform);
+  const providerProfile = resolveProviderProfile(sitePlatform);
   const isClaudeUpstream = sitePlatform === 'claude';
   const isGeminiUpstream = sitePlatform === 'gemini';
   const isGeminiCliUpstream = sitePlatform === 'gemini-cli';
@@ -886,10 +887,6 @@ export function buildUpstreamEndpointRequest(input: {
   };
 
   if (isInternalGeminiUpstream) {
-    const projectId = asTrimmedString(input.oauthProjectId);
-    if (isGeminiCliUpstream && !projectId) {
-      throw new Error('gemini-cli oauth project id missing');
-    }
     const instructions = (
       input.downstreamFormat === 'responses'
       && typeof input.responsesOriginalBody?.instructions === 'string'
@@ -901,27 +898,22 @@ export function buildUpstreamEndpointRequest(input: {
       modelName: input.modelName,
       instructions,
     });
-    const headers = isGeminiCliUpstream
-      ? buildGeminiCliRuntimeHeaders({
-        baseHeaders: commonHeaders,
-        providerHeaders: input.providerHeaders,
-        modelName: input.modelName,
-        stream: input.stream,
-      })
-      : buildAntigravityRuntimeHeaders({
-        baseHeaders: commonHeaders,
-        stream: input.stream,
-      });
-    return {
-      path: resolveEndpointPath(input.endpoint),
-      headers,
-      body: wrapGeminiCliRequest({
-        modelName: input.modelName,
-        projectId: projectId || '',
-        request: geminiRequest,
-      }) as Record<string, unknown>,
-      runtime,
-    };
+    if (!providerProfile) {
+      throw new Error(`missing provider profile for platform: ${sitePlatform}`);
+    }
+    return providerProfile.prepareRequest({
+      endpoint: input.endpoint,
+      modelName: input.modelName,
+      stream: input.stream,
+      tokenValue: input.tokenValue,
+      oauthProvider: input.oauthProvider,
+      oauthProjectId: input.oauthProjectId,
+      sitePlatform,
+      baseHeaders: commonHeaders,
+      providerHeaders: input.providerHeaders,
+      body: geminiRequest,
+      action: input.stream ? 'streamGenerateContent' : 'generateContent',
+    });
   }
 
   if (input.endpoint === 'messages') {
@@ -960,6 +952,21 @@ export function buildUpstreamEndpointRequest(input: {
       ?? sanitizeAnthropicMessagesBody(
         convertOpenAiBodyToAnthropicMessagesBody(openaiBody, input.modelName, input.stream),
       );
+
+    if (providerProfile?.id === 'claude') {
+      return providerProfile.prepareRequest({
+        endpoint: 'messages',
+        modelName: input.modelName,
+        stream: input.stream,
+        tokenValue: input.tokenValue,
+        oauthProvider: input.oauthProvider,
+        oauthProjectId: input.oauthProjectId,
+        sitePlatform,
+        baseHeaders: commonHeaders,
+        claudeHeaders,
+        body: sanitizedBody,
+      });
+    }
 
     const headers = buildClaudeRuntimeHeaders({
       baseHeaders: commonHeaders,
@@ -1008,6 +1015,26 @@ export function buildUpstreamEndpointRequest(input: {
       ),
       sitePlatform,
     );
+
+    if (providerProfile?.id === 'codex') {
+      return providerProfile.prepareRequest({
+        endpoint: 'responses',
+        modelName: input.modelName,
+        stream: input.stream,
+        tokenValue: input.tokenValue,
+        oauthProvider: input.oauthProvider,
+        oauthProjectId: input.oauthProjectId,
+        sitePlatform,
+        baseHeaders: {
+          ...commonHeaders,
+          ...responsesHeaders,
+        },
+        providerHeaders: input.providerHeaders,
+        codexSessionCacheKey: input.codexSessionCacheKey,
+        codexExplicitSessionId: input.codexExplicitSessionId,
+        body,
+      });
+    }
 
     const headers = sitePlatform === 'codex'
       ? buildCodexRuntimeHeaders({
@@ -1078,9 +1105,7 @@ export function buildClaudeCountTokensUpstreamRequest(input: {
   };
 } {
   const sitePlatform = normalizePlatformName(input.sitePlatform);
-  const isClaudeOauthUpstream = sitePlatform === 'claude' && input.oauthProvider === 'claude';
   const claudeHeaders = extractClaudePassthroughHeaders(input.downstreamHeaders);
-  const anthropicVersion = claudeHeaders['anthropic-version'] || '2023-06-01';
   const { body: bodyWithoutBetas, betas } = extractClaudeBetasFromBody({
     ...input.claudeBody,
     model: input.modelName,
@@ -1089,23 +1114,33 @@ export function buildClaudeCountTokensUpstreamRequest(input: {
   delete sanitizedBody.max_tokens;
   delete sanitizedBody.maxTokens;
   delete sanitizedBody.stream;
+  const providerProfile = resolveProviderProfile(sitePlatform);
+  if (providerProfile?.id !== 'claude') {
+    throw new Error(`missing claude provider profile for platform: ${sitePlatform || 'unknown'}`);
+  }
 
-  const headers = buildClaudeRuntimeHeaders({
+  const prepared = providerProfile.prepareRequest({
+    endpoint: 'messages',
+    modelName: input.modelName,
+    stream: false,
+    tokenValue: input.tokenValue,
+    oauthProvider: input.oauthProvider,
+    sitePlatform,
     baseHeaders: {
       'Content-Type': 'application/json',
     },
-    claudeHeaders,
-    anthropicVersion,
-    stream: false,
-    isClaudeOauthUpstream,
-    tokenValue: input.tokenValue,
-    extraBetas: betas,
+    claudeHeaders: {
+      ...claudeHeaders,
+      ...(betas.length > 0 ? { 'anthropic-beta': betas.join(',') } : {}),
+    },
+    body: sanitizedBody,
+    action: 'countTokens',
   });
 
   return {
-    path: '/v1/messages/count_tokens?beta=true',
-    headers,
-    body: sanitizedBody,
+    path: prepared.path,
+    headers: prepared.headers,
+    body: prepared.body,
     runtime: {
       executor: 'claude',
       modelName: input.modelName,
