@@ -298,27 +298,31 @@ async function handleChatProxyRequest(
           }
           streamSession.consumeUpstreamFinalPayload(fallbackData, rawText);
         } else {
-          rawText = await upstream.text();
+          // True streaming: do not buffer full upstream SSE via upstream.text().
+          // We still accumulate rawText while proxying so downstream failure
+          // detection can run consistently.
+          const reader = upstream.body?.getReader();
+          const decoder = new TextDecoder();
+          const wrappedReader = reader
+            ? {
+              async read() {
+                const { done, value } = await reader.read();
+                if (value) {
+                  rawText += decoder.decode(value, { stream: true });
+                }
+                return { done, value };
+              },
+              async cancel(reason?: unknown) {
+                return reader.cancel(reason);
+              },
+              releaseLock() {
+                return reader.releaseLock();
+              },
+            }
+            : null;
 
-          const bytes = new TextEncoder().encode(rawText);
-          const chunkSize = 64 * 1024;
-          let cursor = 0;
-          const reader = {
-            async read() {
-              if (cursor >= bytes.length) {
-                return { done: true, value: undefined };
-              }
-              const next = bytes.slice(cursor, Math.min(bytes.length, cursor + chunkSize));
-              cursor += next.length;
-              return { done: false, value: next };
-            },
-            async cancel() {
-              cursor = bytes.length;
-            },
-            releaseLock() {},
-          } as any;
-
-          await streamSession.run(reader, { end() {} });
+          await streamSession.run(wrappedReader, { end() {} });
+          rawText += decoder.decode();
         }
 
         const latency = Date.now() - startTime;
