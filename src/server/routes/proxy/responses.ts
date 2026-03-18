@@ -434,6 +434,34 @@ export async function responsesProxyRoute(app: FastifyInstance) {
             reply.raw.setHeader('Connection', 'keep-alive');
             reply.raw.setHeader('X-Accel-Buffering', 'no');
           };
+          let parsedUsage: UsageSummary = {
+            promptTokens: 0,
+            completionTokens: 0,
+            totalTokens: 0,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+            promptTokensIncludeCache: null,
+          };
+          const writeLines = (lines: string[]) => {
+            for (const line of lines) reply.raw.write(line);
+          };
+          const streamSession = openAiResponsesTransformer.proxyStream.createSession({
+            modelName,
+            successfulUpstreamPath,
+            strictTerminalEvents: Object.entries(request.headers as Record<string, unknown>)
+              .some(([rawKey, rawValue]) => rawKey.trim().toLowerCase() === 'x-metapi-responses-websocket-transport'
+                && String(rawValue).trim() === '1'),
+            getUsage: () => parsedUsage,
+            onParsedPayload: (payload) => {
+              if (payload && typeof payload === 'object') {
+                parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(payload));
+              }
+            },
+            writeLines,
+            writeRaw: (chunk) => {
+              reply.raw.write(chunk);
+            },
+          });
 
           if (!upstreamContentType.includes('text/event-stream')) {
             const rawText = await upstream.text();
@@ -447,7 +475,7 @@ export async function responsesProxyRoute(app: FastifyInstance) {
               upstreamData = unwrapGeminiCliPayload(upstreamData);
             }
 
-            const parsedUsage = parseProxyUsage(upstreamData);
+            parsedUsage = parseProxyUsage(upstreamData);
             const latency = Date.now() - startTime;
             const failure = detectProxyFailure({ rawText, usage: parsedUsage });
             if (failure) {
@@ -483,17 +511,31 @@ export async function responsesProxyRoute(app: FastifyInstance) {
               return reply.code(failure.status).send({ error: { message: failure.reason, type: 'upstream_error' } });
             }
 
-            const normalized = openAiResponsesTransformer.transformFinalResponse(
-              upstreamData,
-              modelName,
-              rawText,
-            );
-            const downstreamData = openAiResponsesTransformer.outbound.serializeFinal({
-              upstreamPayload: upstreamData,
-              normalized,
-              usage: parsedUsage,
-              serializationMode: 'response',
-            });
+            startSseResponse();
+            const streamResult = streamSession.consumeUpstreamFinalPayload(upstreamData, rawText, reply.raw);
+            if (streamResult.status === 'failed') {
+              tokenRouter.recordFailure(selected.channel.id);
+              logProxy(
+                selected,
+                requestedModel,
+                'failed',
+                200,
+                latency,
+                streamResult.errorMessage,
+                retryCount,
+                downstreamPath,
+                parsedUsage.promptTokens,
+                parsedUsage.completionTokens,
+                parsedUsage.totalTokens,
+                0,
+                null,
+                successfulUpstreamPath,
+                clientContext,
+                logDownstreamApiKeyId ? downstreamApiKeyId : null,
+              );
+              return;
+            }
+
             const resolvedUsage = await resolveProxyUsageWithSelfLogFallback({
               site: selected.site,
               account: selected.account,
@@ -526,32 +568,6 @@ export async function responsesProxyRoute(app: FastifyInstance) {
               clientContext,
               logDownstreamApiKeyId ? downstreamApiKeyId : null,
             );
-
-            const streamPayload = isRecord(downstreamData) ? downstreamData : {
-              id: `resp_${Date.now()}`,
-              object: 'response',
-              status: 'completed',
-              model: modelName,
-              output: [],
-              output_text: '',
-              usage: {
-                input_tokens: parsedUsage.promptTokens,
-                output_tokens: parsedUsage.completionTokens,
-                total_tokens: parsedUsage.totalTokens,
-              },
-            };
-            const createdPayload = {
-              ...streamPayload,
-              status: 'in_progress',
-              output: [],
-              output_text: '',
-            };
-
-            startSseResponse();
-            reply.raw.write(`event: response.created\ndata: ${JSON.stringify({ type: 'response.created', response: createdPayload })}\n\n`);
-            reply.raw.write(`event: response.completed\ndata: ${JSON.stringify({ type: 'response.completed', response: streamPayload })}\n\n`);
-            reply.raw.write('data: [DONE]\n\n');
-            reply.raw.end();
             return;
           }
 
@@ -561,14 +577,6 @@ export async function responsesProxyRoute(app: FastifyInstance) {
           const baseReader = String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli' && upstreamReader
             ? createGeminiCliStreamReader(upstreamReader)
             : upstreamReader;
-          let parsedUsage: UsageSummary = {
-            promptTokens: 0,
-            completionTokens: 0,
-            totalTokens: 0,
-            cacheReadTokens: 0,
-            cacheCreationTokens: 0,
-            promptTokensIncludeCache: null,
-          };
           let rawText = '';
           const decoder = new TextDecoder();
           const reader = baseReader
@@ -588,26 +596,6 @@ export async function responsesProxyRoute(app: FastifyInstance) {
               },
             }
             : baseReader;
-          const writeLines = (lines: string[]) => {
-            for (const line of lines) reply.raw.write(line);
-          };
-          const streamSession = openAiResponsesTransformer.proxyStream.createSession({
-            modelName,
-            successfulUpstreamPath,
-            strictTerminalEvents: Object.entries(request.headers as Record<string, unknown>)
-              .some(([rawKey, rawValue]) => rawKey.trim().toLowerCase() === 'x-metapi-responses-websocket-transport'
-                && String(rawValue).trim() === '1'),
-            getUsage: () => parsedUsage,
-            onParsedPayload: (payload) => {
-              if (payload && typeof payload === 'object') {
-                parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(payload));
-              }
-            },
-            writeLines,
-            writeRaw: (chunk) => {
-              reply.raw.write(chunk);
-            },
-          });
           const streamResult = await streamSession.run(reader, reply.raw);
           rawText += decoder.decode();
 
