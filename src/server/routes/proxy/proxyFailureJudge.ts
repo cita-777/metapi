@@ -141,21 +141,28 @@ function detectHasUpstreamOutput(rawText: string): boolean {
     const parsed = JSON.parse(trimmed);
     return hasCompletionContentFromPayload(parsed);
   } catch {
-    const { events } = pullSseDataEvents(trimmed);
-    if (events.length > 0) {
-      for (const event of events) {
+    // Important: don't trim before SSE parsing, otherwise `data: [DONE]\n\n` can be lost.
+    const pulled = pullSseDataEvents(text);
+    if (pulled.events.length > 0) {
+      for (const event of pulled.events) {
         const payload = event.trim();
         if (!payload || payload === '[DONE]') continue;
         try {
           const parsedEvent = JSON.parse(payload);
           if (hasCompletionContentFromPayload(parsedEvent)) return true;
         } catch {
-          if (payload.length > 0) return true;
+          // Non-JSON payload still counts as upstream output.
+          return true;
         }
       }
+      // SSE payloads exist but none contain output.
       return false;
     }
 
+    // Looks like SSE but contains no non-DONE payloads.
+    if (text.includes('data:')) return false;
+
+    // Not JSON and not SSE: assume it's plain text output.
     return true;
   }
 }

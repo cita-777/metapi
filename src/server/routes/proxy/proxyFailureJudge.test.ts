@@ -97,4 +97,21 @@ describe('detectProxyFailure (empty content)', () => {
 
     expect(failure).toMatchObject({ status: 502 });
   });
+
+  it('treats DONE-only SSE as no output and flags failure', () => {
+    config.proxyEmptyContentFailEnabled = true;
+
+    const rawText = [
+      'data: [DONE]',
+      '',
+      '',
+    ].join('\n');
+
+    const failure = detectProxyFailure({
+      rawText,
+      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    });
+
+    expect(failure).toMatchObject({ status: 502 });
+  });
 });

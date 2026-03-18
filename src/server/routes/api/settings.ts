@@ -659,7 +659,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         });
       }
 
-      if (nextKeywords.join(',') !== (config.proxyErrorKeywords || []).join(',')) {
+      if (JSON.stringify(nextKeywords) !== JSON.stringify(config.proxyErrorKeywords || [])) {
         changedLabels.push('上游错误关键词');
       }
       config.proxyErrorKeywords = nextKeywords;

@@ -1076,7 +1076,7 @@ export default function Settings() {
               checked={runtime.proxyEmptyContentFailEnabled}
               onChange={(e) => setRuntime((prev) => ({ ...prev, proxyEmptyContentFailEnabled: e.target.checked }))}
             />
-            空内容（0 token）判定失败
+            空内容（completion=0，即使 prompt 有 token 也算）判定失败
           </label>
           <div>
             <button onClick={saveProxyFailureRules} disabled={savingProxyFailureRules} className="btn btn-primary">
