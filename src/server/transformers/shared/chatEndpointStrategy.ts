@@ -1,5 +1,5 @@
+import type { Response as UndiciResponse } from 'undici';
 import type { DownstreamFormat } from './normalized.js';
-import type { EndpointAttemptContext, EndpointRecoverResult } from '../../routes/proxy/endpointFlow.js';
 import {
   buildMinimalJsonHeadersForCompatibility,
   isEndpointDispatchDeniedError,
@@ -12,6 +12,18 @@ import {
   isMessagesRequiredError,
   shouldRetryNormalizedMessagesBody,
 } from '../anthropic/messages/compatibility.js';
+
+type EndpointAttemptContext = {
+  request: CompatibilityRequest;
+  targetUrl: string;
+  response: UndiciResponse;
+  rawErrText: string;
+};
+
+type EndpointRecoverResult = {
+  upstream: UndiciResponse;
+  upstreamPath: string;
+} | null;
 
 type CompatibilityRequest = {
   endpoint: CompatibilityEndpoint;

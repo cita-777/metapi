@@ -117,5 +117,21 @@ describe('proxy route architecture boundaries', () => {
     expect(source).toContain('reply.hijack();');
     expect(source).toContain('openAiResponsesTransformer.proxyStream.createSession(');
   });
+
+  it('keeps canonical transformer contracts imported from the transformer boundary only', () => {
+    const chatSource = readSource('./chat.ts');
+    const responsesSource = readSource('./responses.ts');
+    const geminiSource = readSource('./gemini.ts');
+
+    expect(chatSource).not.toContain("from '../proxy-core/");
+    expect(responsesSource).not.toContain("from '../proxy-core/");
+    expect(geminiSource).not.toContain("from '../proxy-core/");
+    expect(chatSource).not.toContain("from '../../transformers/contracts.js'");
+    expect(responsesSource).not.toContain("from '../../transformers/contracts.js'");
+    expect(geminiSource).not.toContain("from '../../transformers/contracts.js'");
+    expect(chatSource).not.toContain("from '../../transformers/canonical/");
+    expect(responsesSource).not.toContain("from '../../transformers/canonical/");
+    expect(geminiSource).not.toContain("from '../../transformers/canonical/");
+  });
 });
 
