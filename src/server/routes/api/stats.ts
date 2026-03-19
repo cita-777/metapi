@@ -25,6 +25,7 @@ import {
   getLocalDayRangeUtc,
   getLocalRangeStartUtc,
   parseStoredUtcDateTime,
+  type StoredUtcDateTimeInput,
   toLocalDayKeyFromStoredUtc,
 } from '../../services/localTimeService.js';
 import { createRateLimitGuard } from '../../middleware/requestRateLimit.js';
@@ -202,7 +203,7 @@ type SiteAvailabilitySiteRow = {
 
 type SiteAvailabilityLogRow = {
   siteId: number | null;
-  createdAt: string | null;
+  createdAt: StoredUtcDateTimeInput;
   status: string | null;
   latencyMs: number | null;
 };

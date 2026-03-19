@@ -148,4 +148,35 @@ describe('buildModelAnalysis', () => {
       calls: 1,
     });
   });
+
+  it('accepts Date-backed createdAt values from external database drivers', () => {
+    const logs = [
+      {
+        createdAt: new Date('2026-02-24T12:30:00.000Z') as unknown as string,
+        modelActual: 'gpt-4o',
+        modelRequested: null,
+        status: 'success',
+        latencyMs: 250,
+        totalTokens: 800,
+        estimatedCost: 1.6,
+      },
+    ];
+
+    const result = buildModelAnalysis(logs, {
+      now: new Date('2026-02-24T12:00:00.000Z'),
+      days: 1,
+    });
+
+    expect(result.totals).toEqual({
+      calls: 1,
+      tokens: 800,
+      spend: 1.6,
+    });
+    expect(result.callRanking[0]).toMatchObject({
+      model: 'gpt-4o',
+      calls: 1,
+      successRate: 100,
+      avgLatencyMs: 250,
+    });
+  });
 });

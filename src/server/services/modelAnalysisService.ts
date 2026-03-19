@@ -1,9 +1,9 @@
-import { formatLocalDate, parseStoredUtcDateTime } from './localTimeService.js';
+import { formatLocalDate, parseStoredUtcDateTime, type StoredUtcDateTimeInput } from './localTimeService.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 interface ProxyLogLike {
-  createdAt: string | null;
+  createdAt: StoredUtcDateTimeInput;
   modelActual: string | null;
   modelRequested: string | null;
   status: string | null;

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -233,6 +233,290 @@ describe('backupService', () => {
     expect(accounts.length).toBe(1);
     expect(accounts[0].username).toBe('legacy-user');
     expect(settings.some((row) => row.key === 'legacy_preferences_ref_v2')).toBe(true);
+  });
+
+  it('imports ALL-API-Hub V2 backups into native offline connections and summaries', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    fetchSpy.mockImplementation(async () => {
+      throw new Error('network access should not happen during offline import');
+    });
+
+    try {
+      const payload = {
+        version: '2.0',
+        timestamp: Date.now(),
+        accounts: {
+          accounts: [
+            {
+              id: 'managed-account',
+              site_url: 'https://newapi.example.com',
+              site_type: 'new-api',
+              site_name: 'Managed Site',
+              authType: 'access_token',
+              account_info: {
+                id: 7788,
+                username: 'managed-user',
+                access_token: 'managed-session-token',
+                quota: 100000,
+                today_quota_consumption: 50000,
+              },
+              checkIn: {
+                autoCheckInEnabled: true,
+              },
+              created_at: '2026-02-01T00:00:00.000Z',
+              updated_at: '2026-02-02T00:00:00.000Z',
+            },
+            {
+              id: 'cookie-account',
+              site_url: 'https://onehub.example.com',
+              site_type: 'one-hub',
+              site_name: 'Cookie Site',
+              username: 'cookie-user',
+              authType: 'cookie',
+              cookieAuth: {
+                sessionCookie: 'sid=cookie-session',
+              },
+              checkIn: {
+                autoCheckInEnabled: false,
+              },
+              created_at: '2026-02-03T00:00:00.000Z',
+              updated_at: '2026-02-04T00:00:00.000Z',
+            },
+            {
+              id: 'direct-openai-account',
+              site_url: 'https://api.openai.com',
+              site_type: 'openai',
+              site_name: 'OpenAI Direct',
+              username: 'openai-account',
+              authType: 'access_token',
+              account_info: {
+                username: 'openai-account',
+                access_token: 'sk-openai-account',
+              },
+              created_at: '2026-02-05T00:00:00.000Z',
+              updated_at: '2026-02-06T00:00:00.000Z',
+            },
+            {
+              id: 'sub2api-account',
+              site_url: 'https://sub2api.example.com',
+              site_type: 'sub2api',
+              site_name: 'Sub2API',
+              authType: 'access_token',
+              account_info: {
+                id: 99,
+                username: 'sub2-user',
+                access_token: 'sub2-session-token',
+              },
+              sub2apiAuth: {
+                refreshToken: 'sub2-refresh-token',
+                tokenExpiresAt: 1735689600000,
+              },
+              checkIn: {
+                autoCheckInEnabled: true,
+              },
+              created_at: '2026-02-07T00:00:00.000Z',
+              updated_at: '2026-02-08T00:00:00.000Z',
+            },
+            {
+              id: 'skipped-none-account',
+              site_url: 'https://skip-none.example.com',
+              site_type: 'new-api',
+              site_name: 'Skip None',
+              authType: 'none',
+              username: 'skip-none-user',
+              created_at: '2026-02-09T00:00:00.000Z',
+              updated_at: '2026-02-10T00:00:00.000Z',
+            },
+            {
+              id: 'skipped-empty-account',
+              site_url: 'https://skip-empty.example.com',
+              site_type: 'new-api',
+              site_name: 'Skip Empty',
+              authType: 'access_token',
+              account_info: {
+                username: 'skip-empty-user',
+              },
+              created_at: '2026-02-11T00:00:00.000Z',
+              updated_at: '2026-02-12T00:00:00.000Z',
+            },
+          ],
+          bookmarks: [
+            {
+              id: 'bookmark-1',
+              name: 'Ignored Bookmark',
+              url: 'https://bookmark.example.com',
+            },
+          ],
+          pinnedAccountIds: ['direct-openai-account'],
+          orderedAccountIds: ['managed-account', 'cookie-account', 'direct-openai-account'],
+          last_updated: 1735689600000,
+        },
+        preferences: {
+          language: 'zh-CN',
+        },
+        channelConfigs: {
+          bySite: {
+            demo: { enabled: true },
+          },
+        },
+        tagStore: {
+          version: 1,
+          tagsById: {},
+        },
+        apiCredentialProfiles: {
+          version: 2,
+          profiles: [
+            {
+              id: 'profile-openai',
+              name: 'OpenAI Profile',
+              apiType: 'openai',
+              baseUrl: 'https://api.openai.com/v1',
+              apiKey: 'sk-profile-openai',
+              tagIds: [],
+              notes: '',
+              createdAt: 1735689601000,
+              updatedAt: 1735689602000,
+            },
+            {
+              id: 'profile-anthropic',
+              name: 'Claude Profile',
+              apiType: 'anthropic',
+              baseUrl: 'https://api.anthropic.com/v1',
+              apiKey: 'sk-profile-claude',
+              tagIds: [],
+              notes: '',
+              createdAt: 1735689603000,
+              updatedAt: 1735689604000,
+            },
+            {
+              id: 'profile-gemini',
+              name: 'Gemini Profile',
+              apiType: 'google',
+              baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+              apiKey: 'gemini-profile-key',
+              tagIds: [],
+              notes: '',
+              createdAt: 1735689605000,
+              updatedAt: 1735689606000,
+            },
+            {
+              id: 'profile-compat-fallback',
+              name: 'Compat Profile',
+              apiType: 'openai-compatible',
+              baseUrl: 'https://compat.example.com/v1',
+              apiKey: 'sk-compat-profile',
+              tagIds: [],
+              notes: '',
+              createdAt: 1735689607000,
+              updatedAt: 1735689608000,
+            },
+          ],
+          lastUpdated: 1735689609000,
+        },
+      } as Record<string, unknown>;
+
+      const result = await backupService.importBackup(payload);
+      const summary = (result as any).summary;
+      const warnings = (result as any).warnings;
+
+      expect(result.allImported).toBe(true);
+      expect(result.sections.accounts).toBe(true);
+      expect(result.sections.preferences).toBe(true);
+      expect(summary).toMatchObject({
+        importedAccounts: 4,
+        importedProfiles: 4,
+        importedApiKeyConnections: 5,
+        importedSites: 7,
+        skippedAccounts: 2,
+      });
+      expect(summary.ignoredSections).toEqual(
+        expect.arrayContaining(['accounts.bookmarks', 'channelConfigs', 'tagStore']),
+      );
+      expect(warnings).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('skipped-none-account'),
+          expect.stringContaining('skipped-empty-account'),
+        ]),
+      );
+
+      const sites = await db.select().from(schema.sites).all();
+      const accounts = await db.select().from(schema.accounts).all();
+      const accountTokens = await db.select().from(schema.accountTokens).all();
+      const settings = await db.select().from(schema.settings).all();
+
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(sites).toHaveLength(7);
+      expect(accounts).toHaveLength(8);
+      expect(accountTokens).toHaveLength(5);
+      expect(settings.some((row) => row.key === 'legacy_preferences_ref_v2')).toBe(true);
+      expect(settings.some((row) => row.key === 'legacy_channel_configs_ref_v2')).toBe(true);
+      expect(settings.some((row) => row.key === 'legacy_tag_store_ref_v2')).toBe(true);
+      expect(settings.some((row) => row.key === 'legacy_api_credential_profiles_ref_v2')).toBe(false);
+
+      const managedAccount = accounts.find((row) => row.username === 'managed-user');
+      const cookieAccount = accounts.find((row) => row.username === 'cookie-user');
+      const openAiAccount = accounts.find((row) => row.username === 'openai-account');
+      const sub2apiAccount = accounts.find((row) => row.username === 'sub2-user');
+      const openAiProfileAccount = accounts.find((row) => row.username === 'OpenAI Profile');
+      const claudeProfileAccount = accounts.find((row) => row.username === 'Claude Profile');
+      const geminiProfileAccount = accounts.find((row) => row.username === 'Gemini Profile');
+      const compatProfileAccount = accounts.find((row) => row.username === 'Compat Profile');
+
+      expect(managedAccount?.accessToken).toBe('managed-session-token');
+      expect(managedAccount?.apiToken).toBeNull();
+      expect(managedAccount?.checkinEnabled).toBe(true);
+      expect(JSON.parse(managedAccount?.extraConfig || '{}')).toMatchObject({
+        credentialMode: 'session',
+        platformUserId: 7788,
+      });
+
+      expect(cookieAccount?.accessToken).toBe('sid=cookie-session');
+      expect(cookieAccount?.checkinEnabled).toBe(false);
+      expect(JSON.parse(cookieAccount?.extraConfig || '{}')).toMatchObject({
+        credentialMode: 'session',
+      });
+
+      expect(openAiAccount?.accessToken).toBe('');
+      expect(openAiAccount?.apiToken).toBe('sk-openai-account');
+      expect(openAiAccount?.checkinEnabled).toBe(false);
+      expect(JSON.parse(openAiAccount?.extraConfig || '{}')).toMatchObject({
+        credentialMode: 'apikey',
+      });
+
+      expect(sub2apiAccount?.accessToken).toBe('sub2-session-token');
+      expect(JSON.parse(sub2apiAccount?.extraConfig || '{}')).toMatchObject({
+        credentialMode: 'session',
+        platformUserId: 99,
+        sub2apiAuth: {
+          refreshToken: 'sub2-refresh-token',
+          tokenExpiresAt: 1735689600000,
+        },
+      });
+
+      expect(openAiProfileAccount?.accessToken).toBe('');
+      expect(openAiProfileAccount?.apiToken).toBe('sk-profile-openai');
+      expect(JSON.parse(openAiProfileAccount?.extraConfig || '{}')).toMatchObject({
+        credentialMode: 'apikey',
+      });
+      expect(claudeProfileAccount?.apiToken).toBe('sk-profile-claude');
+      expect(geminiProfileAccount?.apiToken).toBe('gemini-profile-key');
+      expect(compatProfileAccount?.apiToken).toBe('sk-compat-profile');
+
+      const openAiSite = sites.find((row) => row.platform === 'openai' && row.url === 'https://api.openai.com');
+      expect(openAiSite).toBeTruthy();
+      expect(accounts.filter((row) => row.siteId === openAiSite?.id)).toHaveLength(2);
+
+      expect(accountTokens.map((row) => row.token).sort()).toEqual([
+        'gemini-profile-key',
+        'sk-compat-profile',
+        'sk-openai-account',
+        'sk-profile-claude',
+        'sk-profile-openai',
+      ]);
+      expect(accountTokens.every((row) => row.name === 'default' && row.isDefault && row.source === 'legacy')).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
   it('backfills oauth columns from extraConfig when importing older backups', async () => {

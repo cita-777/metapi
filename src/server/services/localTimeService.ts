@@ -1,5 +1,7 @@
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+export type StoredUtcDateTimeInput = string | number | Date | null | undefined;
+
 function pad2(value: number): string {
   return String(value).padStart(2, '0');
 }
@@ -20,10 +22,37 @@ export function formatUtcSqlDateTime(value: Date): string {
   return `${value.getUTCFullYear()}-${pad2(value.getUTCMonth() + 1)}-${pad2(value.getUTCDate())} ${pad2(value.getUTCHours())}:${pad2(value.getUTCMinutes())}:${pad2(value.getUTCSeconds())}`;
 }
 
-export function parseStoredUtcDateTime(raw: string | null | undefined): Date | null {
-  if (!raw) return null;
+function parseEpochDateTime(raw: number): Date | null {
+  if (!Number.isFinite(raw)) return null;
+  if (raw > 1_000_000_000_000) {
+    const parsed = new Date(Math.round(raw));
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  if (raw > 1_000_000_000) {
+    const parsed = new Date(Math.round(raw * 1000));
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  return null;
+}
+
+export function parseStoredUtcDateTime(raw: StoredUtcDateTimeInput): Date | null {
+  if (raw == null) return null;
+  if (raw instanceof Date) {
+    return Number.isNaN(raw.getTime()) ? null : new Date(raw.getTime());
+  }
+  if (typeof raw === 'number') {
+    return parseEpochDateTime(raw);
+  }
+  if (typeof raw !== 'string') return null;
+
   const text = raw.trim();
   if (!text) return null;
+
+  const numeric = Number(text);
+  if (Number.isFinite(numeric)) {
+    const parsedNumeric = parseEpochDateTime(numeric);
+    if (parsedNumeric) return parsedNumeric;
+  }
 
   let parsed: Date;
   if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(text)) {
@@ -36,7 +65,7 @@ export function parseStoredUtcDateTime(raw: string | null | undefined): Date | n
   return parsed;
 }
 
-export function toLocalDayKeyFromStoredUtc(raw: string | null | undefined): string | null {
+export function toLocalDayKeyFromStoredUtc(raw: StoredUtcDateTimeInput): string | null {
   const parsed = parseStoredUtcDateTime(raw);
   if (!parsed) return null;
   return formatLocalDate(parsed);

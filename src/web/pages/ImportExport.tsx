@@ -12,12 +12,16 @@ type ParsedSummary = {
   hasAccounts: boolean;
   hasPreferences: boolean;
   hasLegacyData: boolean;
+  isAllApiHubV2: boolean;
   sitesCount: number;
   accountsCount: number;
+  bookmarksCount: number;
+  profilesCount: number;
   tokensCount: number;
   routesCount: number;
   channelsCount: number;
   settingsCount: number;
+  ignoredSections: string[];
 };
 
 function downloadJsonFile(data: unknown, filename: string) {
@@ -35,23 +39,29 @@ function downloadJsonFile(data: unknown, filename: string) {
 function parseImportSummary(raw: string): ParsedSummary | null {
   if (!raw.trim()) return null;
 
+  const invalidSummary = (): ParsedSummary => ({
+    valid: false,
+    version: '-',
+    timestampLabel: '未知',
+    hasAccounts: false,
+    hasPreferences: false,
+    hasLegacyData: false,
+    isAllApiHubV2: false,
+    sitesCount: 0,
+    accountsCount: 0,
+    bookmarksCount: 0,
+    profilesCount: 0,
+    tokensCount: 0,
+    routesCount: 0,
+    channelsCount: 0,
+    settingsCount: 0,
+    ignoredSections: [],
+  });
+
   try {
     const data = JSON.parse(raw) as any;
     if (!data || typeof data !== 'object' || Array.isArray(data)) {
-      return {
-        valid: false,
-        version: '-',
-        timestampLabel: '未知',
-        hasAccounts: false,
-        hasPreferences: false,
-        hasLegacyData: false,
-        sitesCount: 0,
-        accountsCount: 0,
-        tokensCount: 0,
-        routesCount: 0,
-        channelsCount: 0,
-        settingsCount: 0,
-      };
+      return invalidSummary();
     }
 
     const accountsSection = (data.accounts && typeof data.accounts === 'object' && !Array.isArray(data.accounts))
@@ -63,6 +73,20 @@ function parseImportSummary(raw: string): ParsedSummary | null {
 
     const legacyAccounts = Boolean(data.data?.accounts || Array.isArray(data.accounts));
     const legacyPrefs = Boolean(data.data?.preferences);
+    const profilesCount = Array.isArray(data.apiCredentialProfiles?.profiles) ? data.apiCredentialProfiles.profiles.length : 0;
+    const bookmarksCount = Array.isArray(accountsSection?.bookmarks) ? accountsSection.bookmarks.length : 0;
+    const isAllApiHubV2 = Boolean(
+      accountsSection
+      && Array.isArray(accountsSection.accounts)
+      && (
+        (typeof data.version === 'string' && data.version.startsWith('2'))
+        || 'last_updated' in accountsSection
+        || Array.isArray(accountsSection.bookmarks)
+        || Array.isArray(accountsSection.pinnedAccountIds)
+        || Array.isArray(accountsSection.orderedAccountIds)
+        || profilesCount > 0
+      )
+    );
 
     const hasAccounts = Boolean(
       data.type === 'accounts'
@@ -74,6 +98,10 @@ function parseImportSummary(raw: string): ParsedSummary | null {
       || preferencesSection
       || legacyPrefs,
     );
+    const ignoredSections: string[] = [];
+    if (bookmarksCount > 0) ignoredSections.push('accounts.bookmarks');
+    if (data.channelConfigs && typeof data.channelConfigs === 'object' && !Array.isArray(data.channelConfigs)) ignoredSections.push('channelConfigs');
+    if (data.tagStore && typeof data.tagStore === 'object' && !Array.isArray(data.tagStore)) ignoredSections.push('tagStore');
 
     const toCount = (value: unknown): number => (Array.isArray(value) ? value.length : 0);
 
@@ -89,29 +117,50 @@ function parseImportSummary(raw: string): ParsedSummary | null {
       hasAccounts,
       hasPreferences,
       hasLegacyData: legacyAccounts || legacyPrefs,
+      isAllApiHubV2,
       sitesCount: toCount(accountsSection?.sites),
       accountsCount: toCount(accountsSection?.accounts),
+      bookmarksCount,
+      profilesCount,
       tokensCount: toCount(accountsSection?.accountTokens),
       routesCount: toCount(accountsSection?.tokenRoutes),
       channelsCount: toCount(accountsSection?.routeChannels),
       settingsCount: toCount(preferencesSection?.settings),
+      ignoredSections,
     };
   } catch {
-    return {
-      valid: false,
-      version: '-',
-      timestampLabel: '未知',
-      hasAccounts: false,
-      hasPreferences: false,
-      hasLegacyData: false,
-      sitesCount: 0,
-      accountsCount: 0,
-      tokensCount: 0,
-      routesCount: 0,
-      channelsCount: 0,
-      settingsCount: 0,
-    };
+    return invalidSummary();
   }
+}
+
+function buildImportSuccessMessage(result: any): string {
+  const sections: string[] = [];
+  if (result?.sections?.accounts) sections.push('账号与路由');
+  if (result?.sections?.preferences) sections.push('系统设置');
+
+  const parts = [`导入完成：${sections.length ? sections.join('、') : '无有效数据'}`];
+  if (result?.summary) {
+    const summary = result.summary;
+    parts.push(
+      [
+        `站点 ${summary.importedSites ?? 0}`,
+        `账号 ${summary.importedAccounts ?? 0}`,
+        `API Key 连接 ${summary.importedApiKeyConnections ?? summary.importedProfiles ?? 0}`,
+        `跳过 ${summary.skippedAccounts ?? 0}`,
+      ].join(' / '),
+    );
+
+    if (Array.isArray(summary.ignoredSections) && summary.ignoredSections.length > 0) {
+      parts.push(`未原生导入 ${summary.ignoredSections.join('、')}`);
+    }
+  }
+
+  if (Array.isArray(result?.warnings) && result.warnings.length > 0) {
+    const preview = result.warnings.slice(0, 2).join('；');
+    parts.push(`提示：${preview}${result.warnings.length > 2 ? ` 等 ${result.warnings.length} 项` : ''}`);
+  }
+
+  return parts.join('；');
 }
 
 export default function ImportExport() {
@@ -193,7 +242,10 @@ export default function ImportExport() {
       toast.error('当前 JSON 结构无法识别');
       return;
     }
-    if (!window.confirm('导入会覆盖账号/路由或系统设置，确认继续？')) {
+    const confirmed = typeof window === 'undefined' || typeof window.confirm !== 'function'
+      ? true
+      : window.confirm('导入会覆盖账号/路由或系统设置，确认继续？');
+    if (!confirmed) {
       return;
     }
 
@@ -201,10 +253,7 @@ export default function ImportExport() {
     try {
       const parsed = JSON.parse(importData);
       const result = await api.importBackup(parsed);
-      const sections: string[] = [];
-      if (result?.sections?.accounts) sections.push('账号与路由');
-      if (result?.sections?.preferences) sections.push('系统设置');
-      toast.success(`导入完成：${sections.length ? sections.join('、') : '无有效数据'}`);
+      toast.success(buildImportSuccessMessage(result));
       setImportData('');
       setSelectedFileName('');
     } catch (err: any) {
@@ -379,6 +428,17 @@ export default function ImportExport() {
                   <>
                     <div>结构有效，版本：{summary.version}，时间：{summary.timestampLabel}</div>
                     <div>包含分区：{summary.hasAccounts ? '账号路由' : ''}{summary.hasAccounts && summary.hasPreferences ? ' + ' : ''}{summary.hasPreferences ? '系统设置' : ''}</div>
+                    {summary.isAllApiHubV2 ? (
+                      <>
+                        <div>检测到 ALL-API-Hub V2 兼容备份：将离线迁移可用连接。</div>
+                        <div>
+                          统计：账号 {summary.accountsCount} / 书签 {summary.bookmarksCount} / 独立 API 凭据 {summary.profilesCount}
+                        </div>
+                        {summary.ignoredSections.length ? (
+                          <div>不会原生导入：{summary.ignoredSections.join('、')}</div>
+                        ) : null}
+                      </>
+                    ) : null}
                     {(summary.sitesCount || summary.accountsCount || summary.tokensCount || summary.routesCount || summary.channelsCount || summary.settingsCount) ? (
                       <div>
                         统计：站点 {summary.sitesCount} / 账号 {summary.accountsCount} / 令牌 {summary.tokensCount} / 路由 {summary.routesCount} / 通道 {summary.channelsCount} / 设置 {summary.settingsCount}

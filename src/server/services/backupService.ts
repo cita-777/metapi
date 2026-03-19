@@ -2,6 +2,7 @@ import { asc } from 'drizzle-orm';
 import cron from 'node-cron';
 import { db, schema } from '../db/index.js';
 import { upsertSetting } from '../db/upsertSetting.js';
+import { mergeAccountExtraConfig } from './accountExtraConfig.js';
 import { getOauthInfoFromExtraConfig } from './oauth/oauthAccount.js';
 
 const BACKUP_VERSION = '2.0';
@@ -60,12 +61,63 @@ interface BackupImportResult {
     preferences: boolean;
   };
   appliedSettings: Array<{ key: string; value: unknown }>;
+  summary?: {
+    importedSites: number;
+    importedAccounts: number;
+    importedProfiles: number;
+    importedApiKeyConnections: number;
+    skippedAccounts: number;
+    ignoredSections: string[];
+  };
+  warnings?: string[];
 }
 
 const EXCLUDED_SETTING_KEYS = new Set<string>([
   // Keep current admin login credential unchanged to avoid accidental lock-out.
   'auth_token',
 ]);
+
+const DIRECT_API_PLATFORMS = new Set([
+  'openai',
+  'claude',
+  'gemini',
+  'cliproxyapi',
+  'codex',
+  'gemini-cli',
+  'antigravity',
+]);
+
+const IMPORT_PLATFORM_ALIASES: Record<string, string> = {
+  anyrouter: 'anyrouter',
+  'wong-gongyi': 'new-api',
+  'vo-api': 'new-api',
+  'super-api': 'new-api',
+  'rix-api': 'new-api',
+  'neo-api': 'new-api',
+  newapi: 'new-api',
+  'new api': 'new-api',
+  'new-api': 'new-api',
+  oneapi: 'one-api',
+  'one api': 'one-api',
+  'one-api': 'one-api',
+  onehub: 'one-hub',
+  'one-hub': 'one-hub',
+  donehub: 'done-hub',
+  'done-hub': 'done-hub',
+  veloera: 'veloera',
+  sub2api: 'sub2api',
+  openai: 'openai',
+  anthropic: 'claude',
+  claude: 'claude',
+  google: 'gemini',
+  gemini: 'gemini',
+  cliproxyapi: 'cliproxyapi',
+  cpa: 'cliproxyapi',
+  'cli-proxy-api': 'cliproxyapi',
+  codex: 'codex',
+  'gemini-cli': 'gemini-cli',
+  antigravity: 'antigravity',
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -139,6 +191,354 @@ function normalizeLegacyPlatform(raw: string): string {
   if (value.includes('done')) return 'done-hub';
 
   return 'new-api';
+}
+
+function normalizeOriginUrl(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  try {
+    return new URL(trimmed).origin;
+  } catch {
+    return trimmed.replace(/\/+$/, '');
+  }
+}
+
+function detectLocalPlatformByUrlHint(url: string): string | undefined {
+  const normalized = url.trim().toLowerCase();
+  if (!normalized) return undefined;
+
+  if (normalized.includes('api.openai.com')) return 'openai';
+  if (normalized.includes('chatgpt.com/backend-api/codex')) return 'codex';
+  if (normalized.includes('api.anthropic.com') || normalized.includes('anthropic.com/v1')) return 'claude';
+  if (
+    normalized.includes('generativelanguage.googleapis.com')
+    || normalized.includes('googleapis.com/v1beta/openai')
+    || normalized.includes('gemini.google.com')
+  ) {
+    return 'gemini';
+  }
+  if (normalized.includes('cloudcode-pa.googleapis.com')) return 'gemini-cli';
+  if (normalized.includes('anyrouter')) return 'anyrouter';
+  if (normalized.includes('donehub') || normalized.includes('done-hub')) return 'done-hub';
+  if (normalized.includes('onehub') || normalized.includes('one-hub')) return 'one-hub';
+  if (normalized.includes('veloera')) return 'veloera';
+  if (normalized.includes('sub2api')) return 'sub2api';
+  if (normalized.includes('127.0.0.1:8317') || normalized.includes('localhost:8317')) return 'cliproxyapi';
+
+  return undefined;
+}
+
+function resolveImportedPlatform(rawPlatform: unknown, rawUrl: string): string {
+  const normalizedPlatform = typeof rawPlatform === 'string'
+    ? IMPORT_PLATFORM_ALIASES[rawPlatform.trim().toLowerCase()]
+    : undefined;
+  if (normalizedPlatform) return normalizedPlatform;
+
+  const urlHint = detectLocalPlatformByUrlHint(rawUrl);
+  if (urlHint) return urlHint;
+
+  return normalizeLegacyPlatform(asString(rawPlatform));
+}
+
+function resolveImportedProfilePlatform(apiType: unknown, baseUrl: string): string {
+  const normalizedType = asString(apiType).toLowerCase();
+  if (normalizedType === 'openai') return 'openai';
+  if (normalizedType === 'anthropic') return 'claude';
+  if (normalizedType === 'google') return 'gemini';
+  if (normalizedType === 'openai-compatible') {
+    return detectLocalPlatformByUrlHint(baseUrl) || 'openai';
+  }
+  return detectLocalPlatformByUrlHint(baseUrl) || 'openai';
+}
+
+function pushDefaultImportedToken(
+  rows: AccountTokenRow[],
+  nextId: () => number,
+  accountId: number,
+  token: string | null,
+  createdAt: string,
+  updatedAt: string,
+) {
+  if (!token) return;
+  rows.push({
+    id: nextId(),
+    accountId,
+    name: 'default',
+    token,
+    tokenGroup: 'default',
+    valueStatus: 'ready',
+    source: 'legacy',
+    enabled: true,
+    isDefault: true,
+    createdAt,
+    updatedAt,
+  });
+}
+
+function buildAllApiHubV2AccountsSection(data: RawBackupData): {
+  section: AccountsBackupSection;
+  summary: NonNullable<BackupImportResult['summary']>;
+  warnings: string[];
+} | null {
+  const accountsContainer = isRecord(data.accounts) ? data.accounts : null;
+  if (!accountsContainer || !Array.isArray(accountsContainer.accounts)) return null;
+
+  const looksLikeV2 =
+    (typeof data.version === 'string' && data.version.startsWith('2'))
+    || Object.prototype.hasOwnProperty.call(accountsContainer, 'last_updated')
+    || Array.isArray(accountsContainer.bookmarks)
+    || Array.isArray(accountsContainer.pinnedAccountIds)
+    || Array.isArray(accountsContainer.orderedAccountIds)
+    || (isRecord(data.apiCredentialProfiles) && Array.isArray(data.apiCredentialProfiles.profiles));
+
+  if (!looksLikeV2) return null;
+
+  const section: AccountsBackupSection = {
+    sites: [],
+    accounts: [],
+    accountTokens: [],
+    tokenRoutes: [],
+    routeChannels: [],
+    routeGroupSources: [],
+  };
+  const siteIdByKey = new Map<string, number>();
+  let nextSiteId = 1;
+  let nextAccountId = 1;
+  let nextTokenId = 1;
+  const warnings: string[] = [];
+  const ignoredSections: string[] = [];
+  let importedAccounts = 0;
+  let importedProfiles = 0;
+  let importedApiKeyConnections = 0;
+  let skippedAccounts = 0;
+
+  const nextToken = () => nextTokenId++;
+  const ensureSite = (input: {
+    platform: string;
+    url: string;
+    name?: string;
+    createdAt: string;
+    updatedAt: string;
+  }) => {
+    const normalizedUrl = normalizeOriginUrl(input.url);
+    if (!normalizedUrl) return null;
+    const key = `${input.platform}::${normalizedUrl}`;
+    const existingId = siteIdByKey.get(key);
+    if (existingId) return existingId;
+
+    const siteId = nextSiteId++;
+    siteIdByKey.set(key, siteId);
+    section.sites.push({
+      id: siteId,
+      name: asString(input.name) || normalizedUrl,
+      url: normalizedUrl,
+      externalCheckinUrl: null,
+      platform: input.platform,
+      proxyUrl: null,
+      useSystemProxy: false,
+      customHeaders: null,
+      status: 'active',
+      isPinned: false,
+      sortOrder: section.sites.length,
+      globalWeight: 1,
+      apiKey: null,
+      createdAt: input.createdAt,
+      updatedAt: input.updatedAt,
+    });
+    return siteId;
+  };
+
+  const addIgnoredSection = (name: string, active: boolean) => {
+    if (active && !ignoredSections.includes(name)) ignoredSections.push(name);
+  };
+
+  addIgnoredSection('accounts.bookmarks', Array.isArray(accountsContainer.bookmarks) && accountsContainer.bookmarks.length > 0);
+  addIgnoredSection('channelConfigs', isRecord(data.channelConfigs));
+  addIgnoredSection('tagStore', isRecord(data.tagStore));
+
+  for (const row of accountsContainer.accounts) {
+    if (!isRecord(row)) continue;
+
+    const createdAt = toIsoString(row.created_at);
+    const updatedAt = toIsoString(row.updated_at);
+    const siteUrl = normalizeOriginUrl(asString(row.site_url));
+    const siteName = asString(row.site_name) || siteUrl;
+    const platform = resolveImportedPlatform(row.site_type, siteUrl);
+    const authType = asString(row.authType).toLowerCase();
+    const accountInfo = isRecord(row.account_info) ? row.account_info : {};
+    const cookieAuth = isRecord(row.cookieAuth) ? row.cookieAuth : {};
+    const sub2apiAuth = isRecord(row.sub2apiAuth) ? row.sub2apiAuth : {};
+    const rawAccountId = asString(row.id) || asString(row.username) || siteName || `account-${nextAccountId}`;
+    const username = asString(accountInfo.username) || asString(row.username) || rawAccountId;
+    const platformUserId = asNumber(accountInfo.id, 0);
+    const checkin = isRecord(row.checkIn) ? row.checkIn : {};
+    const accessTokenCandidate = asString(accountInfo.access_token) || asString(row.access_token);
+    const cookieSession = asString(cookieAuth.sessionCookie);
+    const isDirectApiPlatform = DIRECT_API_PLATFORMS.has(platform);
+
+    let accessToken = '';
+    let apiToken: string | null = null;
+    let credentialMode: 'session' | 'apikey' | null = null;
+
+    if (authType === 'cookie') {
+      if (!cookieSession) {
+        skippedAccounts += 1;
+        warnings.push(`跳过 ALL-API-Hub 账号 ${rawAccountId}：cookieAuth.sessionCookie 缺失`);
+        continue;
+      }
+      accessToken = cookieSession;
+      credentialMode = 'session';
+    } else if (authType === 'access_token') {
+      if (!accessTokenCandidate) {
+        skippedAccounts += 1;
+        warnings.push(`跳过 ALL-API-Hub 账号 ${rawAccountId}：access_token 缺失`);
+        continue;
+      }
+      if (isDirectApiPlatform) {
+        accessToken = '';
+        apiToken = accessTokenCandidate;
+        credentialMode = 'apikey';
+      } else {
+        accessToken = accessTokenCandidate;
+        credentialMode = 'session';
+      }
+    } else {
+      skippedAccounts += 1;
+      warnings.push(`跳过 ALL-API-Hub 账号 ${rawAccountId}：authType=${authType || 'unknown'} 不支持离线迁移`);
+      continue;
+    }
+
+    const siteId = ensureSite({
+      platform,
+      url: siteUrl,
+      name: siteName,
+      createdAt,
+      updatedAt,
+    });
+    if (!siteId) {
+      skippedAccounts += 1;
+      warnings.push(`跳过 ALL-API-Hub 账号 ${rawAccountId}：site_url 无效`);
+      continue;
+    }
+
+    const importedBalance = normalizeLegacyQuota(accountInfo.quota);
+    const importedUsed = normalizeLegacyQuota(accountInfo.today_quota_consumption);
+    const importedQuota = importedBalance + importedUsed;
+    const extraConfigPatch: Record<string, unknown> = {
+      credentialMode,
+      source: 'all-api-hub',
+    };
+    if (platformUserId > 0) {
+      extraConfigPatch.platformUserId = platformUserId;
+    }
+    const refreshToken = asString(sub2apiAuth.refreshToken);
+    const tokenExpiresAt = asNumber(sub2apiAuth.tokenExpiresAt, 0);
+    if (refreshToken) {
+      extraConfigPatch.sub2apiAuth = tokenExpiresAt > 0
+        ? { refreshToken, tokenExpiresAt }
+        : { refreshToken };
+    }
+
+    const accountId = nextAccountId++;
+    section.accounts.push({
+      id: accountId,
+      siteId,
+      username,
+      accessToken,
+      apiToken,
+      oauthProvider: null,
+      oauthAccountKey: null,
+      oauthProjectId: null,
+      balance: importedBalance,
+      balanceUsed: importedUsed,
+      quota: importedQuota > 0 ? importedQuota : importedBalance,
+      unitCost: null,
+      valueScore: 0,
+      status: asBoolean(row.disabled, false) ? 'disabled' : 'active',
+      isPinned: false,
+      sortOrder: section.accounts.length,
+      checkinEnabled: credentialMode === 'session' ? asBoolean(checkin.autoCheckInEnabled, true) : false,
+      lastCheckinAt: null,
+      lastBalanceRefresh: null,
+      extraConfig: mergeAccountExtraConfig(undefined, extraConfigPatch),
+      createdAt,
+      updatedAt,
+    });
+    pushDefaultImportedToken(section.accountTokens, nextToken, accountId, apiToken, createdAt, updatedAt);
+    if (credentialMode === 'apikey') importedApiKeyConnections += 1;
+    importedAccounts += 1;
+  }
+
+  const profilesContainer = isRecord(data.apiCredentialProfiles) ? data.apiCredentialProfiles : null;
+  const profiles = Array.isArray(profilesContainer?.profiles) ? profilesContainer.profiles : [];
+  for (const profile of profiles) {
+    if (!isRecord(profile)) continue;
+
+    const baseUrl = normalizeOriginUrl(asString(profile.baseUrl));
+    const apiKey = asString(profile.apiKey);
+    if (!baseUrl || !apiKey) {
+      warnings.push(`跳过 ALL-API-Hub API 凭据 ${asString(profile.id) || asString(profile.name) || 'unknown'}：baseUrl 或 apiKey 缺失`);
+      continue;
+    }
+
+    const createdAt = toIsoString(profile.createdAt);
+    const updatedAt = toIsoString(profile.updatedAt);
+    const platform = resolveImportedProfilePlatform(profile.apiType, asString(profile.baseUrl));
+    const siteId = ensureSite({
+      platform,
+      url: baseUrl,
+      name: baseUrl,
+      createdAt,
+      updatedAt,
+    });
+    if (!siteId) continue;
+
+    const accountId = nextAccountId++;
+    section.accounts.push({
+      id: accountId,
+      siteId,
+      username: asString(profile.name) || asString(profile.id) || baseUrl,
+      accessToken: '',
+      apiToken: apiKey,
+      oauthProvider: null,
+      oauthAccountKey: null,
+      oauthProjectId: null,
+      balance: 0,
+      balanceUsed: 0,
+      quota: 0,
+      unitCost: null,
+      valueScore: 0,
+      status: 'active',
+      isPinned: false,
+      sortOrder: section.accounts.length,
+      checkinEnabled: false,
+      lastCheckinAt: null,
+      lastBalanceRefresh: null,
+      extraConfig: mergeAccountExtraConfig(undefined, {
+        credentialMode: 'apikey',
+        source: 'all-api-hub-profile',
+        importedProfileId: asString(profile.id) || undefined,
+      }),
+      createdAt,
+      updatedAt,
+    });
+    pushDefaultImportedToken(section.accountTokens, nextToken, accountId, apiKey, createdAt, updatedAt);
+    importedApiKeyConnections += 1;
+    importedProfiles += 1;
+  }
+
+  return {
+    section,
+    summary: {
+      importedSites: section.sites.length,
+      importedAccounts,
+      importedProfiles,
+      importedApiKeyConnections,
+      skippedAccounts,
+      ignoredSections,
+    },
+    warnings,
+  };
 }
 
 function buildAccountsSectionFromRefBackup(data: RawBackupData): AccountsBackupSection | null {
@@ -284,9 +684,6 @@ function buildPreferencesSectionFromRefBackup(data: RawBackupData): PreferencesB
   }
   if (isRecord(data.channelConfigs)) {
     settings.push({ key: 'legacy_channel_configs_ref_v2', value: data.channelConfigs });
-  }
-  if (isRecord(data.apiCredentialProfiles)) {
-    settings.push({ key: 'legacy_api_credential_profiles_ref_v2', value: data.apiCredentialProfiles });
   }
   if (isRecord(data.tagStore)) {
     settings.push({ key: 'legacy_tag_store_ref_v2', value: data.tagStore });
@@ -457,6 +854,9 @@ function detectAccountsSection(data: RawBackupData): AccountsBackupSection | nul
     if (legacyNested) return legacyNested;
   }
 
+  const allApiHubV2 = buildAllApiHubV2AccountsSection(data);
+  if (allApiHubV2) return allApiHubV2.section;
+
   const refFormat = buildAccountsSectionFromRefBackup(data);
   if (refFormat) return refFormat;
 
@@ -481,6 +881,18 @@ function detectPreferencesSection(data: RawBackupData): PreferencesBackupSection
   if (refFormat) return refFormat;
 
   return null;
+}
+
+function detectImportMetadata(data: RawBackupData): {
+  summary?: BackupImportResult['summary'];
+  warnings?: string[];
+} {
+  const allApiHubV2 = buildAllApiHubV2AccountsSection(data);
+  if (!allApiHubV2) return {};
+  return {
+    summary: allApiHubV2.summary,
+    warnings: allApiHubV2.warnings.length > 0 ? allApiHubV2.warnings : undefined,
+  };
 }
 
 async function importAccountsSection(section: AccountsBackupSection): Promise<void> {
@@ -634,6 +1046,7 @@ export async function importBackup(data: RawBackupData): Promise<BackupImportRes
 
   const accountsSection = detectAccountsSection(data);
   const preferencesSection = detectPreferencesSection(data);
+  const importMetadata = detectImportMetadata(data);
 
   const type = typeof data.type === 'string' ? data.type : '';
   const accountsRequested = type === 'accounts' || !!accountsSection;
@@ -670,5 +1083,7 @@ export async function importBackup(data: RawBackupData): Promise<BackupImportRes
       preferences: preferencesImported,
     },
     appliedSettings,
+    summary: importMetadata.summary,
+    warnings: importMetadata.warnings,
   };
 }
