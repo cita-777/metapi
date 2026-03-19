@@ -8,12 +8,15 @@ function readSource(relativePath: string): string {
 describe('proxy route architecture boundaries', () => {
   it('keeps shared protocol helpers out of chat route', () => {
     const source = readSource('./chat.ts');
+    const surfaceSource = readSource('../../proxy-core/surfaces/chatSurface.ts');
+    expect(source).toContain("from '../../proxy-core/surfaces/chatSurface.js'");
     expect(source).not.toContain("from './chatFormats.js'");
-    expect(source).toContain("from '../../transformers/openai/chat/index.js'");
-    expect(source).toContain("from '../../transformers/anthropic/messages/index.js'");
+    expect(surfaceSource).toContain("from '../../transformers/openai/chat/index.js'");
+    expect(surfaceSource).toContain("from '../../transformers/anthropic/messages/index.js'");
   });
   it('keeps anthropic-specific stream orchestration out of chat route', () => {
     const source = readSource('./chat.ts');
+    const surfaceSource = readSource('../../proxy-core/surfaces/chatSurface.ts');
     expect(source).not.toContain('serializeAnthropicRawSseEvent');
     expect(source).not.toContain('syncAnthropicRawStreamStateFromEvent');
     expect(source).not.toContain('isAnthropicRawSseEventName');
@@ -28,14 +31,15 @@ describe('proxy route architecture boundaries', () => {
     expect(source).not.toContain('anthropicMessagesTransformer.consumeSseEventBlock(');
     expect(source).not.toContain('anthropicMessagesTransformer.serializeUpstreamFinalAsStream(');
     expect(source).not.toContain('openAiChatTransformer.serializeUpstreamFinalAsStream(');
-    expect(source).toContain('openAiChatTransformer.proxyStream.createSession(');
-    expect(source).toContain('streamSession.consumeUpstreamFinalPayload(');
-    expect(source).toContain('streamSession.run(');
+    expect(surfaceSource).toContain('openAiChatTransformer.proxyStream.createSession(');
+    expect(surfaceSource).toContain('streamSession.consumeUpstreamFinalPayload(');
+    expect(surfaceSource).toContain('streamSession.run(');
   });
 
   it('keeps chat endpoint retry and downgrade strategy out of the route', () => {
     const source = readSource('./chat.ts');
-    expect(source).toContain('downstreamTransformer.compatibility.createEndpointStrategy(');
+    const surfaceSource = readSource('../../proxy-core/surfaces/chatSurface.ts');
+    expect(surfaceSource).toContain('downstreamTransformer.compatibility.createEndpointStrategy(');
     expect(source).not.toContain('anthropicMessagesTransformer.compatibility.shouldRetryNormalizedBody(');
     expect(source).not.toContain('buildMinimalJsonHeadersForCompatibility(');
     expect(source).not.toContain('promoteResponsesCandidateAfterLegacyChatError(');
@@ -102,12 +106,13 @@ describe('proxy route architecture boundaries', () => {
 
   it('keeps chat stream lifecycle behind transformer-owned facade', () => {
     const source = readSource('./chat.ts');
+    const surfaceSource = readSource('../../proxy-core/surfaces/chatSurface.ts');
     expect(source).not.toContain("from '../../transformers/shared/protocolLifecycle.js'");
     expect(source).not.toContain('createProxyStreamLifecycle');
     expect(source).not.toContain('let shouldTerminateEarly = false;');
     expect(source).not.toContain('const consumeSseBuffer = (incoming: string): string => {');
     expect(source).not.toContain('writeDone();');
-    expect(source).toContain('openAiChatTransformer.proxyStream.createSession(');
+    expect(surfaceSource).toContain('openAiChatTransformer.proxyStream.createSession(');
   });
 
   it('keeps responses stream lifecycle behind transformer-owned facade', () => {
