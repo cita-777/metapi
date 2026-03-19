@@ -234,33 +234,7 @@ jobs:
         env:
           expectedMacArch: ${{ matrix.expectedMacArch }}
         run: |
-          set -euo pipefail
-          mapfile -t app_binaries < <(find release -type f -path '*/Metapi.app/Contents/MacOS/Metapi')
-          if [ "${#app_binaries[@]}" -eq 0 ]; then
-            echo "No packaged macOS app binary found under release/"
-            exit 1
-          fi
-
-          for binary in "${app_binaries[@]}"; do
-            archs="$(lipo -archs "$binary" 2>/dev/null | xargs)"
-            echo "$binary => ${archs:-unknown}"
-            if [ -z "${archs}" ]; then
-              echo "Unable to detect architecture via lipo"
-              exit 1
-            fi
-
-            if [ "${expectedMacArch}" = "x64" ]; then
-              [ "${archs}" = "x86_64" ] || {
-                echo "Expected x86_64-only binary but got: ${archs}"
-                exit 1
-              }
-            else
-              [ "${archs}" = "arm64" ] || {
-                echo "Expected arm64-only binary but got: ${archs}"
-                exit 1
-              }
-            fi
-          done
+          node scripts/desktop/verifyMacArchitecture.mjs --release-dir release --expected-arch "$expectedMacArch"
 
       - name: Upload desktop package
         uses: actions/upload-artifact@v7

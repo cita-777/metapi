@@ -11,6 +11,6 @@ describe('release workflow', () => {
     expect(workflow).toContain('expectedMacArch: x64');
     expect(workflow).toContain('expectedMacArch: arm64');
     expect(workflow).toContain('Verify packaged macOS architecture');
-    expect(workflow).toContain('lipo -archs');
+    expect(workflow).toContain('node scripts/desktop/verifyMacArchitecture.mjs');
   });
 });
