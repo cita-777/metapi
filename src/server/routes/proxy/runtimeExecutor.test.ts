@@ -2,9 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetch } from 'undici';
 import type { BuiltEndpointRequest } from './endpointFlow.js';
 
-vi.mock('undici', () => ({
-  fetch: vi.fn(),
-}));
+vi.mock('undici', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('undici')>();
+  return {
+    ...actual,
+    fetch: vi.fn(),
+  };
+});
 
 const fetchMock = vi.mocked(fetch);
 
