@@ -445,6 +445,7 @@ const parseSseBlock = (block: string): { event: string; data: string | null } =>
 const parseAnyStreamDelta = (eventPayload: any): {
   contentDelta?: string;
   reasoningDelta?: string;
+  hasStructuredOutput?: boolean;
   done?: boolean;
 } => {
   if (!eventPayload || typeof eventPayload !== 'object') return {};
@@ -463,9 +464,18 @@ const parseAnyStreamDelta = (eventPayload: any): {
         ? choice.message.content
         : '';
 
+    const hasStructuredOutput = Boolean(
+      delta?.tool_calls?.length
+      || delta?.tool_call
+      || delta?.function_call
+      || choice?.message?.tool_calls?.length
+      || choice?.message?.function_call,
+    );
+
     return {
       contentDelta: contentDelta || undefined,
       reasoningDelta: reasoningDelta || undefined,
+      hasStructuredOutput: hasStructuredOutput || undefined,
       done: Boolean(choice?.finish_reason),
     };
   }
@@ -475,7 +485,14 @@ const parseAnyStreamDelta = (eventPayload: any): {
     // (output_text.done/content_part.done/output_item.done/response.completed).
     // Treat those as structural events only; otherwise UI appends duplicate text.
     if (eventPayload.type === 'response.output_item.added' || eventPayload.type === 'response.output_item.done') {
-      return {};
+      const item = eventPayload.item;
+      const hasStructuredOutput = Boolean(
+        item
+        && typeof item === 'object'
+        && typeof item.type === 'string'
+        && item.type !== 'message',
+      );
+      return { hasStructuredOutput: hasStructuredOutput || undefined };
     }
 
     if (eventPayload.type === 'response.content_part.added' || eventPayload.type === 'response.content_part.done') {
@@ -551,6 +568,7 @@ const parseAnyStreamDelta = (eventPayload: any): {
   if (Array.isArray(eventPayload.candidates)) {
     const parts = eventPayload?.candidates?.[0]?.content?.parts;
     if (Array.isArray(parts)) {
+      const hasStructuredOutput = parts.some((item: any) => item && typeof item === 'object' && item.functionCall);
       const reasoningDelta = parts
         .filter((item: any) => item?.thought === true)
         .map((item: any) => (typeof item?.text === 'string' ? item.text : ''))
@@ -562,6 +580,7 @@ const parseAnyStreamDelta = (eventPayload: any): {
       return {
         contentDelta: contentDelta || undefined,
         reasoningDelta: reasoningDelta || undefined,
+        hasStructuredOutput: hasStructuredOutput || undefined,
         done: Boolean(eventPayload?.candidates?.[0]?.finishReason),
       };
     }
@@ -1415,6 +1434,7 @@ export default function ModelTester() {
       let doneReceived = false;
       let hasAnyContent = false;
       let hasAnyReasoning = false;
+      let hasAnyStructuredOutput = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -1455,6 +1475,9 @@ export default function ModelTester() {
           if (typeof delta.contentDelta === 'string' && delta.contentDelta.trim().length > 0) {
             hasAnyContent = true;
           }
+          if (delta.hasStructuredOutput) {
+            hasAnyStructuredOutput = true;
+          }
           if (delta.reasoningDelta || delta.contentDelta) {
             setMessages((prev) => applyAssistantDelta(prev, {
               reasoningDelta: delta.reasoningDelta,
@@ -1465,7 +1488,7 @@ export default function ModelTester() {
         }
       }
 
-      const emptyOutput = !hasAnyContent && !hasAnyReasoning;
+      const emptyOutput = !hasAnyContent && !hasAnyReasoning && !hasAnyStructuredOutput;
 
       setMessages((prev) => {
         const idx = findLastLoadingAssistantIndex(prev);
@@ -1566,6 +1589,7 @@ export default function ModelTester() {
       let doneReceived = false;
       let hasAnyContent = false;
       let hasAnyReasoning = false;
+      let hasAnyStructuredOutput = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -1604,6 +1628,9 @@ export default function ModelTester() {
           if (typeof delta.contentDelta === 'string' && delta.contentDelta.trim().length > 0) {
             hasAnyContent = true;
           }
+          if (delta.hasStructuredOutput) {
+            hasAnyStructuredOutput = true;
+          }
           if (delta.reasoningDelta || delta.contentDelta) {
             setMessages((prev) => applyAssistantDelta(prev, {
               reasoningDelta: delta.reasoningDelta,
@@ -1614,7 +1641,7 @@ export default function ModelTester() {
         }
       }
 
-      const emptyOutput = !hasAnyContent && !hasAnyReasoning;
+      const emptyOutput = !hasAnyContent && !hasAnyReasoning && !hasAnyStructuredOutput;
 
       setMessages((prev) => {
         const idx = findLastLoadingAssistantIndex(prev);
