@@ -24,6 +24,14 @@ function getResponsesFailureMessage(payload: Record<string, unknown>): string {
   return 'upstream stream failed';
 }
 
+function hasCompleteFinalResponsesPayload(payload: Record<string, unknown>): boolean {
+  return (
+    payload.object === 'response.compaction'
+    || Array.isArray(payload.output)
+    || Object.prototype.hasOwnProperty.call(payload, 'output_text')
+  );
+}
+
 export async function collectResponsesFinalPayloadFromSse(
   upstream: { text(): Promise<string> },
   modelName: string,
@@ -53,15 +61,11 @@ export async function collectResponsesFinalPayloadFromSse(
     if (eventType !== 'response.completed') {
       return;
     }
-    if (isRecord(payload.response)) {
+    if (isRecord(payload.response) && hasCompleteFinalResponsesPayload(payload.response)) {
       completedPayload = payload.response;
       return;
     }
-    if (
-      payload.object === 'response'
-      || payload.object === 'response.compaction'
-      || Array.isArray(payload.output)
-    ) {
+    if (hasCompleteFinalResponsesPayload(payload)) {
       completedPayload = payload;
     }
   };
