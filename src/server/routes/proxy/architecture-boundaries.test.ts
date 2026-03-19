@@ -94,14 +94,16 @@ describe('proxy route architecture boundaries', () => {
 
   it('keeps gemini runtime closure in transformer-owned helpers', () => {
     const source = readSource('./gemini.ts');
+    const surfaceSource = readSource('../../proxy-core/surfaces/geminiSurface.ts');
+    expect(source).toContain("from '../../proxy-core/surfaces/geminiSurface.js'");
     expect(source).not.toContain('outbound.serializeAggregateResponse(');
     expect(source).not.toContain('aggregator.apply(');
     expect(source).not.toContain('stream.serializeAggregateSsePayload(');
     expect(source).not.toContain('stream.serializeAggregateJsonPayload(');
     expect(source).not.toContain('stream.applyJsonPayloadToAggregate(');
     expect(source).not.toContain('stream.parseSsePayloads(');
-    expect(source).toContain('stream.consumeUpstreamSseBuffer(');
-    expect(source).toContain('stream.serializeUpstreamJsonPayload(');
+    expect(surfaceSource).toContain('stream.consumeUpstreamSseBuffer(');
+    expect(surfaceSource).toContain('stream.serializeUpstreamJsonPayload(');
   });
 
   it('keeps chat stream lifecycle behind transformer-owned facade', () => {
