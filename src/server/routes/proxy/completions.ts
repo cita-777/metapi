@@ -12,6 +12,7 @@ import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordD
 import { withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
 import { composeProxyLogMessage } from './logPathMeta.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
+import { detectProxyFailure } from './proxyFailureJudge.js';
 import { resolveProxyLogBilling } from './proxyBilling.js';
 import { getProxyAuthContext } from '../../middleware/auth.js';
 import { buildUpstreamUrl } from './upstreamUrl.js';
@@ -181,9 +182,45 @@ export async function completionsProxyRoute(app: FastifyInstance) {
           return;
         }
 
-        const data = await upstream.json() as any;
+        const rawText = await upstream.text();
+        let data: any = rawText;
+        try {
+          data = JSON.parse(rawText);
+        } catch {
+          data = rawText;
+        }
         const latency = Date.now() - startTime;
         const parsedUsage = parseProxyUsage(data);
+        const failure = detectProxyFailure({ rawText, usage: parsedUsage });
+        if (failure) {
+          const errText = failure.reason;
+          tokenRouter.recordFailure(selected.channel.id);
+          logProxy(
+            selected,
+            requestedModel,
+            'failed',
+            failure.status,
+            latency,
+            errText,
+            retryCount,
+            logDownstreamApiKeyId ? downstreamApiKeyId : null,
+          );
+
+          if (shouldRetryProxyRequest(failure.status, errText) && retryCount < MAX_RETRIES) {
+            retryCount += 1;
+            continue;
+          }
+
+          await reportProxyAllFailed({
+            model: requestedModel,
+            reason: failure.reason,
+          });
+
+          return reply.code(failure.status).send({
+            error: { message: errText, type: 'upstream_error' },
+          });
+        }
+
         const resolvedUsage = await resolveProxyUsageWithSelfLogFallback({
           site: selected.site,
           account: selected.account,

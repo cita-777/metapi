@@ -534,7 +534,7 @@ async function fetchChannelsForRouteRows(routes: RouteRow[]): Promise<Map<number
   const explicitSourceRouteIds = Array.from(new Set(routes
     .filter((route) => isExplicitGroupRoute(route))
     .flatMap((route) => route.sourceRouteIds)));
-  const enabledExplicitSourceRouteIds = explicitSourceRouteIds.length > 0
+  const explicitSourceRoutes = explicitSourceRouteIds.length > 0
     ? (await db.select({
       id: schema.tokenRoutes.id,
       modelPattern: schema.tokenRoutes.modelPattern,
@@ -543,15 +543,24 @@ async function fetchChannelsForRouteRows(routes: RouteRow[]): Promise<Map<number
     }).from(schema.tokenRoutes)
       .where(inArray(schema.tokenRoutes.id, explicitSourceRouteIds))
       .all())
-      .filter((route) => route.enabled && !isExplicitGroupRoute(route) && isExactModelPattern(route.modelPattern))
-      .map((route) => route.id)
     : [];
+  const enabledExplicitSourceRouteIds = explicitSourceRoutes
+    .filter((route) => route.enabled && !isExplicitGroupRoute(route) && isExactModelPattern(route.modelPattern))
+    .map((route) => route.id);
   const actualRouteIds = Array.from(new Set([
     ...routes.filter((route) => !isExplicitGroupRoute(route)).map((route) => route.id),
     ...enabledExplicitSourceRouteIds,
   ]));
   if (actualRouteIds.length === 0) {
     return new Map(routes.map((route) => [route.id, []]));
+  }
+
+  const actualRouteById = new Map<number, { modelPattern: string; routeMode: string | null }>();
+  for (const route of routes.filter((item) => !isExplicitGroupRoute(item))) {
+    actualRouteById.set(route.id, { modelPattern: route.modelPattern, routeMode: route.routeMode ?? null });
+  }
+  for (const route of explicitSourceRoutes) {
+    actualRouteById.set(route.id, { modelPattern: route.modelPattern, routeMode: route.routeMode ?? null });
   }
 
   const channelRows = await db.select().from(schema.routeChannels)
@@ -565,9 +574,15 @@ async function fetchChannelsForRouteRows(routes: RouteRow[]): Promise<Map<number
 
   for (const row of channelRows) {
     const routeId = row.route_channels.routeId;
+    const actualRoute = actualRouteById.get(routeId);
+    const fallbackSourceModel = actualRoute && !isExplicitGroupRoute(actualRoute) && isExactModelPattern(actualRoute.modelPattern)
+      ? actualRoute.modelPattern
+      : null;
+    const resolvedSourceModel = (row.route_channels.sourceModel || fallbackSourceModel || '').trim();
     if (!channelsByActualRouteId.has(routeId)) channelsByActualRouteId.set(routeId, []);
     channelsByActualRouteId.get(routeId)!.push({
       ...row.route_channels,
+      sourceModel: resolvedSourceModel || null,
       account: row.accounts,
       site: row.sites,
       token: row.account_tokens

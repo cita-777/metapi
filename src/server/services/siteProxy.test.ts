@@ -1,9 +1,13 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { once } from 'node:events';
 import { mkdtempSync } from 'node:fs';
+import { createServer } from 'node:http';
+import { connect as connectSocket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sql } from 'drizzle-orm';
-import { Headers } from 'undici';
+import { SocksClient } from 'socks';
+import { Headers, fetch } from 'undici';
 
 type DbModule = typeof import('../db/index.js');
 
@@ -69,6 +73,72 @@ describe('siteProxy', () => {
     });
 
     expect('dispatcher' in requestInit).toBe(true);
+  });
+
+  it('injects a working dispatcher for socks5 system proxies', async () => {
+    const upstreamServer = createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ ok: true }));
+    });
+    upstreamServer.listen(0, '127.0.0.1');
+    await once(upstreamServer, 'listening');
+    const upstreamAddress = upstreamServer.address();
+    if (!upstreamAddress || typeof upstreamAddress === 'string') {
+      throw new Error('Failed to determine upstream server address');
+    }
+    const requestUrl = `http://proxy-site.example.com:${upstreamAddress.port}/v1/chat/completions`;
+
+    await db.insert(schema.settings).values({
+      key: 'system_proxy_url',
+      value: JSON.stringify('socks5h://127.0.0.1:1080'),
+    }).run();
+    await db.run(sql`
+      INSERT INTO sites (name, url, platform, use_system_proxy)
+      VALUES ('proxy-site', ${`http://proxy-site.example.com:${upstreamAddress.port}`}, 'new-api', 1)
+    `);
+
+    const createConnectionSpy = vi.spyOn(SocksClient, 'createConnection').mockImplementation(async () => {
+      const socket = connectSocket(upstreamAddress.port, '127.0.0.1');
+      await once(socket, 'connect');
+      return { socket } as Awaited<ReturnType<typeof SocksClient.createConnection>>;
+    });
+
+    try {
+      const { withSiteProxyRequestInit } = await import('./siteProxy.js');
+      const requestInit = await withSiteProxyRequestInit(requestUrl, {
+        method: 'GET',
+      });
+
+      expect('dispatcher' in requestInit).toBe(true);
+
+      const response = await fetch(requestUrl, requestInit);
+
+      expect(response.status).toBe(200);
+      expect(createConnectionSpy).toHaveBeenCalledTimes(1);
+      expect(createConnectionSpy).toHaveBeenCalledWith(expect.objectContaining({
+        command: 'connect',
+        proxy: expect.objectContaining({
+          host: '127.0.0.1',
+          port: 1080,
+          type: 5,
+        }),
+        destination: expect.objectContaining({
+          host: 'proxy-site.example.com',
+          port: upstreamAddress.port,
+        }),
+      }));
+    } finally {
+      createConnectionSpy.mockRestore();
+      await new Promise<void>((resolve, reject) => {
+        upstreamServer.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+    }
   });
 
   it('merges site custom headers by matched request url and keeps explicit headers authoritative', async () => {

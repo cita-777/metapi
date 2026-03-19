@@ -273,6 +273,60 @@ describe('settings and auth events', () => {
     expect(runtime.systemProxyUrl).toBe('http://127.0.0.1:7890');
   });
 
+  it('splits proxy error keywords on newlines and commas when saving runtime settings', async () => {
+    const updateResponse = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      payload: {
+        proxyErrorKeywords: 'quota exceeded\nbad gateway,too many requests',
+        proxyEmptyContentFailEnabled: true,
+      },
+    });
+
+    expect(updateResponse.statusCode).toBe(200);
+    const updated = updateResponse.json() as {
+      proxyErrorKeywords?: string[];
+      proxyEmptyContentFailEnabled?: boolean;
+    };
+    expect(updated.proxyErrorKeywords).toEqual([
+      'quota exceeded',
+      'bad gateway',
+      'too many requests',
+    ]);
+    expect(updated.proxyEmptyContentFailEnabled).toBe(true);
+    expect(config.proxyErrorKeywords).toEqual([
+      'quota exceeded',
+      'bad gateway',
+      'too many requests',
+    ]);
+    expect(config.proxyEmptyContentFailEnabled).toBe(true);
+
+    const rows = await db.select().from(schema.settings).all();
+    const settingsMap = new Map(rows.map((row) => [row.key, row.value]));
+    expect(settingsMap.get('proxy_error_keywords')).toBe(JSON.stringify([
+      'quota exceeded',
+      'bad gateway',
+      'too many requests',
+    ]));
+    expect(settingsMap.get('proxy_empty_content_fail_enabled')).toBe(JSON.stringify(true));
+
+    const getResponse = await app.inject({
+      method: 'GET',
+      url: '/api/settings/runtime',
+    });
+    expect(getResponse.statusCode).toBe(200);
+    const runtime = getResponse.json() as {
+      proxyErrorKeywords?: string[];
+      proxyEmptyContentFailEnabled?: boolean;
+    };
+    expect(runtime.proxyErrorKeywords).toEqual([
+      'quota exceeded',
+      'bad gateway',
+      'too many requests',
+    ]);
+    expect(runtime.proxyEmptyContentFailEnabled).toBe(true);
+  });
+
   it('persists and returns log cleanup settings from runtime settings', async () => {
     const updateResponse = await app.inject({
       method: 'PUT',

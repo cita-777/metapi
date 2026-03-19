@@ -55,6 +55,8 @@ interface RuntimeSettingsBody {
   adminIpAllowlist?: string[] | string;
   routingFallbackUnitCost?: number;
   routingWeights?: Partial<RoutingWeights>;
+  proxyErrorKeywords?: string[] | string;
+  proxyEmptyContentFailEnabled?: boolean;
 }
 
 interface DatabaseMigrationBody {
@@ -127,6 +129,33 @@ function toStringList(value: unknown): string[] {
   return [];
 }
 
+function parseProxyErrorKeywords(value: unknown): string[] {
+  const splitKeywords = (input: string): string[] => input
+    .split(/\r?\n|,/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+
+  if (Array.isArray(value)) {
+    const keywords = value.flatMap((item) => {
+      if (typeof item !== 'string') return [];
+      return splitKeywords(item);
+    });
+    return keywords;
+  }
+
+  if (typeof value === 'string') {
+    const keywords = splitKeywords(value);
+    return keywords;
+  }
+
+  throw new Error('上游错误关键词格式无效：需要 string 或 string[]');
+}
+
+function parseBooleanFlag(value: unknown, label: string): boolean {
+  if (typeof value === 'boolean') return value;
+  throw new Error(`${label}格式无效：需要 boolean`);
+}
+
 function isValidHttpUrl(raw: string): boolean {
   const value = String(raw || '').trim();
   if (!value) return false;
@@ -195,6 +224,22 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
     case 'system_proxy_url': {
       if (typeof value !== 'string') return;
       config.systemProxyUrl = normalizeSiteProxyUrl(value) || '';
+      return;
+    }
+    case 'proxy_error_keywords': {
+      try {
+        config.proxyErrorKeywords = parseProxyErrorKeywords(value);
+      } catch {
+        return;
+      }
+      return;
+    }
+    case 'proxy_empty_content_fail_enabled': {
+      try {
+        config.proxyEmptyContentFailEnabled = parseBooleanFlag(value, '空内容判定失败开关');
+      } catch {
+        return;
+      }
       return;
     }
     case 'webhook_url': {
@@ -347,6 +392,8 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     adminIpAllowlist: config.adminIpAllowlist,
     currentAdminIp,
     systemProxyUrl: config.systemProxyUrl,
+    proxyErrorKeywords: config.proxyErrorKeywords,
+    proxyEmptyContentFailEnabled: config.proxyEmptyContentFailEnabled,
     proxyTokenMasked: maskSecret(config.proxyToken),
   };
 }
@@ -601,6 +648,42 @@ export async function settingsRoutes(app: FastifyInstance) {
       config.systemProxyUrl = normalizedSystemProxyUrl || '';
       upsertSetting('system_proxy_url', config.systemProxyUrl);
       invalidateSiteProxyCache();
+    }
+
+    if (body.proxyErrorKeywords !== undefined) {
+      let nextKeywords: string[] = [];
+      try {
+        nextKeywords = parseProxyErrorKeywords(body.proxyErrorKeywords);
+      } catch (err: any) {
+        return reply.code(400).send({
+          success: false,
+          message: err?.message || '上游错误关键词格式无效',
+        });
+      }
+
+      if (JSON.stringify(nextKeywords) !== JSON.stringify(config.proxyErrorKeywords || [])) {
+        changedLabels.push('上游错误关键词');
+      }
+      config.proxyErrorKeywords = nextKeywords;
+      upsertSetting('proxy_error_keywords', config.proxyErrorKeywords);
+    }
+
+    if (body.proxyEmptyContentFailEnabled !== undefined) {
+      let nextValue = false;
+      try {
+        nextValue = parseBooleanFlag(body.proxyEmptyContentFailEnabled, '空内容判定失败开关');
+      } catch (err: any) {
+        return reply.code(400).send({
+          success: false,
+          message: err?.message || '空内容判定失败开关格式无效',
+        });
+      }
+
+      if (nextValue !== config.proxyEmptyContentFailEnabled) {
+        changedLabels.push('空内容判定失败');
+      }
+      config.proxyEmptyContentFailEnabled = nextValue;
+      upsertSetting('proxy_empty_content_fail_enabled', config.proxyEmptyContentFailEnabled);
     }
 
     if (body.webhookUrl !== undefined) {

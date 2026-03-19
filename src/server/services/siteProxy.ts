@@ -1,8 +1,12 @@
 import { db, schema } from '../db/index.js';
 import { eq } from 'drizzle-orm';
 import { config } from '../config.js';
+import { lookup as dnsLookup } from 'node:dns';
+import { isIP, type Socket } from 'node:net';
+import { connect as tlsConnect, type TLSSocket } from 'node:tls';
+import { SocksClient } from 'socks';
 import type { Dispatcher, RequestInit as UndiciRequestInit } from 'undici';
-import { ProxyAgent } from 'undici';
+import { Agent as UndiciAgent, ProxyAgent } from 'undici';
 import { mergeHeadersWithSiteCustomHeaders } from './siteCustomHeaders.js';
 
 const SITE_PROXY_CACHE_TTL_MS = 3_000;
@@ -15,6 +19,15 @@ const SUPPORTED_PROXY_PROTOCOLS = new Set([
   'socks5:',
   'socks5h:',
 ]);
+const SOCKS_PROXY_PROTOCOLS = new Set([
+  'socks:',
+  'socks4:',
+  'socks4a:',
+  'socks5:',
+  'socks5h:',
+]);
+const DEFAULT_PROXY_CONNECT_TIMEOUT_MS = 10_000;
+const DEFAULT_PROXY_KEEPALIVE_INITIAL_DELAY_MS = 60_000;
 
 type SiteProxyRow = {
   siteUrl: string;
@@ -44,6 +57,27 @@ let siteProxyCache: {
 };
 
 const dispatcherCache = new Map<string, Dispatcher>();
+
+type ParsedSocksProxyConfig = {
+  shouldLookup: boolean;
+  proxy: {
+    host: string;
+    port: number;
+    type: 4 | 5;
+    userId?: string;
+    password?: string;
+  };
+};
+
+type UndiciConnectOptions = {
+  hostname: string;
+  host?: string;
+  protocol: string;
+  port: string;
+  servername?: string;
+  localAddress?: string | null;
+  httpSocket?: Socket;
+};
 
 function normalizeSiteUrl(value: string): string {
   const trimmed = (value || '').trim();
@@ -115,12 +149,140 @@ function getDispatcherByProxyUrl(proxyUrl: string): Dispatcher | undefined {
   if (cached) return cached;
 
   try {
-    const dispatcher = new ProxyAgent(normalized);
+    const parsedProxyUrl = new URL(normalized);
+    const dispatcher = SOCKS_PROXY_PROTOCOLS.has(parsedProxyUrl.protocol.toLowerCase())
+      ? createSocksDispatcher(parsedProxyUrl)
+      : new ProxyAgent(normalized);
     dispatcherCache.set(normalized, dispatcher);
     return dispatcher;
   } catch {
     return undefined;
   }
+}
+
+function parseSocksProxyUrl(proxyUrl: URL): ParsedSocksProxyConfig {
+  let shouldLookup = false;
+  let type: 4 | 5 = 5;
+
+  switch (proxyUrl.protocol.toLowerCase()) {
+    case 'socks4:':
+      shouldLookup = true;
+      type = 4;
+      break;
+    case 'socks4a:':
+      type = 4;
+      break;
+    case 'socks5:':
+      shouldLookup = true;
+      type = 5;
+      break;
+    case 'socks:':
+    case 'socks5h:':
+      type = 5;
+      break;
+    default:
+      throw new TypeError(`Unsupported SOCKS proxy protocol: ${proxyUrl.protocol}`);
+  }
+
+  const proxy: ParsedSocksProxyConfig['proxy'] = {
+    host: proxyUrl.hostname,
+    port: Number.parseInt(proxyUrl.port, 10) || 1080,
+    type,
+  };
+
+  if (proxyUrl.username) {
+    proxy.userId = decodeURIComponent(proxyUrl.username);
+  }
+  if (proxyUrl.password) {
+    proxy.password = decodeURIComponent(proxyUrl.password);
+  }
+
+  return { shouldLookup, proxy };
+}
+
+function applySocketDefaults(socket: Socket | TLSSocket) {
+  socket.setNoDelay(true);
+  socket.setKeepAlive(true, DEFAULT_PROXY_KEEPALIVE_INITIAL_DELAY_MS);
+}
+
+async function resolveSocksDestinationHost(hostname: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    dnsLookup(hostname, {}, (error, address) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(address);
+    });
+  });
+}
+
+async function createSocksSocket(
+  connectOptions: UndiciConnectOptions,
+  socksProxy: ParsedSocksProxyConfig,
+): Promise<Socket | TLSSocket> {
+  if (!connectOptions.hostname) {
+    throw new Error('Missing hostname for SOCKS proxy request');
+  }
+
+  const destinationHost = socksProxy.shouldLookup
+    ? await resolveSocksDestinationHost(connectOptions.hostname)
+    : connectOptions.hostname;
+  const destinationPort = Number.parseInt(connectOptions.port, 10)
+    || (connectOptions.protocol === 'https:' ? 443 : 80);
+
+  const { socket } = await SocksClient.createConnection({
+    proxy: socksProxy.proxy,
+    destination: {
+      host: destinationHost,
+      port: destinationPort,
+    },
+    command: 'connect',
+    timeout: DEFAULT_PROXY_CONNECT_TIMEOUT_MS,
+    socket_options: connectOptions.localAddress
+      ? { localAddress: connectOptions.localAddress } as any
+      : undefined,
+  });
+  applySocketDefaults(socket);
+
+  if (connectOptions.protocol !== 'https:') {
+    return socket;
+  }
+
+  return await new Promise<TLSSocket>((resolve, reject) => {
+    const tlsSocket = tlsConnect({
+      socket,
+      host: connectOptions.hostname,
+      servername: connectOptions.servername || (!isIP(connectOptions.hostname) ? connectOptions.hostname : undefined),
+      ALPNProtocols: ['http/1.1'],
+    });
+
+    const cleanup = (error: Error) => {
+      socket.destroy();
+      tlsSocket.destroy();
+      reject(error);
+    };
+
+    tlsSocket.once('secureConnect', () => {
+      tlsSocket.off('error', cleanup);
+      applySocketDefaults(tlsSocket);
+      resolve(tlsSocket);
+    });
+    tlsSocket.once('error', cleanup);
+  });
+}
+
+function createSocksDispatcher(proxyUrl: URL): Dispatcher {
+  const socksProxy = parseSocksProxyUrl(proxyUrl);
+  return new UndiciAgent({
+    connect: (connectOptions, callback) => {
+      void createSocksSocket(connectOptions, socksProxy)
+        .then((socket) => callback(null, socket))
+        .catch((error) => {
+          callback(error instanceof Error ? error : new Error(String(error)), null as any);
+        });
+    },
+  });
 }
 
 export function normalizeSiteProxyUrl(input: unknown): string | null {

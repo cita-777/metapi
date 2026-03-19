@@ -1,3 +1,4 @@
+import { TextDecoder } from 'node:util';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { db, hasProxyLogDownstreamApiKeyIdColumn, schema } from '../../db/index.js';
 import { tokenRouter } from '../../services/tokenRouter.js';
@@ -16,6 +17,7 @@ import {
 import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from '../../routes/proxy/downstreamPolicy.js';
 import { composeProxyLogMessage } from '../../routes/proxy/logPathMeta.js';
 import { executeEndpointFlow, type BuiltEndpointRequest } from '../../routes/proxy/endpointFlow.js';
+import { detectProxyFailure } from '../../routes/proxy/proxyFailureJudge.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { resolveProxyLogBilling } from '../../routes/proxy/proxyBilling.js';
 import { getProxyAuthContext, getProxyResourceOwner } from '../../middleware/auth.js';
@@ -442,17 +444,16 @@ export async function handleOpenAiResponsesSurfaceRequest(
       const successfulUpstreamPath = endpointResult.upstreamPath;
 
         if (isStream) {
-          reply.hijack();
-          reply.raw.statusCode = 200;
-          reply.raw.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-          reply.raw.setHeader('Cache-Control', 'no-cache, no-transform');
-          reply.raw.setHeader('Connection', 'keep-alive');
-          reply.raw.setHeader('X-Accel-Buffering', 'no');
+          const upstreamContentType = (upstream.headers.get('content-type') || '').toLowerCase();
+          const startSseResponse = () => {
+            reply.hijack();
+            reply.raw.statusCode = 200;
+            reply.raw.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+            reply.raw.setHeader('Cache-Control', 'no-cache, no-transform');
+            reply.raw.setHeader('Connection', 'keep-alive');
+            reply.raw.setHeader('X-Accel-Buffering', 'no');
+          };
 
-          const upstreamReader = upstream.body?.getReader();
-          const reader = String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli' && upstreamReader
-            ? createGeminiCliStreamReader(upstreamReader)
-            : upstreamReader;
           let parsedUsage: UsageSummary = {
             promptTokens: 0,
             completionTokens: 0,
@@ -481,7 +482,141 @@ export async function handleOpenAiResponsesSurfaceRequest(
               reply.raw.write(chunk);
             },
           });
+          if (!upstreamContentType.includes('text/event-stream')) {
+            const rawText = await upstream.text();
+            let upstreamData: unknown = rawText;
+            try {
+              upstreamData = JSON.parse(rawText);
+            } catch {
+              upstreamData = rawText;
+            }
+            if (String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli') {
+              upstreamData = unwrapGeminiCliPayload(upstreamData);
+            }
+
+            parsedUsage = parseProxyUsage(upstreamData);
+            const latency = Date.now() - startTime;
+            const failure = detectProxyFailure({ rawText, usage: parsedUsage });
+            if (failure) {
+              tokenRouter.recordFailure(selected.channel.id);
+              logProxy(
+                selected,
+                requestedModel,
+                'failed',
+                failure.status,
+                latency,
+                failure.reason,
+                retryCount,
+                downstreamPath,
+                parsedUsage.promptTokens,
+                parsedUsage.completionTokens,
+                parsedUsage.totalTokens,
+                0,
+                null,
+                successfulUpstreamPath,
+                clientContext,
+                logDownstreamApiKeyId ? downstreamApiKeyId : null,
+              );
+
+              if (shouldRetryProxyRequest(failure.status, failure.reason) && retryCount < MAX_RETRIES) {
+                retryCount += 1;
+                continue;
+              }
+
+              await reportProxyAllFailed({
+                model: requestedModel,
+                reason: failure.reason,
+              });
+              return reply.code(failure.status).send({ error: { message: failure.reason, type: 'upstream_error' } });
+            }
+
+            startSseResponse();
+            const streamResult = streamSession.consumeUpstreamFinalPayload(upstreamData, rawText, reply.raw);
+            if (streamResult.status === 'failed') {
+              tokenRouter.recordFailure(selected.channel.id);
+              logProxy(
+                selected,
+                requestedModel,
+                'failed',
+                200,
+                latency,
+                streamResult.errorMessage,
+                retryCount,
+                downstreamPath,
+                parsedUsage.promptTokens,
+                parsedUsage.completionTokens,
+                parsedUsage.totalTokens,
+                0,
+                null,
+                successfulUpstreamPath,
+                clientContext,
+                logDownstreamApiKeyId ? downstreamApiKeyId : null,
+              );
+              return;
+            }
+
+            const resolvedUsage = await resolveProxyUsageWithSelfLogFallback({
+              site: selected.site,
+              account: selected.account,
+              tokenValue: selected.tokenValue,
+              tokenName: selected.tokenName,
+              modelName: selected.actualModel || requestedModel,
+              requestStartedAtMs: startTime,
+              requestEndedAtMs: startTime + latency,
+              localLatencyMs: latency,
+              usage: {
+                promptTokens: parsedUsage.promptTokens,
+                completionTokens: parsedUsage.completionTokens,
+                totalTokens: parsedUsage.totalTokens,
+              },
+            });
+            const { estimatedCost, billingDetails } = await resolveProxyLogBilling({
+              site: selected.site,
+              account: selected.account,
+              modelName: selected.actualModel || requestedModel,
+              parsedUsage,
+              resolvedUsage,
+            });
+
+            tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost);
+            recordDownstreamCostUsage(request, estimatedCost);
+            logProxy(
+              selected, requestedModel, 'success', 200, latency, null, retryCount, downstreamPath,
+              resolvedUsage.promptTokens, resolvedUsage.completionTokens, resolvedUsage.totalTokens, estimatedCost, billingDetails,
+              successfulUpstreamPath,
+              clientContext,
+              logDownstreamApiKeyId ? downstreamApiKeyId : null,
+            );
+            return;
+          }
+
+          startSseResponse();
+
+          const upstreamReader = upstream.body?.getReader();
+          const baseReader = String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli' && upstreamReader
+            ? createGeminiCliStreamReader(upstreamReader)
+            : upstreamReader;
+          let rawText = '';
+          const decoder = new TextDecoder();
+          const reader = baseReader
+            ? {
+              async read() {
+                const result = await baseReader.read();
+                if (result.value) {
+                  rawText += decoder.decode(result.value, { stream: true });
+                }
+                return result;
+              },
+              async cancel(reason?: unknown) {
+                return baseReader.cancel(reason);
+              },
+              releaseLock() {
+                return baseReader.releaseLock();
+              },
+            }
+            : baseReader;
           const streamResult = await streamSession.run(reader, reply.raw);
+          rawText += decoder.decode();
 
           const latency = Date.now() - startTime;
           if (streamResult.status === 'failed') {
@@ -506,6 +641,11 @@ export async function handleOpenAiResponsesSurfaceRequest(
             );
             return;
           }
+
+          // Once SSE has been hijacked and bytes may already be on the wire, we
+          // must not attempt to convert stream failures into a fresh HTTP error
+          // response or retry on another channel. Responses stream failures are
+          // handled in-band by the proxy stream session.
 
           const resolvedUsage = await resolveProxyUsageWithSelfLogFallback({
             site: selected.site,
@@ -562,6 +702,38 @@ export async function handleOpenAiResponsesSurfaceRequest(
         }
         const latency = Date.now() - startTime;
         const parsedUsage = parseProxyUsage(upstreamData);
+        const failure = detectProxyFailure({ rawText, usage: parsedUsage });
+        if (failure) {
+          tokenRouter.recordFailure(selected.channel.id);
+          logProxy(
+            selected,
+            requestedModel,
+            'failed',
+            failure.status,
+            latency,
+            failure.reason,
+            retryCount,
+            downstreamPath,
+            parsedUsage.promptTokens,
+            parsedUsage.completionTokens,
+            parsedUsage.totalTokens,
+            0,
+            null,
+            successfulUpstreamPath,
+            clientContext,
+            logDownstreamApiKeyId ? downstreamApiKeyId : null,
+          );
+          if (shouldRetryProxyRequest(failure.status, failure.reason) && retryCount < MAX_RETRIES) {
+            retryCount += 1;
+            continue;
+          }
+
+          await reportProxyAllFailed({
+            model: requestedModel,
+            reason: failure.reason,
+          });
+          return reply.code(failure.status).send({ error: { message: failure.reason, type: 'upstream_error' } });
+        }
         const normalized = openAiResponsesTransformer.transformFinalResponse(
           upstreamData,
           modelName,

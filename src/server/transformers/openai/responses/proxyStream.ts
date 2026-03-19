@@ -1,6 +1,7 @@
 import { createProxyStreamLifecycle } from '../../shared/protocolLifecycle.js';
 import { type ParsedSseEvent } from '../../shared/normalized.js';
 import { completeResponsesStream, createOpenAiResponsesAggregateState, failResponsesStream, serializeConvertedResponsesEvents } from './aggregator.js';
+import { openAiResponsesOutbound } from './outbound.js';
 import { openAiResponsesStream } from './stream.js';
 
 type StreamReader = {
@@ -148,6 +149,51 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
   };
 
   return {
+    consumeUpstreamFinalPayload(payload: unknown, fallbackText: string, response?: ResponseSink): ResponsesProxyStreamResult {
+      if (payload && typeof payload === 'object') {
+        input.onParsedPayload?.(payload);
+      }
+
+      const payloadType = (isRecord(payload) && typeof payload.type === 'string')
+        ? payload.type
+        : '';
+      if (payloadType === 'error' || payloadType === 'response.failed') {
+        fail(payload);
+        response?.end();
+        return terminalResult;
+      }
+
+      const normalizedFinal = openAiResponsesOutbound.normalizeFinal(payload, input.modelName, fallbackText);
+      streamContext.id = normalizedFinal.id;
+      streamContext.model = normalizedFinal.model;
+      streamContext.created = normalizedFinal.created;
+
+      const streamPayload = openAiResponsesOutbound.serializeFinal({
+        upstreamPayload: payload,
+        normalized: normalizedFinal,
+        usage: input.getUsage(),
+        serializationMode: 'response',
+      });
+      const createdPayload = {
+        ...streamPayload,
+        status: 'in_progress',
+        output: [],
+        output_text: '',
+      };
+
+      finalized = true;
+      terminalResult = {
+        status: 'completed',
+        errorMessage: null,
+      };
+      input.writeLines([
+        `event: response.created\ndata: ${JSON.stringify({ type: 'response.created', response: createdPayload })}\n\n`,
+        `event: response.completed\ndata: ${JSON.stringify({ type: 'response.completed', response: streamPayload })}\n\n`,
+        'data: [DONE]\n\n',
+      ]);
+      response?.end();
+      return terminalResult;
+    },
     async run(reader: StreamReader | null | undefined, response: ResponseSink): Promise<ResponsesProxyStreamResult> {
       const lifecycle = createProxyStreamLifecycle<ParsedSseEvent>({
         reader,

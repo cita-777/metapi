@@ -129,6 +129,16 @@ function applyRuntimeSettings(settingsMap: Map<string, string>) {
   const systemProxyUrl = parseSettingFromMap<string>(settingsMap, 'system_proxy_url');
   if (typeof systemProxyUrl === 'string') config.systemProxyUrl = systemProxyUrl;
 
+  const proxyErrorKeywords = parseSettingFromMap<string[] | string>(settingsMap, 'proxy_error_keywords');
+  if (proxyErrorKeywords !== undefined) {
+    config.proxyErrorKeywords = toStringList(proxyErrorKeywords);
+  }
+
+  const proxyEmptyContentFailEnabled = parseSettingFromMap<boolean>(settingsMap, 'proxy_empty_content_fail_enabled');
+  if (typeof proxyEmptyContentFailEnabled === 'boolean') {
+    config.proxyEmptyContentFailEnabled = proxyEmptyContentFailEnabled;
+  }
+
   const checkinCron = parseSettingFromMap<string>(settingsMap, 'checkin_cron');
   if (typeof checkinCron === 'string' && checkinCron) config.checkinCron = checkinCron;
 

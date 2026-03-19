@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import { useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import { BrandGlyph, InlineBrandIcon, hashColor, type BrandInfo } from '../../components/BrandIcon.js';
 import CenteredModal from '../../components/CenteredModal.js';
 import ModernSelect from '../../components/ModernSelect.js';
 import { tr } from '../../i18n.js';
@@ -11,6 +12,9 @@ import {
   matchesModelPattern,
   normalizeRouteDisplayIconValue,
   normalizeRouteMode,
+  resolveEndpointTypeIconModel,
+  resolveRouteBrand,
+  siteAvatarLetters,
 } from './utils.js';
 
 type RouteEditorForm = {
@@ -32,6 +36,7 @@ type ManualRoutePanelProps = {
   routeIconSelectOptions: RouteIconOption[];
   previewModelSamples: string[];
   exactSourceRouteOptions: RouteSummaryRow[];
+  sourceEndpointTypesByRouteId: Record<number, string[]>;
   onSave: () => void;
   onCancel: () => void;
 };
@@ -71,6 +76,41 @@ function SearchField({
   );
 }
 
+function FilterChip({
+  active,
+  label,
+  count,
+  icon,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  count?: number;
+  icon?: ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`filter-chip ${active ? 'active' : ''}`}
+      onClick={onClick}
+    >
+      {icon ? <span className="filter-chip-icon">{icon}</span> : null}
+      <span className="filter-chip-label">{label}</span>
+      {count !== undefined ? <span className="filter-chip-count">{count}</span> : null}
+    </button>
+  );
+}
+
+function FilterRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="route-filter-row">
+      <span className="route-filter-row-label">{label}</span>
+      <div className="route-filter-row-chips">{children}</div>
+    </div>
+  );
+}
+
 export default function ManualRoutePanel({
   show,
   editingRouteId,
@@ -81,18 +121,25 @@ export default function ManualRoutePanel({
   routeIconSelectOptions,
   previewModelSamples,
   exactSourceRouteOptions,
+  sourceEndpointTypesByRouteId,
   onSave,
   onCancel,
 }: ManualRoutePanelProps) {
   const [showSourcePicker, setShowSourcePicker] = useState(false);
   const [sourceSearch, setSourceSearch] = useState('');
   const [sourcePickerSelection, setSourcePickerSelection] = useState<number[]>([]);
+  const [activeSourceBrand, setActiveSourceBrand] = useState<string | null>(null);
+  const [activeSourceSite, setActiveSourceSite] = useState<string | null>(null);
+  const [activeSourceEndpointType, setActiveSourceEndpointType] = useState<string | null>(null);
 
   useEffect(() => {
     if (!show) {
       setShowSourcePicker(false);
       setSourceSearch('');
       setSourcePickerSelection([]);
+      setActiveSourceBrand(null);
+      setActiveSourceSite(null);
+      setActiveSourceEndpointType(null);
     }
   }, [show]);
 
@@ -119,14 +166,136 @@ export default function ManualRoutePanel({
     return previewModelSamples.filter((modelName) => matchesModelPattern(modelName, normalizedPattern));
   }, [form.modelPattern, modelPatternError, previewModelSamples]);
 
+  const sourceRouteBrandById = useMemo(() => {
+    const next = new Map<number, BrandInfo | null>();
+    for (const route of exactSourceRouteOptions) {
+      next.set(route.id, resolveRouteBrand(route));
+    }
+    return next;
+  }, [exactSourceRouteOptions]);
+
+  const sourceBrandList = useMemo(() => {
+    const grouped = new Map<string, { count: number; brand: BrandInfo }>();
+    let otherCount = 0;
+
+    for (const route of exactSourceRouteOptions) {
+      const brand = sourceRouteBrandById.get(route.id) || null;
+      if (!brand) {
+        otherCount += 1;
+        continue;
+      }
+      const existing = grouped.get(brand.name);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        grouped.set(brand.name, { count: 1, brand });
+      }
+    }
+
+    return {
+      list: [...grouped.entries()].sort((a, b) => {
+        if (a[1].count === b[1].count) {
+          return a[0].localeCompare(b[0], undefined, { sensitivity: 'base' });
+        }
+        return b[1].count - a[1].count;
+      }) as [string, { count: number; brand: BrandInfo }][],
+      otherCount,
+    };
+  }, [exactSourceRouteOptions, sourceRouteBrandById]);
+
+  const sourceSiteList = useMemo(() => {
+    const grouped = new Map<string, number>();
+
+    for (const route of exactSourceRouteOptions) {
+      const seenSites = new Set<string>();
+      for (const siteName of route.siteNames || []) {
+        const normalizedSite = String(siteName || '').trim();
+        if (!normalizedSite || seenSites.has(normalizedSite)) continue;
+        seenSites.add(normalizedSite);
+        grouped.set(normalizedSite, (grouped.get(normalizedSite) || 0) + 1);
+      }
+    }
+
+    return [...grouped.entries()].sort((a, b) => {
+      if (a[1] === b[1]) {
+        return a[0].localeCompare(b[0], undefined, { sensitivity: 'base' });
+      }
+      return b[1] - a[1];
+    }) as [string, number][];
+  }, [exactSourceRouteOptions]);
+
+  const sourceEndpointTypeList = useMemo(() => {
+    const grouped = new Map<string, number>();
+
+    for (const route of exactSourceRouteOptions) {
+      const endpointTypes = sourceEndpointTypesByRouteId[route.id] || [];
+      for (const endpointType of endpointTypes) {
+        const normalizedType = String(endpointType || '').trim();
+        if (!normalizedType) continue;
+        grouped.set(normalizedType, (grouped.get(normalizedType) || 0) + 1);
+      }
+    }
+
+    return [...grouped.entries()].sort((a, b) => {
+      if (a[1] === b[1]) {
+        return a[0].localeCompare(b[0], undefined, { sensitivity: 'base' });
+      }
+      return b[1] - a[1];
+    }) as [string, number][];
+  }, [exactSourceRouteOptions, sourceEndpointTypesByRouteId]);
+
   const filteredSourceRoutes = useMemo(() => {
+    let list = [...exactSourceRouteOptions];
+
+    if (activeSourceBrand) {
+      if (activeSourceBrand === '__other__') {
+        list = list.filter((route) => !(sourceRouteBrandById.get(route.id) || null));
+      } else {
+        list = list.filter((route) => (sourceRouteBrandById.get(route.id)?.name || '') === activeSourceBrand);
+      }
+    }
+
+    if (activeSourceSite) {
+      list = list.filter((route) => (route.siteNames || []).includes(activeSourceSite));
+    }
+
+    if (activeSourceEndpointType) {
+      list = list.filter((route) => (sourceEndpointTypesByRouteId[route.id] || []).includes(activeSourceEndpointType));
+    }
+
     const normalizedSearch = sourceSearch.trim().toLowerCase();
-    if (!normalizedSearch) return exactSourceRouteOptions;
-    return exactSourceRouteOptions.filter((route) => {
-      const label = renderRouteOptionLabel(route).toLowerCase();
-      return label.includes(normalizedSearch) || route.modelPattern.toLowerCase().includes(normalizedSearch);
+    if (normalizedSearch) {
+      list = list.filter((route) => {
+        const label = renderRouteOptionLabel(route).toLowerCase();
+        const modelPattern = route.modelPattern.toLowerCase();
+        const brandName = (sourceRouteBrandById.get(route.id)?.name || '').toLowerCase();
+        const siteText = (route.siteNames || []).join(' ').toLowerCase();
+        const endpointTypes = (sourceEndpointTypesByRouteId[route.id] || []).join(' ').toLowerCase();
+        return (
+          label.includes(normalizedSearch)
+          || modelPattern.includes(normalizedSearch)
+          || brandName.includes(normalizedSearch)
+          || siteText.includes(normalizedSearch)
+          || endpointTypes.includes(normalizedSearch)
+        );
+      });
+    }
+
+    return list.sort((a, b) => {
+      if (a.channelCount === b.channelCount) {
+        return renderRouteOptionLabel(a).localeCompare(renderRouteOptionLabel(b), undefined, { sensitivity: 'base' });
+      }
+      return b.channelCount - a.channelCount;
     });
-  }, [exactSourceRouteOptions, sourceSearch]);
+  }, [
+    activeSourceBrand,
+    activeSourceEndpointType,
+    activeSourceSite,
+    exactSourceRouteOptions,
+    sourceEndpointTypesByRouteId,
+    sourceRouteBrandById,
+    sourceSearch,
+  ]);
 
   const selectedSourceRoutes = useMemo(() => {
     const routeById = new Map(exactSourceRouteOptions.map((route) => [route.id, route]));
@@ -135,18 +304,29 @@ export default function ManualRoutePanel({
       .filter((route): route is RouteSummaryRow => !!route);
   }, [exactSourceRouteOptions, form.sourceRouteIds]);
 
+  const sourcePickerSelectionSet = useMemo(
+    () => new Set(sourcePickerSelection),
+    [sourcePickerSelection],
+  );
+
   const autoBrandIconEnabled = !isRouteIconNoneValue(form.displayIcon);
   const hasExplicitIconValue = !!normalizeRouteDisplayIconValue(form.displayIcon);
 
   const openSourcePicker = () => {
     setSourcePickerSelection([...form.sourceRouteIds]);
     setSourceSearch('');
+    setActiveSourceBrand(null);
+    setActiveSourceSite(null);
+    setActiveSourceEndpointType(null);
     setShowSourcePicker(true);
   };
 
   const closeSourcePicker = () => {
     setShowSourcePicker(false);
     setSourceSearch('');
+    setActiveSourceBrand(null);
+    setActiveSourceSite(null);
+    setActiveSourceEndpointType(null);
   };
 
   const confirmSourcePicker = () => {
@@ -156,6 +336,9 @@ export default function ManualRoutePanel({
     }));
     setShowSourcePicker(false);
     setSourceSearch('');
+    setActiveSourceBrand(null);
+    setActiveSourceSite(null);
+    setActiveSourceEndpointType(null);
   };
 
   const footer = (
@@ -584,7 +767,101 @@ export default function ManualRoutePanel({
             placeholder={tr('搜索来源模型')}
           />
 
-          <div style={{ maxHeight: 440, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div className="route-filter-bar">
+            <div className="route-filter-bar-expanded" style={{ opacity: 1, transform: 'none' }}>
+              <FilterRow label={tr('品牌')}>
+                <FilterChip
+                  active={!activeSourceBrand}
+                  label={tr('全部')}
+                  count={exactSourceRouteOptions.length}
+                  icon={<span style={{ fontSize: 10 }}>✦</span>}
+                  onClick={() => setActiveSourceBrand(null)}
+                />
+                {sourceBrandList.list.map(([brandName, { count, brand }]) => (
+                  <FilterChip
+                    key={brandName}
+                    active={activeSourceBrand === brandName}
+                    label={brandName}
+                    count={count}
+                    icon={<BrandGlyph brand={brand} size={12} fallbackText={brandName} />}
+                    onClick={() => setActiveSourceBrand(activeSourceBrand === brandName ? null : brandName)}
+                  />
+                ))}
+                {sourceBrandList.otherCount > 0 ? (
+                  <FilterChip
+                    active={activeSourceBrand === '__other__'}
+                    label={tr('其他')}
+                    count={sourceBrandList.otherCount}
+                    icon={<span style={{ fontSize: 10 }}>?</span>}
+                    onClick={() => setActiveSourceBrand(activeSourceBrand === '__other__' ? null : '__other__')}
+                  />
+                ) : null}
+              </FilterRow>
+
+              {sourceSiteList.length > 0 ? (
+                <FilterRow label={tr('站点')}>
+                  <FilterChip
+                    active={!activeSourceSite}
+                    label={tr('全部')}
+                    count={exactSourceRouteOptions.length}
+                    icon={<span style={{ fontSize: 10 }}>⚡</span>}
+                    onClick={() => setActiveSourceSite(null)}
+                  />
+                  {sourceSiteList.map(([siteName, count]) => (
+                    <FilterChip
+                      key={siteName}
+                      active={activeSourceSite === siteName}
+                      label={siteName}
+                      count={count}
+                      icon={(
+                        <span
+                          style={{
+                            fontSize: 8,
+                            background: hashColor(siteName),
+                            color: 'white',
+                            borderRadius: 3,
+                            padding: '1px 2px',
+                            lineHeight: 1,
+                          }}
+                        >
+                          {siteAvatarLetters(siteName)}
+                        </span>
+                      )}
+                      onClick={() => setActiveSourceSite(activeSourceSite === siteName ? null : siteName)}
+                    />
+                  ))}
+                </FilterRow>
+              ) : null}
+
+              <FilterRow label={tr('能力')}>
+                <FilterChip
+                  active={!activeSourceEndpointType}
+                  label={tr('全部')}
+                  count={exactSourceRouteOptions.length}
+                  icon={<span style={{ fontSize: 10 }}>⚙</span>}
+                  onClick={() => setActiveSourceEndpointType(null)}
+                />
+                {sourceEndpointTypeList.map(([endpointType, count]) => {
+                  const iconModel = resolveEndpointTypeIconModel(endpointType);
+                  return (
+                    <FilterChip
+                      key={endpointType}
+                      active={activeSourceEndpointType === endpointType}
+                      label={endpointType}
+                      count={count}
+                      icon={iconModel ? <InlineBrandIcon model={iconModel} size={12} /> : <span style={{ fontSize: 10 }}>⚙</span>}
+                      onClick={() => setActiveSourceEndpointType(activeSourceEndpointType === endpointType ? null : endpointType)}
+                    />
+                  );
+                })}
+                {sourceEndpointTypeList.length === 0 ? (
+                  <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{tr('暂无接口能力数据')}</span>
+                ) : null}
+              </FilterRow>
+            </div>
+          </div>
+
+          <div style={{ maxHeight: 520, overflowY: 'auto', paddingRight: 4 }}>
             {filteredSourceRoutes.length === 0 ? (
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)', padding: '12px 0', textAlign: 'center' }}>
                 {exactSourceRouteOptions.length === 0
@@ -592,50 +869,131 @@ export default function ManualRoutePanel({
                   : tr('没有匹配的来源模型。')}
               </div>
             ) : (
-              filteredSourceRoutes.map((route) => {
-                const selected = sourcePickerSelection.includes(route.id);
-                const label = renderRouteOptionLabel(route);
-                return (
-                  <button
-                    key={route.id}
-                    type="button"
-                    onClick={() => setSourcePickerSelection((current) => toggleSourceRouteId(current, route.id))}
-                    className="btn btn-ghost"
-                    style={{
-                      display: 'flex',
-                      alignItems: 'flex-start',
-                      justifyContent: 'space-between',
-                      gap: 12,
-                      padding: '12px 14px',
-                      border: `1px solid ${selected ? 'var(--color-primary)' : 'var(--color-border)'}`,
-                      background: selected
-                        ? 'color-mix(in srgb, var(--color-primary) 8%, var(--color-bg-card))'
-                        : 'var(--color-bg-card)',
-                      boxShadow: selected
-                        ? '0 0 0 1px color-mix(in srgb, var(--color-primary) 20%, transparent)'
-                        : 'none',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, minWidth: 0, flex: 1 }}>
-                      <input
-                        type="checkbox"
-                        checked={selected}
-                        readOnly
-                        style={{ marginTop: 2, cursor: 'pointer', pointerEvents: 'none' }}
-                      />
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-                        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>{label}</span>
-                        {label !== route.modelPattern && (
-                          <code style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{route.modelPattern}</code>
+              <div
+                className="source-route-picker-grid"
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+                  gap: 10,
+                  alignItems: 'stretch',
+                }}
+              >
+                {filteredSourceRoutes.map((route) => {
+                  const selected = sourcePickerSelectionSet.has(route.id);
+                  const label = renderRouteOptionLabel(route);
+                  const brand = sourceRouteBrandById.get(route.id) || null;
+                  const endpointTypes = (sourceEndpointTypesByRouteId[route.id] || []).slice(0, 3);
+                  const siteNames = Array.from(new Set((route.siteNames || []).filter((siteName) => String(siteName || '').trim())));
+
+                  return (
+                    <button
+                      key={route.id}
+                      type="button"
+                      onClick={() => setSourcePickerSelection((current) => toggleSourceRouteId(current, route.id))}
+                      className="btn btn-ghost source-route-picker-card"
+                      style={{
+                        minHeight: 156,
+                        display: 'flex',
+                        alignItems: 'stretch',
+                        textAlign: 'left',
+                        padding: 0,
+                        border: `1px solid ${selected ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                        background: selected
+                          ? 'color-mix(in srgb, var(--color-primary) 8%, var(--color-bg-card))'
+                          : 'var(--color-bg-card)',
+                        boxShadow: selected
+                          ? '0 0 0 1px color-mix(in srgb, var(--color-primary) 18%, transparent)'
+                          : 'none',
+                      }}
+                    >
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%', padding: '14px 15px' }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, minWidth: 0, flex: 1 }}>
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              readOnly
+                              style={{ marginTop: 2, cursor: 'pointer', pointerEvents: 'none', flexShrink: 0 }}
+                            />
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, minWidth: 0, flex: 1 }}>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 22, height: 22, flexShrink: 0 }}>
+                                {brand ? <BrandGlyph brand={brand} size={18} fallbackText={label} /> : <InlineBrandIcon model={route.modelPattern} size={18} />}
+                              </span>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0, flex: 1 }}>
+                                <span
+                                  style={{
+                                    fontSize: 13,
+                                    fontWeight: 600,
+                                    color: 'var(--color-text-primary)',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  {label}
+                                </span>
+                                {label !== route.modelPattern ? (
+                                  <code
+                                    style={{
+                                      fontSize: 11,
+                                      color: 'var(--color-text-muted)',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                      whiteSpace: 'nowrap',
+                                    }}
+                                  >
+                                    {route.modelPattern}
+                                  </code>
+                                ) : null}
+                              </div>
+                            </div>
+                          </div>
+                          <span className={selected ? 'badge badge-info' : 'badge badge-muted'} style={{ fontSize: 10, flexShrink: 0 }}>
+                            {selected ? tr('已选中') : tr('可选择')}
+                          </span>
+                        </div>
+
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                          <span className="badge badge-info" style={{ fontSize: 10 }}>
+                            {route.channelCount} {tr('通道')}
+                          </span>
+                          <span className="badge badge-muted" style={{ fontSize: 10 }}>
+                            {siteNames.length} {tr('站点')}
+                          </span>
+                          {endpointTypes.map((endpointType) => (
+                            <span key={`${route.id}-${endpointType}`} className="badge badge-muted" style={{ fontSize: 10 }}>
+                              {endpointType}
+                            </span>
+                          ))}
+                        </div>
+
+                        {siteNames.length > 0 ? (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                            {siteNames.slice(0, 3).map((siteName) => (
+                              <span
+                                key={`${route.id}-${siteName}`}
+                                className="badge badge-muted"
+                                style={{ fontSize: 10 }}
+                              >
+                                {siteName}
+                              </span>
+                            ))}
+                            {siteNames.length > 3 ? (
+                              <span className="badge badge-muted" style={{ fontSize: 10 }}>
+                                +{siteNames.length - 3}
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+                            {tr('当前未绑定站点信息')}
+                          </div>
                         )}
                       </div>
-                    </div>
-                    <span className={selected ? 'badge badge-info' : 'badge badge-muted'} style={{ fontSize: 10, flexShrink: 0 }}>
-                      {selected ? tr('已选中') : tr('可选择')}
-                    </span>
-                  </button>
-                );
-              })
+                    </button>
+                  );
+                })}
+              </div>
             )}
           </div>
         </div>

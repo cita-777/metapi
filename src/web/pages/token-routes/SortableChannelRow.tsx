@@ -16,6 +16,7 @@ export function SortableChannelRow({
   isExactRoute,
   loadingDecision,
   isSavingPriority,
+  readOnly = false,
   tokenOptions,
   activeTokenId,
   isUpdatingToken,
@@ -33,7 +34,7 @@ export function SortableChannelRow({
     isDragging,
   } = useSortable({
     id: channel.id,
-    disabled: isSavingPriority,
+    disabled: isSavingPriority || readOnly,
   });
 
   const rowStyle: CSSProperties = {
@@ -42,7 +43,7 @@ export function SortableChannelRow({
     opacity: isDragging ? 0.72 : 1,
     zIndex: isDragging ? 10 : 1,
     display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1fr) auto auto',
+    gridTemplateColumns: readOnly ? 'minmax(0, 1fr)' : 'minmax(0, 1fr) auto auto',
     alignItems: 'center',
     gap: 8,
     padding: '8px 12px',
@@ -63,7 +64,7 @@ export function SortableChannelRow({
           ref={setActivatorNodeRef}
           {...attributes}
           {...listeners}
-          disabled={isSavingPriority}
+          disabled={isSavingPriority || readOnly}
           className="btn btn-ghost"
           style={{
             width: 22,
@@ -72,9 +73,10 @@ export function SortableChannelRow({
             padding: 0,
             border: '1px solid var(--color-border-light)',
             color: 'var(--color-text-muted)',
-            cursor: isSavingPriority ? 'not-allowed' : 'grab',
+            cursor: isSavingPriority || readOnly ? 'not-allowed' : 'grab',
+            opacity: readOnly ? 0.65 : 1,
           }}
-          data-tooltip="拖拽调整优先级"
+          data-tooltip={readOnly ? '来源群组继承通道优先级，不能在这里拖动' : '拖拽调整优先级'}
           aria-label="拖拽调整优先级"
         >
           <svg width="12" height="12" fill="currentColor" viewBox="0 0 12 12" aria-hidden>
@@ -197,46 +199,50 @@ export function SortableChannelRow({
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <div style={{ minWidth: 220, flex: 1 }}>
-          <ModernSelect
-            size="sm"
-            value={String(activeTokenId || 0)}
-            onChange={(nextValue) => onTokenDraftChange(channel.id, Number.parseInt(nextValue, 10) || 0)}
-            disabled={isUpdatingToken}
-            options={[
-              {
-                value: '0',
-                label: '跟随账号默认',
-                description: tokenBinding.followOptionDescription,
-              },
-              ...tokenOptions.map((token) => ({
-                value: String(token.id),
-                label: buildFixedTokenOptionLabel(token, { includeDefaultTag: true }),
-                description: buildFixedTokenOptionDescription(token),
-              })),
-            ]}
-            placeholder="选择令牌绑定方式"
-          />
-          <div style={{ marginTop: 4, fontSize: 11, color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
-            {tokenBinding.helperText}
+      {!readOnly ? (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ minWidth: 220, flex: 1 }}>
+              <ModernSelect
+                size="sm"
+                value={String(activeTokenId || 0)}
+                onChange={(nextValue) => onTokenDraftChange(channel.id, Number.parseInt(nextValue, 10) || 0)}
+                disabled={isUpdatingToken}
+                options={[
+                  {
+                    value: '0',
+                    label: '跟随账号默认',
+                    description: tokenBinding.followOptionDescription,
+                  },
+                  ...tokenOptions.map((token) => ({
+                    value: String(token.id),
+                    label: buildFixedTokenOptionLabel(token, { includeDefaultTag: true }),
+                    description: buildFixedTokenOptionDescription(token),
+                  })),
+                ]}
+                placeholder="选择令牌绑定方式"
+              />
+              <div style={{ marginTop: 4, fontSize: 11, color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
+                {tokenBinding.helperText}
+              </div>
+            </div>
+            <button
+              onClick={onSaveToken}
+              disabled={isUpdatingToken}
+              className="btn btn-link btn-link-info"
+            >
+              {isUpdatingToken ? <span className="spinner spinner-sm" /> : '保存'}
+            </button>
           </div>
-        </div>
-        <button
-          onClick={onSaveToken}
-          disabled={isUpdatingToken}
-          className="btn btn-link btn-link-info"
-        >
-          {isUpdatingToken ? <span className="spinner spinner-sm" /> : '保存'}
-        </button>
-      </div>
 
-      <button
-        onClick={onDeleteChannel}
-        className="btn btn-link btn-link-danger"
-      >
-        移除
-      </button>
+          <button
+            onClick={onDeleteChannel}
+            className="btn btn-link btn-link-danger"
+          >
+            移除
+          </button>
+        </>
+      ) : null}
     </div>
   );
 }
