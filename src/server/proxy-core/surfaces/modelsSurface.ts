@@ -13,7 +13,7 @@ type ModelsSurfaceInput = {
       selectedChannelId?: number | null;
     }>;
   };
-  refreshModelsAndRebuildRoutes(): Promise<void>;
+  refreshModelsAndRebuildRoutes(): Promise<unknown>;
   isModelAllowed(modelName: string, downstreamPolicy: unknown): Promise<boolean>;
   now?: () => Date;
 };

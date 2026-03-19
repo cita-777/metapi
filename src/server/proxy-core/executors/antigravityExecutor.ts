@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { RuntimeDispatchInput, RuntimeExecutor } from './types.js';
+import { Response } from 'undici';
+import type { RuntimeDispatchInput, RuntimeExecutor, RuntimeResponse } from './types.js';
 import {
   asTrimmedString,
   materializeErrorResponse,
@@ -81,7 +82,7 @@ function deleteNestedMaxOutputTokens(payload: Record<string, unknown>): void {
 function buildAntigravityRuntimeBody(
   originalBody: Record<string, unknown>,
   modelName: string,
-  action?: RuntimeDispatchInput['request']['runtime']['action'],
+  action?: NonNullable<RuntimeDispatchInput['request']['runtime']>['action'],
 ): Record<string, unknown> {
   const payload = renameParametersJsonSchema(structuredClone(originalBody)) as Record<string, unknown>;
   if (action === 'countTokens') {
@@ -146,7 +147,7 @@ export const antigravityExecutor: RuntimeExecutor = {
       input.request.runtime?.action,
     );
     const baseAttempts = 3;
-    let lastResponse: Awaited<ReturnType<typeof fetch>> | null = null;
+    let lastResponse: RuntimeResponse | null = null;
 
     attemptLoop:
     for (let attempt = 0; attempt < baseAttempts; attempt += 1) {
@@ -158,7 +159,7 @@ export const antigravityExecutor: RuntimeExecutor = {
           Accept: input.request.runtime?.stream ? 'text/event-stream' : 'application/json',
           'User-Agent': 'antigravity/1.19.6 darwin/arm64',
         };
-        let response: Awaited<ReturnType<typeof fetch>>;
+        let response: RuntimeResponse;
         try {
           response = await performFetch(
             input,
@@ -181,7 +182,7 @@ export const antigravityExecutor: RuntimeExecutor = {
         lastResponse = new Response(errorText, {
           status: errorResponse.status,
           headers: errorResponse.headers,
-        }) as unknown as Awaited<ReturnType<typeof fetch>>;
+        });
 
         if (errorResponse.status === 429) {
           continue;

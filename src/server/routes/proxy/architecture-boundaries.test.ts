@@ -46,6 +46,8 @@ describe('proxy route architecture boundaries', () => {
 
   it('keeps responses protocol assembly out of responses route', () => {
     const source = readSource('./responses.ts');
+    const surfaceSource = readSource('../../proxy-core/surfaces/openAiResponsesSurface.ts');
+    expect(source).toContain("from '../../proxy-core/surfaces/openAiResponsesSurface.js'");
     expect(source).not.toContain('function toResponsesPayload(');
     expect(source).not.toContain('function createResponsesStreamState(');
     expect(source).not.toContain("from '../../transformers/openai/responses/conversion.js'");
@@ -57,19 +59,20 @@ describe('proxy route architecture boundaries', () => {
     expect(source).not.toContain("from './protocolCompat.js'");
     expect(source).not.toContain('function shouldDowngradeFromChatToMessagesForResponses(');
     expect(source).not.toContain('function normalizeText(');
-    expect(source).toContain('openAiResponsesTransformer.inbound.toOpenAiBody(');
-    expect(source).toContain('openAiResponsesTransformer.compatibility.createEndpointStrategy(');
-    expect(source).not.toContain('openAiResponsesTransformer.aggregator.createState(');
-    expect(source).not.toContain('openAiResponsesTransformer.aggregator.serialize(');
-    expect(source).not.toContain('openAiResponsesTransformer.aggregator.complete(');
-    expect(source).toContain('openAiResponsesTransformer.proxyStream.createSession(');
-    expect(source).toContain('streamSession.run(');
-    expect(source).toContain('openAiResponsesTransformer.outbound.serializeFinal(');
+    expect(surfaceSource).toContain('openAiResponsesTransformer.inbound.toOpenAiBody(');
+    expect(surfaceSource).toContain('openAiResponsesTransformer.compatibility.createEndpointStrategy(');
+    expect(surfaceSource).not.toContain('openAiResponsesTransformer.aggregator.createState(');
+    expect(surfaceSource).not.toContain('openAiResponsesTransformer.aggregator.serialize(');
+    expect(surfaceSource).not.toContain('openAiResponsesTransformer.aggregator.complete(');
+    expect(surfaceSource).toContain('openAiResponsesTransformer.proxyStream.createSession(');
+    expect(surfaceSource).toContain('streamSession.run(');
+    expect(surfaceSource).toContain('openAiResponsesTransformer.outbound.serializeFinal(');
   });
 
   it('keeps responses endpoint retry and downgrade strategy out of the route', () => {
     const source = readSource('./responses.ts');
-    expect(source).toContain('openAiResponsesTransformer.compatibility.createEndpointStrategy(');
+    const surfaceSource = readSource('../../proxy-core/surfaces/openAiResponsesSurface.ts');
+    expect(surfaceSource).toContain('openAiResponsesTransformer.compatibility.createEndpointStrategy(');
     expect(source).not.toContain('openAiResponsesTransformer.compatibility.shouldRetry(');
     expect(source).not.toContain('openAiResponsesTransformer.compatibility.buildRetryBodies(');
     expect(source).not.toContain('openAiResponsesTransformer.compatibility.buildRetryHeaders(');
@@ -109,13 +112,14 @@ describe('proxy route architecture boundaries', () => {
 
   it('keeps responses stream lifecycle behind transformer-owned facade', () => {
     const source = readSource('./responses.ts');
+    const surfaceSource = readSource('../../proxy-core/surfaces/openAiResponsesSurface.ts');
     expect(source).not.toContain("from '../../transformers/shared/protocolLifecycle.js'");
     expect(source).not.toContain('createProxyStreamLifecycle');
     expect(source).not.toContain('const consumeSseBuffer = (incoming: string): string => {');
-    expect(source).not.toContain('openAiResponsesTransformer.aggregator.complete(');
     expect(source).not.toContain('reply.raw.end();');
-    expect(source).toContain('reply.hijack();');
-    expect(source).toContain('openAiResponsesTransformer.proxyStream.createSession(');
+    expect(surfaceSource).not.toContain('openAiResponsesTransformer.aggregator.complete(');
+    expect(surfaceSource).toContain('reply.hijack();');
+    expect(surfaceSource).toContain('openAiResponsesTransformer.proxyStream.createSession(');
   });
 
   it('keeps canonical transformer contracts imported from the transformer boundary only', () => {

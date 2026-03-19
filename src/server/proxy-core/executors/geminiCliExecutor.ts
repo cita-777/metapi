@@ -1,4 +1,4 @@
-import type { RuntimeDispatchInput, RuntimeExecutor } from './types.js';
+import type { RuntimeDispatchInput, RuntimeExecutor, RuntimeResponse } from './types.js';
 import {
   asTrimmedString,
   materializeErrorResponse,
@@ -40,7 +40,7 @@ export const geminiCliExecutor: RuntimeExecutor = {
   async dispatch(input: RuntimeDispatchInput) {
     const baseModel = asTrimmedString(input.request.runtime?.modelName) || asTrimmedString(input.request.body.model);
     const models = [baseModel].filter(Boolean);
-    let lastResponse: Awaited<ReturnType<typeof fetch>> | null = null;
+    let lastResponse: RuntimeResponse | null = null;
 
     for (const modelName of models.length > 0 ? models : [baseModel || 'unknown']) {
       const attemptRequest = buildGeminiCliAttemptRequest(input.request, modelName);

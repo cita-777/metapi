@@ -1,4 +1,9 @@
-import { fetch, type RequestInit as UndiciRequestInit } from 'undici';
+import {
+  Response,
+  fetch,
+  type RequestInit as UndiciRequestInit,
+  type Response as UndiciResponse,
+} from 'undici';
 
 export type ProxyRuntimeRequest = {
   endpoint: 'chat' | 'messages' | 'responses';
@@ -21,8 +26,10 @@ export type RuntimeDispatchInput = {
   buildInit: (requestUrl: string, request: ProxyRuntimeRequest) => Promise<UndiciRequestInit> | UndiciRequestInit;
 };
 
+export type RuntimeResponse = UndiciResponse;
+
 export type RuntimeExecutor = {
-  dispatch(input: RuntimeDispatchInput): Promise<Awaited<ReturnType<typeof fetch>>>;
+  dispatch(input: RuntimeDispatchInput): Promise<RuntimeResponse>;
 };
 
 export function asTrimmedString(value: unknown): string {
@@ -51,18 +58,18 @@ export async function performFetch(
   input: RuntimeDispatchInput,
   request: ProxyRuntimeRequest,
   requestUrl = input.targetUrl || buildUpstreamUrl(input.siteUrl, request.path),
-): Promise<Awaited<ReturnType<typeof fetch>>> {
+): Promise<RuntimeResponse> {
   const init = await input.buildInit(requestUrl, request);
   return fetch(requestUrl, init);
 }
 
 export async function materializeErrorResponse(
-  response: Awaited<ReturnType<typeof fetch>>,
-): Promise<Awaited<ReturnType<typeof fetch>>> {
+  response: RuntimeResponse,
+): Promise<RuntimeResponse> {
   if (response.ok) return response;
   const text = await response.text().catch(() => '');
   return new Response(text, {
     status: response.status,
     headers: response.headers,
-  }) as unknown as Awaited<ReturnType<typeof fetch>>;
+  });
 }
