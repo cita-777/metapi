@@ -148,6 +148,8 @@ describe('backupService', () => {
 
     expect(result.allImported).toBe(true);
     expect(result.sections.accounts).toBe(true);
+    expect(result.summary).toBeUndefined();
+    expect(result.warnings).toBeUndefined();
 
     const restoredSite = await db.select().from(schema.sites).where(eq(schema.sites.id, site.id)).get();
     const restoredAccount = await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();

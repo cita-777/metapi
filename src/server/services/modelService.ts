@@ -59,6 +59,10 @@ const GEMINI_CLI_STATIC_MODELS = [
   'gemini-3-flash-preview',
   'gemini-3.1-flash-lite-preview',
 ];
+let inFlightRefreshModelsAndRebuildRoutes: Promise<{
+  refresh: ModelRefreshResult[];
+  rebuild: Awaited<ReturnType<typeof rebuildTokenRoutesFromAvailability>>;
+}> | null = null;
 
 type ModelRefreshErrorCode = 'timeout' | 'unauthorized' | 'empty_models' | 'unknown';
 type ModelRefreshSkipCode = 'site_disabled' | 'adapter_or_status';
@@ -1172,8 +1176,24 @@ export async function rebuildTokenRoutesFromAvailability() {
   };
 }
 
-export async function refreshModelsAndRebuildRoutes() {
+async function runRefreshModelsAndRebuildRoutes() {
   const refresh = await refreshModelsForAllActiveAccounts();
   const rebuild = await rebuildTokenRoutesFromAvailability();
   return { refresh, rebuild };
+}
+
+export async function refreshModelsAndRebuildRoutes() {
+  if (inFlightRefreshModelsAndRebuildRoutes) {
+    return inFlightRefreshModelsAndRebuildRoutes;
+  }
+
+  inFlightRefreshModelsAndRebuildRoutes = (async () => {
+    try {
+      return await runRefreshModelsAndRebuildRoutes();
+    } finally {
+      inFlightRefreshModelsAndRebuildRoutes = null;
+    }
+  })();
+
+  return inFlightRefreshModelsAndRebuildRoutes;
 }

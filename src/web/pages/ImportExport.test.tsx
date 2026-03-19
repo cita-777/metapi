@@ -121,6 +121,64 @@ const allApiHubV2Payload = JSON.stringify({
   },
 });
 
+const nativeMetapiPayload = JSON.stringify({
+  version: '2.0',
+  timestamp: 1735689600000,
+  accounts: {
+    sites: [
+      {
+        id: 1,
+        name: 'Native Site',
+        url: 'https://native.example.com',
+        platform: 'new-api',
+      },
+    ],
+    accounts: [
+      {
+        id: 1,
+        siteId: 1,
+        username: 'native-user',
+        accessToken: 'session-token',
+        apiToken: 'api-token',
+        status: 'active',
+      },
+    ],
+    accountTokens: [
+      {
+        id: 1,
+        accountId: 1,
+        name: 'default',
+        token: 'sk-native',
+        enabled: true,
+        isDefault: true,
+      },
+    ],
+    tokenRoutes: [
+      {
+        id: 1,
+        modelPattern: 'gpt-5-nano',
+        enabled: true,
+      },
+    ],
+    routeChannels: [
+      {
+        id: 1,
+        routeId: 1,
+        accountId: 1,
+        tokenId: 1,
+        enabled: true,
+        manualOverride: false,
+      },
+    ],
+    routeGroupSources: [],
+  },
+  preferences: {
+    settings: [
+      { key: 'locale', value: 'zh-CN' },
+    ],
+  },
+});
+
 describe('ImportExport', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -173,6 +231,31 @@ describe('ImportExport', () => {
       expect(rendered).toContain('ALL-API-Hub V2');
       expect(rendered).toContain('统计：账号 2 / 书签 1 / 独立 API 凭据 2');
       expect(rendered).toContain('accounts.bookmarks、channelConfigs、tagStore');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('does not label native metapi backups as ALL-API-Hub V2', async () => {
+    let root: ReturnType<typeof create> | null = null;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ImportExport />
+          </MemoryRouter>,
+        );
+      });
+
+      const textarea = root!.root.findByType('textarea');
+      await act(async () => {
+        textarea.props.onChange({ target: { value: nativeMetapiPayload } });
+      });
+      await flushMicrotasks();
+
+      const rendered = collectText(root!.root);
+      expect(rendered).not.toContain('ALL-API-Hub V2');
+      expect(rendered).toContain('统计：站点 1 / 账号 1 / 令牌 1 / 路由 1 / 通道 1 / 设置 1');
     } finally {
       root?.unmount();
     }

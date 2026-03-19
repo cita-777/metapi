@@ -75,8 +75,26 @@ function parseImportSummary(raw: string): ParsedSummary | null {
     const legacyPrefs = Boolean(data.data?.preferences);
     const profilesCount = Array.isArray(data.apiCredentialProfiles?.profiles) ? data.apiCredentialProfiles.profiles.length : 0;
     const bookmarksCount = Array.isArray(accountsSection?.bookmarks) ? accountsSection.bookmarks.length : 0;
+    const isNativeMetapiBackup = Boolean(
+      accountsSection
+      && Array.isArray(accountsSection.sites)
+      && Array.isArray(accountsSection.accountTokens)
+      && Array.isArray(accountsSection.tokenRoutes)
+      && Array.isArray(accountsSection.routeChannels)
+    );
+    const hasLegacyAccountRows = Array.isArray(accountsSection?.accounts)
+      && accountsSection.accounts.some((row: any) => row && typeof row === 'object' && !Array.isArray(row) && (
+        'site_url' in row
+        || 'site_type' in row
+        || 'account_info' in row
+        || 'cookieAuth' in row
+        || 'authType' in row
+        || 'sub2apiAuth' in row
+      ));
     const isAllApiHubV2 = Boolean(
       accountsSection
+      && !isNativeMetapiBackup
+      && hasLegacyAccountRows
       && Array.isArray(accountsSection.accounts)
       && (
         (typeof data.version === 'string' && data.version.startsWith('2'))

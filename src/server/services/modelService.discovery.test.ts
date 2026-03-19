@@ -26,6 +26,7 @@ describe('refreshModelsForAccount credential discovery', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let refreshModelsForAccount: ModelServiceModule['refreshModelsForAccount'];
+  let refreshModelsAndRebuildRoutes: ModelServiceModule['refreshModelsAndRebuildRoutes'];
   let dataDir = '';
 
   beforeAll(async () => {
@@ -39,6 +40,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     db = dbModule.db;
     schema = dbModule.schema;
     refreshModelsForAccount = modelService.refreshModelsForAccount;
+    refreshModelsAndRebuildRoutes = modelService.refreshModelsAndRebuildRoutes;
   });
 
   beforeEach(async () => {
@@ -140,6 +142,68 @@ describe('refreshModelsForAccount credential discovery', () => {
       .all();
 
     expect(rows.map((row) => row.modelName).sort()).toEqual(['?', 'GPT-4.1']);
+  });
+
+  it('reuses one in-flight full refresh when concurrent callers request a rebuild', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+
+    let releaseGate: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+
+    getModelsMock.mockImplementation(async () => {
+      await gate;
+      return ['gpt-5-nano'];
+    });
+
+    const site = await db.insert(schema.sites).values({
+      name: 'site-concurrent-refresh',
+      url: 'https://site-concurrent-refresh.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'concurrent-refresh-user',
+      accessToken: 'shared-credential',
+      apiToken: 'shared-credential',
+      status: 'active',
+      extraConfig: JSON.stringify({ credentialMode: 'session' }),
+    }).returning().get();
+
+    await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'shared-credential',
+      source: 'manual',
+      enabled: true,
+      isDefault: true,
+    }).run();
+
+    const firstRefresh = refreshModelsAndRebuildRoutes();
+    const secondRefresh = refreshModelsAndRebuildRoutes();
+    await Promise.resolve();
+    await Promise.resolve();
+    releaseGate?.();
+
+    const results = await Promise.allSettled([firstRefresh, secondRefresh]);
+    expect(results.every((item) => item.status === 'fulfilled')).toBe(true);
+    expect(getModelsMock).toHaveBeenCalledTimes(2);
+
+    const modelRows = await db.select().from(schema.modelAvailability)
+      .where(eq(schema.modelAvailability.accountId, account.id))
+      .all();
+    expect(modelRows.map((row) => row.modelName)).toEqual(['gpt-5-nano']);
+
+    const token = await db.select().from(schema.accountTokens)
+      .where(eq(schema.accountTokens.accountId, account.id))
+      .get();
+    const tokenRows = await db.select().from(schema.tokenModelAvailability)
+      .where(eq(schema.tokenModelAvailability.tokenId, token!.id))
+      .all();
+    expect(tokenRows.map((row) => row.modelName)).toEqual(['gpt-5-nano']);
   });
 
   it('marks runtime health unhealthy when model discovery fails', async () => {

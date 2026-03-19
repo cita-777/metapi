@@ -283,13 +283,29 @@ function buildAllApiHubV2AccountsSection(data: RawBackupData): {
   const accountsContainer = isRecord(data.accounts) ? data.accounts : null;
   if (!accountsContainer || !Array.isArray(accountsContainer.accounts)) return null;
 
+  if (coerceAccountsSection(accountsContainer)) return null;
+
+  const looksLikeLegacyAccountRow = accountsContainer.accounts.some((row) => (
+    isRecord(row) && (
+      Object.prototype.hasOwnProperty.call(row, 'site_url')
+      || Object.prototype.hasOwnProperty.call(row, 'site_type')
+      || Object.prototype.hasOwnProperty.call(row, 'account_info')
+      || Object.prototype.hasOwnProperty.call(row, 'cookieAuth')
+      || Object.prototype.hasOwnProperty.call(row, 'authType')
+      || Object.prototype.hasOwnProperty.call(row, 'sub2apiAuth')
+    )
+  ));
+
   const looksLikeV2 =
-    (typeof data.version === 'string' && data.version.startsWith('2'))
-    || Object.prototype.hasOwnProperty.call(accountsContainer, 'last_updated')
-    || Array.isArray(accountsContainer.bookmarks)
-    || Array.isArray(accountsContainer.pinnedAccountIds)
-    || Array.isArray(accountsContainer.orderedAccountIds)
-    || (isRecord(data.apiCredentialProfiles) && Array.isArray(data.apiCredentialProfiles.profiles));
+    looksLikeLegacyAccountRow
+    && (
+      (typeof data.version === 'string' && data.version.startsWith('2'))
+      || Object.prototype.hasOwnProperty.call(accountsContainer, 'last_updated')
+      || Array.isArray(accountsContainer.bookmarks)
+      || Array.isArray(accountsContainer.pinnedAccountIds)
+      || Array.isArray(accountsContainer.orderedAccountIds)
+      || (isRecord(data.apiCredentialProfiles) && Array.isArray(data.apiCredentialProfiles.profiles))
+    );
 
   if (!looksLikeV2) return null;
 
