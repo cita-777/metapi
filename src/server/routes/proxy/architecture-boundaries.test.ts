@@ -106,6 +106,16 @@ describe('proxy route architecture boundaries', () => {
     expect(surfaceSource).toContain('stream.serializeUpstreamJsonPayload(');
   });
 
+  it('keeps proxy file persistence out of files route', () => {
+    const source = readSource('./files.ts');
+    expect(source).toContain("from '../../proxy-core/surfaces/filesSurface.js'");
+    expect(source).not.toContain('saveProxyFile(');
+    expect(source).not.toContain('listProxyFilesByOwner(');
+    expect(source).not.toContain('getProxyFileByPublicIdForOwner(');
+    expect(source).not.toContain('getProxyFileContentByPublicIdForOwner(');
+    expect(source).not.toContain('softDeleteProxyFileByPublicIdForOwner(');
+  });
+
   it('keeps chat stream lifecycle behind transformer-owned facade', () => {
     const source = readSource('./chat.ts');
     const surfaceSource = readSource('../../proxy-core/surfaces/chatSurface.ts');
