@@ -459,6 +459,7 @@ describe('responses proxy codex oauth refresh', () => {
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain('response.failed');
     expect(response.body).not.toContain('response.completed');
+    expect(reportProxyAllFailedMock).not.toHaveBeenCalled();
     expect(recordSuccessMock).not.toHaveBeenCalled();
     expect(recordFailureMock).toHaveBeenCalledTimes(1);
     expect(insertedProxyLogs.at(-1)).toMatchObject({

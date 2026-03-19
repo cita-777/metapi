@@ -220,6 +220,7 @@ describe('chat proxy stream behavior', () => {
     expect(response.statusCode).toBe(502);
     expect(response.headers['content-type']).not.toContain('text/event-stream');
     expect(response.json()?.error?.type).toBe('upstream_error');
+    expect(reportProxyAllFailedMock).toHaveBeenCalledTimes(1);
     expect(recordSuccessMock).not.toHaveBeenCalled();
     expect(recordFailureMock).toHaveBeenCalledTimes(1);
   });
@@ -1223,6 +1224,9 @@ describe('chat proxy stream behavior', () => {
     expect(response.body).toContain('"status":"failed"');
     expect(response.body).not.toContain('response.completed');
     expect(response.body).toContain('[DONE]');
+    expect(reportProxyAllFailedMock).not.toHaveBeenCalled();
+    expect(recordSuccessMock).not.toHaveBeenCalled();
+    expect(recordFailureMock).toHaveBeenCalledTimes(1);
   });
 
   it('preserves Responses-specific payload fields and forwards openai headers on /v1/responses', async () => {
@@ -2124,6 +2128,7 @@ describe('chat proxy stream behavior', () => {
     expect(response.statusCode).toBe(502);
     expect(response.headers['content-type']).not.toContain('text/event-stream');
     expect(response.json()?.error?.type).toBe('upstream_error');
+    expect(reportProxyAllFailedMock).toHaveBeenCalledTimes(1);
     expect(recordSuccessMock).not.toHaveBeenCalled();
     expect(recordFailureMock).toHaveBeenCalledTimes(1);
   });
@@ -3347,6 +3352,7 @@ describe('chat proxy stream behavior', () => {
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain('"finish_reason":"error"');
     expect(response.body).toContain('[DONE]');
+    expect(reportProxyAllFailedMock).not.toHaveBeenCalled();
     expect(recordSuccessMock).not.toHaveBeenCalled();
     expect(recordFailureMock).toHaveBeenCalledTimes(1);
   });
