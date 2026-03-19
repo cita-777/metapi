@@ -684,7 +684,13 @@ export async function handleOpenAiResponsesSurfaceRequest(
         const upstreamContentType = (upstream.headers.get('content-type') || '').toLowerCase();
         let rawText = '';
         let upstreamData: unknown;
-        if (upstreamContentType.includes('text/event-stream') && successfulUpstreamPath.endsWith('/responses')) {
+        if (
+          upstreamContentType.includes('text/event-stream')
+          && (
+            successfulUpstreamPath.endsWith('/responses')
+            || successfulUpstreamPath.endsWith('/responses/compact')
+          )
+        ) {
           const collected = await collectResponsesFinalPayloadFromSse(upstream, modelName);
           rawText = collected.rawText;
           upstreamData = collected.payload;

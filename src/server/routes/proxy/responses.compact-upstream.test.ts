@@ -182,4 +182,113 @@ describe('responses proxy compact upstream routing', () => {
       ],
     });
   });
+
+  it('preserves native response.compaction payloads when the upstream compact surface closes via SSE', async () => {
+    fetchMock.mockResolvedValue(new Response([
+      'event: response.output_item.added',
+      `data: ${JSON.stringify({
+        type: 'response.output_item.added',
+        output_index: 0,
+        item: {
+          id: 'rs_123',
+          type: 'compaction',
+          encrypted_content: 'enc-compact-payload',
+        },
+      })}`,
+      '',
+      'event: response.completed',
+      `data: ${JSON.stringify({
+        type: 'response.completed',
+        response: {
+          id: 'cmp_123',
+          object: 'response.compaction',
+          created_at: 1700000000,
+          output: [
+            {
+              id: 'rs_123',
+              type: 'compaction',
+              encrypted_content: 'enc-compact-payload',
+            },
+          ],
+          usage: {
+            input_tokens: 1234,
+            output_tokens: 321,
+            total_tokens: 1555,
+          },
+        },
+      })}`,
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n'), {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses/compact',
+      payload: {
+        model: 'gpt-5.2',
+        input: 'hello',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      id: 'cmp_123',
+      object: 'response.compaction',
+      created_at: 1700000000,
+      output: [
+        {
+          id: 'rs_123',
+          type: 'compaction',
+          encrypted_content: 'enc-compact-payload',
+        },
+      ],
+      usage: {
+        input_tokens: 1234,
+        output_tokens: 321,
+        total_tokens: 1555,
+      },
+    });
+  });
+
+  it('collects final payloads when non-stream compact upstreams still respond with SSE final payloads directly', async () => {
+    fetchMock.mockResolvedValue(new Response([
+      'event: response.completed',
+      'data: {"id":"cmp_sse_123","object":"response.compaction","input_tokens":12,"output_tokens":3,"total_tokens":15,"output":[{"id":"rs_123","type":"compaction","encrypted_content":"enc-from-sse"}]}',
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n'), {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses/compact',
+      payload: {
+        model: 'gpt-5.2',
+        input: 'hello',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      id: 'cmp_sse_123',
+      object: 'response.compaction',
+      input_tokens: 12,
+      output_tokens: 3,
+      total_tokens: 15,
+      output: [
+        {
+          id: 'rs_123',
+          type: 'compaction',
+          encrypted_content: 'enc-from-sse',
+        },
+      ],
+    });
+  });
 });
