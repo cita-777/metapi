@@ -55,7 +55,7 @@ export async function collectResponsesFinalPayloadFromSse(
     payload: Record<string, unknown>,
   ) => {
     if (completedPayload) return;
-    if (eventType === 'response.failed') {
+    if (eventType === 'response.failed' || eventType === 'response.incomplete' || eventType === 'error') {
       throw new Error(getResponsesFailureMessage(payload));
     }
     if (eventType !== 'response.completed') {

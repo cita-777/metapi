@@ -442,6 +442,63 @@ export async function handleOpenAiResponsesSurfaceRequest(
 
       const upstream = endpointResult.upstream;
       const successfulUpstreamPath = endpointResult.upstreamPath;
+      const finalizeStreamSuccess = async (parsedUsage: UsageSummary, latency: number) => {
+        let usageForLog = {
+          promptTokens: parsedUsage.promptTokens,
+          completionTokens: parsedUsage.completionTokens,
+          totalTokens: parsedUsage.totalTokens,
+        };
+        let estimatedCost = 0;
+        let billingDetails: unknown = null;
+
+        try {
+          const resolvedUsage = await resolveProxyUsageWithSelfLogFallback({
+            site: selected.site,
+            account: selected.account,
+            tokenValue: selected.tokenValue,
+            tokenName: selected.tokenName,
+            modelName: selected.actualModel || requestedModel,
+            requestStartedAtMs: startTime,
+            requestEndedAtMs: startTime + latency,
+            localLatencyMs: latency,
+            usage: {
+              promptTokens: parsedUsage.promptTokens,
+              completionTokens: parsedUsage.completionTokens,
+              totalTokens: parsedUsage.totalTokens,
+            },
+          });
+          usageForLog = {
+            promptTokens: resolvedUsage.promptTokens,
+            completionTokens: resolvedUsage.completionTokens,
+            totalTokens: resolvedUsage.totalTokens,
+          };
+          const billing = await resolveProxyLogBilling({
+            site: selected.site,
+            account: selected.account,
+            modelName: selected.actualModel || requestedModel,
+            parsedUsage,
+            resolvedUsage,
+          });
+          estimatedCost = billing.estimatedCost;
+          billingDetails = billing.billingDetails;
+        } catch (error) {
+          console.error('[responses] post-stream bookkeeping failed:', error);
+        }
+
+        try {
+          tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost);
+          recordDownstreamCostUsage(request, estimatedCost);
+          logProxy(
+            selected, requestedModel, 'success', 200, latency, null, retryCount, downstreamPath,
+            usageForLog.promptTokens, usageForLog.completionTokens, usageForLog.totalTokens, estimatedCost, billingDetails,
+            successfulUpstreamPath,
+            clientContext,
+            logDownstreamApiKeyId ? downstreamApiKeyId : null,
+          );
+        } catch (error) {
+          console.error('[responses] post-stream success logging failed:', error);
+        }
+      };
 
         if (isStream) {
           const upstreamContentType = (upstream.headers.get('content-type') || '').toLowerCase();
@@ -555,38 +612,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
               return;
             }
 
-            const resolvedUsage = await resolveProxyUsageWithSelfLogFallback({
-              site: selected.site,
-              account: selected.account,
-              tokenValue: selected.tokenValue,
-              tokenName: selected.tokenName,
-              modelName: selected.actualModel || requestedModel,
-              requestStartedAtMs: startTime,
-              requestEndedAtMs: startTime + latency,
-              localLatencyMs: latency,
-              usage: {
-                promptTokens: parsedUsage.promptTokens,
-                completionTokens: parsedUsage.completionTokens,
-                totalTokens: parsedUsage.totalTokens,
-              },
-            });
-            const { estimatedCost, billingDetails } = await resolveProxyLogBilling({
-              site: selected.site,
-              account: selected.account,
-              modelName: selected.actualModel || requestedModel,
-              parsedUsage,
-              resolvedUsage,
-            });
-
-            tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost);
-            recordDownstreamCostUsage(request, estimatedCost);
-            logProxy(
-              selected, requestedModel, 'success', 200, latency, null, retryCount, downstreamPath,
-              resolvedUsage.promptTokens, resolvedUsage.completionTokens, resolvedUsage.totalTokens, estimatedCost, billingDetails,
-              successfulUpstreamPath,
-              clientContext,
-              logDownstreamApiKeyId ? downstreamApiKeyId : null,
-            );
+            await finalizeStreamSuccess(parsedUsage, latency);
             return;
           }
 
@@ -647,37 +673,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
           // response or retry on another channel. Responses stream failures are
           // handled in-band by the proxy stream session.
 
-          const resolvedUsage = await resolveProxyUsageWithSelfLogFallback({
-            site: selected.site,
-            account: selected.account,
-            tokenValue: selected.tokenValue,
-            tokenName: selected.tokenName,
-            modelName: selected.actualModel || requestedModel,
-            requestStartedAtMs: startTime,
-            requestEndedAtMs: startTime + latency,
-            localLatencyMs: latency,
-            usage: {
-              promptTokens: parsedUsage.promptTokens,
-              completionTokens: parsedUsage.completionTokens,
-              totalTokens: parsedUsage.totalTokens,
-            },
-          });
-          const { estimatedCost, billingDetails } = await resolveProxyLogBilling({
-            site: selected.site,
-            account: selected.account,
-            modelName: selected.actualModel || requestedModel,
-            parsedUsage,
-            resolvedUsage,
-          });
-          tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost);
-          recordDownstreamCostUsage(request, estimatedCost);
-          logProxy(
-            selected, requestedModel, 'success', 200, latency, null, retryCount, downstreamPath,
-            resolvedUsage.promptTokens, resolvedUsage.completionTokens, resolvedUsage.totalTokens, estimatedCost, billingDetails,
-            successfulUpstreamPath,
-            clientContext,
-            logDownstreamApiKeyId ? downstreamApiKeyId : null,
-          );
+          await finalizeStreamSuccess(parsedUsage, latency);
           return;
         }
 

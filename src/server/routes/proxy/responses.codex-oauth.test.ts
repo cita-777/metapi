@@ -467,4 +467,82 @@ describe('responses proxy codex oauth refresh', () => {
     });
     expect(String(insertedProxyLogs.at(-1)?.errorMessage || '')).toContain('tool execution failed');
   });
+
+  it('does not retry or mark failure after converting a non-stream upstream payload into SSE when post-stream usage accounting fails', async () => {
+    resolveProxyUsageWithSelfLogFallbackMock.mockRejectedValueOnce(new Error('usage accounting failed'));
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'resp_nonstream_final',
+      object: 'response',
+      model: 'gpt-5.4',
+      status: 'completed',
+      output: [
+        {
+          id: 'msg_nonstream_final',
+          type: 'message',
+          role: 'assistant',
+          status: 'completed',
+          content: [
+            {
+              type: 'output_text',
+              text: 'pong',
+            },
+          ],
+        },
+      ],
+      output_text: 'pong',
+      usage: { input_tokens: 3, output_tokens: 1, total_tokens: 4 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-5.4',
+        input: 'hello codex',
+        stream: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('event: response.completed');
+    expect(response.body).toContain('"output_text":"pong"');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(recordFailureMock).not.toHaveBeenCalled();
+    expect(recordSuccessMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry or mark failure after streaming SSE success when post-stream usage accounting fails', async () => {
+    resolveProxyUsageWithSelfLogFallbackMock.mockRejectedValueOnce(new Error('usage accounting failed'));
+    fetchMock.mockResolvedValue(createSseResponse([
+      'event: response.created\n',
+      'data: {"type":"response.created","response":{"id":"resp_codex_stream_ok","model":"gpt-5.4","created_at":1706000000,"status":"in_progress","output":[]}}\n\n',
+      'event: response.output_item.added\n',
+      'data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_codex_stream_ok","type":"message","role":"assistant","status":"in_progress","content":[]}}\n\n',
+      'event: response.output_text.delta\n',
+      'data: {"type":"response.output_text.delta","output_index":0,"item_id":"msg_codex_stream_ok","delta":"pong"}\n\n',
+      'event: response.completed\n',
+      'data: {"type":"response.completed","response":{"id":"resp_codex_stream_ok","model":"gpt-5.4","status":"completed","usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-5.4',
+        input: 'hello codex',
+        stream: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('event: response.completed');
+    expect(response.body).toContain('"id":"resp_codex_stream_ok"');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(recordFailureMock).not.toHaveBeenCalled();
+    expect(recordSuccessMock).toHaveBeenCalledTimes(1);
+  });
 });
