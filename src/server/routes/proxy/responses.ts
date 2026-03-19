@@ -426,7 +426,9 @@ export async function responsesProxyRoute(app: FastifyInstance) {
 
         if (isStream) {
           const upstreamContentType = (upstream.headers.get('content-type') || '').toLowerCase();
+          let sseResponseStarted = false;
           const startSseResponse = () => {
+            sseResponseStarted = true;
             reply.hijack();
             reply.raw.statusCode = 200;
             reply.raw.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -625,8 +627,13 @@ export async function responsesProxyRoute(app: FastifyInstance) {
 
           // Once SSE has been hijacked and bytes may already be on the wire, we
           // must not attempt to convert stream failures into a fresh HTTP error
-          // response or retry on another channel. Responses stream failures are
-          // handled in-band by the proxy stream session.
+          // response or retry on another channel. Keep the pre-hijack retry/error
+          // path separate from the post-hijack stream failure path so future edits
+          // cannot mix them.
+          if (!sseResponseStarted) {
+            throw new Error('responses proxy stream invariant violated: post-stream failure before SSE start');
+          }
+          // Responses stream failures are handled in-band by the proxy stream session.
 
           const resolvedUsage = await resolveProxyUsageWithSelfLogFallback({
             site: selected.site,

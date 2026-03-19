@@ -344,7 +344,9 @@ async function handleChatProxyRequest(
 
       if (isStream) {
         const upstreamContentType = (upstream.headers.get('content-type') || '').toLowerCase();
+        let sseResponseStarted = false;
         const startSseResponse = () => {
+          sseResponseStarted = true;
           reply.hijack();
           reply.raw.statusCode = 200;
           reply.raw.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -512,8 +514,12 @@ async function handleChatProxyRequest(
 
           // Once SSE has been hijacked and streamed downstream, we can no longer
           // safely fall back to an HTTP error response or retry by switching the
-          // channel mid-flight. Stream-level failures must be handled in-band by
-          // the proxy stream session itself.
+          // channel mid-flight. Keep the pre-hijack retry/error path separate from
+          // the post-hijack stream failure path so future edits cannot mix them.
+          if (!sseResponseStarted) {
+            throw new Error('chat proxy stream invariant violated: post-stream failure before SSE start');
+          }
+          // Stream-level failures must be handled in-band by the proxy stream session itself.
         }
 
         const latency = Date.now() - startTime;

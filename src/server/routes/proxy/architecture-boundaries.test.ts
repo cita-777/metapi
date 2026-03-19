@@ -104,6 +104,8 @@ describe('proxy route architecture boundaries', () => {
     expect(source).not.toContain('let shouldTerminateEarly = false;');
     expect(source).not.toContain('const consumeSseBuffer = (incoming: string): string => {');
     expect(source).not.toContain('writeDone();');
+    expect(source).toContain('let sseResponseStarted = false;');
+    expect(source).toContain('if (!sseResponseStarted) {');
     expect(source).toContain('openAiChatTransformer.proxyStream.createSession(');
   });
 
