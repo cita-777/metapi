@@ -266,6 +266,86 @@ function generateDownstreamSkKey(): string {
   return `sk-${hex}`;
 }
 
+async function copyToClipboard(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  document.execCommand('copy');
+  document.body.removeChild(textarea);
+}
+
+function DownstreamKeyCopyIconButton({ fullKey }: { fullKey: string | undefined }) {
+  const toast = useToast();
+  const [pressed, setPressed] = useState(false);
+
+  const disabled = !fullKey?.trim();
+  const release = () => setPressed(false);
+
+  return (
+    <button
+      type="button"
+      title="复制完整密钥"
+      aria-label="复制完整密钥"
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 2,
+        lineHeight: 0,
+        flexShrink: 0,
+        border: 'none',
+        background: 'transparent',
+        color: disabled
+          ? 'var(--color-text-muted)'
+          : pressed
+            ? 'var(--color-text-primary)'
+            : 'var(--color-text-muted)',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.4 : 1,
+        borderRadius: 'var(--radius-sm)',
+      }}
+      disabled={disabled}
+      onMouseDown={() => {
+        if (!disabled) setPressed(true);
+      }}
+      onMouseUp={release}
+      onMouseLeave={release}
+      onTouchStart={() => {
+        if (!disabled) setPressed(true);
+      }}
+      onTouchEnd={release}
+      onTouchCancel={release}
+      onClick={async (e) => {
+        e.stopPropagation();
+        const full = fullKey?.trim();
+        if (!full) {
+          toast.info('完整密钥暂不可用，请刷新页面后重试');
+          return;
+        }
+        try {
+          await copyToClipboard(full);
+          toast.success('已复制到剪贴板');
+        } catch {
+          toast.error('复制失败');
+        }
+      }}
+    >
+      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+      </svg>
+    </button>
+  );
+}
+
 function buildEditorForm(item?: ManagedItem | DownstreamApiKeyItem | null): EditorForm {
   return {
     name: item?.name || '',
@@ -1659,7 +1739,10 @@ export default function DownstreamKeys() {
                           <strong style={{ color: 'var(--color-text-primary)' }}>{row.name}</strong>
                           <StatusBadge enabled={row.enabled} />
                         </div>
-                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 4 }}>{row.keyMasked}</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text-muted)' }}>{row.keyMasked}</span>
+                          <DownstreamKeyCopyIconButton fullKey={row.key} />
+                        </div>
                         {row.description ? <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', maxWidth: 320 }}>{row.description}</div> : null}
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
                           <span className={`badge ${row.groupName ? 'badge-info' : 'badge-muted'}`} style={{ fontSize: 11 }}>
