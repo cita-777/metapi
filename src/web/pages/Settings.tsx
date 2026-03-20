@@ -1145,7 +1145,13 @@ export default function Settings() {
                 borderLeft: '1px solid var(--color-border-light)',
                 cursor: 'pointer',
               }}
-              onClick={() => setProxyTokenDraft(generateSkRandomToken())}
+              onClick={() => {
+                try {
+                  setProxyTokenDraft(generateSkRandomToken());
+                } catch (err: any) {
+                  toast.error(err?.message || '无法生成随机令牌，请使用 HTTPS 或受支持的浏览器环境');
+                }
+              }}
             >
               随机
             </button>

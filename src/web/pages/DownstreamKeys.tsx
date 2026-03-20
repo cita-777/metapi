@@ -261,20 +261,33 @@ function tagChipStyle(kind: 'normal' | 'accent' = 'normal'): React.CSSProperties
 }
 
 async function copyToClipboard(text: string): Promise<void> {
+  const legacyCopy = () => {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    try {
+      textarea.focus();
+      textarea.select();
+      const ok = document.execCommand('copy');
+      if (!ok) throw new Error('execCommand copy failed');
+    } finally {
+      document.body.removeChild(textarea);
+    }
+  };
+
   if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // fallback below
+    }
   }
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.style.position = 'fixed';
-  textarea.style.opacity = '0';
-  textarea.style.left = '-9999px';
-  document.body.appendChild(textarea);
-  textarea.focus();
-  textarea.select();
-  document.execCommand('copy');
-  document.body.removeChild(textarea);
+
+  legacyCopy();
 }
 
 function DownstreamKeyCopyIconButton({ fullKey }: { fullKey: string | undefined }) {
@@ -872,6 +885,7 @@ function EditorModal({
   groupSuggestions: string[];
   tagSuggestions: string[];
 }) {
+  const toast = useToast();
   const [modelSearch, setModelSearch] = useState('');
   const [groupSearch, setGroupSearch] = useState('');
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -969,7 +983,13 @@ function EditorModal({
               type="button"
               className="btn btn-ghost"
               style={{ flexShrink: 0, whiteSpace: 'nowrap', alignSelf: 'stretch' }}
-              onClick={() => onChange((prev) => ({ ...prev, key: generateSkRandomToken() }))}
+              onClick={() => {
+                try {
+                  onChange((prev) => ({ ...prev, key: generateSkRandomToken() }));
+                } catch (err: any) {
+                  toast.error(err?.message || '无法生成随机密钥，请使用 HTTPS 或受支持的浏览器环境');
+                }
+              }}
             >
               随机
             </button>
