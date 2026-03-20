@@ -17,7 +17,6 @@ import { clearAuthSession } from '../authSession.js';
 import { clearAppInstallationState } from '../appLocalState.js';
 import { tr } from '../i18n.js';
 import { ROUTE_ICON_NONE_VALUE } from './token-routes/utils.js';
-import { generateSkRandomToken } from '../utils/generateSkSecret.js';
 
 const PROXY_TOKEN_PREFIX = 'sk-';
 const ROUTE_BRAND_ICON_PREFIX = 'brand:';
@@ -214,7 +213,7 @@ export default function Settings() {
     proxyErrorKeywords: [],
     proxyEmptyContentFailEnabled: false,
   });
-  const [proxyTokenDraft, setProxyTokenDraft] = useState('');
+  const [proxyTokenSuffix, setProxyTokenSuffix] = useState('');
   const [proxyErrorKeywordsText, setProxyErrorKeywordsText] = useState('');
   const [maskedToken, setMaskedToken] = useState('');
   const [loading, setLoading] = useState(true);
@@ -491,6 +490,14 @@ export default function Settings() {
     loadSettings();
   }, []);
 
+  const normalizeProxyTokenSuffix = (raw: string) => {
+    const compact = raw.replace(/\s+/g, '');
+    if (compact.toLowerCase().startsWith(PROXY_TOKEN_PREFIX)) {
+      return compact.slice(PROXY_TOKEN_PREFIX.length);
+    }
+    return compact;
+  };
+
   const parseProxyErrorKeywords = (raw: string) => raw
     .split(/\r?\n|,/g)
     .map((item) => item.trim())
@@ -530,24 +537,16 @@ export default function Settings() {
   };
 
   const saveProxyToken = async () => {
-    const token = proxyTokenDraft.trim();
-    if (!token) {
-      toast.info('请输入完整下游访问令牌（以 sk- 开头）');
-      return;
-    }
-    if (!token.toLowerCase().startsWith(PROXY_TOKEN_PREFIX)) {
-      toast.info('下游访问令牌必须以 sk- 开头');
-      return;
-    }
-    if (token.length < 6) {
-      toast.info('下游访问令牌至少 6 位（含 sk-）');
+    const suffix = proxyTokenSuffix.trim();
+    if (!suffix) {
+      toast.info('请输入 sk- 后的令牌内容');
       return;
     }
     setSavingToken(true);
     try {
-      const res = await api.updateRuntimeSettings({ proxyToken: token });
+      const res = await api.updateRuntimeSettings({ proxyToken: `${PROXY_TOKEN_PREFIX}${suffix}` });
       setRuntime((prev) => ({ ...prev, proxyTokenMasked: res.proxyTokenMasked || prev.proxyTokenMasked }));
-      setProxyTokenDraft('');
+      setProxyTokenSuffix('');
       toast.success('Proxy token updated');
     } catch (err: any) {
       toast.error(err?.message || '保存失败');
@@ -1157,72 +1156,50 @@ export default function Settings() {
 
         <div className="card animate-slide-up stagger-4" style={{ padding: 20 }}>
           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>下游访问令牌（PROXY_TOKEN）</div>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12, lineHeight: 1.6 }}>
-            用于下游站点或客户端访问本服务代理接口。随机生成与保存前请自行妥善保管。
+          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
+            用于下游站点或客户端访问本服务代理接口。前缀 sk- 固定不可修改，只需填写后缀。
           </div>
           <code style={{ display: 'block', padding: '10px 14px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', fontSize: 13, fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-light)', marginBottom: 10 }}>
             当前：{runtime.proxyTokenMasked || '未设置'}
           </code>
           <div
             style={{
-              display: 'flex',
-              alignItems: 'stretch',
+              ...inputStyle,
               marginBottom: 10,
-              border: '1px solid var(--color-border)',
-              borderRadius: 'var(--radius-sm)',
+              padding: 0,
+              display: 'flex',
+              alignItems: 'center',
               overflow: 'hidden',
-              background: 'var(--color-bg)',
             }}
           >
+            <span
+              style={{
+                padding: '10px 12px',
+                borderRight: '1px solid var(--color-border-light)',
+                fontFamily: 'var(--font-mono)',
+                fontSize: 13,
+                color: 'var(--color-text-secondary)',
+                userSelect: 'none',
+              }}
+            >
+              {PROXY_TOKEN_PREFIX}
+            </span>
             <input
-              type="text"
-              autoComplete="off"
-              spellCheck={false}
-              value={proxyTokenDraft}
-              onChange={(e) => setProxyTokenDraft(e.target.value)}
-              placeholder="sk-"
+              type="password"
+              value={proxyTokenSuffix}
+              onChange={(e) => setProxyTokenSuffix(normalizeProxyTokenSuffix(e.target.value))}
+              placeholder="请输入 sk- 后的令牌内容"
               style={{
                 flex: 1,
-                minWidth: 0,
                 border: 'none',
                 outline: 'none',
                 background: 'transparent',
                 color: 'var(--color-text-primary)',
                 fontFamily: 'var(--font-mono)',
                 fontSize: 13,
-                lineHeight: 1.45,
                 padding: '10px 12px',
               }}
             />
-            <button
-              type="button"
-              title="生成以 sk- 开头的随机令牌"
-              style={{
-                flexShrink: 0,
-                margin: 0,
-                padding: '0 16px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: 13,
-                fontWeight: 600,
-                letterSpacing: '0.02em',
-                color: 'var(--color-primary)',
-                background: 'color-mix(in srgb, var(--color-primary) 10%, transparent)',
-                border: 'none',
-                borderLeft: '1px solid var(--color-border-light)',
-                cursor: 'pointer',
-              }}
-              onClick={() => {
-                try {
-                  setProxyTokenDraft(generateSkRandomToken());
-                } catch (err: any) {
-                  toast.error(err?.message || '无法生成随机令牌，请使用 HTTPS 或受支持的浏览器环境');
-                }
-              }}
-            >
-              随机
-            </button>
           </div>
           <button onClick={saveProxyToken} disabled={savingToken} className="btn btn-primary">
             {savingToken ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '更新下游访问令牌'}

@@ -7,7 +7,6 @@ import { useToast } from '../components/Toast.js';
 import ModernSelect from '../components/ModernSelect.js';
 import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import { tr } from '../i18n.js';
-import { generateSkRandomToken } from '../utils/generateSkSecret.js';
 
 const DownstreamKeyTrendChart = lazy(() => import('../components/charts/DownstreamKeyTrendChart.js'));
 type DownstreamKeyTrendBucket = import('../components/charts/DownstreamKeyTrendChart.js').DownstreamKeyTrendBucket;
@@ -260,34 +259,28 @@ function tagChipStyle(kind: 'normal' | 'accent' = 'normal'): React.CSSProperties
   };
 }
 
+function generateDownstreamSkKey(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `sk-${hex}`;
+}
+
 async function copyToClipboard(text: string): Promise<void> {
-  const legacyCopy = () => {
-    const textarea = document.createElement('textarea');
-    textarea.value = text;
-    textarea.style.position = 'fixed';
-    textarea.style.opacity = '0';
-    textarea.style.left = '-9999px';
-    document.body.appendChild(textarea);
-    try {
-      textarea.focus();
-      textarea.select();
-      const ok = document.execCommand('copy');
-      if (!ok) throw new Error('execCommand copy failed');
-    } finally {
-      document.body.removeChild(textarea);
-    }
-  };
-
   if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return;
-    } catch {
-      // fallback below
-    }
+    await navigator.clipboard.writeText(text);
+    return;
   }
-
-  legacyCopy();
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  document.execCommand('copy');
+  document.body.removeChild(textarea);
 }
 
 function DownstreamKeyCopyIconButton({ fullKey }: { fullKey: string | undefined }) {
@@ -885,7 +878,6 @@ function EditorModal({
   groupSuggestions: string[];
   tagSuggestions: string[];
 }) {
-  const toast = useToast();
   const [modelSearch, setModelSearch] = useState('');
   const [groupSearch, setGroupSearch] = useState('');
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -983,13 +975,7 @@ function EditorModal({
               type="button"
               className="btn btn-ghost"
               style={{ flexShrink: 0, whiteSpace: 'nowrap', alignSelf: 'stretch' }}
-              onClick={() => {
-                try {
-                  onChange((prev) => ({ ...prev, key: generateSkRandomToken() }));
-                } catch (err: any) {
-                  toast.error(err?.message || '无法生成随机密钥，请使用 HTTPS 或受支持的浏览器环境');
-                }
-              }}
+              onClick={() => onChange((prev) => ({ ...prev, key: generateDownstreamSkKey() }))}
             >
               随机
             </button>
