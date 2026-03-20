@@ -7,9 +7,12 @@ import { useToast } from '../components/Toast.js';
 import ModernSelect from '../components/ModernSelect.js';
 import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import { tr } from '../i18n.js';
+import { generateDownstreamSkKey } from './helpers/generateDownstreamSkKey.js';
 
 const DownstreamKeyTrendChart = lazy(() => import('../components/charts/DownstreamKeyTrendChart.js'));
 type DownstreamKeyTrendBucket = import('../components/charts/DownstreamKeyTrendChart.js').DownstreamKeyTrendBucket;
+
+const PROXY_TOKEN_PREFIX = 'sk-';
 
 type Range = '24h' | '7d' | 'all';
 type Status = 'all' | 'enabled' | 'disabled';
@@ -257,13 +260,6 @@ function tagChipStyle(kind: 'normal' | 'accent' = 'normal'): React.CSSProperties
       ? 'color-mix(in srgb, var(--color-primary) 10%, transparent)'
       : 'var(--color-bg-card)',
   };
-}
-
-function generateDownstreamSkKey(): string {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-  return `sk-${hex}`;
 }
 
 async function copyToClipboard(text: string): Promise<void> {
@@ -975,7 +971,7 @@ function EditorModal({
               type="button"
               className="btn btn-ghost"
               style={{ flexShrink: 0, whiteSpace: 'nowrap', alignSelf: 'stretch' }}
-              onClick={() => onChange((prev) => ({ ...prev, key: generateDownstreamSkKey() }))}
+              onClick={() => onChange((prev) => ({ ...prev, key: generateDownstreamSkKey(PROXY_TOKEN_PREFIX) }))}
             >
               随机
             </button>
