@@ -259,6 +259,13 @@ function tagChipStyle(kind: 'normal' | 'accent' = 'normal'): React.CSSProperties
   };
 }
 
+function generateDownstreamSkKey(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `sk-${hex}`;
+}
+
 function buildEditorForm(item?: ManagedItem | DownstreamApiKeyItem | null): EditorForm {
   return {
     name: item?.name || '',
@@ -877,7 +884,22 @@ function EditorModal({
         </div>
         <div className="downstream-key-modal-field">
           <div className="downstream-key-modal-label">下游密钥</div>
-          <input value={form.key} onChange={(e) => onChange((prev) => ({ ...prev, key: e.target.value }))} placeholder="sk-..." style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }} />
+          <div style={{ display: 'flex', gap: 8, alignItems: 'stretch', minWidth: 0 }}>
+            <input
+              value={form.key}
+              onChange={(e) => onChange((prev) => ({ ...prev, key: e.target.value }))}
+              placeholder="sk-..."
+              style={{ ...inputStyle, flex: 1, minWidth: 0, fontFamily: 'var(--font-mono)' }}
+            />
+            <button
+              type="button"
+              className="btn btn-ghost"
+              style={{ flexShrink: 0, whiteSpace: 'nowrap', alignSelf: 'stretch' }}
+              onClick={() => onChange((prev) => ({ ...prev, key: generateDownstreamSkKey() }))}
+            >
+              随机
+            </button>
+          </div>
         </div>
         <div className="downstream-key-modal-field">
           <div className="downstream-key-modal-label">主分组</div>
