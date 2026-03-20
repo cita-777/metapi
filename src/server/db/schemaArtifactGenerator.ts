@@ -118,7 +118,7 @@ function formatDefaultValue(dialect: SqlDialect, column: SchemaContractColumn): 
       return " DEFAULT (datetime('now'))";
     }
     if (dialect === 'mysql') {
-      return ' DEFAULT (CAST(UTC_TIMESTAMP() AS CHAR))';
+      return " DEFAULT (DATE_FORMAT(NOW(), '%Y-%m-%d %H:%i:%s'))";
     }
     return " DEFAULT to_char(timezone('UTC', CURRENT_TIMESTAMP), 'YYYY-MM-DD HH24:MI:SS')";
   }
