@@ -3,6 +3,7 @@ import {
   type NormalizedFinalResponse,
 } from '../../shared/normalized.js';
 import { decodeOpenAiEncryptedReasoning } from '../../shared/reasoningTransport.js';
+import { decodeResponsesMcpCompatToolCall } from './mcpCompatibility.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
@@ -228,6 +229,10 @@ function extractSyntheticOutputItemsFromUpstream(payload: unknown): ResponsesOut
         };
       }
 
+      if (itemType.startsWith('mcp_')) {
+        return cloneJson(rawItem);
+      }
+
       return null;
     })
     .filter((item): item is ResponsesOutputItem => item !== null);
@@ -394,6 +399,12 @@ export function serializeResponsesFinalPayload(input: {
 
   if (toolCalls.length > 0 && !hasToolLikeItem) {
     for (const toolCall of toolCalls) {
+      const mcpItem = decodeResponsesMcpCompatToolCall(toolCall.name, toolCall.arguments);
+      if (mcpItem) {
+        output.push(mcpItem);
+        continue;
+      }
+
       output.push({
         id: toolCall.id,
         type: 'function_call',

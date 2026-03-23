@@ -1024,6 +1024,65 @@ describe('convertResponsesBodyToOpenAiBody', () => {
     ]);
   });
 
+  it('round-trips mcp item families through OpenAI-compatible fallback using compatibility tool calls', () => {
+    const source = {
+      model: 'gpt-5',
+      input: [
+        {
+          type: 'mcp_call',
+          id: 'mcp_call_1',
+          call_id: 'mcp_call_1',
+          name: 'read_file',
+          server_label: 'filesystem',
+          arguments: {
+            path: '/tmp/demo.txt',
+          },
+        },
+        {
+          type: 'mcp_approval_request',
+          id: 'mcp_approval_request_1',
+          approval_request_id: 'mcp_approval_request_1',
+          name: 'read_file',
+          server_label: 'filesystem',
+          arguments: {
+            path: '/tmp/demo.txt',
+          },
+        },
+        {
+          type: 'mcp_approval_response',
+          id: 'mcp_approval_response_1',
+          approval_request_id: 'mcp_approval_request_1',
+          approve: true,
+        },
+      ],
+    };
+
+    const openAiBody = convertResponsesBodyToOpenAiBody(
+      source,
+      'gpt-5',
+      false,
+    );
+
+    expect(openAiBody.messages).toHaveLength(1);
+    expect(openAiBody.messages[0]).toMatchObject({
+      role: 'assistant',
+      content: '',
+      tool_calls: [
+        { id: 'mcp_call_1', type: 'function' },
+        { id: 'mcp_approval_request_1', type: 'function' },
+        { id: 'mcp_approval_response_1', type: 'function' },
+      ],
+    });
+
+    const roundTripped = convertOpenAiBodyToResponsesBody(
+      openAiBody,
+      'gpt-5',
+      false,
+    );
+
+    expect(roundTripped.input).toEqual(source.input);
+  });
+
   it('preserves remaining request fields needed for OpenAI-compatible downstream fallback', () => {
     const result = convertResponsesBodyToOpenAiBody(
       {

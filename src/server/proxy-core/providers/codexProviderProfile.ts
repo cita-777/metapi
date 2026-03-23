@@ -30,22 +30,11 @@ export const codexProviderProfile: ProviderProfile = {
       openAiBeta: getInputHeader(input.baseHeaders, 'openai-beta')
         || (websocketTransport ? asTrimmedString(config.codexResponsesWebsocketBeta) : null),
     });
-    const codexSessionId = getInputHeader(headers, 'session_id') || getInputHeader(headers, 'session-id');
-    const shouldInjectDerivedPromptCacheKey = !!codexSessionId
-      && !asTrimmedString(input.body.prompt_cache_key)
-      && !asTrimmedString(input.codexExplicitSessionId)
-      && !!asTrimmedString(input.codexSessionCacheKey);
-    const body = shouldInjectDerivedPromptCacheKey
-      ? {
-        ...input.body,
-        prompt_cache_key: codexSessionId,
-      }
-      : input.body;
 
     return {
       path: '/responses',
       headers,
-      body,
+      body: input.body,
       runtime: {
         executor: 'codex',
         modelName: input.modelName,

@@ -3,6 +3,11 @@ import {
   normalizeResponsesMessageContentBlocks,
   normalizeResponsesMessageItem,
 } from './normalization.js';
+import {
+  decodeResponsesMcpCompatToolCall,
+  isResponsesMcpItem,
+  toResponsesMcpCompatToolCall,
+} from './mcpCompatibility.js';
 import { normalizeInputFileBlock, toOpenAiChatFileBlock } from '../../shared/inputFile.js';
 import { buildShortToolNameMap, getShortToolName } from '../../shared/toolNameShortener.js';
 
@@ -501,6 +506,14 @@ export function convertOpenAiBodyToResponsesBody(
         const toolCall = rawToolCalls[index];
         if (!isRecord(toolCall)) continue;
         const functionPart = isRecord(toolCall.function) ? toolCall.function : {};
+        const mcpItem = decodeResponsesMcpCompatToolCall(
+          functionPart.name ?? toolCall.name,
+          functionPart.arguments ?? toolCall.arguments,
+        );
+        if (mcpItem) {
+          inputItems.push(mcpItem);
+          continue;
+        }
         const callId = asTrimmedString(toolCall.id) || `call_${Date.now()}_${index}`;
         const name = (
           asTrimmedString(functionPart.name)
@@ -813,6 +826,15 @@ export function convertResponsesBodyToOpenAiBody(
     if (!isRecord(item)) return;
 
     const itemType = asTrimmedString(item.type).toLowerCase();
+    if (itemType.startsWith('mcp_') && isResponsesMcpItem(item)) {
+      const toolCall = toResponsesMcpCompatToolCall(item, `call_${Date.now()}_${functionCallIndex}`);
+      if (toolCall) {
+        pendingToolCalls.push(toolCall as OpenAiToolCall);
+        functionCallIndex += 1;
+        return;
+      }
+    }
+
     if (itemType === 'function_call' || itemType === 'custom_tool_call') {
       const toolCall = toOpenAiToolCall(item, functionCallIndex);
       functionCallIndex += 1;
