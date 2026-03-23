@@ -314,7 +314,6 @@ describe('executeEndpointFlow', () => {
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe('https://proxy.internal/api/v1/responses?mode=relay#frag');
   });
-
   it('returns normalized final error when all endpoints fail', async () => {
     fetchMock.mockResolvedValueOnce(toUndiciResponse(new Response(JSON.stringify({
       error: { message: 'upstream_error', type: 'upstream_error' },
