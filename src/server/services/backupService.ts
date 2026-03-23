@@ -228,6 +228,10 @@ interface BackupImportResult {
 const EXCLUDED_SETTING_KEYS = new Set<string>([
   // Keep current admin login credential unchanged to avoid accidental lock-out.
   'auth_token',
+  // Runtime database selection is environment-bound and must not be propagated by backups.
+  'db_type',
+  'db_url',
+  'db_ssl',
 ]);
 const BACKUP_WEBDAV_CONFIG_SETTING_KEY = 'backup_webdav_config_v1';
 const BACKUP_WEBDAV_STATE_SETTING_KEY = 'backup_webdav_state_v1';
