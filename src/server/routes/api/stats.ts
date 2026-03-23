@@ -1390,7 +1390,7 @@ export async function statsRoutes(app: FastifyInstance) {
     }
 
     const refresh = await refreshModelsForAccount(accountId);
-    const rebuild = rebuildTokenRoutesFromAvailability();
+    const rebuild = await rebuildTokenRoutesFromAvailability();
     return { success: true, refresh, rebuild };
   });
 
