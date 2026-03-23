@@ -563,6 +563,8 @@ export function convertOpenAiBodyToResponsesBody(
   if (topP !== null) body.top_p = topP;
 
   if (openaiBody.metadata !== undefined) body.metadata = openaiBody.metadata;
+  if (openaiBody.modalities !== undefined) body.modalities = cloneJsonValue(openaiBody.modalities);
+  if (openaiBody.audio !== undefined) body.audio = cloneJsonValue(openaiBody.audio);
   if (openaiBody.reasoning !== undefined) body.reasoning = openaiBody.reasoning;
   if (openaiBody.reasoning_effort !== undefined) body.reasoning_effort = openaiBody.reasoning_effort;
   if (openaiBody.reasoning_budget !== undefined) body.reasoning_budget = openaiBody.reasoning_budget;
@@ -884,6 +886,9 @@ export function convertResponsesBodyToOpenAiBody(
   if (typeof normalizedBody.max_output_tokens === 'number' && Number.isFinite(normalizedBody.max_output_tokens)) {
     payload.max_tokens = normalizedBody.max_output_tokens;
   }
+  if (normalizedBody.metadata !== undefined) payload.metadata = cloneJsonValue(normalizedBody.metadata);
+  if (normalizedBody.modalities !== undefined) payload.modalities = cloneJsonValue(normalizedBody.modalities);
+  if (normalizedBody.audio !== undefined) payload.audio = cloneJsonValue(normalizedBody.audio);
   if (normalizedBody.parallel_tool_calls !== undefined) payload.parallel_tool_calls = normalizedBody.parallel_tool_calls;
   if (normalizedBody.tools !== undefined) payload.tools = convertResponsesToolsToOpenAi(normalizedBody.tools);
   if (normalizedBody.tool_choice !== undefined) payload.tool_choice = convertResponsesToolChoiceToOpenAi(normalizedBody.tool_choice);

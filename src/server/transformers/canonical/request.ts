@@ -501,6 +501,19 @@ export function canonicalRequestToOpenAiChatBody(
   if (request.reasoning?.effort) body.reasoning_effort = request.reasoning.effort;
   if (request.reasoning?.budgetTokens !== undefined) body.reasoning_budget = request.reasoning.budgetTokens;
   if (request.reasoning?.summary) body.reasoning_summary = request.reasoning.summary;
+  const transformerMetadata = isRecord(request.passthrough?.transformerMetadata)
+    ? request.passthrough.transformerMetadata as Record<string, unknown>
+    : null;
+  const passthroughInclude = Array.isArray(transformerMetadata?.include)
+    ? (transformerMetadata.include as unknown[])
+      .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      .map((item) => item.trim())
+    : [];
+  const mergedInclude = [
+    ...(request.reasoning?.includeEncryptedContent ? ['reasoning.encrypted_content'] : []),
+    ...passthroughInclude,
+  ].filter((item, index, all) => all.indexOf(item) === index);
+  if (mergedInclude.length > 0) body.include = mergedInclude;
   if (request.metadata !== undefined) body.metadata = cloneJsonValue(request.metadata);
   if (request.continuation?.promptCacheKey) body.prompt_cache_key = request.continuation.promptCacheKey;
   if (request.continuation?.previousResponseId) body.previous_response_id = request.continuation.previousResponseId;

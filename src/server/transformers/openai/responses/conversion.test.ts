@@ -1109,6 +1109,56 @@ describe('convertResponsesBodyToOpenAiBody', () => {
     });
   });
 
+  it('preserves tools and tool_choice across all compatibility retry bodies', () => {
+    const candidates = buildResponsesCompatibilityBodies({
+      model: 'gpt-5',
+      input: 'hello',
+      stream: true,
+      metadata: { user_id: 'user-1' },
+      instructions: 'be helpful',
+      tools: [{
+        type: 'function',
+        function: {
+          name: 'lookup_weather',
+          parameters: {
+            type: 'object',
+            properties: {
+              city: { type: 'string' },
+            },
+          },
+        },
+      }],
+      tool_choice: {
+        type: 'function',
+        function: {
+          name: 'lookup_weather',
+        },
+      },
+    });
+
+    expect(candidates.length).toBeGreaterThan(0);
+    for (const candidate of candidates) {
+      expect(candidate.tools).toEqual([{
+        type: 'function',
+        function: {
+          name: 'lookup_weather',
+          parameters: {
+            type: 'object',
+            properties: {
+              city: { type: 'string' },
+            },
+          },
+        },
+      }]);
+      expect(candidate.tool_choice).toEqual({
+        type: 'function',
+        function: {
+          name: 'lookup_weather',
+        },
+      });
+    }
+  });
+
   it('derives Responses reasoning config from chat-style reasoning request fields', () => {
     const result = convertOpenAiBodyToResponsesBody(
       {
@@ -1173,6 +1223,59 @@ describe('convertResponsesBodyToOpenAiBody', () => {
     ]);
   });
 
+  it('preserves chat-native modalities and audio settings when converting to Responses bodies', () => {
+    const result = convertOpenAiBodyToResponsesBody(
+      {
+        model: 'gpt-5',
+        messages: [{ role: 'user', content: 'hello' }],
+        metadata: { user_id: 'user-1' },
+        modalities: ['text', 'audio'],
+        audio: {
+          voice: 'alloy',
+          format: 'mp3',
+        },
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result).toMatchObject({
+      metadata: { user_id: 'user-1' },
+      modalities: ['text', 'audio'],
+      audio: {
+        voice: 'alloy',
+        format: 'mp3',
+      },
+    });
+  });
+
+  it('preserves metadata, modalities, and audio when converting Responses bodies back to OpenAI-compatible bodies', () => {
+    const result = convertResponsesBodyToOpenAiBody(
+      {
+        model: 'gpt-5',
+        input: 'hello',
+        metadata: { user_id: 'user-1' },
+        modalities: ['text', 'audio'],
+        audio: {
+          voice: 'alloy',
+          format: 'mp3',
+        },
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result).toMatchObject({
+      model: 'gpt-5',
+      metadata: { user_id: 'user-1' },
+      modalities: ['text', 'audio'],
+      audio: {
+        voice: 'alloy',
+        format: 'mp3',
+      },
+    });
+  });
+
   it('maps Responses text.format back into OpenAI response_format', () => {
     const result = convertResponsesBodyToOpenAiBody(
       {
@@ -1212,6 +1315,27 @@ describe('convertResponsesBodyToOpenAiBody', () => {
         },
       },
       verbosity: 'medium',
+    });
+  });
+
+  it('preserves responses metadata when converting back to OpenAI-compatible bodies', () => {
+    const result = convertResponsesBodyToOpenAiBody(
+      {
+        model: 'gpt-5',
+        input: 'hello',
+        metadata: {
+          user_id: 'user-1',
+        },
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result).toMatchObject({
+      model: 'gpt-5',
+      metadata: {
+        user_id: 'user-1',
+      },
     });
   });
 

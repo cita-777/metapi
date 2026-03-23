@@ -437,6 +437,34 @@ function parseResponsesOutputText(payload: Record<string, unknown>): string {
   return parts.join('\n\n');
 }
 
+function parseResponsesReasoning(payload: Record<string, unknown>): {
+  reasoningContent: string;
+  reasoningSignature?: string;
+} {
+  const output = Array.isArray(payload.output) ? payload.output : [];
+  const reasoningParts: string[] = [];
+  let reasoningSignature = '';
+
+  for (const item of output) {
+    if (!isRecord(item)) continue;
+    if (asTrimmedString(item.type).toLowerCase() !== 'reasoning') continue;
+
+    const parsed = extractTextAndReasoning(item.summary ?? item.content ?? item);
+    const text = joinNonEmpty([parsed.content, parsed.reasoning]);
+    if (text) reasoningParts.push(text);
+
+    const encrypted = asTrimmedString(item.encrypted_content);
+    if (!reasoningSignature && encrypted) {
+      reasoningSignature = encrypted;
+    }
+  }
+
+  return {
+    reasoningContent: joinNonEmpty(reasoningParts),
+    ...(reasoningSignature ? { reasoningSignature } : {}),
+  };
+}
+
 function stringifyUnknownValue(value: unknown): string {
   if (typeof value === 'string') return value;
   if (value === undefined || value === null) return '';
@@ -1039,12 +1067,14 @@ export function normalizeUpstreamFinalResponse(
 
   if (isRecord(payload) && ((payload as any).object === 'response' || Array.isArray((payload as any).output))) {
     const toolCalls = collectToolCallsFromResponsesPayload(payload);
+    const responsesReasoning = parseResponsesReasoning(payload);
     return {
       id: isNonEmptyString(payload.id) ? payload.id : fallbackId,
       model: isNonEmptyString(payload.model) ? payload.model : fallbackModel,
-      created: ensureIntegerTimestamp(payload.created, now),
+      created: ensureIntegerTimestamp((payload as any).created_at ?? payload.created, now),
       content: parseResponsesOutputText(payload) || (toolCalls.length > 0 ? '' : fallbackText),
-      reasoningContent: '',
+      reasoningContent: responsesReasoning.reasoningContent,
+      ...(responsesReasoning.reasoningSignature ? { reasoningSignature: responsesReasoning.reasoningSignature } : {}),
       finishReason: toolCalls.length > 0
         ? 'tool_calls'
         : (normalizeStopReason(payload.finish_reason ?? payload.status) || 'stop'),

@@ -389,6 +389,54 @@ describe('serializeConvertedResponsesEvents', () => {
     });
   });
 
+  it('emits terminal done events before relaying an upstream response.completed event', () => {
+    const state = createOpenAiResponsesAggregateState('gpt-5');
+    const streamContext = createStreamTransformContext('gpt-5');
+    const usage = {
+      promptTokens: 2,
+      completionTokens: 4,
+      totalTokens: 6,
+    };
+
+    serializeConvertedResponsesEvents({
+      state,
+      streamContext,
+      usage,
+      event: {
+        contentDelta: 'hello world',
+      } as any,
+    });
+
+    const completionLines = serializeConvertedResponsesEvents({
+      state,
+      streamContext,
+      usage,
+      event: {
+        responsesEventType: 'response.completed',
+        responsesPayload: {
+          type: 'response.completed',
+          response: {
+            id: 'resp_done_1',
+            model: 'gpt-5',
+            usage: {
+              input_tokens: 2,
+              output_tokens: 4,
+              total_tokens: 6,
+            },
+          },
+        },
+      },
+    });
+
+    const events = parseSseEvents(completionLines);
+    expect(events.map((entry) => entry.event ?? 'data')).toEqual([
+      'response.output_text.done',
+      'response.content_part.done',
+      'response.output_item.done',
+      'response.completed',
+    ]);
+  });
+
   it('emits canonical reasoning done events before response.completed when recovering sparse reasoning output', () => {
     const state = createOpenAiResponsesAggregateState('gpt-5');
     const streamContext = createStreamTransformContext('gpt-5');
@@ -762,5 +810,434 @@ describe('serializeConvertedResponsesEvents', () => {
         ],
       },
     });
+  });
+
+  it('emits terminal done events before forwarding an upstream response.completed event', () => {
+    const state = createOpenAiResponsesAggregateState('gpt-5');
+    const streamContext = createStreamTransformContext('gpt-5');
+    const usage = {
+      promptTokens: 2,
+      completionTokens: 4,
+      totalTokens: 6,
+    };
+
+    serializeConvertedResponsesEvents({
+      state,
+      streamContext,
+      usage,
+      event: {
+        contentDelta: 'hello world',
+      } as any,
+    });
+
+    const lines = serializeConvertedResponsesEvents({
+      state,
+      streamContext,
+      usage,
+      event: {
+        responsesEventType: 'response.completed',
+        responsesPayload: {
+          type: 'response.completed',
+          response: {
+            id: 'resp_1',
+            model: 'gpt-5',
+            usage: {
+              input_tokens: 2,
+              output_tokens: 4,
+              total_tokens: 6,
+            },
+          },
+        },
+      },
+    });
+
+    const events = parseSseEvents(lines);
+    expect(events.map((entry) => entry.event)).toEqual([
+      'response.output_text.done',
+      'response.content_part.done',
+      'response.output_item.done',
+      'response.completed',
+    ]);
+  });
+
+  it('closes reasoning summary parts before forwarding an upstream response.completed event', () => {
+    const state = createOpenAiResponsesAggregateState('gpt-5');
+    const streamContext = createStreamTransformContext('gpt-5');
+    const usage = {
+      promptTokens: 1,
+      completionTokens: 2,
+      totalTokens: 3,
+    };
+
+    serializeConvertedResponsesEvents({
+      state,
+      streamContext,
+      usage,
+      event: {
+        reasoningDelta: 'Think ',
+      } as any,
+    });
+
+    const lines = serializeConvertedResponsesEvents({
+      state,
+      streamContext,
+      usage,
+      event: {
+        responsesEventType: 'response.completed',
+        responsesPayload: {
+          type: 'response.completed',
+          response: {
+            id: 'resp_reasoning_done',
+            model: 'gpt-5',
+            usage: {
+              input_tokens: 1,
+              output_tokens: 2,
+              total_tokens: 3,
+            },
+          },
+        },
+      },
+    });
+
+    const events = parseSseEvents(lines);
+    expect(events.map((entry) => entry.event)).toEqual([
+      'response.reasoning_summary_text.done',
+      'response.reasoning_summary_part.done',
+      'response.output_item.done',
+      'response.completed',
+    ]);
+  });
+
+  it('preserves response.incomplete as a first-class terminal event', () => {
+    const state = createOpenAiResponsesAggregateState('gpt-5');
+    const streamContext = createStreamTransformContext('gpt-5');
+    const usage = {
+      promptTokens: 2,
+      completionTokens: 4,
+      totalTokens: 6,
+    };
+
+    serializeConvertedResponsesEvents({
+      state,
+      streamContext,
+      usage,
+      event: {
+        contentDelta: 'partial answer',
+      } as any,
+    });
+
+    const lines = serializeConvertedResponsesEvents({
+      state,
+      streamContext,
+      usage,
+      event: {
+        responsesEventType: 'response.incomplete',
+        responsesPayload: {
+          type: 'response.incomplete',
+          response: {
+            id: 'resp_incomplete_1',
+            model: 'gpt-5',
+            status: 'incomplete',
+            incomplete_details: {
+              reason: 'max_output_tokens',
+            },
+            usage: {
+              input_tokens: 2,
+              output_tokens: 4,
+              total_tokens: 6,
+            },
+          },
+        },
+      },
+    });
+
+    const events = parseSseEvents(lines);
+    expect(events.map((entry) => entry.event)).toEqual([
+      'response.output_text.done',
+      'response.content_part.done',
+      'response.output_item.done',
+      'response.incomplete',
+    ]);
+    expect(events[3]?.payload).toMatchObject({
+      type: 'response.incomplete',
+      response: {
+        id: 'resp_incomplete_1',
+        status: 'incomplete',
+        incomplete_details: {
+          reason: 'max_output_tokens',
+        },
+        output_text: 'partial answer',
+      },
+    });
+  });
+
+  it('closes every unterminated message part and only emits output_text.done for text parts', () => {
+    const state = createOpenAiResponsesAggregateState('gpt-5');
+    const streamContext = createStreamTransformContext('gpt-5');
+    const usage = {
+      promptTokens: 1,
+      completionTokens: 2,
+      totalTokens: 3,
+    };
+
+    serializeConvertedResponsesEvents({
+      state,
+      streamContext,
+      usage,
+      event: {
+        responsesEventType: 'response.output_item.added',
+        responsesPayload: {
+          type: 'response.output_item.added',
+          output_index: 0,
+          item: {
+            id: 'msg_multi_1',
+            type: 'message',
+            role: 'assistant',
+            status: 'in_progress',
+            content: [],
+          },
+        },
+      },
+    });
+
+    serializeConvertedResponsesEvents({
+      state,
+      streamContext,
+      usage,
+      event: {
+        responsesEventType: 'response.content_part.added',
+        responsesPayload: {
+          type: 'response.content_part.added',
+          output_index: 0,
+          item_id: 'msg_multi_1',
+          content_index: 0,
+          part: {
+            type: 'refusal',
+            text: 'no',
+          },
+        },
+      },
+    });
+
+    serializeConvertedResponsesEvents({
+      state,
+      streamContext,
+      usage,
+      event: {
+        responsesEventType: 'response.content_part.added',
+        responsesPayload: {
+          type: 'response.content_part.added',
+          output_index: 0,
+          item_id: 'msg_multi_1',
+          content_index: 1,
+          part: {
+            type: 'output_text',
+            text: 'yes',
+          },
+        },
+      },
+    });
+
+    const lines = completeResponsesStream(state, streamContext, usage);
+    const events = parseSseEvents(lines);
+
+    expect(events.map((entry) => entry.event ?? (entry.payload === '[DONE]' ? '[DONE]' : 'data'))).toEqual([
+      'response.content_part.done',
+      'response.output_text.done',
+      'response.content_part.done',
+      'response.output_item.done',
+      'response.completed',
+      '[DONE]',
+    ]);
+    expect(events[0]?.payload).toMatchObject({
+      type: 'response.content_part.done',
+      content_index: 0,
+      part: {
+        type: 'refusal',
+        text: 'no',
+      },
+    });
+    expect(events[1]?.payload).toMatchObject({
+      type: 'response.output_text.done',
+      item_id: 'msg_multi_1',
+      text: 'yes',
+    });
+    expect(events[2]?.payload).toMatchObject({
+      type: 'response.content_part.done',
+      content_index: 1,
+      part: {
+        type: 'output_text',
+        text: 'yes',
+      },
+    });
+  });
+
+  it('closes every unterminated reasoning summary part before completion', () => {
+    const state = createOpenAiResponsesAggregateState('gpt-5');
+    const streamContext = createStreamTransformContext('gpt-5');
+    const usage = {
+      promptTokens: 1,
+      completionTokens: 2,
+      totalTokens: 3,
+    };
+
+    serializeConvertedResponsesEvents({
+      state,
+      streamContext,
+      usage,
+      event: {
+        responsesEventType: 'response.output_item.added',
+        responsesPayload: {
+          type: 'response.output_item.added',
+          output_index: 0,
+          item: {
+            id: 'rs_multi_1',
+            type: 'reasoning',
+            status: 'in_progress',
+            summary: [],
+          },
+        },
+      },
+    });
+
+    for (const [summaryIndex, text] of [[0, 'first'], [1, 'second']] as const) {
+      serializeConvertedResponsesEvents({
+        state,
+        streamContext,
+        usage,
+        event: {
+          responsesEventType: 'response.reasoning_summary_part.added',
+          responsesPayload: {
+            type: 'response.reasoning_summary_part.added',
+            item_id: 'rs_multi_1',
+            output_index: 0,
+            summary_index: summaryIndex,
+            part: {
+              type: 'summary_text',
+              text,
+            },
+          },
+        },
+      });
+    }
+
+    const lines = completeResponsesStream(state, streamContext, usage);
+    const events = parseSseEvents(lines);
+
+    expect(events.map((entry) => entry.event ?? (entry.payload === '[DONE]' ? '[DONE]' : 'data'))).toEqual([
+      'response.reasoning_summary_text.done',
+      'response.reasoning_summary_part.done',
+      'response.reasoning_summary_text.done',
+      'response.reasoning_summary_part.done',
+      'response.output_item.done',
+      'response.completed',
+      '[DONE]',
+    ]);
+    expect(events[0]?.payload).toMatchObject({
+      type: 'response.reasoning_summary_text.done',
+      summary_index: 0,
+      text: 'first',
+    });
+    expect(events[2]?.payload).toMatchObject({
+      type: 'response.reasoning_summary_text.done',
+      summary_index: 1,
+      text: 'second',
+    });
+  });
+
+  it('does not synthesize duplicate tool input done events after original tool completion already arrived', () => {
+    const state = createOpenAiResponsesAggregateState('gpt-5');
+    const streamContext = createStreamTransformContext('gpt-5');
+    const usage = {
+      promptTokens: 1,
+      completionTokens: 2,
+      totalTokens: 3,
+    };
+
+    serializeConvertedResponsesEvents({
+      state,
+      streamContext,
+      usage,
+      event: {
+        responsesEventType: 'response.output_item.added',
+        responsesPayload: {
+          type: 'response.output_item.added',
+          output_index: 0,
+          item: {
+            id: 'fc_done_1',
+            type: 'function_call',
+            status: 'in_progress',
+            call_id: 'fc_done_1',
+            name: 'browser',
+            arguments: '',
+          },
+        },
+      },
+    });
+
+    serializeConvertedResponsesEvents({
+      state,
+      streamContext,
+      usage,
+      event: {
+        responsesEventType: 'response.function_call_arguments.done',
+        responsesPayload: {
+          type: 'response.function_call_arguments.done',
+          item_id: 'fc_done_1',
+          call_id: 'fc_done_1',
+          output_index: 0,
+          name: 'browser',
+          arguments: '{"url":"https://example.com"}',
+        },
+      },
+    });
+
+    serializeConvertedResponsesEvents({
+      state,
+      streamContext,
+      usage,
+      event: {
+        responsesEventType: 'response.output_item.added',
+        responsesPayload: {
+          type: 'response.output_item.added',
+          output_index: 1,
+          item: {
+            id: 'ct_done_1',
+            type: 'custom_tool_call',
+            status: 'in_progress',
+            call_id: 'ct_done_1',
+            name: 'browser',
+            input: '',
+          },
+        },
+      },
+    });
+
+    serializeConvertedResponsesEvents({
+      state,
+      streamContext,
+      usage,
+      event: {
+        responsesEventType: 'response.custom_tool_call_input.done',
+        responsesPayload: {
+          type: 'response.custom_tool_call_input.done',
+          item_id: 'ct_done_1',
+          call_id: 'ct_done_1',
+          output_index: 1,
+          name: 'browser',
+          input: 'open example.com',
+        },
+      },
+    });
+
+    const lines = completeResponsesStream(state, streamContext, usage);
+    const events = parseSseEvents(lines);
+
+    expect(events.map((entry) => entry.event ?? (entry.payload === '[DONE]' ? '[DONE]' : 'data'))).toEqual([
+      'response.output_item.done',
+      'response.output_item.done',
+      'response.completed',
+      '[DONE]',
+    ]);
   });
 });

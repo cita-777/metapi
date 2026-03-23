@@ -119,6 +119,7 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
     || input.successfulUpstreamPath.endsWith('/responses')
     || input.successfulUpstreamPath.endsWith('/responses/compact');
   let finalized = false;
+  let terminalEventSeen = false;
   let terminalResult: ResponsesProxyStreamResult = {
     status: 'completed',
     errorMessage: null,
@@ -145,8 +146,6 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
   };
 
   const complete = () => {
-    if (finalized) return;
-    finalized = true;
     terminalResult = {
       status: 'completed',
       errorMessage: null,
@@ -155,6 +154,10 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
 
   const closeOut = () => {
     if (finalized) return;
+    if (terminalEventSeen) {
+      finalize();
+      return;
+    }
     if (requiresExplicitTerminalEvent) {
       fail({
         type: 'response.failed',
@@ -190,15 +193,14 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
     const isFailureEvent = (
       eventBlock.event === 'error'
       || eventBlock.event === 'response.failed'
-      || eventBlock.event === 'response.incomplete'
       || payloadType === 'error'
       || payloadType === 'response.failed'
-      || payloadType === 'response.incomplete'
     );
     if (isFailureEvent) {
       fail(parsedPayload);
       return true;
     }
+    const isIncompleteEvent = eventBlock.event === 'response.incomplete' || payloadType === 'response.incomplete';
 
     if (parsedPayload && typeof parsedPayload === 'object') {
       const normalizedEvent = openAiResponsesStream.normalizeEvent(parsedPayload, streamContext, input.modelName);
@@ -225,7 +227,8 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
         return true;
       }
       input.writeLines(convertedLines);
-      if (eventBlock.event === 'response.completed' || payloadType === 'response.completed') {
+      if (eventBlock.event === 'response.completed' || payloadType === 'response.completed' || isIncompleteEvent) {
+        terminalEventSeen = true;
         complete();
       }
       return false;
@@ -249,6 +252,9 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
       const payloadType = (isRecord(payload) && typeof payload.type === 'string')
         ? payload.type
         : '';
+      const payloadStatus = isRecord(payload) && typeof payload.status === 'string'
+        ? payload.status
+        : '';
       if (payloadType === 'error' || payloadType === 'response.failed') {
         fail(payload);
         response?.end();
@@ -266,7 +272,8 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
         usage: input.getUsage(),
         serializationMode: 'response',
       });
-      if (shouldFailEmptyResponsesCompletion({
+      const isIncompletePayload = payloadType === 'response.incomplete' || payloadStatus === 'incomplete';
+      if (!isIncompletePayload && shouldFailEmptyResponsesCompletion({
         payload: { type: 'response.completed', response: streamPayload },
         state: responsesState,
         usage: input.getUsage(),
@@ -287,16 +294,29 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
         output_text: '',
       };
 
-      finalized = true;
-      terminalResult = {
-        status: 'completed',
-        errorMessage: null,
-      };
-      input.writeLines([
-        `event: response.created\ndata: ${JSON.stringify({ type: 'response.created', response: createdPayload })}\n\n`,
-        `event: response.completed\ndata: ${JSON.stringify({ type: 'response.completed', response: streamPayload })}\n\n`,
-        'data: [DONE]\n\n',
-      ]);
+      if (isIncompletePayload) {
+        finalized = true;
+        terminalResult = {
+          status: 'completed',
+          errorMessage: null,
+        };
+        input.writeLines([
+          `event: response.created\ndata: ${JSON.stringify({ type: 'response.created', response: createdPayload })}\n\n`,
+          `event: response.incomplete\ndata: ${JSON.stringify({ type: 'response.incomplete', response: streamPayload })}\n\n`,
+          'data: [DONE]\n\n',
+        ]);
+      } else {
+        finalized = true;
+        terminalResult = {
+          status: 'completed',
+          errorMessage: null,
+        };
+        input.writeLines([
+          `event: response.created\ndata: ${JSON.stringify({ type: 'response.created', response: createdPayload })}\n\n`,
+          `event: response.completed\ndata: ${JSON.stringify({ type: 'response.completed', response: streamPayload })}\n\n`,
+          'data: [DONE]\n\n',
+        ]);
+      }
       response?.end();
       return terminalResult;
     },

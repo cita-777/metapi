@@ -79,6 +79,64 @@ describe('shared normalized helpers', () => {
     });
   });
 
+  it('preserves responses reasoning summaries and encrypted reasoning signatures in final normalization', () => {
+    expect(normalizeUpstreamFinalResponse({
+      object: 'response',
+      id: 'resp_reasoning_1',
+      model: 'gpt-test',
+      created_at: 456,
+      output: [
+        {
+          type: 'reasoning',
+          summary: [{ type: 'summary_text', text: 'plan quietly' }],
+          encrypted_content: 'enc-1',
+        },
+        {
+          type: 'message',
+          content: [{ type: 'output_text', text: 'hello' }],
+        },
+      ],
+      status: 'completed',
+    }, 'fallback-model')).toEqual({
+      id: 'resp_reasoning_1',
+      model: 'gpt-test',
+      created: 456,
+      content: 'hello',
+      reasoningContent: 'plan quietly',
+      reasoningSignature: 'enc-1',
+      finishReason: 'stop',
+      toolCalls: [],
+    });
+  });
+
+  it('normalizes responses payloads with reasoning summaries and encrypted signatures', () => {
+    expect(normalizeUpstreamFinalResponse({
+      object: 'response',
+      id: 'resp_reasoning_1',
+      model: 'gpt-test',
+      created: 123,
+      output: [
+        {
+          type: 'reasoning',
+          encrypted_content: 'enc_1',
+          summary: [
+            { type: 'summary_text', text: 'plan quietly' },
+          ],
+        },
+      ],
+      status: 'completed',
+    }, 'fallback-model')).toEqual({
+      id: 'resp_reasoning_1',
+      model: 'gpt-test',
+      created: 123,
+      content: '',
+      reasoningContent: 'plan quietly',
+      reasoningSignature: 'enc_1',
+      finishReason: 'stop',
+      toolCalls: [],
+    });
+  });
+
   it('maps claude tools, tool choice, metadata, and reasoning when parsing downstream requests', () => {
     const result = parseDownstreamChatRequest({
       model: 'gpt-5',

@@ -187,4 +187,27 @@ describe('canonical request helpers', () => {
       }],
     });
   });
+
+  it('round-trips include continuity metadata back into OpenAI-compatible bodies', () => {
+    const request = canonicalRequestFromOpenAiBody({
+      body: {
+        model: 'gpt-5',
+        stream: true,
+        include: ['reasoning.encrypted_content', 'message.input_image.image_url'],
+        reasoning: {
+          effort: 'high',
+        },
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+      surface: 'openai-responses',
+    });
+
+    const body = canonicalRequestToOpenAiChatBody(request);
+
+    expect(body).toMatchObject({
+      model: 'gpt-5',
+      reasoning_effort: 'high',
+      include: ['reasoning.encrypted_content', 'message.input_image.image_url'],
+    });
+  });
 });

@@ -109,6 +109,47 @@ describe('serializeResponsesFinalPayload', () => {
     expect(payload).not.toHaveProperty('output_text');
   });
 
+  it('serializes response mode with created_at instead of created', () => {
+    const payload = serializeResponsesFinalPayload({
+      upstreamPayload: {
+        id: 'chatcmpl_response_mode',
+        object: 'chat.completion',
+        created: 1700000000,
+        model: 'gpt-5',
+        choices: [
+          {
+            index: 0,
+            finish_reason: 'stop',
+            message: {
+              role: 'assistant',
+              content: 'hello',
+            },
+          },
+        ],
+      },
+      normalized: {
+        id: 'chatcmpl_response_mode',
+        model: 'gpt-5',
+        created: 1700000000,
+        content: 'hello',
+        reasoningContent: '',
+        finishReason: 'stop',
+        toolCalls: [],
+      },
+      usage: {
+        promptTokens: 11,
+        completionTokens: 7,
+        totalTokens: 18,
+      },
+    } as any);
+
+    expect(payload).toMatchObject({
+      object: 'response',
+      created_at: 1700000000,
+    });
+    expect(payload).not.toHaveProperty('created');
+  });
+
   it('preserves top-level chat annotations on synthetic assistant messages', () => {
     const payload = serializeResponsesFinalPayload({
       upstreamPayload: {
@@ -424,6 +465,51 @@ describe('serializeResponsesFinalPayload', () => {
         status: 'completed',
         encrypted_content: 'enc-only-1',
         summary: [],
+      },
+    ]);
+  });
+
+  it('preserves image generation mime_type on synthesized response payloads', () => {
+    const payload = serializeResponsesFinalPayload({
+      upstreamPayload: {
+        id: 'resp_like_mime_1',
+        model: 'gpt-5',
+        output: [
+          {
+            id: 'img_1',
+            type: 'image_generation_call',
+            status: 'completed',
+            result: 'data:image/png;base64,final',
+            mime_type: 'image/png',
+            output_format: 'png',
+          },
+        ],
+      },
+      normalized: {
+        id: 'resp_like_mime_1',
+        model: 'gpt-5',
+        created: 1700000000,
+        content: '',
+        reasoningContent: '',
+        finishReason: 'stop',
+        toolCalls: [],
+      },
+      usage: {
+        promptTokens: 1,
+        completionTokens: 2,
+        totalTokens: 3,
+      },
+    });
+
+    expect(payload.output).toEqual([
+      {
+        id: 'img_1',
+        type: 'image_generation_call',
+        status: 'completed',
+        result: 'data:image/png;base64,final',
+        mime_type: 'image/png',
+        output_format: 'png',
+        partial_images: [],
       },
     ]);
   });
