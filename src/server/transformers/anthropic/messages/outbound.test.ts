@@ -149,4 +149,94 @@ describe('anthropicMessagesOutbound.serializeFinal', () => {
       },
     });
   });
+
+  it('cleans tagged signatures and preserves redacted_thinking for generic normalized finals', () => {
+    const payload = anthropicMessagesOutbound.serializeFinal({
+      id: 'chatcmpl-redacted-1',
+      model: 'claude-test',
+      created: 456,
+      content: 'visible text',
+      reasoningContent: 'plan quietly',
+      reasoningSignature: 'metapi:anthropic-signature:sig-clean',
+      redactedReasoningContent: 'ciphertext',
+      finishReason: 'stop',
+      toolCalls: [],
+    } as any, {
+      promptTokens: 9,
+      completionTokens: 3,
+      totalTokens: 12,
+    });
+
+    expect(payload.content).toEqual([
+      {
+        type: 'thinking',
+        thinking: 'plan quietly',
+        signature: 'sig-clean',
+      },
+      {
+        type: 'redacted_thinking',
+        data: 'ciphertext',
+      },
+      {
+        type: 'text',
+        text: 'visible text',
+      },
+    ]);
+  });
+
+  it('cleans tagged native thinking signatures while preserving native anthropic block order', () => {
+    const sourcePayload = {
+      id: 'msg_native-tagged-1',
+      type: 'message',
+      role: 'assistant',
+      model: 'claude-test',
+      content: [
+        {
+          type: 'thinking',
+          thinking: 'plan first',
+          signature: 'metapi:anthropic-signature:sig-native',
+        },
+        {
+          type: 'tool_use',
+          id: 'toolu_lookup',
+          name: 'lookup_weather',
+          input: { city: 'Paris' },
+        },
+        {
+          type: 'text',
+          text: 'done',
+        },
+      ],
+      stop_reason: 'tool_use',
+      stop_sequence: null,
+      usage: {
+        input_tokens: 100,
+        output_tokens: 30,
+      },
+    };
+
+    const normalized = anthropicMessagesOutbound.normalizeFinal(sourcePayload, 'claude-test');
+    const payload = anthropicMessagesOutbound.serializeFinal(
+      normalized,
+      anthropicMessagesUsage.fromPayload(sourcePayload),
+    );
+
+    expect(payload.content).toEqual([
+      {
+        type: 'thinking',
+        thinking: 'plan first',
+        signature: 'sig-native',
+      },
+      {
+        type: 'tool_use',
+        id: 'toolu_lookup',
+        name: 'lookup_weather',
+        input: { city: 'Paris' },
+      },
+      {
+        type: 'text',
+        text: 'done',
+      },
+    ]);
+  });
 });

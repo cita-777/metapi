@@ -197,6 +197,13 @@ function parseToolChoice(rawToolChoice: unknown): CanonicalToolChoice | undefine
   const type = asTrimmedString(rawToolChoice.type).toLowerCase();
   if (type === 'auto' || type === 'none') return type;
   if (type === 'any' || type === 'required') return 'required';
+  if (type === 'function') {
+    const name = asTrimmedString(
+      (isRecord(rawToolChoice.function) ? rawToolChoice.function.name : undefined)
+      ?? rawToolChoice.name,
+    );
+    return name ? { type: 'tool', name } : undefined;
+  }
   if (type !== 'tool') return undefined;
 
   const name = asTrimmedString(
@@ -212,8 +219,9 @@ function parseTools(rawTools: unknown): CanonicalTool[] | undefined {
   const tools = rawTools
     .flatMap((item) => {
       if (!isRecord(item)) return [];
+      const itemType = asTrimmedString(item.type).toLowerCase();
 
-      if (asTrimmedString(item.type).toLowerCase() === 'function' && isRecord(item.function)) {
+      if (itemType === 'function' && isRecord(item.function)) {
         const name = asTrimmedString(item.function.name);
         if (!name) return [];
         return [{
@@ -221,7 +229,21 @@ function parseTools(rawTools: unknown): CanonicalTool[] | undefined {
           ...(asTrimmedString(item.function.description)
             ? { description: asTrimmedString(item.function.description) }
             : {}),
+          ...(typeof item.function.strict === 'boolean' ? { strict: item.function.strict } : {}),
           ...(isRecord(item.function.parameters) ? { inputSchema: cloneJsonValue(item.function.parameters) } : {}),
+        }];
+      }
+
+      if ((itemType === '' || itemType === 'tool') && asTrimmedString(item.name)) {
+        return [{
+          name: asTrimmedString(item.name),
+          ...(asTrimmedString(item.description)
+            ? { description: asTrimmedString(item.description) }
+            : {}),
+          ...(typeof item.strict === 'boolean' ? { strict: item.strict } : {}),
+          ...(isRecord(item.input_schema)
+            ? { inputSchema: cloneJsonValue(item.input_schema) }
+            : (isRecord(item.inputSchema) ? { inputSchema: cloneJsonValue(item.inputSchema) } : {})),
         }];
       }
 
@@ -252,6 +274,9 @@ export function canonicalRequestFromOpenAiBody(
   input: CanonicalRequestFromOpenAiBodyInput,
 ): CanonicalRequestEnvelope {
   const body = input.body;
+  const metadata = isRecord(input.metadata)
+    ? input.metadata
+    : (isRecord(body.metadata) ? cloneJsonValue(body.metadata) : undefined);
   const messages: CanonicalMessage[] = [];
   const rawMessages = Array.isArray(body.messages) ? body.messages : [];
 
@@ -329,7 +354,7 @@ export function canonicalRequestFromOpenAiBody(
     ...(parseTools(body.tools) ? { tools: parseTools(body.tools) } : {}),
     ...(parseToolChoice(body.tool_choice) !== undefined ? { toolChoice: parseToolChoice(body.tool_choice) } : {}),
     ...(Object.keys(continuation).length > 0 ? { continuation } : {}),
-    ...(input.metadata ? { metadata: input.metadata } : {}),
+    ...(metadata ? { metadata } : {}),
     ...((reasoningResult.metadata || input.passthrough)
       ? {
         passthrough: {
@@ -478,6 +503,20 @@ export function canonicalRequestToOpenAiChatBody(
   if (request.reasoning?.effort) body.reasoning_effort = request.reasoning.effort;
   if (request.reasoning?.budgetTokens !== undefined) body.reasoning_budget = request.reasoning.budgetTokens;
   if (request.reasoning?.summary) body.reasoning_summary = request.reasoning.summary;
+  const transformerMetadata = isRecord(request.passthrough?.transformerMetadata)
+    ? request.passthrough.transformerMetadata as Record<string, unknown>
+    : null;
+  const passthroughInclude = Array.isArray(transformerMetadata?.include)
+    ? (transformerMetadata.include as unknown[])
+      .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      .map((item) => item.trim())
+    : [];
+  const mergedInclude = [
+    ...(request.reasoning?.includeEncryptedContent ? ['reasoning.encrypted_content'] : []),
+    ...passthroughInclude,
+  ].filter((item, index, all) => all.indexOf(item) === index);
+  if (mergedInclude.length > 0) body.include = mergedInclude;
+  if (request.metadata !== undefined) body.metadata = cloneJsonValue(request.metadata);
   if (request.continuation?.promptCacheKey) body.prompt_cache_key = request.continuation.promptCacheKey;
   if (request.continuation?.previousResponseId) body.previous_response_id = request.continuation.previousResponseId;
   if (Array.isArray(request.tools) && request.tools.length > 0) {
@@ -486,6 +525,7 @@ export function canonicalRequestToOpenAiChatBody(
       function: {
         name: tool.name,
         ...(tool.description ? { description: tool.description } : {}),
+        ...(typeof tool.strict === 'boolean' ? { strict: tool.strict } : {}),
         parameters: cloneJsonValue(tool.inputSchema ?? { type: 'object' }),
       },
     }));

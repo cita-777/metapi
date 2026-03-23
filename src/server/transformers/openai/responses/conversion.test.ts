@@ -1226,6 +1226,219 @@ describe('convertResponsesBodyToOpenAiBody', () => {
     });
   });
 
+  it('preserves tools and tool_choice across all compatibility retry bodies', () => {
+    const candidates = buildResponsesCompatibilityBodies({
+      model: 'gpt-5',
+      input: 'hello',
+      stream: true,
+      metadata: { user_id: 'user-1' },
+      instructions: 'be helpful',
+      tools: [{
+        type: 'function',
+        function: {
+          name: 'lookup_weather',
+          parameters: {
+            type: 'object',
+            properties: {
+              city: { type: 'string' },
+            },
+          },
+        },
+      }],
+      tool_choice: {
+        type: 'function',
+        function: {
+          name: 'lookup_weather',
+        },
+      },
+    });
+
+    expect(candidates.length).toBeGreaterThan(0);
+    for (const candidate of candidates) {
+      expect(candidate.tools).toEqual([{
+        type: 'function',
+        function: {
+          name: 'lookup_weather',
+          parameters: {
+            type: 'object',
+            properties: {
+              city: { type: 'string' },
+            },
+          },
+        },
+      }]);
+      expect(candidate.tool_choice).toEqual({
+        type: 'function',
+        function: {
+          name: 'lookup_weather',
+        },
+      });
+    }
+  });
+
+  it('maps native tool choices and strict function tools into OpenAI-compatible fallback bodies', () => {
+    const result = convertResponsesBodyToOpenAiBody(
+      {
+        model: 'gpt-5',
+        input: 'hello',
+        tools: [{
+          type: 'function',
+          name: 'lookup_weather',
+          parameters: {
+            type: 'object',
+            properties: {
+              city: { type: 'string' },
+            },
+          },
+          strict: true,
+        }],
+        tool_choice: {
+          type: 'tool',
+          name: 'lookup_weather',
+        },
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result.tools).toEqual([{
+      type: 'function',
+      function: {
+        name: 'lookup_weather',
+        parameters: {
+          type: 'object',
+          properties: {
+            city: { type: 'string' },
+          },
+        },
+        strict: true,
+      },
+    }]);
+    expect(result.tool_choice).toEqual({
+      type: 'function',
+      function: {
+        name: 'lookup_weather',
+      },
+    });
+  });
+
+  it('derives Responses reasoning config from chat-style reasoning request fields', () => {
+    const result = convertOpenAiBodyToResponsesBody(
+      {
+        model: 'gpt-5',
+        messages: [{ role: 'user', content: 'hello' }],
+        reasoning_effort: 'high',
+        reasoning_budget: 2048,
+        reasoning_summary: 'detailed',
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result).toMatchObject({
+      model: 'gpt-5',
+      reasoning: {
+        effort: 'high',
+        budget_tokens: 2048,
+        summary: 'detailed',
+      },
+    });
+  });
+
+  it('preserves assistant reasoning history when converting OpenAI-compatible bodies to Responses input', () => {
+    const result = convertOpenAiBodyToResponsesBody(
+      {
+        model: 'gpt-5',
+        messages: [{
+          role: 'assistant',
+          content: '',
+          reasoning_content: 'plan quietly',
+          reasoning_signature: 'sig_1',
+          tool_calls: [{
+            id: 'call_1',
+            type: 'function',
+            function: {
+              name: 'Glob',
+              arguments: '{"pattern":"README*"}',
+            },
+          }],
+        }],
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result.input).toEqual([
+      {
+        type: 'reasoning',
+        summary: [{
+          type: 'summary_text',
+          text: 'plan quietly',
+        }],
+        encrypted_content: 'sig_1',
+      },
+      {
+        type: 'function_call',
+        call_id: 'call_1',
+        name: 'Glob',
+        arguments: '{"pattern":"README*"}',
+      },
+    ]);
+  });
+
+  it('preserves chat-native modalities and audio settings when converting to Responses bodies', () => {
+    const result = convertOpenAiBodyToResponsesBody(
+      {
+        model: 'gpt-5',
+        messages: [{ role: 'user', content: 'hello' }],
+        metadata: { user_id: 'user-1' },
+        modalities: ['text', 'audio'],
+        audio: {
+          voice: 'alloy',
+          format: 'mp3',
+        },
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result).toMatchObject({
+      metadata: { user_id: 'user-1' },
+      modalities: ['text', 'audio'],
+      audio: {
+        voice: 'alloy',
+        format: 'mp3',
+      },
+    });
+  });
+
+  it('preserves metadata, modalities, and audio when converting Responses bodies back to OpenAI-compatible bodies', () => {
+    const result = convertResponsesBodyToOpenAiBody(
+      {
+        model: 'gpt-5',
+        input: 'hello',
+        metadata: { user_id: 'user-1' },
+        modalities: ['text', 'audio'],
+        audio: {
+          voice: 'alloy',
+          format: 'mp3',
+        },
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result).toMatchObject({
+      model: 'gpt-5',
+      metadata: { user_id: 'user-1' },
+      modalities: ['text', 'audio'],
+      audio: {
+        voice: 'alloy',
+        format: 'mp3',
+      },
+    });
+  });
+
   it('maps Responses text.format back into OpenAI response_format', () => {
     const result = convertResponsesBodyToOpenAiBody(
       {
@@ -1265,6 +1478,27 @@ describe('convertResponsesBodyToOpenAiBody', () => {
         },
       },
       verbosity: 'medium',
+    });
+  });
+
+  it('preserves responses metadata when converting back to OpenAI-compatible bodies', () => {
+    const result = convertResponsesBodyToOpenAiBody(
+      {
+        model: 'gpt-5',
+        input: 'hello',
+        metadata: {
+          user_id: 'user-1',
+        },
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result).toMatchObject({
+      model: 'gpt-5',
+      metadata: {
+        user_id: 'user-1',
+      },
     });
   });
 
