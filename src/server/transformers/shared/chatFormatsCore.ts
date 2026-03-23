@@ -778,7 +778,7 @@ function extractClaudeReasoningRequest(
   };
 }
 
-function convertClaudeRequestToOpenAiBody(body: Record<string, unknown>): {
+export function convertClaudeRequestToOpenAiBody(body: Record<string, unknown>): {
   model: string;
   stream: boolean;
   messages: Array<Record<string, unknown>>;
@@ -788,6 +788,42 @@ function convertClaudeRequestToOpenAiBody(body: Record<string, unknown>): {
   const stream = body.stream === true;
 
   const messages: Array<Record<string, unknown>> = [];
+
+  const convertToolResultContent = (content: unknown): string | Array<Record<string, unknown>> | null => {
+    const blocks: Array<Record<string, unknown>> = [];
+
+    const appendContentBlock = (item: unknown) => {
+      if (isRecord(item)) {
+        const block = toOpenAiContentBlockFromClaudeBlock(item);
+        if (block) {
+          blocks.push(block);
+          return;
+        }
+      }
+      const text = parseClaudeMessageContent(item);
+      if (text) {
+        blocks.push({ type: 'text', text });
+      }
+    };
+
+    const valueToProcess = (isRecord(content) && Array.isArray(content.content))
+      ? (content.content as unknown[])
+      : content;
+
+    if (Array.isArray(valueToProcess)) {
+      for (const item of valueToProcess) {
+        appendContentBlock(item);
+      }
+    } else {
+      appendContentBlock(valueToProcess);
+    }
+
+    if (blocks.length <= 0) return null;
+    const collapsed = collapseOpenAiContentBlocks(blocks);
+    if (!collapsed) return null;
+    if (typeof collapsed === 'string' && collapsed.length === 0) return null;
+    return collapsed;
+  };
 
   const appendMessage = (role: string, content: unknown) => {
     const text = parseClaudeMessageContent(content);
@@ -799,16 +835,13 @@ function convertClaudeRequestToOpenAiBody(body: Record<string, unknown>): {
     const toolCallId = typeof toolUseId === 'string' ? toolUseId.trim() : '';
     if (!toolCallId) return;
 
-    const text = (
-      parseClaudeMessageContent(content)
-      || stringifyUnknownValue(content)
-    ).trim();
-    if (!text) return;
+    const contentPayload = convertToolResultContent(content);
+    if (!contentPayload) return;
 
     messages.push({
       role: 'tool',
       tool_call_id: toolCallId,
-      content: text,
+      content: contentPayload,
     });
   };
 
