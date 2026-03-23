@@ -602,7 +602,7 @@ async function handleResponsesWebsocketConnection(
                   socket,
                   request,
                   payload: normalized.request,
-                  preserveIncrementalMode: false,
+                  preserveIncrementalMode: supportsIncrementalInput,
                   authToken: authContext.token,
                 });
                 if (fallbackOutput) {

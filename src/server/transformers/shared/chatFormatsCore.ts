@@ -437,6 +437,34 @@ function parseResponsesOutputText(payload: Record<string, unknown>): string {
   return parts.join('\n\n');
 }
 
+function parseResponsesReasoning(payload: Record<string, unknown>): {
+  reasoningContent: string;
+  reasoningSignature?: string;
+} {
+  const output = Array.isArray(payload.output) ? payload.output : [];
+  const reasoningParts: string[] = [];
+  let reasoningSignature = '';
+
+  for (const item of output) {
+    if (!isRecord(item)) continue;
+    if (asTrimmedString(item.type).toLowerCase() !== 'reasoning') continue;
+
+    const parsed = extractTextAndReasoning(item.summary ?? item.content ?? item);
+    const text = joinNonEmpty([parsed.content, parsed.reasoning]);
+    if (text) reasoningParts.push(text);
+
+    const encrypted = asTrimmedString(item.encrypted_content);
+    if (!reasoningSignature && encrypted) {
+      reasoningSignature = encrypted;
+    }
+  }
+
+  return {
+    reasoningContent: joinNonEmpty(reasoningParts),
+    ...(reasoningSignature ? { reasoningSignature } : {}),
+  };
+}
+
 function stringifyUnknownValue(value: unknown): string {
   if (typeof value === 'string') return value;
   if (value === undefined || value === null) return '';
@@ -658,6 +686,98 @@ function collapseOpenAiContentBlocks(
   return text || null;
 }
 
+function pickPositiveInteger(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.trunc(value);
+  }
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return undefined;
+}
+
+function convertClaudeToolsToOpenAiChat(rawTools: unknown): unknown {
+  if (!Array.isArray(rawTools)) return rawTools;
+
+  return rawTools.map((item) => {
+    if (!isRecord(item)) return item;
+
+    const type = asTrimmedString(item.type).toLowerCase();
+    if (type === 'function' || type === 'custom' || type === 'image_generation') {
+      return item;
+    }
+
+    const name = asTrimmedString(item.name);
+    if (!name) return item;
+
+    return {
+      type: 'function',
+      function: {
+        name,
+        ...(asTrimmedString(item.description)
+          ? { description: asTrimmedString(item.description) }
+          : {}),
+        parameters: isRecord(item.input_schema)
+          ? item.input_schema
+          : (isRecord(item.parameters) ? item.parameters : { type: 'object' }),
+      },
+    };
+  });
+}
+
+function convertClaudeToolChoiceToOpenAiChat(rawToolChoice: unknown): unknown {
+  if (rawToolChoice === undefined) return undefined;
+  if (typeof rawToolChoice === 'string') {
+    const normalized = rawToolChoice.trim().toLowerCase();
+    if (normalized === 'any') return 'required';
+    return normalized || rawToolChoice;
+  }
+  if (!isRecord(rawToolChoice)) return rawToolChoice;
+
+  const type = asTrimmedString(rawToolChoice.type).toLowerCase();
+  if (type === 'auto' || type === 'none') return type;
+  if (type === 'any' || type === 'required') return 'required';
+  if (type === 'function' && isRecord(rawToolChoice.function)) {
+    const name = asTrimmedString(rawToolChoice.function.name);
+    return name
+      ? {
+        type: 'function',
+        function: { name },
+      }
+      : 'required';
+  }
+  if (type !== 'tool') return rawToolChoice;
+
+  const name = asTrimmedString(
+    rawToolChoice.name
+    ?? (isRecord(rawToolChoice.tool) ? rawToolChoice.tool.name : undefined),
+  );
+  return name
+    ? {
+      type: 'function',
+      function: { name },
+    }
+    : 'required';
+}
+
+function extractClaudeReasoningRequest(
+  body: Record<string, unknown>,
+): { reasoningEffort?: string; reasoningBudget?: number } {
+  const thinking = isRecord(body.thinking) ? body.thinking : null;
+  const outputConfig = isRecord(body.output_config) ? body.output_config : null;
+  const reasoningEffort = asTrimmedString(outputConfig?.effort).toLowerCase();
+  const reasoningBudget = pickPositiveInteger(
+    thinking?.budget_tokens
+    ?? thinking?.budgetTokens,
+  );
+
+  return {
+    ...(reasoningEffort ? { reasoningEffort } : {}),
+    ...(reasoningBudget !== undefined ? { reasoningBudget } : {}),
+  };
+}
+
 function convertClaudeRequestToOpenAiBody(body: Record<string, unknown>): {
   model: string;
   stream: boolean;
@@ -717,6 +837,7 @@ function convertClaudeRequestToOpenAiBody(body: Record<string, unknown>): {
     // - user.tool_result    -> tool messages with tool_call_id
     const contentBlocks: Array<Record<string, unknown>> = [];
     const toolCalls: Array<Record<string, unknown>> = [];
+    const reasoningParts: string[] = [];
 
     const flushContentAsMessage = () => {
       const contentPayload = collapseOpenAiContentBlocks(contentBlocks);
@@ -730,7 +851,6 @@ function convertClaudeRequestToOpenAiBody(body: Record<string, unknown>): {
       const blockType = typeof block.type === 'string' ? block.type : '';
 
       if (blockType === 'tool_result') {
-        flushContentAsMessage();
         appendToolResultMessage(block.tool_use_id, block.content);
         continue;
       }
@@ -758,13 +878,18 @@ function convertClaudeRequestToOpenAiBody(body: Record<string, unknown>): {
         continue;
       }
 
+      const extracted = extractTextAndReasoning(block);
+      if (mappedRole === 'assistant' && extracted.reasoning) {
+        reasoningParts.push(extracted.reasoning);
+      }
+
       const contentBlock = toOpenAiContentBlockFromClaudeBlock(block);
       if (contentBlock) {
         contentBlocks.push(contentBlock);
         continue;
       }
 
-      const text = parseClaudeMessageContent(block);
+      const text = extracted.content || parseClaudeMessageContent(block);
       if (text) {
         contentBlocks.push({
           type: 'text',
@@ -780,11 +905,20 @@ function convertClaudeRequestToOpenAiBody(body: Record<string, unknown>): {
         tool_calls: toolCalls,
       };
       assistantMessage.content = merged || '';
+      const reasoningContent = joinNonEmpty(reasoningParts);
+      if (reasoningContent) assistantMessage.reasoning_content = reasoningContent;
       messages.push(assistantMessage);
-    } else if (merged !== null) {
-      messages.push({
+    } else if (merged !== null || (mappedRole === 'assistant' && reasoningParts.length > 0)) {
+      const nextMessage: Record<string, unknown> = {
         role: mappedRole,
-        content: merged,
+        content: merged ?? '',
+      };
+      if (mappedRole === 'assistant') {
+        const reasoningContent = joinNonEmpty(reasoningParts);
+        if (reasoningContent) nextMessage.reasoning_content = reasoningContent;
+      }
+      messages.push({
+        ...nextMessage,
       });
     }
   }
@@ -801,6 +935,8 @@ function convertClaudeRequestToOpenAiBody(body: Record<string, unknown>): {
   const topP = pickFiniteNumber(body.top_p);
   if (topP !== undefined) payload.top_p = topP;
 
+  if (isRecord(body.metadata)) payload.metadata = body.metadata;
+
   const maxTokens = pickFiniteNumber(body.max_tokens);
   if (maxTokens !== undefined) {
     payload.max_tokens = maxTokens;
@@ -812,8 +948,12 @@ function convertClaudeRequestToOpenAiBody(body: Record<string, unknown>): {
     payload.stop = body.stop_sequences;
   }
 
-  if (body.tools !== undefined) payload.tools = body.tools;
-  if (body.tool_choice !== undefined) payload.tool_choice = body.tool_choice;
+  const reasoningRequest = extractClaudeReasoningRequest(body);
+  if (reasoningRequest.reasoningEffort) payload.reasoning_effort = reasoningRequest.reasoningEffort;
+  if (reasoningRequest.reasoningBudget !== undefined) payload.reasoning_budget = reasoningRequest.reasoningBudget;
+
+  if (body.tools !== undefined) payload.tools = convertClaudeToolsToOpenAiChat(body.tools);
+  if (body.tool_choice !== undefined) payload.tool_choice = convertClaudeToolChoiceToOpenAiChat(body.tool_choice);
 
   return { model, stream, messages, payload };
 }
@@ -927,12 +1067,14 @@ export function normalizeUpstreamFinalResponse(
 
   if (isRecord(payload) && ((payload as any).object === 'response' || Array.isArray((payload as any).output))) {
     const toolCalls = collectToolCallsFromResponsesPayload(payload);
+    const responsesReasoning = parseResponsesReasoning(payload);
     return {
       id: isNonEmptyString(payload.id) ? payload.id : fallbackId,
       model: isNonEmptyString(payload.model) ? payload.model : fallbackModel,
-      created: ensureIntegerTimestamp(payload.created, now),
+      created: ensureIntegerTimestamp((payload as any).created_at ?? payload.created, now),
       content: parseResponsesOutputText(payload) || (toolCalls.length > 0 ? '' : fallbackText),
-      reasoningContent: '',
+      reasoningContent: responsesReasoning.reasoningContent,
+      ...(responsesReasoning.reasoningSignature ? { reasoningSignature: responsesReasoning.reasoningSignature } : {}),
       finishReason: toolCalls.length > 0
         ? 'tool_calls'
         : (normalizeStopReason(payload.finish_reason ?? payload.status) || 'stop'),

@@ -3190,6 +3190,87 @@ describe('chat proxy stream behavior', () => {
     expect(toolMessage.content).toContain('matches');
   });
 
+  it('maps claude tool config and thinking budget before routing claude downstream requests to openai chat endpoint', async () => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site: { name: 'openai-site', url: 'https://api.openai.com', platform: 'openai' },
+      account: { id: 33, username: 'demo-user' },
+      tokenName: 'default',
+      tokenValue: 'sk-openai',
+      actualModel: 'gpt-4o-mini',
+    });
+
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'chatcmpl-openai-config-mapped',
+      object: 'chat.completion',
+      created: 1_706_000_007,
+      model: 'gpt-4o-mini',
+      choices: [{
+        index: 0,
+        message: { role: 'assistant', content: 'tool config mapped' },
+        finish_reason: 'stop',
+      }],
+      usage: { prompt_tokens: 9, completion_tokens: 3, total_tokens: 12 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/messages',
+      payload: {
+        model: 'gpt-4o-mini',
+        max_tokens: 256,
+        metadata: { user_id: 'user-1' },
+        thinking: { type: 'enabled', budget_tokens: 1024 },
+        tools: [{
+          name: 'Glob',
+          description: 'Search files',
+          input_schema: {
+            type: 'object',
+            properties: {
+              pattern: { type: 'string' },
+            },
+            required: ['pattern'],
+          },
+        }],
+        tool_choice: {
+          type: 'tool',
+          name: 'Glob',
+        },
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const [_targetUrl, options] = fetchMock.mock.calls[0] as [string, any];
+    const forwardedBody = JSON.parse(options.body);
+    expect(forwardedBody.metadata).toEqual({ user_id: 'user-1' });
+    expect(forwardedBody.reasoning_budget).toBe(1024);
+    expect(forwardedBody.tools).toEqual([{
+      type: 'function',
+      function: {
+        name: 'Glob',
+        description: 'Search files',
+        parameters: {
+          type: 'object',
+          properties: {
+            pattern: { type: 'string' },
+          },
+          required: ['pattern'],
+        },
+      },
+    }]);
+    expect(forwardedBody.tool_choice).toEqual({
+      type: 'function',
+      function: {
+        name: 'Glob',
+      },
+    });
+  });
+
   it('forces claude platform to use /v1/messages with x-api-key auth for openai downstream requests', async () => {
     selectChannelMock.mockReturnValue({
       channel: { id: 11, routeId: 22 },

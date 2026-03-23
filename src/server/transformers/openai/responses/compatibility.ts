@@ -61,6 +61,8 @@ export function buildResponsesCompatibilityBodies(
     if (instructions !== null) richCandidate.instructions = instructions;
 
     const passthroughFields = [
+      'tools',
+      'tool_choice',
       'parallel_tool_calls',
       'include',
       'reasoning',
@@ -228,6 +230,8 @@ function buildStrictResponsesBody(
     model,
     input: body.input,
     stream: body.stream === true,
+    ...(body.tools !== undefined ? { tools: cloneJsonValue(body.tools) } : {}),
+    ...(body.tool_choice !== undefined ? { tool_choice: cloneJsonValue(body.tool_choice) } : {}),
     ...(explicitInstructions !== null
       ? { instructions: explicitInstructions }
       : {}),

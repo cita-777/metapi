@@ -46,6 +46,7 @@ export const openAiResponsesStream = {
     'response.image_generation_call.partial_image',
     'response.image_generation_call.completed',
     'response.completed',
+    'response.incomplete',
     'response.failed',
   ] as const,
   createContext(modelName: string): StreamTransformContext {

@@ -220,6 +220,7 @@ function extractSyntheticOutputItemsFromUpstream(payload: unknown): ResponsesOut
           result: cloneJson(rawItem.result),
           partial_images: Array.isArray(rawItem.partial_images) ? cloneJson(rawItem.partial_images) : [],
           ...(rawItem.background !== undefined ? { background: cloneJson(rawItem.background) } : {}),
+          ...(rawItem.mime_type !== undefined ? { mime_type: cloneJson(rawItem.mime_type) } : {}),
           ...(rawItem.output_format !== undefined ? { output_format: cloneJson(rawItem.output_format) } : {}),
           ...(rawItem.quality !== undefined ? { quality: cloneJson(rawItem.quality) } : {}),
           ...(rawItem.size !== undefined ? { size: cloneJson(rawItem.size) } : {}),
@@ -418,7 +419,7 @@ export function serializeResponsesFinalPayload(input: {
   return {
     id: responseId,
     object: 'response',
-    created: normalized.created,
+    created_at: normalized.created,
     status: 'completed',
     model: normalized.model,
     output,
