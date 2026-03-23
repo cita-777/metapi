@@ -26,7 +26,10 @@ describe('docker workflows', () => {
   it('keeps server docker builds isolated from desktop packaging dependencies', () => {
     const dockerfile = readFileSync(resolve(process.cwd(), 'docker/Dockerfile'), 'utf8');
 
-    expect(dockerfile).toContain('npm ci --omit=peer --no-audit --no-fund');
+    expect(dockerfile).toContain('npm ci --no-audit --no-fund');
+    expect(dockerfile).not.toContain('npm ci --omit=peer --no-audit --no-fund');
+    expect(dockerfile).not.toContain('npm ci --include=dev --omit=peer --no-audit --no-fund');
     expect(dockerfile).toContain('RUN npm run build:web && npm run build:server');
+    expect(dockerfile).toContain('npm prune --omit=dev --no-audit --no-fund');
   });
 });
