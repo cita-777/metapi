@@ -938,7 +938,7 @@ export async function refreshModelsForAccount(
     }
   }
 
-  const accountModels = new Set<string>();
+  const accountModels = new Map<string, string>();   // lowercase key → original name (first-wins)
   const modelLatency = new Map<string, number | null>();
   let scannedTokenCount = 0;
   let discoveredByCredential = false;
@@ -951,14 +951,15 @@ export async function refreshModelsForAccount(
 
   const mergeDiscoveredModels = (models: string[], latencyMs: number | null) => {
     for (const modelName of models) {
-      accountModels.add(modelName);
-      const prev = modelLatency.get(modelName);
+      const key = modelName.toLowerCase();
+      if (!accountModels.has(key)) accountModels.set(key, modelName);
+      const prev = modelLatency.get(key);
       if (prev === undefined || prev === null) {
-        modelLatency.set(modelName, latencyMs);
+        modelLatency.set(key, latencyMs);
         continue;
       }
       if (latencyMs === null) continue;
-      if (latencyMs < prev) modelLatency.set(modelName, latencyMs);
+      if (latencyMs < prev) modelLatency.set(key, latencyMs);
     }
   };
 
@@ -1055,11 +1056,11 @@ export async function refreshModelsForAccount(
 
   const checkedAt = new Date().toISOString();
   await db.insert(schema.modelAvailability).values(
-    Array.from(accountModels).map((modelName) => ({
+    Array.from(accountModels.values()).map((modelName) => ({
       accountId: account.id,
       modelName,
       available: true,
-      latencyMs: modelLatency.get(modelName) ?? null,
+      latencyMs: modelLatency.get(modelName.toLowerCase()) ?? null,
       checkedAt,
     })),
   ).run();
@@ -1071,7 +1072,7 @@ export async function refreshModelsForAccount(
     checkedAt,
   });
 
-  const modelsPreview = Array.from(accountModels).slice(0, 10);
+  const modelsPreview = Array.from(accountModels.values()).slice(0, 10);
   return buildSuccessfulRefreshResult({
     accountId,
     modelCount: accountModels.size,
@@ -1133,12 +1134,12 @@ export async function rebuildTokenRoutesFromAvailability() {
   const disabledModelsBySite = new Map<number, Set<string>>();
   for (const row of disabledModelRows) {
     if (!disabledModelsBySite.has(row.siteId)) disabledModelsBySite.set(row.siteId, new Set());
-    disabledModelsBySite.get(row.siteId)!.add(row.modelName);
+    disabledModelsBySite.get(row.siteId)!.add(row.modelName.toLowerCase());
   }
 
   function isModelDisabledForSite(siteId: number, modelName: string): boolean {
     const disabled = disabledModelsBySite.get(siteId);
-    return !!disabled && disabled.has(modelName);
+    return !!disabled && disabled.has(modelName.toLowerCase());
   }
 
   // Load global brand filter
