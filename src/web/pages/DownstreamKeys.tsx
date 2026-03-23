@@ -85,6 +85,7 @@ type BatchMetadataForm = {
   tags: string[];
 };
 
+type DefaultRouteSelections = Pick<EditorForm, 'selectedModels' | 'selectedGroupRouteIds'>;
 function toDateTimeLocal(isoString: string | null | undefined): string {
   if (!isoString) return '';
   const ts = Date.parse(isoString);
@@ -136,6 +137,21 @@ function normalizeTags(values: string[]): string[] {
 
 function uniqIds(values: number[]): number[] {
   return [...new Set(values.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0).map((value) => Math.trunc(value)))];
+}
+
+function buildDefaultRouteSelections(routeOptions: RouteSelectorItem[]): DefaultRouteSelections {
+  return {
+    selectedModels: uniqStrings(
+      routeOptions
+        .filter((item) => isExactModelPattern(item.modelPattern))
+        .map((item) => item.modelPattern),
+    ).sort((a, b) => a.localeCompare(b)),
+    selectedGroupRouteIds: uniqIds(
+      routeOptions
+        .filter(isGroupRouteOption)
+        .map((item) => item.id),
+    ),
+  };
 }
 
 function parseTagText(value: string): string[] {
@@ -279,7 +295,21 @@ function DownstreamKeyCopyIconButton({ fullKey }: { fullKey: string | undefined 
   );
 }
 
-function buildEditorForm(item?: ManagedItem | DownstreamApiKeyItem | null): EditorForm {
+function buildEditorForm(
+  item?: ManagedItem | DownstreamApiKeyItem | null,
+  routeOptions: RouteSelectorItem[] = [],
+  selectAllByDefault = false,
+): EditorForm {
+  const defaultSelections = selectAllByDefault
+    ? buildDefaultRouteSelections(routeOptions)
+    : { selectedModels: [], selectedGroupRouteIds: [] };
+  const selectedModels = Array.isArray(item?.supportedModels)
+    ? item.supportedModels
+    : defaultSelections.selectedModels;
+  const selectedGroupRouteIds = Array.isArray(item?.allowedRouteIds)
+    ? item.allowedRouteIds
+    : defaultSelections.selectedGroupRouteIds;
+
   return {
     name: item?.name || '',
     key: item?.key || '',
@@ -290,8 +320,8 @@ function buildEditorForm(item?: ManagedItem | DownstreamApiKeyItem | null): Edit
     maxRequests: item?.maxRequests === null || item?.maxRequests === undefined ? '' : String(item.maxRequests),
     expiresAt: toDateTimeLocal(item?.expiresAt),
     enabled: item?.enabled ?? true,
-    selectedModels: uniqStrings(Array.isArray(item?.supportedModels) ? item!.supportedModels : []),
-    selectedGroupRouteIds: uniqIds(Array.isArray(item?.allowedRouteIds) ? item!.allowedRouteIds : []),
+    selectedModels: uniqStrings(selectedModels),
+    selectedGroupRouteIds: uniqIds(selectedGroupRouteIds),
     siteWeightMultipliersText: JSON.stringify(item?.siteWeightMultipliers || {}, null, 2),
   };
 }
@@ -823,6 +853,7 @@ export default function DownstreamKeys() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editorForm, setEditorForm] = useState<EditorForm>(() => buildEditorForm());
+  const [createDefaultsPending, setCreateDefaultsPending] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
@@ -981,9 +1012,33 @@ export default function DownstreamKeys() {
     return acc;
   }, { tokens: 0, requests: 0, cost: 0, enabled: 0 }), [visibleItems]);
 
+  useEffect(() => {
+    if (!editorOpen || editingId !== null || !createDefaultsPending) {
+      return;
+    }
+
+    const defaultSelections = buildDefaultRouteSelections(routeOptions);
+    if (defaultSelections.selectedModels.length === 0 && defaultSelections.selectedGroupRouteIds.length === 0) {
+      return;
+    }
+
+    setEditorForm((prev) => {
+      if (prev.selectedModels.length > 0 || prev.selectedGroupRouteIds.length > 0) {
+        return prev;
+      }
+      return {
+        ...prev,
+        selectedModels: defaultSelections.selectedModels,
+        selectedGroupRouteIds: defaultSelections.selectedGroupRouteIds,
+      };
+    });
+    setCreateDefaultsPending(false);
+  }, [createDefaultsPending, editorOpen, editingId, routeOptions]);
+
   const openCreate = () => {
     setEditingId(null);
-    setEditorForm(buildEditorForm());
+    setEditorForm(buildEditorForm(null, routeOptions, true));
+    setCreateDefaultsPending(true);
     setEditorOpen(true);
   };
 
@@ -998,6 +1053,7 @@ export default function DownstreamKeys() {
 
   const openEdit = (item: ManagedItem) => {
     setEditingId(item.id);
+    setCreateDefaultsPending(false);
     setEditorForm(buildEditorForm(rawItemMap.get(item.id) || item));
     setEditorOpen(true);
   };
@@ -1005,6 +1061,7 @@ export default function DownstreamKeys() {
   const closeEditor = () => {
     setEditorOpen(false);
     setEditingId(null);
+    setCreateDefaultsPending(false);
     setEditorForm(buildEditorForm());
   };
 
