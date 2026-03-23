@@ -597,6 +597,11 @@ export function serializeAnthropicFinalAsStream(
   const lines = [
     ...anthropicMessagesStream.serializeEvent({ role: 'assistant' }, streamContext, downstreamContext),
   ];
+  const serializeAnthropicEvent = (event: AnthropicExtendedStreamEvent) => anthropicMessagesStream.serializeEvent(
+    event,
+    streamContext,
+    downstreamContext,
+  );
   const contentBlocks = buildAnthropicFinalContentBlocks(normalizedFinal);
 
   for (let index = 0; index < contentBlocks.length; index += 1) {
@@ -604,7 +609,7 @@ export function serializeAnthropicFinalAsStream(
     const blockType = asTrimmedString(block.type).toLowerCase();
 
     if (blockType === 'thinking') {
-      lines.push(...anthropicMessagesStream.serializeEvent(
+      lines.push(...serializeAnthropicEvent(
         {
           anthropic: {
             startBlock: {
@@ -613,8 +618,6 @@ export function serializeAnthropicFinalAsStream(
             },
           },
         },
-        streamContext,
-        downstreamContext,
       ));
       const thinkingText = asTrimmedString(block.thinking);
       if (thinkingText) {
@@ -626,30 +629,26 @@ export function serializeAnthropicFinalAsStream(
       }
       const cleanSignature = cleanAnthropicReasoningSignature(block.signature);
       if (cleanSignature) {
-        lines.push(...anthropicMessagesStream.serializeEvent(
+        lines.push(...serializeAnthropicEvent(
           {
             anthropic: {
               signatureDelta: cleanSignature,
             },
           },
-          streamContext,
-          downstreamContext,
         ));
       }
-      lines.push(...anthropicMessagesStream.serializeEvent(
+      lines.push(...serializeAnthropicEvent(
         {
           anthropic: {
             stopBlockIndex: index,
           },
         },
-        streamContext,
-        downstreamContext,
       ));
       continue;
     }
 
     if (blockType === 'redacted_thinking') {
-      lines.push(...anthropicMessagesStream.serializeEvent(
+      lines.push(...serializeAnthropicEvent(
         {
           anthropic: {
             startBlock: {
@@ -659,17 +658,13 @@ export function serializeAnthropicFinalAsStream(
             redactedThinkingData: asTrimmedString(block.data),
           },
         },
-        streamContext,
-        downstreamContext,
       ));
-      lines.push(...anthropicMessagesStream.serializeEvent(
+      lines.push(...serializeAnthropicEvent(
         {
           anthropic: {
             stopBlockIndex: index,
           },
         },
-        streamContext,
-        downstreamContext,
       ));
       continue;
     }
@@ -688,19 +683,17 @@ export function serializeAnthropicFinalAsStream(
         streamContext,
         downstreamContext,
       ));
-      lines.push(...anthropicMessagesStream.serializeEvent(
+      lines.push(...serializeAnthropicEvent(
         {
           anthropic: {
             stopBlockIndex: index,
           },
         },
-        streamContext,
-        downstreamContext,
       ));
       continue;
     }
 
-    lines.push(...anthropicMessagesStream.serializeEvent(
+    lines.push(...serializeAnthropicEvent(
       {
         anthropic: {
           startBlock: {
@@ -709,8 +702,6 @@ export function serializeAnthropicFinalAsStream(
           },
         },
       },
-      streamContext,
-      downstreamContext,
     ));
     if (typeof block.text === 'string') {
       lines.push(...anthropicMessagesStream.serializeEvent(
@@ -719,14 +710,12 @@ export function serializeAnthropicFinalAsStream(
         downstreamContext,
       ));
     }
-    lines.push(...anthropicMessagesStream.serializeEvent(
+    lines.push(...serializeAnthropicEvent(
       {
         anthropic: {
           stopBlockIndex: index,
         },
       },
-      streamContext,
-      downstreamContext,
     ));
   }
 
