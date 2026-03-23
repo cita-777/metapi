@@ -1109,6 +1109,70 @@ describe('convertResponsesBodyToOpenAiBody', () => {
     });
   });
 
+  it('derives Responses reasoning config from chat-style reasoning request fields', () => {
+    const result = convertOpenAiBodyToResponsesBody(
+      {
+        model: 'gpt-5',
+        messages: [{ role: 'user', content: 'hello' }],
+        reasoning_effort: 'high',
+        reasoning_budget: 2048,
+        reasoning_summary: 'detailed',
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result).toMatchObject({
+      model: 'gpt-5',
+      reasoning: {
+        effort: 'high',
+        budget_tokens: 2048,
+        summary: 'detailed',
+      },
+    });
+  });
+
+  it('preserves assistant reasoning history when converting OpenAI-compatible bodies to Responses input', () => {
+    const result = convertOpenAiBodyToResponsesBody(
+      {
+        model: 'gpt-5',
+        messages: [{
+          role: 'assistant',
+          content: '',
+          reasoning_content: 'plan quietly',
+          reasoning_signature: 'sig_1',
+          tool_calls: [{
+            id: 'call_1',
+            type: 'function',
+            function: {
+              name: 'Glob',
+              arguments: '{"pattern":"README*"}',
+            },
+          }],
+        }],
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result.input).toEqual([
+      {
+        type: 'reasoning',
+        summary: [{
+          type: 'summary_text',
+          text: 'plan quietly',
+        }],
+        encrypted_content: 'sig_1',
+      },
+      {
+        type: 'function_call',
+        call_id: 'call_1',
+        name: 'Glob',
+        arguments: '{"pattern":"README*"}',
+      },
+    ]);
+  });
+
   it('maps Responses text.format back into OpenAI response_format', () => {
     const result = convertResponsesBodyToOpenAiBody(
       {

@@ -179,6 +179,20 @@ function normalizeResponsesRequestFieldParity(
     normalized.text = textConfig;
   }
 
+  if (!isRecord(normalized.reasoning)) {
+    const reasoning: Record<string, unknown> = {};
+    const effort = normalizeOptionalTrimmedString((normalized as Record<string, unknown>).reasoning_effort);
+    if (effort) reasoning.effort = effort;
+    const budgetTokens = toFiniteIntegerLike((normalized as Record<string, unknown>).reasoning_budget);
+    if (budgetTokens !== null) reasoning.budget_tokens = budgetTokens;
+    const summary = normalizeOptionalTrimmedString((normalized as Record<string, unknown>).reasoning_summary);
+    if (summary) reasoning.summary = summary;
+    if (Object.keys(reasoning).length > 0) normalized.reasoning = reasoning;
+  }
+  delete normalized.reasoning_effort;
+  delete normalized.reasoning_budget;
+  delete normalized.reasoning_summary;
+
   return normalized;
 }
 
@@ -448,6 +462,28 @@ export function convertOpenAiBodyToResponsesBody(
     }
 
     if (role === 'assistant') {
+      const reasoningContent = extractTextContent(
+        item.reasoning_content
+        ?? item.reasoning
+        ?? item.thinking,
+      ).trim();
+      const reasoningSignature = asTrimmedString(item.reasoning_signature);
+      if (reasoningContent || reasoningSignature) {
+        const reasoningItem: Record<string, unknown> = {
+          type: 'reasoning',
+        };
+        if (reasoningContent) {
+          reasoningItem.summary = [{
+            type: 'summary_text',
+            text: reasoningContent,
+          }];
+        }
+        if (reasoningSignature) {
+          reasoningItem.encrypted_content = reasoningSignature;
+        }
+        inputItems.push(reasoningItem);
+      }
+
       const normalizedContent = normalizeResponsesMessageContent('assistant', item.content);
       if (normalizedContent.length > 0) {
         inputItems.push({
@@ -528,6 +564,9 @@ export function convertOpenAiBodyToResponsesBody(
 
   if (openaiBody.metadata !== undefined) body.metadata = openaiBody.metadata;
   if (openaiBody.reasoning !== undefined) body.reasoning = openaiBody.reasoning;
+  if (openaiBody.reasoning_effort !== undefined) body.reasoning_effort = openaiBody.reasoning_effort;
+  if (openaiBody.reasoning_budget !== undefined) body.reasoning_budget = openaiBody.reasoning_budget;
+  if (openaiBody.reasoning_summary !== undefined) body.reasoning_summary = openaiBody.reasoning_summary;
   if (openaiBody.parallel_tool_calls !== undefined) body.parallel_tool_calls = openaiBody.parallel_tool_calls;
   if (openaiBody.tools !== undefined) body.tools = convertOpenAiToolsToResponses(openaiBody.tools, toolNameMap);
   if (openaiBody.safety_identifier !== undefined) body.safety_identifier = openaiBody.safety_identifier;
