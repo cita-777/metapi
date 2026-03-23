@@ -241,9 +241,12 @@ function normalizeOpenAiToolArguments(raw: unknown): string {
   return '';
 }
 
-function normalizeToolOutput(raw: unknown): string {
-  const text = extractTextContent(raw).trim();
-  if (text) return text;
+function normalizeToolOutput(raw: unknown): string | Array<string | Record<string, unknown>> {
+  const normalizedContent = toOpenAiMessageContent(raw);
+  const hasNormalizedContent = typeof normalizedContent === 'string'
+    ? normalizedContent.trim().length > 0
+    : Array.isArray(normalizedContent) && normalizedContent.length > 0;
+  if (hasNormalizedContent) return normalizedContent;
   if (raw === undefined || raw === null) return '';
   if (typeof raw === 'string') return raw;
   if (typeof raw === 'number' || typeof raw === 'boolean') return String(raw);
@@ -858,10 +861,13 @@ export function convertResponsesBodyToOpenAiBody(
       : Array.isArray(content) && content.length > 0;
     if (!hasContent) return;
 
-    messages.push({
+    const message: Record<string, unknown> = {
       role: normalizedRole,
       content,
-    });
+    };
+    const phase = asTrimmedString(item.phase);
+    if (phase) message.phase = phase;
+    messages.push(message);
   };
 
   if (typeof input === 'string') {
