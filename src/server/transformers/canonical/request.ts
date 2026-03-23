@@ -222,8 +222,8 @@ function parseToolChoice(rawToolChoice: unknown): CanonicalToolChoice | undefine
 function parseTools(rawTools: unknown): CanonicalTool[] | undefined {
   if (!Array.isArray(rawTools)) return undefined;
 
-  const tools = rawTools
-    .flatMap((item) => {
+  const tools: CanonicalTool[] = rawTools
+    .flatMap((item): CanonicalTool[] => {
       if (!isRecord(item)) return [];
       const itemType = asTrimmedString(item.type).toLowerCase();
 

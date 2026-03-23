@@ -259,11 +259,14 @@ function normalizeToolMessageContent(raw: unknown): string | Array<Record<string
   if (isRecord(raw)) {
     const type = asTrimmedString(raw.type).toLowerCase();
     if (type === 'image_url' || type === 'input_image') {
-      return toAnthropicImageBlock(raw) ?? '';
+      const imageBlock = toAnthropicImageBlock(raw);
+      return imageBlock ? [imageBlock] : '';
     }
     if (type === 'file' || type === 'input_file') {
       const fileBlock = normalizeInputFileBlock(raw);
-      return fileBlock ? [toAnthropicDocumentBlock(fileBlock)] : '';
+      if (!fileBlock) return '';
+      const documentBlock = toAnthropicDocumentBlock(fileBlock);
+      return documentBlock ? [documentBlock] : '';
     }
     const text = normalizeTextCandidate(raw);
     return text || safeJsonStringify(raw);

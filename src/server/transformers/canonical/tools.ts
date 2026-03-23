@@ -26,3 +26,13 @@ export type CanonicalToolChoice =
     type: 'raw';
     value: string | Record<string, unknown>;
   };
+
+export function isCanonicalFunctionTool(tool: CanonicalTool): tool is CanonicalFunctionTool {
+  return 'name' in tool;
+}
+
+export function isCanonicalNamedToolChoice(
+  toolChoice: CanonicalToolChoice | undefined,
+): toolChoice is { type: 'tool'; name: string } {
+  return !!toolChoice && typeof toolChoice === 'object' && toolChoice.type === 'tool';
+}
