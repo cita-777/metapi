@@ -215,6 +215,31 @@ describe('canonical request helpers', () => {
     });
   });
 
+  it('preserves extra fields on tool-shaped raw tool_choice objects', () => {
+    const request = canonicalRequestFromOpenAiBody({
+      body: {
+        model: 'gpt-5',
+        tool_choice: {
+          type: 'tool',
+          name: 'browser',
+          mode: 'required',
+          disable_parallel_tool_use: true,
+        },
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+      surface: 'openai-responses',
+    });
+
+    const body = canonicalRequestToOpenAiChatBody(request);
+
+    expect(body.tool_choice).toEqual({
+      type: 'tool',
+      name: 'browser',
+      mode: 'required',
+      disable_parallel_tool_use: true,
+    });
+  });
+
   it('preserves structured tool outputs and top-level attachments through canonical round-trips', () => {
     const request = createCanonicalRequestEnvelope({
       requestedModel: 'gpt-5',
@@ -322,5 +347,29 @@ describe('canonical request helpers', () => {
         content: 'hello',
       },
     ]);
+  });
+
+  it('writes raw canonical tool types back into OpenAI-compatible bodies when the raw payload omits the discriminator', () => {
+    const request = createCanonicalRequestEnvelope({
+      requestedModel: 'gpt-5',
+      surface: 'openai-responses',
+      tools: [{
+        type: 'custom',
+        raw: {
+          name: 'browser',
+          description: 'browse the web',
+          format: { type: 'text' },
+        },
+      }],
+    });
+
+    const body = canonicalRequestToOpenAiChatBody(request);
+
+    expect(body.tools).toEqual([{
+      type: 'custom',
+      name: 'browser',
+      description: 'browse the web',
+      format: { type: 'text' },
+    }]);
   });
 });

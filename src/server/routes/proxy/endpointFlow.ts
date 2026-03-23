@@ -76,12 +76,6 @@ type ExecuteEndpointFlowInput = {
   onAttemptSuccess?: (ctx: EndpointAttemptSuccessContext) => void | Promise<void>;
 };
 
-function buildAbsoluteUrl(base: string, path: string): string {
-  const normalizedBase = base.replace(/\/+$/, '');
-  const normalizedPath = path.replace(/^\/+/, '');
-  return normalizedPath ? `${normalizedBase}/${normalizedPath}` : normalizedBase;
-}
-
 async function runEndpointFlowHook<T>(
   hook: ((ctx: T) => void | Promise<void>) | undefined,
   ctx: T,
@@ -113,7 +107,7 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
     const request = input.buildRequest(endpoint, endpointIndex);
     const defaultTarget = buildUpstreamUrl(input.siteUrl, request.path);
     const targetUrl = input.proxyUrl
-      ? buildAbsoluteUrl(input.proxyUrl, request.path)
+      ? buildUpstreamUrl(input.proxyUrl, request.path)
       : defaultTarget;
 
     let response = input.dispatchRequest
@@ -155,7 +149,7 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
         const recoveredRequest = recovered.request ?? baseContext.request;
         const recoveredTargetUrl = recovered.targetUrl ?? (
           input.proxyUrl
-            ? buildAbsoluteUrl(input.proxyUrl, recovered.upstreamPath)
+            ? buildUpstreamUrl(input.proxyUrl, recovered.upstreamPath)
             : buildUpstreamUrl(input.siteUrl, recovered.upstreamPath)
         );
         await runEndpointFlowHook(input.onAttemptSuccess, {

@@ -215,6 +215,11 @@ function parseToolChoice(rawToolChoice: unknown): CanonicalToolChoice | undefine
     rawToolChoice.name
     ?? (isRecord(rawToolChoice.tool) ? rawToolChoice.tool.name : undefined),
   );
+  const toolChoiceKeys = Object.keys(rawToolChoice);
+  const hasExtraToolFields = toolChoiceKeys.some((key) => key !== 'type' && key !== 'name' && key !== 'tool');
+  if (hasExtraToolFields) {
+    return { type: 'raw', value: cloneJsonValue(rawToolChoice) as Record<string, unknown> };
+  }
   if (name) return { type: 'tool', name };
   return { type: 'raw', value: cloneJsonValue(rawToolChoice) as Record<string, unknown> };
 }
@@ -561,7 +566,11 @@ export function canonicalRequestToOpenAiChatBody(
   if (Array.isArray(request.tools) && request.tools.length > 0) {
     body.tools = request.tools.map((tool) => {
       if ('raw' in tool) {
-        return cloneJsonValue(tool.raw);
+        const raw = cloneJsonValue(tool.raw) as Record<string, unknown>;
+        if (typeof raw.type !== 'string' || raw.type.trim().length === 0) {
+          raw.type = tool.type;
+        }
+        return raw;
       }
       return {
         type: 'function',
