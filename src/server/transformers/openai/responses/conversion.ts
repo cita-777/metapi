@@ -737,6 +737,14 @@ function convertResponsesToolChoiceToOpenAi(rawToolChoice: unknown): unknown {
   if (!isRecord(rawToolChoice)) return rawToolChoice;
 
   const type = asTrimmedString(rawToolChoice.type).toLowerCase();
+  if (type === 'tool') {
+    const name = asTrimmedString(rawToolChoice.name);
+    if (!name) return 'required';
+    return {
+      type: 'function',
+      function: { name },
+    };
+  }
   if (type === 'function') {
     if (isRecord(rawToolChoice.function) && asTrimmedString(rawToolChoice.function.name)) {
       return rawToolChoice;

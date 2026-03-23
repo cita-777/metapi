@@ -229,6 +229,7 @@ function parseTools(rawTools: unknown): CanonicalTool[] | undefined {
           ...(asTrimmedString(item.function.description)
             ? { description: asTrimmedString(item.function.description) }
             : {}),
+          ...(typeof item.function.strict === 'boolean' ? { strict: item.function.strict } : {}),
           ...(isRecord(item.function.parameters) ? { inputSchema: cloneJsonValue(item.function.parameters) } : {}),
         }];
       }
@@ -239,6 +240,7 @@ function parseTools(rawTools: unknown): CanonicalTool[] | undefined {
           ...(asTrimmedString(item.description)
             ? { description: asTrimmedString(item.description) }
             : {}),
+          ...(typeof item.strict === 'boolean' ? { strict: item.strict } : {}),
           ...(isRecord(item.input_schema)
             ? { inputSchema: cloneJsonValue(item.input_schema) }
             : (isRecord(item.inputSchema) ? { inputSchema: cloneJsonValue(item.inputSchema) } : {})),
@@ -523,6 +525,7 @@ export function canonicalRequestToOpenAiChatBody(
       function: {
         name: tool.name,
         ...(tool.description ? { description: tool.description } : {}),
+        ...(typeof tool.strict === 'boolean' ? { strict: tool.strict } : {}),
         parameters: cloneJsonValue(tool.inputSchema ?? { type: 'object' }),
       },
     }));

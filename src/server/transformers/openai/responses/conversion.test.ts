@@ -1159,6 +1159,52 @@ describe('convertResponsesBodyToOpenAiBody', () => {
     }
   });
 
+  it('maps native tool choices and strict function tools into OpenAI-compatible fallback bodies', () => {
+    const result = convertResponsesBodyToOpenAiBody(
+      {
+        model: 'gpt-5',
+        input: 'hello',
+        tools: [{
+          type: 'function',
+          name: 'lookup_weather',
+          parameters: {
+            type: 'object',
+            properties: {
+              city: { type: 'string' },
+            },
+          },
+          strict: true,
+        }],
+        tool_choice: {
+          type: 'tool',
+          name: 'lookup_weather',
+        },
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result.tools).toEqual([{
+      type: 'function',
+      function: {
+        name: 'lookup_weather',
+        parameters: {
+          type: 'object',
+          properties: {
+            city: { type: 'string' },
+          },
+        },
+        strict: true,
+      },
+    }]);
+    expect(result.tool_choice).toEqual({
+      type: 'function',
+      function: {
+        name: 'lookup_weather',
+      },
+    });
+  });
+
   it('derives Responses reasoning config from chat-style reasoning request fields', () => {
     const result = convertOpenAiBodyToResponsesBody(
       {

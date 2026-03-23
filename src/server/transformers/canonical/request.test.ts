@@ -61,6 +61,7 @@ describe('canonical request helpers', () => {
           function: {
             name: 'Glob',
             description: 'Search files',
+            strict: true,
             parameters: {
               type: 'object',
               properties: {
@@ -87,6 +88,7 @@ describe('canonical request helpers', () => {
       tools: [{
         name: 'Glob',
         description: 'Search files',
+        strict: true,
         inputSchema: {
           type: 'object',
           properties: {
@@ -155,6 +157,7 @@ describe('canonical request helpers', () => {
       },
       tools: [{
         name: 'Glob',
+        strict: true,
         inputSchema: {
           type: 'object',
           properties: {
@@ -177,6 +180,7 @@ describe('canonical request helpers', () => {
         type: 'function',
         function: {
           name: 'Glob',
+          strict: true,
           parameters: {
             type: 'object',
             properties: {
