@@ -113,7 +113,7 @@ describe('TokenRoutes cached snapshot load', () => {
   });
 
   it('shows cached probabilities immediately from getRoutes snapshot data', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(

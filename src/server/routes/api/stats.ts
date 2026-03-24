@@ -1,11 +1,8 @@
 ﻿import { FastifyInstance } from 'fastify';
 import { db, schema } from '../../db/index.js';
 import { and, desc, eq, gte, lt, sql } from 'drizzle-orm';
-import {
-  refreshModelsForAccount,
-  refreshModelsAndRebuildRoutes,
-  rebuildTokenRoutesFromAvailability,
-} from '../../services/modelService.js';
+import { refreshModelsForAccount } from '../../services/modelService.js';
+import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { buildModelAnalysis } from '../../services/modelAnalysisService.js';
 import { fallbackTokenCost, fetchModelPricingCatalog } from '../../services/modelPricingService.js';
 import { getUpstreamModelDescriptionsCached } from '../../services/upstreamModelDescriptionService.js';
@@ -847,7 +844,7 @@ export async function statsRoutes(app: FastifyInstance) {
           },
           failureMessage: (currentTask) => `模型广场刷新失败：${currentTask.error || 'unknown error'}`,
         },
-        async () => refreshModelsAndRebuildRoutes(),
+        async () => routeRefreshWorkflow.refreshModelsAndRebuildRoutes(),
       );
       refreshQueued = !reused;
       refreshReused = reused;
@@ -1390,7 +1387,7 @@ export async function statsRoutes(app: FastifyInstance) {
     }
 
     const refresh = await refreshModelsForAccount(accountId);
-    const rebuild = await rebuildTokenRoutesFromAvailability();
+    const rebuild = await routeRefreshWorkflow.rebuildRoutesOnly();
     return { success: true, refresh, rebuild };
   });
 

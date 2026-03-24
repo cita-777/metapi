@@ -2,6 +2,10 @@ import type { ProxyResourceOwner } from '../middleware/auth.js';
 import { getProxyFileByPublicIdForOwner, LOCAL_PROXY_FILE_ID_PREFIX } from './proxyFileStore.js';
 import { ensureBase64DataUrl } from '../transformers/shared/inputFile.js';
 import { summarizeConversationFileInputsInOpenAiBody } from '../proxy-core/capabilities/conversationFileCapabilities.js';
+import {
+  isSupportedConversationFileMimeType,
+  resolveConversationFileMimeType,
+} from '../../shared/conversationFileTypes.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -23,31 +27,8 @@ function cloneJsonValue<T>(value: T): T {
   return value;
 }
 
-function inferMimeTypeFromFilename(filename: string): string {
-  const normalized = filename.toLowerCase();
-  if (normalized.endsWith('.pdf')) return 'application/pdf';
-  if (normalized.endsWith('.txt')) return 'text/plain';
-  if (normalized.endsWith('.md') || normalized.endsWith('.markdown')) return 'text/markdown';
-  if (normalized.endsWith('.json')) return 'application/json';
-  if (normalized.endsWith('.png')) return 'image/png';
-  if (normalized.endsWith('.jpg') || normalized.endsWith('.jpeg')) return 'image/jpeg';
-  if (normalized.endsWith('.gif')) return 'image/gif';
-  if (normalized.endsWith('.webp')) return 'image/webp';
-  if (normalized.endsWith('.wav')) return 'audio/wav';
-  if (normalized.endsWith('.mp3')) return 'audio/mpeg';
-  if (normalized.endsWith('.m4a')) return 'audio/mp4';
-  if (normalized.endsWith('.ogg')) return 'audio/ogg';
-  if (normalized.endsWith('.webm')) return 'audio/webm';
-  return 'application/octet-stream';
-}
-
 function isSupportedMimeType(mimeType: string): boolean {
-  return mimeType === 'application/pdf'
-    || mimeType === 'text/plain'
-    || mimeType === 'text/markdown'
-    || mimeType === 'application/json'
-    || mimeType.startsWith('image/')
-    || mimeType.startsWith('audio/');
+  return isSupportedConversationFileMimeType(mimeType);
 }
 
 function audioFormatFromMimeType(mimeType: string, filename: string): string {
@@ -118,7 +99,7 @@ async function resolveInputFileLike(fileLike: InputFileLike, owner: ProxyResourc
 }> {
   if (fileLike.fileData) {
     const filename = fileLike.filename || 'upload.bin';
-    const mimeType = fileLike.mimeType || inferMimeTypeFromFilename(filename);
+    const mimeType = resolveConversationFileMimeType(fileLike.mimeType, filename);
     if (!isSupportedMimeType(mimeType)) {
       throw new ProxyInputFileResolutionError(400, `unsupported file mime type: ${mimeType}`);
     }
@@ -135,12 +116,14 @@ async function resolveInputFileLike(fileLike: InputFileLike, owner: ProxyResourc
     if (!stored) {
       throw new ProxyInputFileResolutionError(404, `file not found: ${fileLike.fileId}`, 'not_found_error');
     }
-    const mimeType = fileLike.mimeType || stored.mimeType || inferMimeTypeFromFilename(stored.filename);
+    const mimeType = resolveConversationFileMimeType(
+      fileLike.mimeType || stored.mimeType,
+      stored.filename,
+    );
     if (!isSupportedMimeType(mimeType)) {
       throw new ProxyInputFileResolutionError(400, `unsupported file mime type: ${mimeType}`);
     }
     return {
-      fileId: fileLike.fileId,
       filename: fileLike.filename || stored.filename,
       fileData: stored.contentBase64,
       mimeType,
@@ -148,7 +131,7 @@ async function resolveInputFileLike(fileLike: InputFileLike, owner: ProxyResourc
   }
 
   const filename = fileLike.filename || 'upload.bin';
-  const mimeType = fileLike.mimeType || inferMimeTypeFromFilename(filename);
+  const mimeType = resolveConversationFileMimeType(fileLike.mimeType, filename);
   if (!fileLike.fileData) {
     throw new ProxyInputFileResolutionError(400, `file_data is required for inline file block: ${filename}`);
   }
@@ -237,6 +220,36 @@ async function resolveResponsesMessageContent(content: unknown, owner: ProxyReso
     if (!fileLike || !shouldResolveInlineFileLike(fileLike)) return cloneJsonValue(item);
     return toResponsesResolvedBlock(await resolveInputFileLike(fileLike, owner));
   }));
+}
+
+export async function inlineLocalInputFileReferences(
+  value: unknown,
+  owner: ProxyResourceOwner,
+): Promise<unknown> {
+  if (Array.isArray(value)) {
+    return Promise.all(value.map((item) => inlineLocalInputFileReferences(item, owner)));
+  }
+
+  if (!isRecord(value)) return cloneJsonValue(value);
+
+  const fileLike = normalizeInputFileLike(value);
+  if (fileLike && shouldResolveInlineFileLike(fileLike)) {
+    const resolved = await resolveInputFileLike(fileLike, owner);
+    const type = asTrimmedString(value.type).toLowerCase();
+    if (type === 'file') {
+      return toOpenAiResolvedBlock(resolved);
+    }
+    if (type === 'input_file') {
+      return toResponsesResolvedBlock(resolved);
+    }
+  }
+
+  const entries = await Promise.all(
+    Object.entries(value).map(async ([key, entryValue]) => (
+      [key, await inlineLocalInputFileReferences(entryValue, owner)] as const
+    )),
+  );
+  return Object.fromEntries(entries);
 }
 
 export async function resolveOpenAiBodyInputFiles(

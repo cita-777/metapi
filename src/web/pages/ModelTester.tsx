@@ -41,18 +41,22 @@ import {
   type DebugTab,
   type ModelTesterInputs,
   type ModelTesterModeState,
-  type ParameterEnabled,
-  type PlaygroundMode,
-  type PlaygroundMultipartFile,
-  type TestTargetFormat,
-  type TestChatPayload,
-} from './helpers/modelTesterSession.js';
+    type ParameterEnabled,
+    type PlaygroundMode,
+    type PlaygroundProtocol,
+    type PlaygroundMultipartFile,
+    type ProxyTestEnvelope,
+    type TestTargetFormat,
+    type TestChatPayload,
+  } from './helpers/modelTesterSession.js';
 import {
   buildConversationFileAccept,
   buildConversationFileHint,
   isConversationUploadedFileSupported,
   resolveConversationFileCapability,
 } from './helpers/conversationFileCapabilities.js';
+import ConversationComposer from './model-tester/ConversationComposer.js';
+import DebugPanel from './model-tester/DebugPanel.js';
 import ModernSelect from '../components/ModernSelect.js';
 import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import { useIsMobile } from '../components/useIsMobile.js';
@@ -2858,163 +2862,25 @@ export default function ModelTester() {
             )}
 
             {inputs.mode === 'conversation' ? (
-              <div style={{ display: 'flex', gap: 10, alignItems: isMobile ? 'stretch' : 'flex-end', flexDirection: isMobile ? 'column' : 'row' }}>
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <div style={{
-                    padding: '10px 12px',
-                    borderRadius: 'var(--radius-md)',
-                    border: '1px solid var(--color-border-light)',
-                    background: 'var(--color-bg-subtle)',
-                  }}>
-                    <input
-                      ref={conversationFileInputRef}
-                      type="file"
-                      multiple
-                      accept={conversationFileAccept}
-                      style={{ display: 'none' }}
-                      onChange={(event) => {
-                        void handleConversationFilesChange(event.target.files);
-                        event.target.value = '';
-                      }}
-                    />
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                      <button
-                        type="button"
-                        className="btn btn-ghost"
-                        style={{ border: '1px solid var(--color-border)', padding: '6px 10px' }}
-                        disabled={sending || customRequestMode || !conversationFileSupported}
-                        onClick={() => conversationFileInputRef.current?.click()}
-                      >
-                        添加文件
-                      </button>
-                      <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
-                        {customRequestMode
-                          ? '自定义请求模式不会自动上传这些附件；关闭自定义模式后可走标准 /v1/files 链路。'
-                          : !conversationFileSupported
-                            ? (conversationFileCapability.reason || '当前协议暂不支持会话附件注入。')
-                            : conversationFileHint}
-                      </span>
-                    </div>
-                    {conversationFiles.length > 0 && (
-                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
-                        {conversationFiles.map((file) => {
-                          const statusText = file.status === 'uploading'
-                            ? '上传中'
-                            : file.status === 'uploaded'
-                              ? '已上传'
-                              : file.status === 'error'
-                                ? '失败'
-                                : '待上传';
-                          const statusColor = file.status === 'error'
-                            ? 'var(--color-danger)'
-                            : file.status === 'uploaded'
-                              ? 'var(--color-success)'
-                              : file.status === 'uploading'
-                                ? 'var(--color-warning)'
-                                : 'var(--color-text-muted)';
-
-                          return (
-                            <span
-                              key={file.localId}
-                              style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: 6,
-                                maxWidth: '100%',
-                                padding: '6px 10px',
-                                borderRadius: 999,
-                                border: '1px solid var(--color-border-light)',
-                                background: 'var(--color-bg-card)',
-                                fontSize: 11,
-                              }}
-                              title={file.errorMessage || file.fileId || file.name}
-                            >
-                              <span>📎</span>
-                              <span style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {file.name}
-                              </span>
-                              <span style={{ color: statusColor }}>· {statusText}</span>
-                              {!sending && (
-                                <button
-                                  type="button"
-                                  onClick={() => removeConversationFile(file.localId)}
-                                  style={{
-                                    border: 'none',
-                                    background: 'transparent',
-                                    color: 'var(--color-text-muted)',
-                                    cursor: 'pointer',
-                                    padding: 0,
-                                  }}
-                                >
-                                  ×
-                                </button>
-                              )}
-                            </span>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-
-                  <textarea
-                    value={input}
-                    onChange={(event) => setInput(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' && !event.shiftKey) {
-                        event.preventDefault();
-                        if (sending) {
-                          void stopGenerating();
-                          return;
-                        }
-                        void send();
-                      }
-                    }}
-                    placeholder={customRequestMode
-                      ? '自定义模式下输入可选。回车发送时将优先使用右侧自定义请求体。'
-                      : '输入提示词，或只上传文件后直接发送…（回车发送，Shift+回车换行）'}
-                    rows={3}
-                    style={{ ...inputBaseStyle, resize: 'none', flex: 1 }}
-                  />
-                </div>
-                <button
-                  onClick={() => {
-                    if (sending) {
-                      void stopGenerating();
-                      return;
-                    }
-                    void send();
-                  }}
-                  disabled={sending ? false : !canSend}
-                  className="btn btn-primary"
-                  style={{
-                    height: isMobile ? 50 : 78,
-                    padding: isMobile ? '0 16px' : '0 20px',
-                    fontSize: 14,
-                    fontWeight: 600,
-                    display: 'flex',
-                    flexDirection: isMobile ? 'row' : 'column',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 4,
-                    minWidth: isMobile ? '100%' : 88,
-                    width: isMobile ? '100%' : 'auto',
-                  }}
-                >
-                  {sending ? (
-                    <>
-                      <span style={{ fontSize: 18, lineHeight: 1 }}>■</span>
-                      <span style={{ fontSize: 11 }}>停止</span>
-                    </>
-                  ) : (
-                    <>
-                      <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                      </svg>
-                      <span style={{ fontSize: 11 }}>发送</span>
-                    </>
-                  )}
-                </button>
-              </div>
+              <ConversationComposer
+                isMobile={isMobile}
+                sending={sending}
+                customRequestMode={customRequestMode}
+                conversationFileCapability={conversationFileCapability}
+                conversationFileSupported={conversationFileSupported}
+                conversationFileAccept={conversationFileAccept}
+                conversationFileHint={conversationFileHint}
+                conversationFiles={conversationFiles}
+                conversationFileInputRef={conversationFileInputRef}
+                input={input}
+                canSend={canSend}
+                inputBaseStyle={inputBaseStyle}
+                onInputChange={setInput}
+                onFilesChange={handleConversationFilesChange}
+                onRemoveConversationFile={removeConversationFile}
+                onSend={send}
+                onStop={stopGenerating}
+              />
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {inputs.mode === 'embeddings' && (
@@ -3104,102 +2970,15 @@ export default function ModelTester() {
           </div>
         </div>
 
-        {debugPanelPresence.shouldRender && (
-          <div className={`card panel-presence ${debugPanelPresence.isVisible ? '' : 'is-closing'}`.trim()} style={{ padding: 14, minHeight: isMobile ? 'auto' : 680, maxHeight: isMobile ? 'none' : 740, display: 'flex', flexDirection: 'column', order: isMobile ? 3 : 0 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-              <h3 style={{ margin: 0, fontSize: 15 }}>调试</h3>
-              <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
-                {debugTimestamp ? new Date(debugTimestamp).toLocaleString() : '--'}
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-              <button
-                className="btn btn-ghost"
-                style={{
-                  border: activeDebugTab === DEBUG_TABS.PREVIEW ? '1px solid var(--color-primary)' : '1px solid var(--color-border)',
-                  color: activeDebugTab === DEBUG_TABS.PREVIEW ? 'var(--color-primary)' : 'var(--color-text-secondary)',
-                }}
-                onClick={() => setActiveDebugTab(DEBUG_TABS.PREVIEW)}
-              >
-                预览
-              </button>
-              <button
-                className="btn btn-ghost"
-                style={{
-                  border: activeDebugTab === DEBUG_TABS.REQUEST ? '1px solid var(--color-primary)' : '1px solid var(--color-border)',
-                  color: activeDebugTab === DEBUG_TABS.REQUEST ? 'var(--color-primary)' : 'var(--color-text-secondary)',
-                }}
-                onClick={() => setActiveDebugTab(DEBUG_TABS.REQUEST)}
-              >
-                请求
-              </button>
-              <button
-                className="btn btn-ghost"
-                style={{
-                  border: activeDebugTab === DEBUG_TABS.RESPONSE ? '1px solid var(--color-primary)' : '1px solid var(--color-border)',
-                  color: activeDebugTab === DEBUG_TABS.RESPONSE ? 'var(--color-primary)' : 'var(--color-text-secondary)',
-                }}
-                onClick={() => setActiveDebugTab(DEBUG_TABS.RESPONSE)}
-              >
-                响应
-              </button>
-            </div>
-
-            <div style={{ flex: 1, overflow: 'hidden', border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg)' }}>
-              <pre style={{
-                margin: 0,
-                padding: 12,
-                fontSize: 12,
-                lineHeight: 1.55,
-                fontFamily: 'var(--font-mono)',
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word',
-                overflow: 'auto',
-                maxHeight: '100%',
-              }}>
-                {debugTabContent || '// 暂无数据'}
-              </pre>
-            </div>
-
-            <div style={{ marginTop: 10, fontSize: 12, fontWeight: 600 }}>时间线</div>
-            <div style={{
-              marginTop: 6,
-              border: '1px solid var(--color-border-light)',
-              borderRadius: 'var(--radius-sm)',
-              padding: 8,
-              minHeight: 120,
-              maxHeight: 170,
-              overflowY: 'auto',
-              background: 'var(--color-bg)',
-            }}>
-              {debugTimeline.length === 0 ? (
-                <div style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>暂无事件。</div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {debugTimeline.map((item, index) => (
-                    <div key={`${item.at}-${index}`} style={{ fontSize: 11, color: 'var(--color-text-secondary)', lineHeight: 1.45 }}>
-                      <span style={{
-                        display: 'inline-block',
-                        minWidth: 40,
-                        marginRight: 6,
-                        color: item.level === 'error' ? 'var(--color-danger)' : item.level === 'warn' ? 'var(--color-warning)' : 'var(--color-primary)',
-                        fontWeight: 700,
-                        textTransform: 'uppercase',
-                      }}>
-                        {item.level}
-                      </span>
-                      <span style={{ color: 'var(--color-text-muted)', marginRight: 6 }}>
-                        {new Date(item.at).toLocaleTimeString()}
-                      </span>
-                      <span>{item.text}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+        <DebugPanel
+          presence={debugPanelPresence}
+          isMobile={isMobile}
+          debugTimestamp={debugTimestamp}
+          activeDebugTab={activeDebugTab}
+          onTabChange={setActiveDebugTab}
+          debugTabContent={debugTabContent}
+          debugTimeline={debugTimeline}
+        />
       </div>
     </div>
   );

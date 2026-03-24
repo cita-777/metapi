@@ -316,4 +316,37 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
     };
     expect(parsedCleared.sub2apiAuth).toBeUndefined();
   });
+
+  it('does not refresh models for pin-only account edits', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Pinned Site',
+      url: 'https://pinned.example.com',
+      platform: 'new-api',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'pinned-user',
+      accessToken: 'access-token',
+      status: 'active',
+      isPinned: false,
+      sortOrder: 0,
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/accounts/${account.id}`,
+      payload: {
+        isPinned: true,
+        sortOrder: 5,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(getModelsMock).not.toHaveBeenCalled();
+    expect(verifyTokenMock).not.toHaveBeenCalled();
+
+    const updated = await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();
+    expect(updated?.isPinned).toBe(true);
+    expect(updated?.sortOrder).toBe(5);
+  });
 });

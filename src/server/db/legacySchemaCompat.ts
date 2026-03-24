@@ -1,13 +1,19 @@
 import {
+  ACCOUNT_TOKEN_COLUMN_COMPATIBILITY_SPECS,
   ensureAccountTokenSchemaCompatibility,
   type AccountTokenSchemaInspector,
 } from './accountTokenSchemaCompatibility.js';
 import {
   ensureProxyFileSchemaCompatibility,
+  PROXY_FILE_COLUMN_COMPATIBILITY_SPECS,
+  PROXY_FILE_INDEX_COMPATIBILITY_SPECS,
+  PROXY_FILE_TABLE_COMPATIBILITY_SPECS,
   type ProxyFileSchemaInspector,
 } from './proxyFileSchemaCompatibility.js';
 import {
   ensureRouteGroupingSchemaCompatibility,
+  ROUTE_GROUPING_COLUMN_COMPATIBILITY_SPECS,
+  ROUTE_GROUPING_TABLE_COMPATIBILITY_SPECS,
   type RouteGroupingSchemaInspector,
 } from './routeGroupingSchemaCompatibility.js';
 import {
@@ -17,6 +23,8 @@ import {
 } from './sharedIndexSchemaCompatibility.js';
 import {
   ensureSiteSchemaCompatibility,
+  SITE_COLUMN_COMPATIBILITY_SPECS,
+  SITE_TABLE_COMPATIBILITY_SPECS,
   type SiteSchemaInspector,
 } from './siteSchemaCompatibility.js';
 
@@ -29,36 +37,16 @@ export interface LegacySchemaCompatInspector extends
   AccountTokenSchemaInspector,
   SharedIndexSchemaInspector {}
 
-const LEGACY_COMPAT_TABLES = new Set([
+const BOOTSTRAP_OWNED_LEGACY_TABLES = [
   'account_tokens',
   'token_model_availability',
-  'route_group_sources',
   'proxy_video_tasks',
-  'proxy_files',
   'downstream_api_keys',
-  'site_disabled_models',
-]);
+];
 
-const LEGACY_COMPAT_COLUMNS = new Set([
+const BOOTSTRAP_OWNED_LEGACY_COLUMNS = [
   'sites.status',
-  'sites.proxy_url',
-  'sites.use_system_proxy',
-  'sites.custom_headers',
-  'sites.external_checkin_url',
-  'sites.global_weight',
-  'account_tokens.token_group',
-  'account_tokens.value_status',
-  'token_routes.display_name',
-  'token_routes.display_icon',
-  'token_routes.route_mode',
-  'token_routes.decision_snapshot',
-  'token_routes.decision_refreshed_at',
-  'token_routes.routing_strategy',
   'route_channels.token_id',
-  'route_channels.source_model',
-  'route_channels.last_selected_at',
-  'route_channels.consecutive_fail_count',
-  'route_channels.cooldown_level',
   'proxy_video_tasks.status_snapshot',
   'proxy_video_tasks.upstream_response_meta',
   'proxy_video_tasks.last_upstream_status',
@@ -71,16 +59,12 @@ const LEGACY_COMPAT_COLUMNS = new Set([
   'proxy_logs.client_app_name',
   'proxy_logs.client_confidence',
   'proxy_logs.downstream_api_key_id',
-]);
+];
 
-const LEGACY_COMPAT_INDEXES = new Set([
-  'site_disabled_models_site_model_unique',
-  'site_disabled_models_site_id_idx',
+const BOOTSTRAP_OWNED_LEGACY_INDEXES = [
   'token_model_availability_token_model_unique',
   'proxy_video_tasks_public_id_unique',
   'proxy_video_tasks_upstream_video_id_idx',
-  'proxy_files_public_id_unique',
-  'proxy_files_owner_lookup_idx',
   'downstream_api_keys_key_unique',
   'downstream_api_keys_name_idx',
   'downstream_api_keys_enabled_idx',
@@ -88,23 +72,53 @@ const LEGACY_COMPAT_INDEXES = new Set([
   'proxy_logs_client_app_id_created_at_idx',
   'proxy_logs_client_family_created_at_idx',
   'proxy_logs_downstream_api_key_created_at_idx',
-  'route_group_sources_group_source_unique',
-  'route_group_sources_source_route_id_idx',
-  ...SHARED_INDEX_COMPATIBILITY_SPECS.map((spec) => spec.indexName),
-]);
+];
 
 function normalizeSqlText(sqlText: string): string {
   return sqlText.trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
-const LEGACY_COMPAT_UPDATES = new Set([
-  'UPDATE sites SET use_system_proxy = 0 WHERE use_system_proxy IS NULL;',
-  'UPDATE `sites` SET `use_system_proxy` = FALSE WHERE `use_system_proxy` IS NULL',
-  'UPDATE "sites" SET "use_system_proxy" = FALSE WHERE "use_system_proxy" IS NULL',
-  'UPDATE sites SET global_weight = 1 WHERE global_weight IS NULL OR global_weight <= 0;',
-  'UPDATE `sites` SET `global_weight` = 1 WHERE `global_weight` IS NULL OR `global_weight` <= 0',
-  'UPDATE "sites" SET "global_weight" = 1 WHERE "global_weight" IS NULL OR "global_weight" <= 0',
-].map((sqlText) => normalizeSqlText(sqlText)));
+function extractIndexName(sqlText: string): string | null {
+  const match = normalizeSqlText(sqlText).match(
+    /^create (?:unique )?index(?: if not exists)? [`"]?([a-z0-9_]+)[`"]?/i,
+  );
+  return match?.[1] ?? null;
+}
+
+const LEGACY_COMPAT_TABLES = new Set([
+  ...SITE_TABLE_COMPATIBILITY_SPECS.map((spec) => spec.table),
+  ...ROUTE_GROUPING_TABLE_COMPATIBILITY_SPECS.map((spec) => spec.table),
+  ...PROXY_FILE_TABLE_COMPATIBILITY_SPECS.map((spec) => spec.table),
+  ...BOOTSTRAP_OWNED_LEGACY_TABLES,
+]);
+
+const LEGACY_COMPAT_COLUMNS = new Set([
+  ...SITE_COLUMN_COMPATIBILITY_SPECS.map((spec) => `sites.${spec.column}`),
+  ...ACCOUNT_TOKEN_COLUMN_COMPATIBILITY_SPECS.map((spec) => `${spec.table}.${spec.column}`),
+  ...ROUTE_GROUPING_COLUMN_COMPATIBILITY_SPECS.map((spec) => `${spec.table}.${spec.column}`),
+  ...PROXY_FILE_COLUMN_COMPATIBILITY_SPECS.map((spec) => `${spec.table}.${spec.column}`),
+  ...BOOTSTRAP_OWNED_LEGACY_COLUMNS,
+]);
+
+const LEGACY_COMPAT_INDEXES = new Set([
+  ...SITE_TABLE_COMPATIBILITY_SPECS.flatMap((spec) => spec.postCreateSql ? Object.values(spec.postCreateSql) : [])
+    .flat()
+    .map((sqlText) => extractIndexName(sqlText))
+    .filter((indexName): indexName is string => Boolean(indexName)),
+  ...ROUTE_GROUPING_TABLE_COMPATIBILITY_SPECS.flatMap((spec) => Object.values(spec.createSql))
+    .flat()
+    .map((sqlText) => extractIndexName(sqlText))
+    .filter((indexName): indexName is string => Boolean(indexName)),
+  ...PROXY_FILE_INDEX_COMPATIBILITY_SPECS.map((spec) => spec.indexName),
+  ...BOOTSTRAP_OWNED_LEGACY_INDEXES,
+  ...SHARED_INDEX_COMPATIBILITY_SPECS.map((spec) => spec.indexName),
+]);
+
+const LEGACY_COMPAT_UPDATES = new Set(
+  SITE_COLUMN_COMPATIBILITY_SPECS
+    .flatMap((spec) => spec.normalizeSql ? Object.values(spec.normalizeSql) : [])
+    .map((sqlText) => normalizeSqlText(sqlText)),
+);
 
 export function classifyLegacyCompatMutation(sqlText: string): LegacySchemaCompatClassification {
   const normalized = normalizeSqlText(sqlText);

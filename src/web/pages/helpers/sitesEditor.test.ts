@@ -72,7 +72,7 @@ describe('buildSiteSaveAction', () => {
   it('throws when edit mode has no site id', () => {
     expect(() =>
       buildSiteSaveAction(
-        { mode: 'edit' },
+        { mode: 'edit' } as unknown as Parameters<typeof buildSiteSaveAction>[0],
         {
           name: 'site-c',
           url: 'https://c.example.com',
@@ -88,10 +88,7 @@ describe('buildSiteSaveAction', () => {
   });
 
   it('does not expose deprecated apiKey in site editor state', () => {
-    expect(emptySiteForm()).not.toHaveProperty('apiKey');
-    expect(emptySiteForm().customHeaders).toEqual([emptySiteCustomHeader()]);
-    expect(emptySiteForm().proxyUrl).toBe('');
-    expect(siteFormFromSite({
+    const legacySite = {
       name: 'site-d',
       url: 'https://d.example.com',
       externalCheckinUrl: null,
@@ -100,7 +97,12 @@ describe('buildSiteSaveAction', () => {
       customHeaders: '{"x-site-token":"alpha"}',
       globalWeight: 1,
       apiKey: 'sk-legacy-site-key',
-    })).not.toHaveProperty('apiKey');
+    } as unknown as Parameters<typeof siteFormFromSite>[0];
+
+    expect(emptySiteForm()).not.toHaveProperty('apiKey');
+    expect(emptySiteForm().customHeaders).toEqual([emptySiteCustomHeader()]);
+    expect(emptySiteForm().proxyUrl).toBe('');
+    expect(siteFormFromSite(legacySite)).not.toHaveProperty('apiKey');
     expect(siteFormFromSite({
       proxyUrl: 'http://127.0.0.1:8080',
     }).proxyUrl).toBe('http://127.0.0.1:8080');

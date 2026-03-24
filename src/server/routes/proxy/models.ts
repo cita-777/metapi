@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { listModelsSurface } from '../../proxy-core/surfaces/modelsSurface.js';
-import { refreshModelsAndRebuildRoutes } from '../../services/modelService.js';
+import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { getDownstreamRoutingPolicy } from './downstreamPolicy.js';
 import { tokenRouter } from '../../services/tokenRouter.js';
 import { isModelAllowedByPolicyOrAllowedRoutes } from '../../services/downstreamApiKeyService.js';
@@ -14,7 +14,7 @@ export async function modelsProxyRoute(app: FastifyInstance) {
       downstreamPolicy,
       responseFormat: wantsClaudeFormat ? 'claude' : 'openai',
       tokenRouter,
-      refreshModelsAndRebuildRoutes,
+      refreshModelsAndRebuildRoutes: routeRefreshWorkflow.refreshModelsAndRebuildRoutes,
       isModelAllowed: isModelAllowedByPolicyOrAllowedRoutes,
     });
   });

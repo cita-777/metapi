@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { anthropicMessagesTransformer } from './index.js';
+import { anthropicMessagesTransformer, serializeAnthropicFinalAsStream } from './index.js';
 
 type SerializedAnthropicEvent = {
   event: string;
@@ -302,5 +302,144 @@ describe('anthropicMessagesStream.serializeEvent', () => {
       'content_block_stop',
     ]);
     expect(stopEvents[0]?.payload.index).toBe(1);
+  });
+});
+
+describe('serializeAnthropicFinalAsStream', () => {
+  it('emits thinking signature and tool_use blocks for normalized final payloads', () => {
+    const streamContext = anthropicMessagesTransformer.createStreamContext('claude-opus-4-6');
+    const downstreamContext = anthropicMessagesTransformer.createDownstreamContext();
+
+    const serialized = serializeAnthropicFinalAsStream({
+      id: 'resp_final_stream',
+      model: 'claude-opus-4-6',
+      created: 1700000000,
+      content: '',
+      reasoningContent: 'plan quietly',
+      reasoningSignature: 'sig-final',
+      finishReason: 'tool_calls',
+      toolCalls: [{
+        id: 'call_1',
+        name: 'lookup_city',
+        arguments: '{"city":"Paris"}',
+      }],
+    }, streamContext, downstreamContext).join('');
+
+    const events = anthropicMessagesTransformer.pullSseEvents(serialized).events.map((item) => ({
+      event: item.event,
+      payload: JSON.parse(item.data),
+    }));
+
+    expect(events.some((item) =>
+      item.payload.type === 'content_block_delta'
+      && item.payload.delta?.type === 'signature_delta'
+      && item.payload.delta?.signature === 'sig-final',
+    )).toBe(true);
+    expect(events.some((item) =>
+      item.payload.type === 'content_block_start'
+      && item.payload.content_block?.type === 'tool_use'
+      && item.payload.content_block?.id === 'call_1'
+      && item.payload.content_block?.name === 'lookup_city',
+    )).toBe(true);
+    expect(events.some((item) =>
+      item.payload.type === 'content_block_delta'
+      && item.payload.delta?.type === 'input_json_delta'
+      && item.payload.delta?.partial_json === '{"city":"Paris"}',
+    )).toBe(true);
+  });
+
+  it('preserves native anthropic block order and cleans tagged signatures when serializing fallback streams', () => {
+    const streamContext = anthropicMessagesTransformer.createStreamContext('claude-opus-4-6');
+    const downstreamContext = anthropicMessagesTransformer.createDownstreamContext();
+
+    const serialized = serializeAnthropicFinalAsStream({
+      id: 'resp_native_order_1',
+      model: 'claude-opus-4-6',
+      created: 1700000000,
+      content: '',
+      reasoningContent: '',
+      finishReason: 'tool_calls',
+      toolCalls: [],
+      nativeContent: [
+        {
+          type: 'thinking',
+          thinking: 'plan first',
+          signature: 'metapi:anthropic-signature:sig-native',
+        },
+        {
+          type: 'tool_use',
+          id: 'toolu_lookup',
+          name: 'lookup_city',
+          input: { city: 'Paris' },
+        },
+        {
+          type: 'text',
+          text: 'done',
+        },
+      ],
+    } as any, streamContext, downstreamContext).join('');
+
+    const events = anthropicMessagesTransformer.pullSseEvents(serialized).events.map((item) => ({
+      event: item.event,
+      payload: JSON.parse(item.data),
+    }));
+
+    expect(events
+      .filter((item) => item.payload.type === 'content_block_start')
+      .map((item) => item.payload.content_block?.type)).toEqual([
+      'thinking',
+      'tool_use',
+      'text',
+    ]);
+    expect(events.some((item) =>
+      item.payload.type === 'content_block_delta'
+      && item.payload.delta?.type === 'signature_delta'
+      && item.payload.delta?.signature === 'sig-native',
+    )).toBe(true);
+    expect(events.some((item) =>
+      item.payload.type === 'content_block_delta'
+      && item.payload.delta?.type === 'input_json_delta'
+      && item.payload.delta?.partial_json === '{"city":"Paris"}',
+    )).toBe(true);
+  });
+
+  it('preserves redacted_thinking in generic normalized final fallback streams', () => {
+    const streamContext = anthropicMessagesTransformer.createStreamContext('claude-opus-4-6');
+    const downstreamContext = anthropicMessagesTransformer.createDownstreamContext();
+
+    const serialized = serializeAnthropicFinalAsStream({
+      id: 'resp_redacted_1',
+      model: 'claude-opus-4-6',
+      created: 1700000000,
+      content: 'visible text',
+      reasoningContent: 'plan quietly',
+      reasoningSignature: 'metapi:anthropic-signature:sig-redacted',
+      redactedReasoningContent: 'ciphertext',
+      finishReason: 'stop',
+      toolCalls: [],
+    } as any, streamContext, downstreamContext).join('');
+
+    const events = anthropicMessagesTransformer.pullSseEvents(serialized).events.map((item) => ({
+      event: item.event,
+      payload: JSON.parse(item.data),
+    }));
+
+    expect(events
+      .filter((item) => item.payload.type === 'content_block_start')
+      .map((item) => item.payload.content_block?.type)).toEqual([
+      'thinking',
+      'redacted_thinking',
+      'text',
+    ]);
+    expect(events.some((item) =>
+      item.payload.type === 'content_block_start'
+      && item.payload.content_block?.type === 'redacted_thinking'
+      && item.payload.content_block?.data === 'ciphertext',
+    )).toBe(true);
+    expect(events.some((item) =>
+      item.payload.type === 'content_block_delta'
+      && item.payload.delta?.type === 'signature_delta'
+      && item.payload.delta?.signature === 'sig-redacted',
+    )).toBe(true);
   });
 });

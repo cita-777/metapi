@@ -5,7 +5,7 @@ import { BrandGlyph, getBrand, hashColor, BrandIcon, type BrandInfo } from '../c
 import SiteBadgeLink from '../components/SiteBadgeLink.js';
 import { useToast } from '../components/Toast.js';
 import ModernSelect from '../components/ModernSelect.js';
-import MobileFilterSheet from '../components/MobileFilterSheet.js';
+import ResponsiveFilterPanel from '../components/ResponsiveFilterPanel.js';
 import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import { mergeMarketplaceMetadata, shouldHydrateMarketplaceMetadata } from './helpers/modelsMarketplaceMetadata.js';
@@ -522,15 +522,13 @@ export default function Models() {
               )}
             </div>
           </div>
-          {isMobile && (
-            <MobileFilterSheet
-              open={showFilters}
-              onClose={() => setShowFilters(false)}
-              title={tr('筛选模型')}
-            >
-              {filterControls}
-            </MobileFilterSheet>
-          )}
+          <ResponsiveFilterPanel
+            isMobile={isMobile}
+            mobileOpen={showFilters}
+            onMobileClose={() => setShowFilters(false)}
+            mobileTitle={tr('筛选模型')}
+            mobileContent={filterControls}
+          />
           {[...Array(4)].map((_, i) => <div key={i} className="skeleton" style={{ height: 100, marginBottom: 12, borderRadius: 12 }} />)}
         </div>
       </div>
@@ -607,15 +605,13 @@ export default function Models() {
           </div>
         </div>
 
-        {isMobile && (
-          <MobileFilterSheet
-            open={showFilters}
-            onClose={() => setShowFilters(false)}
-            title={tr('筛选模型')}
-          >
-            {filterControls}
-          </MobileFilterSheet>
-        )}
+        <ResponsiveFilterPanel
+          isMobile={isMobile}
+          mobileOpen={showFilters}
+          onMobileClose={() => setShowFilters(false)}
+          mobileTitle={tr('筛选模型')}
+          mobileContent={filterControls}
+        />
 
         {/* Toolbar */}
         <div className="toolbar">

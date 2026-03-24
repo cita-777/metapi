@@ -757,9 +757,9 @@ describe('refreshModelsForAccount credential discovery', () => {
       .get();
     const parsed = JSON.parse(latest!.extraConfig || '{}');
     expect(parsed.oauth).toMatchObject({
-      provider: 'codex',
       modelDiscoveryStatus: 'abnormal',
     });
+    expect(parsed.oauth).not.toHaveProperty('provider');
     expect(parsed.oauth.lastModelSyncError).toContain('HTTP 403');
     expect(parsed.oauth.lastModelSyncAt).toMatch(/\d{4}-\d{2}-\d{2}T/);
     expect(parsed.runtimeHealth?.state).toBe('unhealthy');
@@ -990,12 +990,12 @@ describe('refreshModelsForAccount credential discovery', () => {
     });
     const parsed = JSON.parse(latest!.extraConfig || '{}');
     expect(parsed.oauth).toMatchObject({
-      provider: 'gemini-cli',
       email: 'gemini-refreshed-user@example.com',
       refreshToken: 'gemini-refresh-token-next',
-      projectId: 'project-refresh-demo',
       modelDiscoveryStatus: 'healthy',
     });
+    expect(parsed.oauth).not.toHaveProperty('provider');
+    expect(parsed.oauth).not.toHaveProperty('projectId');
   });
 
   it('discovers antigravity oauth models via fetchAvailableModels fallback using the oauth project id', async () => {
@@ -1083,5 +1083,216 @@ describe('refreshModelsForAccount credential discovery', () => {
       'claude-sonnet-4-5-20250929',
       'gemini-3-pro-preview',
     ]);
+  });
+
+  it('continues antigravity discovery after fetch errors and trims the oauth project id before posting', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockRejectedValue(new Error('antigravity oauth discovery should not call adapter.getModels'));
+    undiciFetchMock
+      .mockRejectedValueOnce(new Error('network boom'))
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          models: {
+            'gemini-3-pro-preview': { displayName: 'Gemini 3 Pro Preview' },
+          },
+        }),
+        text: async () => JSON.stringify({ ok: true }),
+      });
+
+    const site = await db.insert(schema.sites).values({
+      name: 'antigravity-site-trimmed',
+      url: 'https://cloudcode-pa.googleapis.com',
+      platform: 'antigravity',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'antigravity-trimmed@example.com',
+      accessToken: 'antigravity-access-token',
+      apiToken: null,
+      status: 'active',
+      oauthProvider: 'antigravity',
+      oauthAccountKey: 'antigravity-trimmed@example.com',
+      oauthProjectId: '  project-demo  ',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'antigravity',
+          email: 'antigravity-trimmed@example.com',
+        },
+      }),
+    }).returning().get();
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      status: 'success',
+      errorCode: null,
+      tokenScanned: 0,
+      discoveredByCredential: true,
+      discoveredApiToken: false,
+      modelCount: 1,
+      modelsPreview: ['gemini-3-pro-preview'],
+    });
+    expect(undiciFetchMock).toHaveBeenCalledTimes(2);
+    expect(String(undiciFetchMock.mock.calls[1]?.[0] || '')).toBe('https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels');
+    expect(JSON.parse(String(undiciFetchMock.mock.calls[1]?.[1]?.body || '{}'))).toEqual({
+      project: 'project-demo',
+    });
+  });
+
+  it('preserves manual models after successful model refresh', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockResolvedValue(['gpt-4.1', 'claude-opus-4-6']);
+
+    const site = await db.insert(schema.sites).values({
+      name: 'site-manual',
+      url: 'https://site-manual.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'manual-user',
+      accessToken: 'session-token',
+      apiToken: null,
+      status: 'active',
+    }).returning().get();
+
+    // Add a manual model before refresh
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'my-custom-model',
+      available: true,
+      isManual: true,
+    }).run();
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      status: 'success',
+    });
+
+    const rows = await db.select().from(schema.modelAvailability)
+      .where(eq(schema.modelAvailability.accountId, account.id))
+      .all();
+
+    const modelNames = rows.map((r) => r.modelName).sort();
+    expect(modelNames).toContain('my-custom-model');
+    expect(modelNames).toContain('gpt-4.1');
+    expect(modelNames).toContain('claude-opus-4-6');
+
+    const manualRow = rows.find((r) => r.modelName === 'my-custom-model');
+    expect(manualRow?.isManual).toBe(true);
+  });
+
+  it('preserves manual models even when discovered models overlap', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockResolvedValue(['gpt-4.1', 'my-custom-model']);
+
+    const site = await db.insert(schema.sites).values({
+      name: 'site-overlap',
+      url: 'https://site-overlap.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'overlap-user',
+      accessToken: 'session-token',
+      apiToken: null,
+      status: 'active',
+    }).returning().get();
+
+    // Manual model that also exists upstream
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'my-custom-model',
+      available: true,
+      isManual: true,
+    }).run();
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      status: 'success',
+    });
+
+    const rows = await db.select().from(schema.modelAvailability)
+      .where(eq(schema.modelAvailability.accountId, account.id))
+      .all();
+
+    // Should have gpt-4.1 (discovered) and my-custom-model (manual, kept as-is)
+    const modelNames = rows.map((r) => r.modelName).sort();
+    expect(modelNames).toEqual(['gpt-4.1', 'my-custom-model']);
+
+    // The manual model should still have isManual=true (not overwritten by discovery)
+    const manualRow = rows.find((r) => r.modelName === 'my-custom-model');
+    expect(manualRow?.isManual).toBe(true);
+  });
+
+  it('preserves manual models when refresh fails and restores previous availability', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockResolvedValue([]);
+
+    const site = await db.insert(schema.sites).values({
+      name: 'site-fail',
+      url: 'https://site-fail.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'fail-user',
+      accessToken: 'session-token',
+      apiToken: null,
+      status: 'active',
+    }).returning().get();
+
+    // Existing synced model
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'gpt-4.1',
+      available: true,
+      isManual: false,
+    }).run();
+
+    // Manual model
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'my-custom-model',
+      available: true,
+      isManual: true,
+    }).run();
+
+    const result = await refreshModelsForAccount(account.id, { allowInactive: true });
+
+    expect(result).toMatchObject({
+      status: 'failed',
+    });
+
+    const rows = await db.select().from(schema.modelAvailability)
+      .where(eq(schema.modelAvailability.accountId, account.id))
+      .all();
+
+    // Both manual model and restored synced model should exist
+    const modelNames = rows.map((r) => r.modelName).sort();
+    expect(modelNames).toContain('my-custom-model');
+    expect(modelNames).toContain('gpt-4.1');
+
+    const manualRow = rows.find((r) => r.modelName === 'my-custom-model');
+    expect(manualRow?.isManual).toBe(true);
   });
 });

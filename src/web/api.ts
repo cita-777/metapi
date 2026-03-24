@@ -194,6 +194,36 @@ function resolveProxyTestTimeoutMs(data: ProxyTestRequestEnvelope) {
   return DEFAULT_PROXY_TEST_TIMEOUT_MS;
 }
 
+function proxyTestRequest(data: ProxyTestRequestEnvelope) {
+  return request('/api/test/proxy', {
+    method: 'POST',
+    body: JSON.stringify(data),
+    timeoutMs: resolveProxyTestTimeoutMs(data),
+  });
+}
+
+async function proxyTestStreamRequest(data: ProxyTestRequestEnvelope, signal?: AbortSignal) {
+  const token = getAuthToken(localStorage);
+  if (!token) {
+    clearAuthSession(localStorage);
+    throw new Error('Session expired');
+  }
+  const response = await fetch('/api/test/proxy/stream', {
+    method: 'POST',
+    signal,
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  });
+  if (response.status === 401 || response.status === 403) {
+    clearAuthSession(localStorage);
+    throw new Error('Session expired');
+  }
+  return response;
+}
+
 export type ProxyTestJobResponse = {
   jobId: string;
   status: 'pending' | 'succeeded' | 'failed' | 'cancelled';
@@ -723,52 +753,12 @@ export const api = {
       data: `data:${mimeType};base64,${base64}`,
     };
   },
-  testProxy: (data: ProxyTestRequestEnvelope) =>
-    request('/api/test/proxy', {
-      method: 'POST',
-      body: JSON.stringify(data),
-      timeoutMs: resolveProxyTestTimeoutMs(data),
-    }),
-  proxyTest: (data: ProxyTestRequestEnvelope) =>
-    request('/api/test/proxy', {
-      method: 'POST',
-      body: JSON.stringify(data),
-      timeoutMs: resolveProxyTestTimeoutMs(data),
-    }),
+  testProxy: proxyTestRequest,
+  proxyTest: proxyTestRequest,
   testChat: (data: TestChatRequestPayload) =>
     request('/api/test/chat', { method: 'POST', body: JSON.stringify(data) }),
-  testProxyStream: async (data: ProxyTestRequestEnvelope, signal?: AbortSignal) => {
-    const token = getAuthToken(localStorage);
-    if (!token) {
-      clearAuthSession(localStorage);
-      throw new Error('Session expired');
-    }
-    return fetch('/api/test/proxy/stream', {
-      method: 'POST',
-      signal,
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(data),
-    });
-  },
-  proxyTestStream: async (data: ProxyTestRequestEnvelope, signal?: AbortSignal) => {
-    const token = getAuthToken(localStorage);
-    if (!token) {
-      clearAuthSession(localStorage);
-      throw new Error('Session expired');
-    }
-    return fetch('/api/test/proxy/stream', {
-      method: 'POST',
-      signal,
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(data),
-    });
-  },
+  testProxyStream: proxyTestStreamRequest,
+  proxyTestStream: proxyTestStreamRequest,
   testChatStream: async (data: TestChatRequestPayload, signal?: AbortSignal) => {
     const token = getAuthToken(localStorage);
     if (!token) {

@@ -108,7 +108,7 @@ describe('OAuthManagement page', () => {
       offset: 0,
     });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -206,7 +206,7 @@ describe('OAuthManagement page', () => {
         accountId: 7,
       });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -304,7 +304,7 @@ describe('OAuthManagement page', () => {
     });
     apiMock.submitOAuthManualCallback.mockResolvedValue({ success: true });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -398,7 +398,7 @@ describe('OAuthManagement page', () => {
       offset: 0,
     });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -464,7 +464,7 @@ describe('OAuthManagement page', () => {
       offset: 0,
     });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -526,7 +526,7 @@ describe('OAuthManagement page', () => {
       status: 'pending',
     });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -618,7 +618,7 @@ describe('OAuthManagement page', () => {
       status: 'pending',
     });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -717,7 +717,7 @@ describe('OAuthManagement page', () => {
       .mockResolvedValueOnce({ items: [], total: 0, limit: 100, offset: 0 });
     apiMock.deleteOAuthConnection.mockResolvedValue({ success: true });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -860,7 +860,7 @@ describe('OAuthManagement page', () => {
       },
     });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(

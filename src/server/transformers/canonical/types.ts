@@ -1,3 +1,4 @@
+import type { CanonicalAttachment } from './attachments.js';
 import type { CanonicalTool, CanonicalToolChoice } from './tools.js';
 
 export type CanonicalOperation =
@@ -57,6 +58,7 @@ export type CanonicalToolResultPart = {
   toolCallId: string;
   resultText?: string;
   resultJson?: unknown;
+  resultContent?: string | Array<string | Record<string, unknown>>;
 };
 
 export type CanonicalContentPart =
@@ -69,6 +71,8 @@ export type CanonicalContentPart =
 export type CanonicalMessage = {
   role: CanonicalMessageRole;
   parts: CanonicalContentPart[];
+  phase?: string;
+  reasoningSignature?: string;
 };
 
 export type CanonicalReasoningEffort =
@@ -105,4 +109,5 @@ export type CanonicalRequestEnvelope = {
   continuation?: CanonicalContinuation;
   metadata?: Record<string, unknown>;
   passthrough?: Record<string, unknown>;
+  attachments?: CanonicalAttachment[];
 };

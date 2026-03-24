@@ -61,7 +61,7 @@ describe('Accounts batch actions', () => {
   });
 
   it('refreshes balance for selected accounts through the batch toolbar', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -97,7 +97,7 @@ describe('Accounts batch actions', () => {
   });
 
   it('selects an account when clicking the row instead of only the checkbox', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -147,7 +147,7 @@ describe('Accounts batch actions', () => {
       },
     ]);
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(

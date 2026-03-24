@@ -70,8 +70,8 @@ describe('Sites disabled models save', () => {
     vi.clearAllMocks();
   });
 
-  async function renderSitesEditor() {
-    let root: ReturnType<typeof create> | null = null;
+  async function renderSitesEditor(): Promise<WebTestRenderer> {
+    let root!: WebTestRenderer;
     await act(async () => {
       root = create(
         <MemoryRouter initialEntries={['/sites']}>
@@ -83,7 +83,7 @@ describe('Sites disabled models save', () => {
     });
     await flushMicrotasks();
 
-    const editButton = root.root.find((node) => (
+    const editButton = root.root.find((node: ReactTestInstance) => (
       node.type === 'button'
       && typeof node.props.onClick === 'function'
       && collectText(node).trim() === '编辑'
@@ -100,7 +100,7 @@ describe('Sites disabled models save', () => {
   it('reports route rebuild failure after saving disabled models from sites editor', async () => {
     apiMock.rebuildRoutes.mockRejectedValue(new Error('rebuild failed'));
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       root = await renderSitesEditor();
 
@@ -129,11 +129,11 @@ describe('Sites disabled models save', () => {
     apiMock.getSiteAvailableModels.mockRejectedValue(new Error('available models failed'));
     apiMock.rebuildRoutes.mockResolvedValue({ success: true });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       root = await renderSitesEditor();
 
-      const saveButton = root.root.find((node) => (
+      const saveButton = root.root.find((node: ReactTestInstance) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
         && collectText(node).includes('保存禁用列表')
@@ -153,11 +153,11 @@ describe('Sites disabled models save', () => {
   it('allows adding a disabled model manually when no available models are discovered', async () => {
     apiMock.rebuildRoutes.mockResolvedValue({ success: true });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       root = await renderSitesEditor();
 
-      const manualInput = root.root.find((node) => (
+      const manualInput = root.root.find((node: ReactTestInstance) => (
         node.type === 'input'
         && node.props.placeholder === '输入模型名称，如 gpt-4o'
       ));
@@ -166,7 +166,7 @@ describe('Sites disabled models save', () => {
         manualInput.props.onChange({ target: { value: 'gpt-4o' } });
       });
 
-      const addButton = root.root.find((node) => (
+      const addButton = root.root.find((node: ReactTestInstance) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
         && collectText(node).trim() === '添加模型'
@@ -177,7 +177,7 @@ describe('Sites disabled models save', () => {
       });
       await flushMicrotasks();
 
-      const saveButton = root.root.find((node) => (
+      const saveButton = root.root.find((node: ReactTestInstance) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
         && collectText(node).includes('保存禁用列表')

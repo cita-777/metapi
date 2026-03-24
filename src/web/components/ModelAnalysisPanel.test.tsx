@@ -42,7 +42,7 @@ describe('ModelAnalysisPanel token summaries', () => {
   });
 
   it('renders total token summaries with compact units', () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     act(() => {
       root = create(
@@ -70,10 +70,10 @@ describe('ModelAnalysisPanel token summaries', () => {
     globalThis.document = {
       documentElement: {},
     } as unknown as Document;
-    delete (globalThis as typeof globalThis & { getComputedStyle?: typeof getComputedStyle }).getComputedStyle;
-    delete (globalThis as typeof globalThis & { MutationObserver?: typeof MutationObserver }).MutationObserver;
+    Reflect.deleteProperty(globalThis as typeof globalThis & Record<string, unknown>, 'getComputedStyle');
+    Reflect.deleteProperty(globalThis as typeof globalThis & Record<string, unknown>, 'MutationObserver');
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     await expect(act(async () => {
       root = create(

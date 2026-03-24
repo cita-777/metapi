@@ -55,7 +55,7 @@ describe('Sites system proxy bulk actions', () => {
   });
 
   it('sends selected site ids to enable system proxy', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -92,7 +92,7 @@ describe('Sites system proxy bulk actions', () => {
   });
 
   it('selects a site when clicking the row instead of only the checkbox', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(

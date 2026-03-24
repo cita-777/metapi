@@ -85,7 +85,7 @@ describe('Dashboard site observability panel', () => {
   });
 
   it('renders site availability strips and summary metrics', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {

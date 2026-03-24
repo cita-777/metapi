@@ -54,61 +54,6 @@ function validateSystemPrompts(body: Record<string, unknown>): { statusCode: num
   return undefined;
 }
 
-function validateAdaptiveEffort(body: Record<string, unknown>): { statusCode: number; payload: unknown } | undefined {
-  const thinking = isRecord(body.thinking) ? body.thinking : null;
-  const thinkingType = asTrimmedString(thinking?.type).toLowerCase();
-  const outputConfig = isRecord(body.output_config)
-    ? body.output_config
-    : (isRecord(body.outputConfig) ? body.outputConfig : null);
-
-  if (!outputConfig || !('effort' in outputConfig)) return undefined;
-
-  const effort = asTrimmedString(outputConfig.effort).toLowerCase();
-  if (!effort || thinkingType !== 'adaptive') return undefined;
-
-  if (!['low', 'medium', 'high', 'max'].includes(effort)) {
-    return invalidRequest('output_config.effort must be one of: low, medium, high, max');
-  }
-
-  return undefined;
-}
-
-function validateToolChoice(body: Record<string, unknown>): { statusCode: number; payload: unknown } | undefined {
-  const rawToolChoice = body.tool_choice ?? body.toolChoice;
-  if (rawToolChoice === undefined) return undefined;
-
-  if (typeof rawToolChoice === 'string') {
-    const type = asTrimmedString(rawToolChoice).toLowerCase();
-    if (!type) return undefined;
-    if (type === 'required' || type === 'auto' || type === 'none' || type === 'any') return undefined;
-    if (type === 'tool') {
-      return invalidRequest('tool_choice.name is required when type is tool');
-    }
-    return invalidRequest('tool_choice.type must be one of: auto, none, any, tool');
-  }
-
-  if (!isRecord(rawToolChoice)) {
-    return invalidRequest('tool_choice must be an object or string');
-  }
-
-  const type = asTrimmedString(rawToolChoice.type).toLowerCase();
-  if (!['auto', 'none', 'any', 'tool'].includes(type)) {
-    return invalidRequest('tool_choice.type must be one of: auto, none, any, tool');
-  }
-
-  if (type !== 'tool') return undefined;
-
-  const name = asTrimmedString(
-    rawToolChoice.name
-    ?? (isRecord(rawToolChoice.tool) ? rawToolChoice.tool.name : undefined),
-  );
-  if (!name) {
-    return invalidRequest('tool_choice.name is required when type is tool');
-  }
-
-  return undefined;
-}
-
 function sanitizeAnthropicInboundBody(
   body: Record<string, unknown>,
 ): { sanitizedBody?: Record<string, unknown>; error?: { statusCode: number; payload: unknown } } {
@@ -117,12 +62,6 @@ function sanitizeAnthropicInboundBody(
 
   const systemError = validateSystemPrompts(body);
   if (systemError) return { error: systemError };
-
-  const adaptiveEffortError = validateAdaptiveEffort(body);
-  if (adaptiveEffortError) return { error: adaptiveEffortError };
-
-  const toolChoiceError = validateToolChoice(body);
-  if (toolChoiceError) return { error: toolChoiceError };
 
   const validation = validateAnthropicMessagesBody(body, {
     autoOptimizeCacheControls: false,

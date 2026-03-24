@@ -23,7 +23,7 @@ function LocationProbe() {
 
 describe('Tokens legacy route redirect', () => {
   it('redirects /tokens to the merged accounts tokens segment', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     await act(async () => {
       root = create(
         <ToastProvider>

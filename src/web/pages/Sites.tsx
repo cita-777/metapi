@@ -3,8 +3,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { getBrand } from '../components/BrandIcon.js';
 import CenteredModal from '../components/CenteredModal.js';
-import MobileBatchBar from '../components/MobileBatchBar.js';
-import MobileFilterSheet from '../components/MobileFilterSheet.js';
+import ResponsiveFilterPanel from '../components/ResponsiveFilterPanel.js';
+import ResponsiveBatchActionBar from '../components/ResponsiveBatchActionBar.js';
 import { useToast } from '../components/Toast.js';
 import ModernSelect from '../components/ModernSelect.js';
 import { MobileCard, MobileField } from '../components/MobileCard.js';
@@ -714,38 +714,47 @@ export default function Sites() {
         </div>
       </div>
 
-      <MobileFilterSheet open={showMobileTools} onClose={() => setShowMobileTools(false)} title="站点排序与操作">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>排序方式</div>
-            <ModernSelect
-              value={sortMode}
-              onChange={(nextValue) => setSortMode(nextValue as SortMode)}
-              options={[
-                { value: 'custom', label: '自定义排序' },
-                { value: 'balance-desc', label: '余额高到低' },
-                { value: 'balance-asc', label: '余额低到高' },
-              ]}
-              placeholder="自定义排序"
-            />
+      <ResponsiveFilterPanel
+        isMobile={isMobile}
+        mobileOpen={showMobileTools}
+        onMobileClose={() => setShowMobileTools(false)}
+        mobileTitle="站点排序与操作"
+        mobileContent={(
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>排序方式</div>
+              <ModernSelect
+                value={sortMode}
+                onChange={(nextValue) => setSortMode(nextValue as SortMode)}
+                options={[
+                  { value: 'custom', label: '自定义排序' },
+                  { value: 'balance-desc', label: '余额高到低' },
+                  { value: 'balance-asc', label: '余额低到高' },
+                ]}
+                placeholder="自定义排序"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                toggleSelectAllVisible(!allVisibleSitesSelected);
+                setShowMobileTools(false);
+              }}
+              className="btn btn-ghost"
+              style={{ border: '1px solid var(--color-border)' }}
+            >
+              {allVisibleSitesSelected ? '取消全选可见项' : '全选可见项'}
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              toggleSelectAllVisible(!allVisibleSitesSelected);
-              setShowMobileTools(false);
-            }}
-            className="btn btn-ghost"
-            style={{ border: '1px solid var(--color-border)' }}
-          >
-            {allVisibleSitesSelected ? '取消全选可见项' : '全选可见项'}
-          </button>
-        </div>
-      </MobileFilterSheet>
+        )}
+      />
 
-      {!isMobile && selectedSiteIds.length > 0 && (
-        <div className="card" style={{ padding: 12, marginBottom: 12, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <span style={{ fontSize: 13, fontWeight: 600 }}>已选 {selectedSiteIds.length} 项</span>
+      {selectedSiteIds.length > 0 && (
+        <ResponsiveBatchActionBar
+          isMobile={isMobile}
+          info={`已选 ${selectedSiteIds.length} 项`}
+          desktopStyle={{ marginBottom: 12 }}
+        >
           <button
             data-testid="sites-batch-enable-system-proxy"
             onClick={() => runBatchAction('enableSystemProxy')}
@@ -772,38 +781,7 @@ export default function Sites() {
           <button onClick={() => runBatchAction('delete')} disabled={batchActionLoading} className="btn btn-link btn-link-danger">
             批量删除
           </button>
-        </div>
-      )}
-
-      {isMobile && selectedSiteIds.length > 0 && (
-        <MobileBatchBar info={`已选 ${selectedSiteIds.length} 项`}>
-            <button
-              data-testid="sites-batch-enable-system-proxy"
-              onClick={() => runBatchAction('enableSystemProxy')}
-              disabled={batchActionLoading}
-              className="btn btn-ghost"
-              style={{ border: '1px solid var(--color-border)' }}
-            >
-              批量开启系统代理
-            </button>
-            <button
-              onClick={() => runBatchAction('disableSystemProxy')}
-              disabled={batchActionLoading}
-              className="btn btn-ghost"
-              style={{ border: '1px solid var(--color-border)' }}
-            >
-              批量关闭系统代理
-            </button>
-            <button onClick={() => runBatchAction('enable')} disabled={batchActionLoading} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }}>
-              批量启用
-            </button>
-            <button onClick={() => runBatchAction('disable')} disabled={batchActionLoading} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }}>
-              批量禁用
-            </button>
-            <button onClick={() => runBatchAction('delete')} disabled={batchActionLoading} className="btn btn-link btn-link-danger">
-              批量删除
-            </button>
-        </MobileBatchBar>
+        </ResponsiveBatchActionBar>
       )}
 
       <div className="info-tip" style={{ marginBottom: 12 }}>

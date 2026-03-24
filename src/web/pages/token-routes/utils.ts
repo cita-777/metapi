@@ -1,6 +1,13 @@
 import type { CSSProperties } from 'react';
 import { getBrand, normalizeBrandIconKey, type BrandInfo } from '../../components/BrandIcon.js';
-import type { RouteRow, RouteChannel, RouteDecisionCandidate, ChannelDecisionState, RouteSummaryRow, RouteMode } from './types.js';
+import { normalizeTokenRouteMode, type RouteDecisionCandidate, type RouteMode } from '../../../shared/tokenRouteContract.js';
+import type { RouteRow, RouteChannel, ChannelDecisionState, RouteSummaryRow } from './types.js';
+import {
+  isExactTokenRouteModelPattern,
+  isTokenRouteRegexPattern,
+  matchesTokenRouteModelPattern,
+  parseTokenRouteRegexPattern,
+} from '../../../shared/tokenRoutePatterns.js';
 
 export const AUTO_ROUTE_DECISION_LIMIT = 80;
 export const ROUTE_RENDER_CHUNK = 40;
@@ -39,18 +46,15 @@ export const PLATFORM_ALIASES: Record<string, string> = {
 };
 
 export function isRegexModelPattern(modelPattern: string): boolean {
-  return modelPattern.trim().toLowerCase().startsWith('re:');
+  return isTokenRouteRegexPattern(modelPattern);
 }
 
 export function isExactModelPattern(modelPattern: string): boolean {
-  const normalized = modelPattern.trim();
-  if (!normalized) return false;
-  if (isRegexModelPattern(normalized)) return false;
-  return !/[\*\?]/.test(normalized);
+  return isExactTokenRouteModelPattern(modelPattern);
 }
 
 export function normalizeRouteMode(routeMode: RouteMode | string | null | undefined): RouteMode {
-  return routeMode === 'explicit_group' ? 'explicit_group' : 'pattern';
+  return normalizeTokenRouteMode(routeMode);
 }
 
 export function isExplicitGroupRoute(route: Pick<RouteRow | RouteSummaryRow, 'routeMode'>): boolean {
@@ -61,82 +65,12 @@ export function isRouteExactModel(route: Pick<RouteRow | RouteSummaryRow, 'model
   return !isExplicitGroupRoute(route) && isExactModelPattern(route.modelPattern);
 }
 
-export function parseRegexModelPattern(modelPattern: string): { regex: RegExp | null; error: string | null } {
-  if (!isRegexModelPattern(modelPattern)) return { regex: null, error: null };
-  const body = modelPattern.trim().slice(3).trim();
-  if (!body) return { regex: null, error: 're: 后缺少正则表达式' };
-  try {
-    return { regex: new RegExp(body), error: null };
-  } catch (error) {
-    return { regex: null, error: (error as Error)?.message || '无效正则' };
-  }
+export function parseRegexModelPattern(modelPattern: string): { regex: { test(value: string): boolean } | null; error: string | null } {
+  return parseTokenRouteRegexPattern(modelPattern);
 }
-
-function globToRegexSource(glob: string): string {
-  let source = '';
-  for (let i = 0; i < glob.length; i += 1) {
-    const ch = glob[i];
-    if (ch === '*') {
-      source += '.*';
-      continue;
-    }
-    if (ch === '?') {
-      source += '.';
-      continue;
-    }
-    if (ch === '[') {
-      const closeIndex = glob.indexOf(']', i + 1);
-      if (closeIndex > i + 1) {
-        source += glob.slice(i, closeIndex + 1);
-        i = closeIndex;
-        continue;
-      }
-      source += '\\[';
-      continue;
-    }
-    source += ch.replace(/[\\^$+?.()|{}]/g, '\\$&');
-  }
-  return source;
-}
-
-const compiledGlobCache = new Map<string, RegExp | null>();
-
-function matchesGlobPattern(model: string, pattern: string): boolean {
-  let re = compiledGlobCache.get(pattern);
-  if (re === undefined) {
-    try {
-      re = new RegExp(`^${globToRegexSource(pattern)}$`);
-    } catch {
-      re = null;
-    }
-    compiledGlobCache.set(pattern, re);
-  }
-  return re ? re.test(model) : false;
-}
-
-const matchCache = new Map<string, boolean>();
-const MATCH_CACHE_LIMIT = 4000;
 
 export function matchesModelPattern(model: string, pattern: string): boolean {
-  const normalized = (pattern || '').trim();
-  if (!normalized) return false;
-  if (normalized === model) return true;
-
-  const cacheKey = `${model}\0${normalized}`;
-  const cached = matchCache.get(cacheKey);
-  if (cached !== undefined) return cached;
-
-  let result: boolean;
-  if (isRegexModelPattern(normalized)) {
-    const parsed = parseRegexModelPattern(normalized);
-    result = !!parsed.regex && parsed.regex.test(model);
-  } else {
-    result = matchesGlobPattern(model, normalized);
-  }
-
-  if (matchCache.size >= MATCH_CACHE_LIMIT) matchCache.clear();
-  matchCache.set(cacheKey, result);
-  return result;
+  return matchesTokenRouteModelPattern(model, pattern);
 }
 
 export function getModelPatternError(modelPattern: string): string | null {

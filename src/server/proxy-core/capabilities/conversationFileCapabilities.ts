@@ -1,4 +1,5 @@
 import { inferInputFileMimeType, normalizeInputFileBlock } from '../../transformers/shared/inputFile.js';
+import { classifyConversationFileMimeType } from '../../../shared/conversationFileTypes.js';
 
 export type ConversationFileTransport = 'unsupported' | 'inline_only' | 'native';
 export type ConversationFileEndpoint = 'chat' | 'messages' | 'responses';
@@ -25,13 +26,6 @@ function asTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function classifyMimeFamily(mimeType: string | null): 'image' | 'audio' | 'document' {
-  const normalized = asTrimmedString(mimeType).toLowerCase();
-  if (normalized.startsWith('image/')) return 'image';
-  if (normalized.startsWith('audio/')) return 'audio';
-  return 'document';
-}
-
 function appendConversationFileSummary(
   summary: ConversationFileInputSummary,
   item: Record<string, unknown>,
@@ -39,7 +33,7 @@ function appendConversationFileSummary(
   const normalizedFile = normalizeInputFileBlock(item);
   if (normalizedFile) {
     const mimeType = inferInputFileMimeType(normalizedFile);
-    const family = classifyMimeFamily(mimeType);
+    const family = classifyConversationFileMimeType(mimeType);
     if (family === 'image') {
       summary.hasImage = true;
       return;

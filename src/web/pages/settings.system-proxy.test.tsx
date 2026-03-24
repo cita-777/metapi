@@ -87,7 +87,7 @@ describe('Settings system proxy', () => {
   });
 
   it('saves system proxy url from settings', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -127,7 +127,7 @@ describe('Settings system proxy', () => {
   });
 
   it('tests system proxy from settings', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(

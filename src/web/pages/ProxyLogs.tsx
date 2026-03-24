@@ -13,7 +13,7 @@ import { useToast } from '../components/Toast.js';
 import { ModelBadge } from '../components/BrandIcon.js';
 import SiteBadgeLink from '../components/SiteBadgeLink.js';
 import { MobileCard, MobileField } from '../components/MobileCard.js';
-import MobileFilterSheet from '../components/MobileFilterSheet.js';
+import ResponsiveFilterPanel from '../components/ResponsiveFilterPanel.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import { formatDateTimeLocal } from './helpers/checkinLogTime.js';
 import ModernSelect from '../components/ModernSelect.js';
@@ -32,6 +32,12 @@ type ProxyLogDetailState = {
   loading: boolean;
   data?: ProxyLogDetail;
   error?: string;
+};
+
+type ProxyLogSiteFilterOption = {
+  id: number;
+  name: string;
+  status: string | null;
 };
 
 const PAGE_SIZES = [20, 50, 100];
@@ -353,14 +359,17 @@ export default function ProxyLogs() {
       try {
         const result = await api.getSites();
         const rows = Array.isArray(result) ? result : (result?.sites || []);
-        const normalized = rows
+        const normalized: ProxyLogSiteFilterOption[] = rows
           .map((site: any) => ({
             id: Number(site?.id || 0),
             name: String(site?.name || '').trim() || `站点 #${site?.id ?? ''}`,
             status: typeof site?.status === 'string' ? site.status : null,
           }))
-          .filter((site) => site.id > 0)
-          .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'));
+          .filter((site: ProxyLogSiteFilterOption) => site.id > 0)
+          .sort(
+            (left: ProxyLogSiteFilterOption, right: ProxyLogSiteFilterOption) =>
+              left.name.localeCompare(right.name, 'zh-CN'),
+          );
         if (!cancelled) setSites(normalized);
       } catch (error) {
         console.error('Failed to load sites for proxy log filters:', error);
@@ -661,31 +670,19 @@ export default function ProxyLogs() {
         </div>
       </div>
 
-      {isMobile ? (
-        <>
-          <div className="mobile-filter-row">
-            <button
-              type="button"
-              className="btn btn-ghost"
-              style={{ border: '1px solid var(--color-border)' }}
-              onClick={() => setShowFilters(true)}
-            >
-              筛选
-            </button>
-          </div>
-          <MobileFilterSheet
-            open={showFilters}
-            onClose={() => setShowFilters(false)}
-            title={tr('筛选日志')}
-          >
+      <ResponsiveFilterPanel
+        isMobile={isMobile}
+        mobileOpen={showFilters}
+        onMobileOpen={() => setShowFilters(true)}
+        onMobileClose={() => setShowFilters(false)}
+        mobileTitle={tr('筛选日志')}
+        mobileContent={filterControls}
+        desktopContent={(
+          <div className="toolbar" style={{ marginBottom: 12 }}>
             {filterControls}
-          </MobileFilterSheet>
-        </>
-      ) : (
-        <div className="toolbar" style={{ marginBottom: 12 }}>
-          {filterControls}
-        </div>
-      )}
+          </div>
+        )}
+      />
 
       {hasInvalidTimeRange && (
         <div className="alert alert-error" style={{ marginBottom: 12 }}>
@@ -713,7 +710,7 @@ export default function ProxyLogs() {
               const detailState = detailById[log.id];
               const detail = detailState?.data;
               const detailLog: ProxyLogRenderItem = detail ? { ...log, ...detail } : log;
-              const pathMeta = parseProxyLogPathMeta(detailLog.errorMessage);
+              const pathMeta = parseProxyLogPathMeta(detailLog.errorMessage ?? undefined);
               const billingDetailSummary = detail ? formatBillingDetailSummary(detailLog) : null;
               const billingProcessLines = detail ? buildBillingProcessLines(detailLog) : [];
               const downstreamKeySummary = renderDownstreamKeySummary(detailLog);
@@ -820,7 +817,7 @@ export default function ProxyLogs() {
                 const detailState = detailById[log.id];
                 const detail = detailState?.data;
                 const detailLog: ProxyLogRenderItem = detail ? { ...log, ...detail } : log;
-                const pathMeta = parseProxyLogPathMeta(detailLog.errorMessage);
+                const pathMeta = parseProxyLogPathMeta(detailLog.errorMessage ?? undefined);
                 const billingDetailSummary = detail ? formatBillingDetailSummary(detailLog) : null;
                 const billingProcessLines = detail ? buildBillingProcessLines(detailLog) : [];
                 const downstreamKeySummary = renderDownstreamKeySummary(detailLog);

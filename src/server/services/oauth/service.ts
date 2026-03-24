@@ -1,7 +1,8 @@
 import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { db, schema } from '../../db/index.js';
 import { mergeAccountExtraConfig } from '../accountExtraConfig.js';
-import { refreshModelsForAccount, rebuildTokenRoutesFromAvailability } from '../modelService.js';
+import { refreshModelsForAccount } from '../modelService.js';
+import * as routeRefreshWorkflow from '../routeRefreshWorkflow.js';
 import {
   createOauthSession,
   getOauthSession,
@@ -14,8 +15,15 @@ import {
   listOAuthProviderDefinitions,
   type OAuthProviderDefinition,
 } from './providers.js';
-import { buildOauthInfo, getOauthInfoFromExtraConfig } from './oauthAccount.js';
+import {
+  buildOauthInfo,
+  buildOauthInfoFromAccount,
+  buildStoredOauthState,
+  buildStoredOauthStateFromAccount,
+  getOauthInfoFromAccount,
+} from './oauthAccount.js';
 import { buildCodexOauthInfo } from './codexAccount.js';
+import { ensureOauthIdentityBackfill } from './oauthIdentityBackfill.js';
 import { buildQuotaSnapshotFromOauthInfo, refreshOauthQuotaSnapshot } from './quota.js';
 
 type OAuthProviderMetadata = ReturnType<typeof listOauthProviders>[number];
@@ -232,7 +240,7 @@ async function upsertOauthAccount(input: {
   });
   const extraConfig = mergeAccountExtraConfig(existing?.extraConfig, {
     credentialMode: 'session',
-    oauth,
+    oauth: buildStoredOauthState(oauth),
   });
 
   if (existing) {
@@ -398,7 +406,7 @@ export async function handleOauthCallback(input: {
           updatedAt: previousAccount.updatedAt,
         }).where(eq(schema.accounts.id, previousAccount.id)).run();
       }
-      await rebuildTokenRoutesFromAvailability();
+      await routeRefreshWorkflow.rebuildRoutesOnly();
       const errorMessage = refreshResult.errorMessage || `${input.provider} model discovery failed`;
       markOauthSessionError(input.state, errorMessage);
       throw new Error(errorMessage);
@@ -411,7 +419,7 @@ export async function handleOauthCallback(input: {
       }).where(eq(schema.accounts.id, account.id)).run();
     }
 
-    await rebuildTokenRoutesFromAvailability();
+    await routeRefreshWorkflow.rebuildRoutesOnly();
     markOauthSessionSuccess(input.state, {
       accountId: account.id,
       siteId: site.id,
@@ -458,6 +466,7 @@ export async function listOauthConnections(options: {
   limit?: number;
   offset?: number;
 } = {}) {
+  await ensureOauthIdentityBackfill();
   const limit = Math.max(1, Math.min(200, Math.trunc(options.limit ?? 50)));
   const offset = Math.max(0, Math.trunc(options.offset ?? 0));
 
@@ -510,15 +519,16 @@ export async function listOauthConnections(options: {
     routeChannelCountByAccount.set(row.accountId, row.count ?? 0);
   }
 
-  const items = rows.map((row) => {
-    const oauth = getOauthInfoFromExtraConfig(row.accounts.extraConfig)!;
+  const items = rows.flatMap((row) => {
+    const oauth = getOauthInfoFromAccount(row.accounts);
+    if (!oauth) return [];
     const models = modelMap.get(row.accounts.id) || [];
     const status = (
       oauth.modelDiscoveryStatus === 'abnormal'
       || row.accounts.status !== 'active'
       || row.sites.status !== 'active'
     ) ? 'abnormal' : 'healthy';
-    return {
+    return [{
       accountId: row.accounts.id,
       siteId: row.sites.id,
       provider: oauth.provider,
@@ -540,7 +550,7 @@ export async function listOauthConnections(options: {
         url: row.sites.url,
         platform: row.sites.platform,
       },
-    };
+    }];
   });
 
   return { items, total, limit, offset };
@@ -553,12 +563,12 @@ export async function deleteOauthConnection(accountId: number) {
   if (!account) {
     throw new Error('oauth account not found');
   }
-  const oauth = getOauthInfoFromExtraConfig(account.extraConfig);
-  if (!oauth) {
+  const normalizedOauth = getOauthInfoFromAccount(account);
+  if (!normalizedOauth) {
     throw new Error('account is not managed by oauth');
   }
   await db.delete(schema.accounts).where(eq(schema.accounts.id, accountId)).run();
-  await rebuildTokenRoutesFromAvailability();
+  await routeRefreshWorkflow.rebuildRoutesOnly();
   return { success: true };
 }
 
@@ -574,7 +584,7 @@ export async function startOauthRebindFlow(accountId: number, requestOrigin?: st
   if (!account) {
     throw new Error('oauth account not found');
   }
-  const oauth = getOauthInfoFromExtraConfig(account.extraConfig);
+  const oauth = getOauthInfoFromAccount(account);
   if (!oauth) {
     throw new Error('account is not managed by oauth');
   }
@@ -587,10 +597,18 @@ export async function startOauthRebindFlow(accountId: number, requestOrigin?: st
 }
 
 export function buildOauthProviderHeaders(input: {
+  account?: {
+    extraConfig?: string | null;
+    oauthProvider?: string | null;
+    oauthAccountKey?: string | null;
+    oauthProjectId?: string | null;
+  } | null;
   extraConfig?: string | null;
   downstreamHeaders?: Record<string, unknown>;
 }) {
-  const oauth = getOauthInfoFromExtraConfig(input.extraConfig);
+  const oauth = getOauthInfoFromAccount(input.account || {
+    extraConfig: input.extraConfig,
+  });
   if (!oauth) return {};
   const definition = getOAuthProviderDefinition(oauth.provider);
   if (!definition?.buildProxyHeaders) return {};
@@ -619,7 +637,7 @@ export async function refreshOauthAccessToken(accountId: number) {
   if (!account) {
     throw new Error('oauth account not found');
   }
-  const oauth = getOauthInfoFromExtraConfig(account.extraConfig);
+  const oauth = getOauthInfoFromAccount(account);
   if (!oauth?.refreshToken) {
     throw new Error('oauth refresh token missing');
   }
@@ -635,7 +653,7 @@ export async function refreshOauthAccessToken(accountId: number) {
       providerData: oauth.providerData,
     },
   });
-  const nextOauth = buildOauthInfo(account.extraConfig, {
+  const nextOauth = buildOauthInfoFromAccount(account, {
     provider: oauth.provider,
     accountId: refreshed.accountId || oauth.accountId,
     accountKey: refreshed.accountKey || oauth.accountKey || refreshed.accountId || oauth.accountId,
@@ -652,7 +670,7 @@ export async function refreshOauthAccessToken(accountId: number) {
   });
   const extraConfig = mergeAccountExtraConfig(account.extraConfig, {
     credentialMode: 'session',
-    oauth: nextOauth,
+    oauth: buildStoredOauthStateFromAccount(account, nextOauth),
   });
 
   await db.update(schema.accounts).set({

@@ -40,7 +40,7 @@ describe('Dashboard hook order', () => {
   });
 
   it('keeps hook order stable when switching from loading to loaded render', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     let renderedTree = '';
     const dashboardData = {
       totalBalance: 0,

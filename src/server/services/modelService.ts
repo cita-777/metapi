@@ -1,5 +1,4 @@
 import { and, eq } from 'drizzle-orm';
-import { fetch } from 'undici';
 import { db, schema } from '../db/index.js';
 import { getAdapter } from './platforms/index.js';
 import {
@@ -22,27 +21,20 @@ import { getBlockedBrandRules, isModelBlockedByBrand } from './brandMatcher.js';
 import { config } from '../config.js';
 import { setAccountRuntimeHealth } from './accountHealthService.js';
 import { clearAllRouteDecisionSnapshots } from './routeDecisionSnapshotStore.js';
-import { withAccountProxyOverride, withExplicitProxyRequestInit, withSiteRecordProxyRequestInit } from './siteProxy.js';
-import { getCodexOauthInfoFromExtraConfig, isCodexPlatform } from './oauth/codexAccount.js';
-import { buildOauthInfo, getOauthInfoFromExtraConfig } from './oauth/oauthAccount.js';
-import { CLAUDE_DEFAULT_ANTHROPIC_VERSION } from './oauth/claudeProvider.js';
+import { withAccountProxyOverride } from './siteProxy.js';
+import { isCodexPlatform } from './oauth/codexAccount.js';
+import { buildStoredOauthStateFromAccount, getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { refreshOauthAccessTokenSingleflight } from './oauth/refreshSingleflight.js';
 import {
-  ANTIGRAVITY_DAILY_UPSTREAM_BASE_URL,
-  ANTIGRAVITY_MODELS_USER_AGENT,
-  ANTIGRAVITY_SANDBOX_DAILY_UPSTREAM_BASE_URL,
-  ANTIGRAVITY_UPSTREAM_BASE_URL,
-} from './oauth/antigravityProvider.js';
-import {
-  GEMINI_CLI_GOOGLE_API_CLIENT,
-  GEMINI_CLI_REQUIRED_SERVICE,
-  GEMINI_CLI_USER_AGENT,
-} from './oauth/geminiCliProvider.js';
+  discoverAntigravityModelsFromCloud,
+  discoverClaudeModelsFromCloud,
+  discoverCodexModelsFromCloud,
+  validateGeminiCliOauthConnection,
+} from './platformDiscoveryRegistry.js';
 
 const API_TOKEN_DISCOVERY_TIMEOUT_MS = 8_000;
 const MODEL_DISCOVERY_TIMEOUT_MS = 12_000;
 const MODEL_REFRESH_BATCH_SIZE = 3;
-const CODEX_MODELS_CLIENT_VERSION = '1.0.0';
 const GEMINI_CLI_STATIC_MODELS = [
   'gemini-2.5-pro',
   'gemini-2.5-flash',
@@ -154,88 +146,6 @@ function normalizeModels(models: string[]): string[] {
   return normalizedModels;
 }
 
-function buildCodexModelsEndpoint(baseUrl: string): string {
-  const normalized = (baseUrl || '').replace(/\/+$/, '');
-  return `${normalized}/models?client_version=${encodeURIComponent(CODEX_MODELS_CLIENT_VERSION)}`;
-}
-
-function extractCodexModelIds(payload: unknown): string[] {
-  const collection = (() => {
-    if (Array.isArray(payload)) return payload;
-    if (!payload || typeof payload !== 'object') return [];
-    const record = payload as Record<string, unknown>;
-    if (Array.isArray(record.models)) return record.models;
-    if (Array.isArray(record.data)) return record.data;
-    if (Array.isArray(record.items)) return record.items;
-    return [];
-  })();
-
-  return collection.flatMap((item) => {
-    if (typeof item === 'string') return [item];
-    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
-    const record = item as Record<string, unknown>;
-    const id = typeof record.id === 'string'
-      ? record.id
-      : (typeof record.slug === 'string' ? record.slug : (typeof record.model === 'string' ? record.model : ''));
-    return id ? [id] : [];
-  });
-}
-
-function extractClaudeModelIds(payload: unknown): string[] {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return [];
-  const record = payload as { data?: unknown };
-  if (!Array.isArray(record.data)) return [];
-
-  return record.data.flatMap((item) => {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
-    const value = item as { id?: unknown; name?: unknown };
-    const id = typeof value.id === 'string'
-      ? value.id.trim()
-      : (typeof value.name === 'string' ? value.name.trim() : '');
-    return id ? [id] : [];
-  });
-}
-
-function normalizeBaseUrl(baseUrl: string): string {
-  return (baseUrl || '').replace(/\/+$/, '');
-}
-
-function extractAntigravityModelIds(payload: unknown): string[] {
-  if (!payload || typeof payload !== 'object') return [];
-  const record = payload as { models?: unknown };
-  if (record.models && typeof record.models === 'object' && !Array.isArray(record.models)) {
-    return Object.keys(record.models).map((name) => name.trim()).filter(Boolean);
-  }
-  if (!Array.isArray(record.models)) return [];
-  return record.models.flatMap((item) => {
-    if (typeof item === 'string') {
-      const trimmed = item.trim();
-      return trimmed ? [trimmed] : [];
-    }
-    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
-    const value = item as { id?: unknown; name?: unknown };
-    const id = typeof value.id === 'string'
-      ? value.id.trim()
-      : (typeof value.name === 'string' ? value.name.trim() : '');
-    return id ? [id] : [];
-  });
-}
-
-function buildAntigravityDiscoveryBaseUrls(siteUrl: string): string[] {
-  const seen = new Set<string>();
-  return [
-    siteUrl,
-    ANTIGRAVITY_UPSTREAM_BASE_URL,
-    ANTIGRAVITY_DAILY_UPSTREAM_BASE_URL,
-    ANTIGRAVITY_SANDBOX_DAILY_UPSTREAM_BASE_URL,
-  ].flatMap((candidate) => {
-    const normalized = normalizeBaseUrl(candidate);
-    if (!normalized || seen.has(normalized)) return [];
-    seen.add(normalized);
-    return [normalized];
-  });
-}
-
 async function updateOauthModelDiscoveryState(input: {
   account: typeof schema.accounts.$inferSelect;
   checkedAt: string;
@@ -243,10 +153,10 @@ async function updateOauthModelDiscoveryState(input: {
   lastModelSyncError?: string;
   lastDiscoveredModels?: string[];
 }) {
-  const oauth = getOauthInfoFromExtraConfig(input.account.extraConfig);
+  const oauth = getOauthInfoFromAccount(input.account);
   if (!oauth) return input.account.extraConfig || null;
   const extraConfig = mergeAccountExtraConfig(input.account.extraConfig, {
-    oauth: buildOauthInfo(input.account.extraConfig, {
+    oauth: buildStoredOauthStateFromAccount(input.account, {
       provider: oauth.provider,
       modelDiscoveryStatus: input.status,
       lastModelSyncAt: input.checkedAt,
@@ -259,138 +169,6 @@ async function updateOauthModelDiscoveryState(input: {
     updatedAt: input.checkedAt,
   }).where(eq(schema.accounts.id, input.account.id)).run();
   return extraConfig;
-}
-
-async function discoverCodexModelsFromCloud(input: {
-  site: typeof schema.sites.$inferSelect;
-  account: typeof schema.accounts.$inferSelect;
-}): Promise<string[]> {
-  const accessToken = (input.account.accessToken || '').trim();
-  if (!accessToken) {
-    throw new Error('codex oauth access token missing');
-  }
-  const oauth = getCodexOauthInfoFromExtraConfig(input.account.extraConfig);
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${accessToken}`,
-    Accept: 'application/json',
-    Originator: 'codex_cli_rs',
-  };
-  if (oauth?.accountId) {
-    headers['Chatgpt-Account-Id'] = oauth.accountId;
-  }
-
-  const response = await fetch(
-    buildCodexModelsEndpoint(input.site.url),
-    withSiteRecordProxyRequestInit(input.site, { method: 'GET', headers }),
-  );
-  if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(`HTTP ${response.status}: ${text || 'codex model discovery failed'}`);
-  }
-  return normalizeModels(extractCodexModelIds(await response.json()));
-}
-
-async function discoverClaudeModelsFromCloud(input: {
-  site: typeof schema.sites.$inferSelect;
-  account: typeof schema.accounts.$inferSelect;
-}): Promise<string[]> {
-  const accessToken = (input.account.accessToken || '').trim();
-  if (!accessToken) {
-    throw new Error('claude oauth access token missing');
-  }
-  const response = await fetch(
-    `${input.site.url.replace(/\/+$/, '')}/v1/models`,
-    withSiteRecordProxyRequestInit(input.site, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: 'application/json',
-        'anthropic-version': CLAUDE_DEFAULT_ANTHROPIC_VERSION,
-      },
-    }),
-  );
-  if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(`HTTP ${response.status}: ${text || 'claude oauth model discovery failed'}`);
-  }
-  return normalizeModels(extractClaudeModelIds(await response.json()));
-}
-
-async function validateGeminiCliOauthConnection(input: {
-  account: typeof schema.accounts.$inferSelect;
-}): Promise<void> {
-  const accessToken = (input.account.accessToken || '').trim();
-  if (!accessToken) {
-    throw new Error('gemini cli oauth access token missing');
-  }
-  const oauth = getOauthInfoFromExtraConfig(input.account.extraConfig);
-  const projectId = (oauth?.projectId || '').trim();
-  if (!projectId) {
-    throw new Error('gemini cli oauth project id missing');
-  }
-  const response = await fetch(
-    `https://serviceusage.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(GEMINI_CLI_REQUIRED_SERVICE)}`,
-    withExplicitProxyRequestInit(getProxyUrlFromExtraConfig(input.account.extraConfig), {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: 'application/json',
-        'User-Agent': GEMINI_CLI_USER_AGENT,
-        'X-Goog-Api-Client': GEMINI_CLI_GOOGLE_API_CLIENT,
-      },
-    }, true),
-  );
-  if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(`HTTP ${response.status}: ${text || 'gemini cli oauth validation failed'}`);
-  }
-  const payload = await response.json() as { state?: unknown };
-  if (String(payload.state || '').trim().toUpperCase() !== 'ENABLED') {
-    throw new Error(`Cloud AI API not enabled for project ${projectId}`);
-  }
-}
-
-async function discoverAntigravityModelsFromCloud(input: {
-  site: typeof schema.sites.$inferSelect;
-  account: typeof schema.accounts.$inferSelect;
-}): Promise<string[]> {
-  const accessToken = (input.account.accessToken || '').trim();
-  if (!accessToken) {
-    throw new Error('antigravity oauth access token missing');
-  }
-
-  const oauth = getOauthInfoFromExtraConfig(input.account.extraConfig);
-  const requestBody = oauth?.projectId ? { project: oauth.projectId } : {};
-  let lastError = '';
-
-  for (const baseUrl of buildAntigravityDiscoveryBaseUrls(input.site.url || ANTIGRAVITY_UPSTREAM_BASE_URL)) {
-    const response = await fetch(
-      `${baseUrl}/v1internal:fetchAvailableModels`,
-      withSiteRecordProxyRequestInit(input.site, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-          'User-Agent': ANTIGRAVITY_MODELS_USER_AGENT,
-        },
-        body: JSON.stringify(requestBody),
-      }),
-    );
-    if (!response.ok) {
-      lastError = await response.text().catch(() => '') || `HTTP ${response.status}`;
-      continue;
-    }
-
-    const payload = await response.json();
-    const models = normalizeModels(extractAntigravityModelIds(payload));
-    if (models.length > 0) {
-      return models;
-    }
-    lastError = '未获取到可用模型';
-  }
-
-  throw new Error(lastError || '未获取到可用模型');
 }
 
 function isExactModelPattern(modelPattern: string): boolean {
@@ -510,7 +288,7 @@ export async function refreshModelsForAccount(
 
   const account = row.accounts;
   const site = row.sites;
-  const oauth = getOauthInfoFromExtraConfig(account.extraConfig);
+  const oauth = getOauthInfoFromAccount(account);
   const adapter = getAdapter(site.platform);
   const accountProxyUrl = getProxyUrlFromExtraConfig(account.extraConfig);
 
@@ -524,7 +302,10 @@ export async function refreshModelsForAccount(
   const previousModelAvailability = restoreAvailabilityOnFailure
     ? await db.select()
       .from(schema.modelAvailability)
-      .where(eq(schema.modelAvailability.accountId, accountId))
+      .where(and(
+        eq(schema.modelAvailability.accountId, accountId),
+        eq(schema.modelAvailability.isManual, false),
+      ))
       .all()
     : [];
   const previousTokenModelAvailability = restoreAvailabilityOnFailure
@@ -536,7 +317,10 @@ export async function refreshModelsForAccount(
 
   const clearExistingAvailability = async () => {
     await db.delete(schema.modelAvailability)
-      .where(eq(schema.modelAvailability.accountId, accountId))
+      .where(and(
+        eq(schema.modelAvailability.accountId, accountId),
+        eq(schema.modelAvailability.isManual, false),
+      ))
       .run();
 
     const currentAccountTokens = await db.select({ id: schema.accountTokens.id })
@@ -568,6 +352,18 @@ export async function refreshModelsForAccount(
 
   await clearExistingAvailability();
 
+  // Collect manual model names so discovered models that collide are skipped (unique index).
+  const manualModelNames = new Set(
+    (await db.select({ modelName: schema.modelAvailability.modelName })
+      .from(schema.modelAvailability)
+      .where(and(
+        eq(schema.modelAvailability.accountId, accountId),
+        eq(schema.modelAvailability.isManual, true),
+      ))
+      .all()
+    ).map((r) => r.modelName.toLowerCase()),
+  );
+
   if (isSiteDisabled(site.status)) {
     return buildSkippedRefreshResult(accountId, 'site_disabled', '站点已禁用');
   }
@@ -590,15 +386,18 @@ export async function refreshModelsForAccount(
         throw new Error('未获取到可用模型');
       }
 
-      await db.insert(schema.modelAvailability).values(
-        codexModels.map((modelName) => ({
-          accountId,
-          modelName,
-          available: true,
-          latencyMs: Date.now() - startedAt,
-          checkedAt,
-        })),
-      ).run();
+      const newCodexModels = codexModels.filter((m) => !manualModelNames.has(m.toLowerCase()));
+      if (newCodexModels.length > 0) {
+        await db.insert(schema.modelAvailability).values(
+          newCodexModels.map((modelName) => ({
+            accountId,
+            modelName,
+            available: true,
+            latencyMs: Date.now() - startedAt,
+            checkedAt,
+          })),
+        ).run();
+      }
       await updateOauthModelDiscoveryState({
         account,
         checkedAt,
@@ -661,15 +460,18 @@ export async function refreshModelsForAccount(
       if (claudeModels.length === 0) {
         throw new Error('未获取到可用模型');
       }
-      await db.insert(schema.modelAvailability).values(
-        claudeModels.map((modelName) => ({
-          accountId,
-          modelName,
-          available: true,
-          latencyMs: Date.now() - startedAt,
-          checkedAt,
-        })),
-      ).run();
+      const newClaudeModels = claudeModels.filter((m) => !manualModelNames.has(m.toLowerCase()));
+      if (newClaudeModels.length > 0) {
+        await db.insert(schema.modelAvailability).values(
+          newClaudeModels.map((modelName) => ({
+            accountId,
+            modelName,
+            available: true,
+            latencyMs: Date.now() - startedAt,
+            checkedAt,
+          })),
+        ).run();
+      }
       await updateOauthModelDiscoveryState({
         account,
         checkedAt,
@@ -751,15 +553,18 @@ export async function refreshModelsForAccount(
           `gemini cli oauth validation timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
         );
       }
-      await db.insert(schema.modelAvailability).values(
-        GEMINI_CLI_STATIC_MODELS.map((modelName) => ({
-          accountId,
-          modelName,
-          available: true,
-          latencyMs: Date.now() - startedAt,
-          checkedAt,
-        })),
-      ).run();
+      const newGeminiModels = GEMINI_CLI_STATIC_MODELS.filter((m) => !manualModelNames.has(m.toLowerCase()));
+      if (newGeminiModels.length > 0) {
+        await db.insert(schema.modelAvailability).values(
+          newGeminiModels.map((modelName) => ({
+            accountId,
+            modelName,
+            available: true,
+            latencyMs: Date.now() - startedAt,
+            checkedAt,
+          })),
+        ).run();
+      }
       await updateOauthModelDiscoveryState({
         account: discoveryAccount,
         checkedAt,
@@ -823,15 +628,18 @@ export async function refreshModelsForAccount(
         throw new Error('未获取到可用模型');
       }
 
-      await db.insert(schema.modelAvailability).values(
-        antigravityModels.map((modelName) => ({
-          accountId,
-          modelName,
-          available: true,
-          latencyMs: Date.now() - startedAt,
-          checkedAt,
-        })),
-      ).run();
+      const newAntigravityModels = antigravityModels.filter((m) => !manualModelNames.has(m.toLowerCase()));
+      if (newAntigravityModels.length > 0) {
+        await db.insert(schema.modelAvailability).values(
+          newAntigravityModels.map((modelName) => ({
+            accountId,
+            modelName,
+            available: true,
+            latencyMs: Date.now() - startedAt,
+            checkedAt,
+          })),
+        ).run();
+      }
       await updateOauthModelDiscoveryState({
         account,
         checkedAt,
@@ -1055,15 +863,18 @@ export async function refreshModelsForAccount(
   }
 
   const checkedAt = new Date().toISOString();
-  await db.insert(schema.modelAvailability).values(
-    Array.from(accountModels.values()).map((modelName) => ({
-      accountId: account.id,
-      modelName,
-      available: true,
-      latencyMs: modelLatency.get(modelName.toLowerCase()) ?? null,
-      checkedAt,
-    })),
-  ).run();
+  const newAccountModels = Array.from(accountModels.values()).filter((m) => !manualModelNames.has(m.toLowerCase()));
+  if (newAccountModels.length > 0) {
+    await db.insert(schema.modelAvailability).values(
+      newAccountModels.map((modelName) => ({
+        accountId: account.id,
+        modelName,
+        available: true,
+        latencyMs: modelLatency.get(modelName.toLowerCase()) ?? null,
+        checkedAt,
+      })),
+    ).run();
+  }
 
   await setAccountRuntimeHealth(account.id, {
     state: 'healthy',

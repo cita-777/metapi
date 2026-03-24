@@ -44,7 +44,7 @@ type ParsedSiteProxyInput = {
   proxyUrl: string | null;
 };
 
-type SiteProxyConfigLike = {
+export type SiteProxyConfigLike = {
   proxyUrl?: string | null;
   useSystemProxy?: boolean | null;
   customHeaders?: string | null;

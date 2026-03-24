@@ -7,13 +7,13 @@ export interface AccountTokenSchemaInspector {
   execute(sqlText: string): Promise<void>;
 }
 
-type AccountTokenColumnCompatibilitySpec = {
+export type AccountTokenColumnCompatibilitySpec = {
   table: 'account_tokens';
   column: string;
   addSql: Record<AccountTokenSchemaDialect, string>;
 };
 
-const ACCOUNT_TOKEN_COLUMN_COMPATIBILITY_SPECS: AccountTokenColumnCompatibilitySpec[] = [
+export const ACCOUNT_TOKEN_COLUMN_COMPATIBILITY_SPECS: AccountTokenColumnCompatibilitySpec[] = [
   {
     table: 'account_tokens',
     column: 'token_group',

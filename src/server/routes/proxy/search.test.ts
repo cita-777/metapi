@@ -129,6 +129,36 @@ describe('/v1/search route', () => {
     });
   });
 
+  it('keeps returning a successful search response when channel success bookkeeping fails', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      object: 'search.result',
+      data: [{ title: 'AxonHub' }],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    recordSuccessMock.mockRejectedValueOnce(new Error('record success failed'));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/search',
+      headers: {
+        authorization: 'Bearer sk-demo',
+      },
+      payload: {
+        query: 'axonhub',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      object: 'search.result',
+      data: [{ title: 'AxonHub' }],
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(selectNextChannelMock).not.toHaveBeenCalled();
+  });
+
   it('rejects max_results outside the allowed range', async () => {
     const response = await app.inject({
       method: 'POST',

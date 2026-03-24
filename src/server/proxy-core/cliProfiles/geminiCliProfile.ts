@@ -32,6 +32,9 @@ export const geminiCliProfile: CliProfileDefinition = {
     if (input.body !== undefined && !hasGeminiCliBodyShape(input.body)) return null;
     return {
       id: 'gemini_cli',
+      clientAppId: 'gemini_cli',
+      clientAppName: 'Gemini CLI',
+      clientConfidence: 'exact',
     };
   },
 };

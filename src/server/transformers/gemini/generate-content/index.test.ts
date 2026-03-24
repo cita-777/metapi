@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import {
   geminiGenerateContentTransformer,
+  resolveGeminiGenerateContentUrl,
+  resolveGeminiModelsUrl,
+  resolveGeminiNativeBaseUrl,
   reasoningEffortToGeminiThinkingConfig,
   geminiThinkingConfigToReasoning,
 } from './index.js';
 import { extractGeminiUsage } from './usage.js';
-import { serializeGeminiAggregateResponse, extractResponseMetadata } from './outbound.js';
+import { serializeGeminiAggregateResponse, extractResponseMetadata, geminiGenerateContentOutbound } from './outbound.js';
 import { resolveGeminiThinkingConfigFromRequest } from './convert.js';
 import {
   parseGeminiStreamPayload,
@@ -15,6 +18,33 @@ import {
 } from './stream.js';
 
 describe('geminiGenerateContentTransformer.inbound', () => {
+  it('reuses the same gemini url resolver helpers across transformer layers', () => {
+    expect(geminiGenerateContentTransformer.resolveBaseUrl).toBe(resolveGeminiNativeBaseUrl);
+    expect(geminiGenerateContentTransformer.resolveModelsUrl).toBe(resolveGeminiModelsUrl);
+    expect(geminiGenerateContentTransformer.resolveActionUrl).toBe(resolveGeminiGenerateContentUrl);
+    expect(geminiGenerateContentOutbound.resolveBaseUrl).toBe(resolveGeminiNativeBaseUrl);
+    expect(geminiGenerateContentOutbound.resolveModelsUrl).toBe(resolveGeminiModelsUrl);
+    expect(geminiGenerateContentOutbound.resolveActionUrl).toBe(resolveGeminiGenerateContentUrl);
+  });
+
+  it('preserves base-url query params when resolving Gemini endpoints', () => {
+    expect(
+      resolveGeminiNativeBaseUrl('https://example.com/native?alt=sse', 'v1beta'),
+    ).toBe('https://example.com/native/v1beta?alt=sse');
+    expect(
+      resolveGeminiModelsUrl('https://example.com/native?alt=sse', 'v1beta', 'api-key'),
+    ).toBe('https://example.com/native/v1beta/models?alt=sse&key=api-key');
+    expect(
+      resolveGeminiGenerateContentUrl(
+        'https://example.com/native?alt=sse',
+        'v1beta',
+        '/models/gemini-2.5-pro:generateContent',
+        'api-key',
+        '?trace=1',
+      ),
+    ).toBe('https://example.com/native/v1beta/models/gemini-2.5-pro:generateContent?alt=sse&trace=1&key=api-key');
+  });
+
   it('parses native Gemini requests into canonical envelopes', () => {
     const result = geminiGenerateContentTransformer.parseRequest({
       model: 'gemini-2.5-pro',

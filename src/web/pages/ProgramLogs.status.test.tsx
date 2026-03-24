@@ -54,7 +54,7 @@ describe('ProgramLogs status label', () => {
       },
     ]);
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     await act(async () => {
       root = create(
         <MemoryRouter initialEntries={['/events']}>
@@ -90,7 +90,7 @@ describe('ProgramLogs status label', () => {
       },
     ]);
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     await act(async () => {
       root = create(
         <MemoryRouter initialEntries={['/events']}>

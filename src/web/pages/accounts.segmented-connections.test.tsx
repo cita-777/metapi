@@ -67,7 +67,7 @@ describe('Accounts segmented connections view', () => {
     ]);
     apiMock.getAccountTokens.mockResolvedValue([]);
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -116,7 +116,7 @@ describe('Accounts segmented connections view', () => {
     ]);
     apiMock.getAccountTokens.mockResolvedValue([]);
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(

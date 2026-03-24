@@ -290,6 +290,52 @@ describe('backupService', () => {
     ]);
   });
 
+  it('does not export runtime database config in preferences backups', async () => {
+    await db.insert(schema.settings).values([
+      { key: 'db_type', value: JSON.stringify('postgres') },
+      { key: 'db_url', value: JSON.stringify('postgres://metapi:secret@db.example.com:5432/metapi') },
+      { key: 'db_ssl', value: JSON.stringify(true) },
+      { key: 'routing_fallback_unit_cost', value: JSON.stringify(0.25) },
+    ]).run();
+
+    const exported = await backupService.exportBackup('preferences') as any;
+    const exportedSettingKeys = exported.preferences.settings.map((row: { key: string }) => row.key);
+
+    expect(exportedSettingKeys).toContain('routing_fallback_unit_cost');
+    expect(exportedSettingKeys).not.toContain('db_type');
+    expect(exportedSettingKeys).not.toContain('db_url');
+    expect(exportedSettingKeys).not.toContain('db_ssl');
+  });
+
+  it('ignores imported runtime database config settings', async () => {
+    const result = await backupService.importBackup({
+      version: '2.1',
+      timestamp: Date.now(),
+      type: 'preferences',
+      preferences: {
+        settings: [
+          { key: 'db_type', value: 'postgres' },
+          { key: 'db_url', value: 'postgres://metapi:secret@db.example.com:5432/metapi' },
+          { key: 'db_ssl', value: true },
+          { key: 'routing_fallback_unit_cost', value: 0.25 },
+        ],
+      },
+    });
+
+    expect(result.sections.preferences).toBe(true);
+    expect(result.appliedSettings).toEqual([
+      { key: 'routing_fallback_unit_cost', value: 0.25 },
+    ]);
+
+    const settingsRows = await db.select().from(schema.settings).all();
+    const savedKeys = settingsRows.map((row) => row.key);
+
+    expect(savedKeys).toContain('routing_fallback_unit_cost');
+    expect(savedKeys).not.toContain('db_type');
+    expect(savedKeys).not.toContain('db_url');
+    expect(savedKeys).not.toContain('db_ssl');
+  });
+
   it('preserves local logs and runtime stats when importing account backups', async () => {
     const exportedAt = '2026-03-20T09:00:00.000Z';
     const localRuntimeAt = '2026-03-21T10:30:00.000Z';

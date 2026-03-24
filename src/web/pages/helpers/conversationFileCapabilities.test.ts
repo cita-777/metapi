@@ -75,5 +75,9 @@ describe('resolveConversationFileCapability', () => {
       filename: 'voice.mp3',
       mimeType: 'audio/mpeg',
     })).toBe(false);
+    expect(isConversationUploadedFileSupported(claudeCapability, {
+      filename: 'paper.pdf',
+      mimeType: 'application/octet-stream',
+    })).toBe(true);
   });
 });

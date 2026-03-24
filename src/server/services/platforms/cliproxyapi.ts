@@ -1,30 +1,27 @@
-import { BasePlatformAdapter, type BalanceInfo, type CheckinResult, type UserInfo } from './base.js';
+import {
+  StandardApiProviderAdapterBase,
+  normalizePlatformBaseUrl,
+  resolveVersionedModelsUrl,
+} from './standardApiProvider.js';
 
-function normalizeBaseUrl(baseUrl: string): string {
-  return (baseUrl || '').replace(/\/+$/, '');
-}
-
-export class CliProxyApiAdapter extends BasePlatformAdapter {
+export class CliProxyApiAdapter extends StandardApiProviderAdapterBase {
   readonly platformName = 'cliproxyapi';
+  protected override loginUnsupportedMessage = 'CLIProxyAPI does not support login';
+  protected override checkinUnsupportedMessage = 'CLIProxyAPI does not support checkin';
 
   async detect(url: string): Promise<boolean> {
     const normalized = (url || '').toLowerCase();
 
-    // Quick check: default CLIProxyAPI port
     if (/:8317(\/|$)/.test(normalized)) {
       return true;
     }
 
-    // Quick check: common hostname keyword
     if (normalized.includes('cliproxy')) {
       return true;
     }
 
-    // Probe management endpoint with strict signature checks.
-    // Do not trust bare 401/403 because many non-CLIProxy sites may return
-    // those statuses for unknown/protected paths.
     try {
-      const base = normalizeBaseUrl(url);
+      const base = normalizePlatformBaseUrl(url);
       const { fetch } = await import('undici');
       const res = await fetch(`${base}/v0/management/openai-compatibility`, {
         method: 'GET',
@@ -53,31 +50,11 @@ export class CliProxyApiAdapter extends BasePlatformAdapter {
     }
   }
 
-  override async login(_baseUrl: string, _username: string, _password: string) {
-    return { success: false as const, message: 'CLIProxyAPI does not support login' };
-  }
-
-  override async getUserInfo(_baseUrl: string, _accessToken: string): Promise<UserInfo | null> {
-    return null;
-  }
-
-  async checkin(_baseUrl: string, _accessToken: string): Promise<CheckinResult> {
-    return { success: false, message: 'CLIProxyAPI does not support checkin' };
-  }
-
-  async getBalance(_baseUrl: string, _accessToken: string): Promise<BalanceInfo> {
-    return { balance: 0, used: 0, quota: 0 };
-  }
-
   async getModels(baseUrl: string, apiToken: string): Promise<string[]> {
-    try {
-      const base = normalizeBaseUrl(baseUrl);
-      const res = await this.fetchJson<any>(`${base}/v1/models`, {
-        headers: { Authorization: `Bearer ${apiToken}` },
-      });
-      return (res?.data || []).map((m: any) => m?.id).filter(Boolean);
-    } catch {
-      return [];
-    }
+    return this.fetchModelsFromStandardEndpoint({
+      baseUrl,
+      headers: { Authorization: `Bearer ${apiToken}` },
+      resolveUrl: resolveVersionedModelsUrl,
+    });
   }
 }

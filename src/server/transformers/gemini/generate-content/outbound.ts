@@ -7,45 +7,11 @@ import {
   toTransformerMetadataRecord,
   type TransformerMetadata,
 } from '../../shared/normalized.js';
-
-function normalizeBaseUrl(baseUrl: string): string {
-  return (baseUrl || '').replace(/\/+$/, '');
-}
-
-function baseIncludesVersion(baseUrl: string): boolean {
-  return /\/v\d+(?:beta)?(?:\/|$)/i.test(baseUrl);
-}
-
-function resolveBaseUrl(baseUrl: string, apiVersion: string): string {
-  const normalized = normalizeBaseUrl(baseUrl);
-  if (baseIncludesVersion(normalized)) return normalized;
-  return `${normalized}/${apiVersion}`;
-}
-
-function resolveModelsUrl(
-  baseUrl: string,
-  apiVersion: string,
-  apiKey: string,
-): string {
-  const resolvedBaseUrl = resolveBaseUrl(baseUrl, apiVersion);
-  const separator = resolvedBaseUrl.includes('?') ? '&' : '?';
-  return `${resolvedBaseUrl}/models${separator}key=${encodeURIComponent(apiKey)}`;
-}
-
-function resolveActionUrl(
-  baseUrl: string,
-  apiVersion: string,
-  modelActionPath: string,
-  apiKey: string,
-  search: string,
-): string {
-  const resolvedBaseUrl = resolveBaseUrl(baseUrl, apiVersion);
-  const normalizedAction = modelActionPath.replace(/^\/+/, '');
-  const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
-  params.set('key', apiKey);
-  const query = params.toString();
-  return `${resolvedBaseUrl}/${normalizedAction}${query ? `?${query}` : ''}`;
-}
+import {
+  resolveGeminiGenerateContentUrl,
+  resolveGeminiModelsUrl,
+  resolveGeminiNativeBaseUrl,
+} from './urlResolver.js';
 
 type GeminiRecord = Record<string, unknown>;
 
@@ -304,9 +270,9 @@ export function extractResponseMetadata(payload: unknown, requestPayload?: unkno
 }
 
 export const geminiGenerateContentOutbound = {
-  resolveBaseUrl,
-  resolveModelsUrl,
-  resolveActionUrl,
+  resolveBaseUrl: resolveGeminiNativeBaseUrl,
+  resolveModelsUrl: resolveGeminiModelsUrl,
+  resolveActionUrl: resolveGeminiGenerateContentUrl,
   extractTransformerMetadata,
   extractResponseMetadata,
   serializeAggregateResponse: serializeGeminiAggregateResponse,

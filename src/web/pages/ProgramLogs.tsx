@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 import { MobileCard, MobileField } from '../components/MobileCard.js';
-import MobileFilterSheet from '../components/MobileFilterSheet.js';
+import ResponsiveFilterPanel from '../components/ResponsiveFilterPanel.js';
 import { useToast } from '../components/Toast.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import { formatDateTimeLocal } from './helpers/checkinLogTime.js';
@@ -213,55 +213,14 @@ export default function ProgramLogs() {
         </div>
       </div>
 
-      {isMobile ? (
-        <>
-          <div className="mobile-filter-row">
-            <button
-              type="button"
-              className="btn btn-ghost"
-              style={{ border: '1px solid var(--color-border)' }}
-              onClick={() => setShowFilters(true)}
-            >
-              筛选
-            </button>
-          </div>
-          <MobileFilterSheet
-            open={showFilters}
-            onClose={() => setShowFilters(false)}
-            title="筛选程序日志"
-          >
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <ModernSelect
-                size="sm"
-                value={filterType}
-                onChange={(nextValue) => setFilterType(nextValue)}
-                options={TYPE_OPTIONS.map((item) => ({
-                  value: item.value,
-                  label: item.label,
-                }))}
-                placeholder="全部类型"
-              />
-              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--color-text-secondary)' }}>
-                <input
-                  type="checkbox"
-                  checked={onlyUnread}
-                  onChange={(e) => {
-                    setOffset(0);
-                    setHasMore(true);
-                    setOnlyUnread(e.target.checked);
-                  }}
-                />
-                仅看未读
-              </label>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-                共 {visibleRows.length} 条
-              </div>
-            </div>
-          </MobileFilterSheet>
-        </>
-      ) : (
-        <div className="card" style={{ padding: 14, marginBottom: 12, display: 'flex', gap: 10, alignItems: 'center' }}>
-          <div style={{ minWidth: 170 }}>
+      <ResponsiveFilterPanel
+        isMobile={isMobile}
+        mobileOpen={showFilters}
+        onMobileOpen={() => setShowFilters(true)}
+        onMobileClose={() => setShowFilters(false)}
+        mobileTitle="筛选程序日志"
+        mobileContent={(
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <ModernSelect
               size="sm"
               value={filterType}
@@ -272,26 +231,57 @@ export default function ProgramLogs() {
               }))}
               placeholder="全部类型"
             />
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+              <input
+                type="checkbox"
+                checked={onlyUnread}
+                onChange={(e) => {
+                  setOffset(0);
+                  setHasMore(true);
+                  setOnlyUnread(e.target.checked);
+                }}
+              />
+              仅看未读
+            </label>
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+              共 {visibleRows.length} 条
+            </div>
           </div>
+        )}
+        desktopContent={(
+          <div className="card" style={{ padding: 14, marginBottom: 12, display: 'flex', gap: 10, alignItems: 'center' }}>
+            <div style={{ minWidth: 170 }}>
+              <ModernSelect
+                size="sm"
+                value={filterType}
+                onChange={(nextValue) => setFilterType(nextValue)}
+                options={TYPE_OPTIONS.map((item) => ({
+                  value: item.value,
+                  label: item.label,
+                }))}
+                placeholder="全部类型"
+              />
+            </div>
 
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--color-text-secondary)' }}>
-            <input
-              type="checkbox"
-              checked={onlyUnread}
-              onChange={(e) => {
-                setOffset(0);
-                setHasMore(true);
-                setOnlyUnread(e.target.checked);
-              }}
-            />
-            仅看未读
-          </label>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+              <input
+                type="checkbox"
+                checked={onlyUnread}
+                onChange={(e) => {
+                  setOffset(0);
+                  setHasMore(true);
+                  setOnlyUnread(e.target.checked);
+                }}
+              />
+              仅看未读
+            </label>
 
-          <div style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--color-text-muted)' }}>
-            共 {visibleRows.length} 条
+            <div style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--color-text-muted)' }}>
+              共 {visibleRows.length} 条
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      />
 
       <div className="card" style={{ overflowX: 'auto' }}>
         {loading ? (

@@ -525,7 +525,8 @@ describe('responses proxy codex oauth refresh', () => {
     const forwardedBody = JSON.parse(options.body);
     expect(forwardedBody.stream).toBe(true);
     expect(forwardedBody.instructions).toBe('');
-    expect(forwardedBody.store).toBe(false);
+    expect(forwardedBody.store).toBeUndefined();
+    expect(forwardedBody.max_output_tokens).toBeUndefined();
 
     expect(response.json()).toMatchObject({
       id: 'resp_codex_stream',
@@ -567,11 +568,13 @@ describe('responses proxy codex oauth refresh', () => {
     const secondBody = JSON.parse(secondOptions.body);
 
     expect(firstBody.instructions).toBe('');
-    expect(firstBody.store).toBe(false);
+    expect(firstBody.store).toBeUndefined();
     expect(firstBody.stream).toBe(true);
+    expect(firstBody.max_output_tokens).toBeUndefined();
     expect(secondBody.instructions).toBe('');
-    expect(secondBody.store).toBe(false);
+    expect(secondBody.store).toBeUndefined();
     expect(secondBody.stream).toBe(true);
+    expect(secondBody.max_output_tokens).toBeUndefined();
   });
 
   it('does not record success when a streaming responses request ends with response.failed', async () => {

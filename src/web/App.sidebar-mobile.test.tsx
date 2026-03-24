@@ -151,7 +151,7 @@ describe('App mobile sidebar', () => {
 
   it('opens the mobile drawer from the hamburger trigger and exposes the close affordance', async () => {
     setupRuntime(768);
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {

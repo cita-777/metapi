@@ -9,9 +9,13 @@ import {
   type NormalizedStreamEvent,
   type StreamTransformContext,
 } from '../../shared/normalized.js';
+import { decodeAnthropicReasoningSignature } from '../../shared/reasoningTransport.js';
 import { type AnthropicExtendedStreamEvent } from './aggregator.js';
 
 type AnthropicStreamPayload = Record<string, unknown>;
+type AnthropicMessagesNormalizedFinalResponse = NormalizedFinalResponse & {
+  nativeContent?: AnthropicStreamPayload[];
+};
 
 type AnthropicBlockKind = 'thinking' | 'text' | 'tool_use' | 'redacted_thinking';
 
@@ -55,6 +59,106 @@ function asTrimmedString(value: unknown): string {
 
 function serializeSse(event: string, payload: Record<string, unknown>): string {
   return `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
+}
+
+function cloneJsonValue<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => cloneJsonValue(item)) as T;
+  }
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, cloneJsonValue(item)]),
+    ) as T;
+  }
+  return value;
+}
+
+function cleanAnthropicReasoningSignature(value: unknown): string | null {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) return null;
+  const decoded = decodeAnthropicReasoningSignature(raw);
+  if (decoded) return decoded;
+  if (raw.startsWith('metapi:')) return null;
+  return raw;
+}
+
+function buildAnthropicFinalContentBlocks(
+  normalizedFinal: NormalizedFinalResponse,
+): AnthropicStreamPayload[] {
+  const anthropicNormalized = normalizedFinal as AnthropicMessagesNormalizedFinalResponse;
+  if (Array.isArray(anthropicNormalized.nativeContent) && anthropicNormalized.nativeContent.length > 0) {
+    return anthropicNormalized.nativeContent
+      .filter((block): block is AnthropicStreamPayload => isRecord(block))
+      .map((block) => {
+        const cloned = cloneJsonValue(block);
+        const blockType = asTrimmedString(cloned.type).toLowerCase();
+        if (blockType === 'thinking') {
+          const signature = cleanAnthropicReasoningSignature(cloned.signature);
+          if (signature) cloned.signature = signature;
+          else delete cloned.signature;
+        }
+        return cloned;
+      });
+  }
+
+  const contentBlocks: AnthropicStreamPayload[] = [];
+  const cleanSignature = cleanAnthropicReasoningSignature(normalizedFinal.reasoningSignature);
+  if (normalizedFinal.reasoningContent || cleanSignature) {
+    const thinkingBlock: AnthropicStreamPayload = {
+      type: 'thinking',
+      thinking: normalizedFinal.reasoningContent || '',
+    };
+    if (cleanSignature) thinkingBlock.signature = cleanSignature;
+    contentBlocks.push(thinkingBlock);
+  }
+  if (normalizedFinal.redactedReasoningContent) {
+    contentBlocks.push({
+      type: 'redacted_thinking',
+      data: normalizedFinal.redactedReasoningContent,
+    });
+  }
+  if (normalizedFinal.content) {
+    contentBlocks.push({
+      type: 'text',
+      text: normalizedFinal.content,
+    });
+  }
+  if (Array.isArray(normalizedFinal.toolCalls)) {
+    for (let index = 0; index < normalizedFinal.toolCalls.length; index += 1) {
+      const toolCall = normalizedFinal.toolCalls[index];
+      contentBlocks.push({
+        type: 'tool_use',
+        id: toolCall.id || `toolu_${index}`,
+        name: toolCall.name || `tool_${index}`,
+        input: (() => {
+          const rawArguments = toolCall.arguments || '';
+          try {
+            return rawArguments ? JSON.parse(rawArguments) : {};
+          } catch {
+            return { value: rawArguments };
+          }
+        })(),
+      });
+    }
+  }
+
+  if (contentBlocks.length <= 0) {
+    contentBlocks.push({
+      type: 'text',
+      text: '',
+    });
+  }
+  return contentBlocks;
+}
+
+function serializeToolInputDelta(input: unknown): string | null {
+  if (input === undefined) return null;
+  if (typeof input === 'string') return input;
+  try {
+    return JSON.stringify(input);
+  } catch {
+    return JSON.stringify({});
+  }
 }
 
 export function isAnthropicRawSseEventName(value: unknown): value is string {
@@ -493,25 +597,126 @@ export function serializeAnthropicFinalAsStream(
   const lines = [
     ...anthropicMessagesStream.serializeEvent({ role: 'assistant' }, streamContext, downstreamContext),
   ];
+  const serializeAnthropicEvent = (event: AnthropicExtendedStreamEvent) => anthropicMessagesStream.serializeEvent(
+    event,
+    streamContext,
+    downstreamContext,
+  );
+  const contentBlocks = buildAnthropicFinalContentBlocks(normalizedFinal);
 
-  if (normalizedFinal.reasoningContent) {
-    lines.push(
-      ...anthropicMessagesStream.serializeEvent(
-        { reasoningDelta: normalizedFinal.reasoningContent },
+  for (let index = 0; index < contentBlocks.length; index += 1) {
+    const block = contentBlocks[index];
+    const blockType = asTrimmedString(block.type).toLowerCase();
+
+    if (blockType === 'thinking') {
+      lines.push(...serializeAnthropicEvent(
+        {
+          anthropic: {
+            startBlock: {
+              kind: 'thinking',
+              index,
+            },
+          },
+        },
+      ));
+      const thinkingText = asTrimmedString(block.thinking);
+      if (thinkingText) {
+        lines.push(...anthropicMessagesStream.serializeEvent(
+          { reasoningDelta: thinkingText },
+          streamContext,
+          downstreamContext,
+        ));
+      }
+      const cleanSignature = cleanAnthropicReasoningSignature(block.signature);
+      if (cleanSignature) {
+        lines.push(...serializeAnthropicEvent(
+          {
+            anthropic: {
+              signatureDelta: cleanSignature,
+            },
+          },
+        ));
+      }
+      lines.push(...serializeAnthropicEvent(
+        {
+          anthropic: {
+            stopBlockIndex: index,
+          },
+        },
+      ));
+      continue;
+    }
+
+    if (blockType === 'redacted_thinking') {
+      lines.push(...serializeAnthropicEvent(
+        {
+          anthropic: {
+            startBlock: {
+              kind: 'redacted_thinking',
+              index,
+            },
+            redactedThinkingData: asTrimmedString(block.data),
+          },
+        },
+      ));
+      lines.push(...serializeAnthropicEvent(
+        {
+          anthropic: {
+            stopBlockIndex: index,
+          },
+        },
+      ));
+      continue;
+    }
+
+    if (blockType === 'tool_use') {
+      const argumentsDelta = serializeToolInputDelta(block.input);
+      lines.push(...anthropicMessagesStream.serializeEvent(
+        {
+          toolCallDeltas: [{
+            index,
+            id: asTrimmedString(block.id) || undefined,
+            name: asTrimmedString(block.name) || undefined,
+            ...(argumentsDelta !== null ? { argumentsDelta } : {}),
+          }],
+        },
         streamContext,
         downstreamContext,
-      ),
-    );
-  }
+      ));
+      lines.push(...serializeAnthropicEvent(
+        {
+          anthropic: {
+            stopBlockIndex: index,
+          },
+        },
+      ));
+      continue;
+    }
 
-  if (normalizedFinal.content) {
-    lines.push(
-      ...anthropicMessagesStream.serializeEvent(
-        { contentDelta: normalizedFinal.content },
+    lines.push(...serializeAnthropicEvent(
+      {
+        anthropic: {
+          startBlock: {
+            kind: 'text',
+            index,
+          },
+        },
+      },
+    ));
+    if (typeof block.text === 'string') {
+      lines.push(...anthropicMessagesStream.serializeEvent(
+        { contentDelta: block.text },
         streamContext,
         downstreamContext,
-      ),
-    );
+      ));
+    }
+    lines.push(...serializeAnthropicEvent(
+      {
+        anthropic: {
+          stopBlockIndex: index,
+        },
+      },
+    ));
   }
 
   lines.push(
@@ -766,8 +971,11 @@ export const anthropicMessagesStream = {
       events.push(...handleExplicitBlockStart(startBlock.kind, normalizedStartIndex, context));
     }
 
-    if (anthropicEvent.anthropic?.signatureDelta) {
-      bufferPendingSignature(context, anthropicEvent.anthropic.signatureDelta);
+    const signatureDelta = anthropicEvent.anthropic?.signatureDelta
+      ?? (typeof event.reasoningSignature === 'string' ? event.reasoningSignature : undefined);
+    const cleanSignatureDelta = cleanAnthropicReasoningSignature(signatureDelta);
+    if (cleanSignatureDelta) {
+      bufferPendingSignature(context, cleanSignatureDelta);
     }
 
     if (anthropicEvent.anthropic?.redactedThinkingData) {

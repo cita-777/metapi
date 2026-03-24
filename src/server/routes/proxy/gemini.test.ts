@@ -1345,7 +1345,7 @@ describe('gemini native proxy routes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(recordSuccessMock).toHaveBeenCalledWith(11, expect.any(Number), 0);
+    expect(recordSuccessMock).toHaveBeenCalledWith(11, expect.any(Number), 0, 'gemini-2.5-flash');
     expect(dbInsertMock).toHaveBeenCalledTimes(1);
     expect(dbInsertValuesMock).toHaveBeenCalledWith(expect.objectContaining({
       routeId: 22,
@@ -1362,6 +1362,70 @@ describe('gemini native proxy routes', () => {
       errorMessage: '[downstream:/v1beta/models/gemini-2.5-flash:generateContent] [upstream:/v1beta/models/gemini-2.5-flash:generateContent]',
       createdAt: expect.any(String),
     }));
+  });
+
+  it('keeps returning a successful Gemini response when channel success bookkeeping fails', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      candidates: [
+        {
+          content: {
+            parts: [{ text: 'hello despite bookkeeping failure' }],
+            role: 'model',
+          },
+          finishReason: 'STOP',
+        },
+      ],
+      usageMetadata: {
+        promptTokenCount: 10,
+        candidatesTokenCount: 5,
+        totalTokenCount: 15,
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    recordSuccessMock.mockImplementation(async () => {
+      throw new Error('record success failed');
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1beta/models/gemini-2.5-flash:generateContent',
+      headers: {
+        'x-goog-api-key': 'sk-managed-gemini',
+      },
+      payload: {
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: 'hello' }],
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(selectNextChannelMock).not.toHaveBeenCalled();
+    expect(recordFailureMock).not.toHaveBeenCalled();
+    expect(response.json()).toEqual({
+      responseId: '',
+      modelVersion: '',
+      candidates: [
+        {
+          index: 0,
+          content: {
+            parts: [{ text: 'hello despite bookkeeping failure' }],
+            role: 'model',
+          },
+          finishReason: 'STOP',
+        },
+      ],
+      usageMetadata: {
+        promptTokenCount: 10,
+        candidatesTokenCount: 5,
+        totalTokenCount: 15,
+      },
+    });
   });
 
   it('forwards explicit gemini version paths through transformer-owned parsing helpers', async () => {
@@ -1716,6 +1780,48 @@ describe('gemini native proxy routes', () => {
     expect(response.body).toContain('data: [DONE]\r\n\r\n');
   });
 
+  it('does not retry a Gemini SSE stream when channel success bookkeeping fails after bytes are written', async () => {
+    const encoder = new TextEncoder();
+    const upstreamBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"candidates":[{"content":{"role":"model","parts":[{"text":"hello after bookkeeping failure"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":4,"totalTokenCount":11}}\r\n\r\n'));
+        controller.enqueue(encoder.encode('data: [DONE]\r\n\r\n'));
+        controller.close();
+      },
+    });
+
+    fetchMock.mockResolvedValue(new Response(upstreamBody, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+    }));
+    recordSuccessMock.mockImplementation(async () => {
+      throw new Error('record success failed');
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse',
+      headers: {
+        'x-goog-api-key': 'sk-managed-gemini',
+      },
+      payload: {
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: 'hello' }],
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/event-stream');
+    expect(response.body).toContain('hello after bookkeeping failure');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(selectNextChannelMock).not.toHaveBeenCalled();
+    expect(recordFailureMock).not.toHaveBeenCalled();
+  });
+
   it('falls back to the next channel when first Gemini channel returns 400 before any bytes are written', async () => {
     selectNextChannelMock.mockReturnValue({
       channel: { id: 12, routeId: 22 },
@@ -2015,6 +2121,6 @@ describe('gemini native proxy routes', () => {
       totalTokens: 17,
       errorMessage: '[downstream:/v1beta/models/gemini-2.5-flash:streamGenerateContent] [upstream:/v1beta/models/gemini-2.5-flash:streamGenerateContent]',
     }));
-    expect(recordSuccessMock).toHaveBeenCalledWith(12, expect.any(Number), 0);
+    expect(recordSuccessMock).toHaveBeenCalledWith(12, expect.any(Number), 0, 'gemini-2.5-flash');
   });
 });

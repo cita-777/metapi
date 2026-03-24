@@ -14,6 +14,10 @@ const MODEL_UNSUPPORTED_PATTERNS: RegExp[] = [
   /you\s+do\s+not\s+have\s+access\s+to\s+the\s+model/i,
 ];
 
+export const RETRYABLE_TIMEOUT_PATTERNS: RegExp[] = [
+  /(request timed out|connection timed out|read timeout|\btimed out\b)/i,
+];
+
 const RETRYABLE_CHANNEL_LOCAL_PATTERNS: RegExp[] = [
   /unsupported\s+legacy\s+protocol/i,
   /please\s+use\s+\/v1\/responses/i,
@@ -34,7 +38,7 @@ const RETRYABLE_CHANNEL_LOCAL_PATTERNS: RegExp[] = [
   /gateway\s+time-?out/i,
   /service\s+unavailable/i,
   /cpu\s+overloaded/i,
-  /timeout/i,
+  ...RETRYABLE_TIMEOUT_PATTERNS,
 ];
 
 const NON_RETRYABLE_REQUEST_PATTERNS: RegExp[] = [

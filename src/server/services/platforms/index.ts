@@ -14,6 +14,7 @@ import { GeminiCliAdapter } from './geminiCli.js';
 import { AntigravityAdapter } from './antigravity.js';
 import { CliProxyApiAdapter } from './cliproxyapi.js';
 import { detectPlatformByTitle } from './titleHint.js';
+import { detectPlatformByUrlHint, normalizePlatformAlias } from '../../../shared/platformIdentity.js';
 
 const adapters: PlatformAdapter[] = [
   // Specific forks before generic adapters for better auto-detection.
@@ -33,47 +34,8 @@ const adapters: PlatformAdapter[] = [
   new OneApiAdapter(),
 ];
 
-const platformAliases: Record<string, string> = {
-  // NewAPI family aliases
-  anyrouter: 'anyrouter',
-  'wong-gongyi': 'new-api',
-  'vo-api': 'new-api',
-  'super-api': 'new-api',
-  'rix-api': 'new-api',
-  'neo-api': 'new-api',
-  newapi: 'new-api',
-  'new api': 'new-api',
-  // OneAPI family aliases
-  oneapi: 'one-api',
-  'one api': 'one-api',
-  // Keep canonical forms explicit for clarity
-  'new-api': 'new-api',
-  'one-api': 'one-api',
-  veloera: 'veloera',
-  'one-hub': 'one-hub',
-  'done-hub': 'done-hub',
-  sub2api: 'sub2api',
-  // Official upstream APIs
-  openai: 'openai',
-  codex: 'codex',
-  'chatgpt-codex': 'codex',
-  'chatgpt codex': 'codex',
-  anthropic: 'claude',
-  claude: 'claude',
-  gemini: 'gemini',
-  'gemini-cli': 'gemini-cli',
-  antigravity: 'antigravity',
-  'anti-gravity': 'antigravity',
-  google: 'gemini',
-  // CLIProxyAPI aliases
-  cliproxyapi: 'cliproxyapi',
-  cpa: 'cliproxyapi',
-  'cli-proxy-api': 'cliproxyapi',
-};
-
 function normalizePlatform(platform: string): string {
-  const raw = (platform || '').trim().toLowerCase();
-  return platformAliases[raw] ?? raw;
+  return normalizePlatformAlias(platform);
 }
 
 export function getAdapter(platform: string): PlatformAdapter | undefined {
@@ -88,36 +50,6 @@ const titleFirstPlatforms = new Set<string>([
   'veloera',
   'sub2api',
 ]);
-
-function detectPlatformByUrlHint(url: string): string | undefined {
-  const normalized = (url || '').trim().toLowerCase();
-  if (!normalized) return undefined;
-
-  // Official upstream endpoints.
-  if (normalized.includes('api.openai.com')) return 'openai';
-  if (normalized.includes('chatgpt.com/backend-api/codex')) return 'codex';
-  if (normalized.includes('api.anthropic.com') || normalized.includes('anthropic.com/v1')) return 'claude';
-  if (
-    normalized.includes('generativelanguage.googleapis.com')
-    || normalized.includes('googleapis.com/v1beta/openai')
-    || normalized.includes('gemini.google.com')
-  ) {
-    return 'gemini';
-  }
-  if (normalized.includes('cloudcode-pa.googleapis.com')) return 'gemini-cli';
-
-  // NewAPI-family forks and common aliases.
-  if (normalized.includes('anyrouter')) return 'anyrouter';
-  if (normalized.includes('donehub') || normalized.includes('done-hub')) return 'done-hub';
-  if (normalized.includes('onehub') || normalized.includes('one-hub')) return 'one-hub';
-  if (normalized.includes('veloera')) return 'veloera';
-  if (normalized.includes('sub2api')) return 'sub2api';
-
-  // CLIProxyAPI default local endpoints.
-  if (normalized.includes('127.0.0.1:8317') || normalized.includes('localhost:8317')) return 'cliproxyapi';
-
-  return undefined;
-}
 
 export async function detectPlatform(url: string): Promise<PlatformAdapter | undefined> {
   const urlHint = detectPlatformByUrlHint(url);

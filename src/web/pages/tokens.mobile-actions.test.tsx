@@ -77,7 +77,7 @@ describe('Tokens mobile actions', () => {
   });
 
   it('supports select-all-visible and expandable mobile token details', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(

@@ -79,7 +79,7 @@ describe('TokenRoutes routing strategy updates', () => {
   });
 
   it('keeps the optimistic routing strategy when refresh fails after a successful save', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -129,7 +129,7 @@ describe('TokenRoutes routing strategy updates', () => {
   });
 
   it('supports switching to stable_first and keeps the optimistic label when refresh fails', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(

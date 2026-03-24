@@ -562,9 +562,7 @@ async function handleResponsesWebsocketConnection(
               ...(supportsIncrementalInput ? { [RESPONSES_WEBSOCKET_MODE_HEADER]: 'incremental' } : {}),
             };
             const providerHeaders = buildOauthProviderHeaders({
-              extraConfig: typeof codexWebsocketChannel.account.extraConfig === 'string'
-                ? codexWebsocketChannel.account.extraConfig
-                : null,
+              account: codexWebsocketChannel.account,
               downstreamHeaders,
             });
             const prepared = buildUpstreamEndpointRequest({
@@ -604,7 +602,7 @@ async function handleResponsesWebsocketConnection(
                   socket,
                   request,
                   payload: normalized.request,
-                  preserveIncrementalMode: false,
+                  preserveIncrementalMode: supportsIncrementalInput,
                   authToken: authContext.token,
                 });
                 if (fallbackOutput) {

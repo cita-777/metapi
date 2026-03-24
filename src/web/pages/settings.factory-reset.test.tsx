@@ -116,7 +116,7 @@ describe('Settings factory reset', () => {
   });
 
   it('shows a 3 second danger confirmation and clears local state after reset', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(

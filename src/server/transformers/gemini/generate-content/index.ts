@@ -1,13 +1,20 @@
-import { canonicalRequestFromOpenAiBody } from '../../canonical/request.js';
+import {
+  canonicalRequestFromOpenAiBody,
+  isCanonicalFunctionTool,
+  isCanonicalNamedToolChoice,
+} from '../../canonical/request.js';
 import type { CanonicalContentPart, CanonicalRequestEnvelope } from '../../canonical/types.js';
 import type { ProtocolBuildContext, ProtocolParseContext } from '../../contracts.js';
-function normalizeBaseUrl(baseUrl: string): string {
-  return (baseUrl || '').replace(/\/+$/, '');
-}
-
-function baseIncludesVersion(baseUrl: string): boolean {
-  return /\/v\d+(?:beta)?(?:\/|$)/i.test(baseUrl);
-}
+import {
+  resolveGeminiGenerateContentUrl,
+  resolveGeminiModelsUrl,
+  resolveGeminiNativeBaseUrl,
+} from './urlResolver.js';
+export {
+  resolveGeminiGenerateContentUrl,
+  resolveGeminiModelsUrl,
+  resolveGeminiNativeBaseUrl,
+} from './urlResolver.js';
 
 function asTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -15,37 +22,6 @@ function asTrimmedString(value: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
-}
-
-export function resolveGeminiNativeBaseUrl(baseUrl: string, apiVersion: string): string {
-  const normalized = normalizeBaseUrl(baseUrl);
-  if (baseIncludesVersion(normalized)) return normalized;
-  return `${normalized}/${apiVersion}`;
-}
-
-export function resolveGeminiModelsUrl(
-  baseUrl: string,
-  apiVersion: string,
-  apiKey: string,
-): string {
-  const base = resolveGeminiNativeBaseUrl(baseUrl, apiVersion);
-  const separator = base.includes('?') ? '&' : '?';
-  return `${base}/models${separator}key=${encodeURIComponent(apiKey)}`;
-}
-
-export function resolveGeminiGenerateContentUrl(
-  baseUrl: string,
-  apiVersion: string,
-  modelActionPath: string,
-  apiKey: string,
-  search: string,
-): string {
-  const base = resolveGeminiNativeBaseUrl(baseUrl, apiVersion);
-  const normalizedAction = modelActionPath.replace(/^\/+/, '');
-  const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
-  params.set('key', apiKey);
-  const query = params.toString();
-  return `${base}/${normalizedAction}${query ? `?${query}` : ''}`;
 }
 
 export function resolveGeminiProxyApiVersion(params: { geminiApiVersion?: unknown } | null | undefined): string {
@@ -246,13 +222,16 @@ function buildGeminiRequestFromCanonical(request: CanonicalRequestEnvelope): Rec
   }
 
   if (Array.isArray(request.tools) && request.tools.length > 0) {
-    payload.tools = [{
-      functionDeclarations: request.tools.map((tool) => ({
-        name: tool.name,
-        ...(tool.description ? { description: tool.description } : {}),
-        ...(tool.inputSchema ? { parameters: tool.inputSchema } : {}),
-      })),
-    }];
+    const functionTools = request.tools.filter(isCanonicalFunctionTool);
+    if (functionTools.length > 0) {
+      payload.tools = [{
+        functionDeclarations: functionTools.map((tool) => ({
+          name: tool.name,
+          ...(tool.description ? { description: tool.description } : {}),
+          ...(tool.inputSchema ? { parameters: tool.inputSchema } : {}),
+        })),
+      }];
+    }
   }
 
   if (request.toolChoice) {
@@ -262,7 +241,7 @@ function buildGeminiRequestFromCanonical(request: CanonicalRequestEnvelope): Rec
       payload.toolConfig = { functionCallingConfig: { mode: 'AUTO' } };
     } else if (request.toolChoice === 'required') {
       payload.toolConfig = { functionCallingConfig: { mode: 'ANY' } };
-    } else {
+    } else if (isCanonicalNamedToolChoice(request.toolChoice)) {
       payload.toolConfig = {
         functionCallingConfig: {
           mode: 'ANY',

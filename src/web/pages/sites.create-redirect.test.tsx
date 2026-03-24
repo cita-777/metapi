@@ -42,7 +42,7 @@ async function createSiteAndCollectLocation(createdSite: { id: number; platform?
   apiMock.getSites.mockResolvedValue([]);
   apiMock.addSite.mockResolvedValue(createdSite);
 
-  let root: ReturnType<typeof create> | null = null;
+  let root!: WebTestRenderer;
   try {
     await act(async () => {
       root = create(

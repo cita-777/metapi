@@ -117,6 +117,54 @@ describe('TokenRouter selection scoring', () => {
     }).returning().get();
   }
 
+  it('reuses a preferred channel only while it remains healthy', async () => {
+    config.routingWeights = {
+      baseWeightFactor: 1,
+      valueScoreFactor: 0,
+      costWeight: 0,
+      balanceWeight: 0,
+      usageWeight: 0,
+    };
+
+    const route = await createRoute('gpt-5.2');
+    const site = await createSite('sticky-site');
+    const account = await createAccount(site.id, 'sticky-user');
+    const tokenA = await createToken(account.id, 'sticky-a');
+    const tokenB = await createToken(account.id, 'sticky-b');
+
+    const preferredChannel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: tokenA.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      failCount: 0,
+    }).returning().get();
+
+    await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: tokenB.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      failCount: 0,
+    }).run();
+
+    const router = new TokenRouter();
+    const selected = await router.selectPreferredChannel('gpt-5.2', preferredChannel.id);
+    expect(selected?.channel.id).toBe(preferredChannel.id);
+
+    await db.update(schema.routeChannels).set({
+      failCount: 4,
+      lastFailAt: new Date().toISOString(),
+    }).where(eq(schema.routeChannels.id, preferredChannel.id)).run();
+    invalidateTokenRouterCache();
+
+    await expect(router.selectPreferredChannel('gpt-5.2', preferredChannel.id)).resolves.toBeNull();
+  });
+
   it('normalizes probability across channels on the same site', async () => {
     config.routingWeights = {
       baseWeightFactor: 1,
@@ -544,6 +592,67 @@ describe('TokenRouter selection scoring', () => {
     const recoveredCandidateB = decision.candidates.find((candidate) => candidate.channelId === channelB.id);
     expect((recoveredCandidateA?.probability || 0)).toBeGreaterThan(30);
     expect((recoveredCandidateB?.probability || 0)).toBeLessThan(70);
+  });
+
+  it('does not open a site breaker for repeated timeout validation errors', async () => {
+    config.routingWeights = {
+      baseWeightFactor: 1,
+      valueScoreFactor: 0,
+      costWeight: 0,
+      balanceWeight: 0,
+      usageWeight: 0,
+    };
+
+    const route = await createRoute('gpt-5.4');
+
+    const siteA = await createSite('timeout-validation-a');
+    const accountA = await createAccount(siteA.id, 'timeout-validation-user-a');
+    const tokenA = await createToken(accountA.id, 'timeout-validation-token-a');
+    const channelA = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountA.id,
+      tokenId: tokenA.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const siteB = await createSite('timeout-validation-b');
+    const accountB = await createAccount(siteB.id, 'timeout-validation-user-b');
+    const tokenB = await createToken(accountB.id, 'timeout-validation-token-b');
+    const channelB = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountB.id,
+      tokenId: tokenB.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    for (let index = 0; index < 3; index += 1) {
+      await router.recordFailure(channelA.id, {
+        status: 400,
+        errorText: 'invalid timeout parameter',
+      });
+    }
+    await db.update(schema.routeChannels).set({
+      cooldownUntil: null,
+      lastFailAt: null,
+      failCount: 0,
+    }).where(eq(schema.routeChannels.id, channelA.id)).run();
+    invalidateTokenRouterCache();
+
+    const decision = await router.explainSelection('gpt-5.4');
+    const candidateA = decision.candidates.find((candidate) => candidate.channelId === channelA.id);
+    const candidateB = decision.candidates.find((candidate) => candidate.channelId === channelB.id);
+
+    expect(candidateA).toBeTruthy();
+    expect(candidateB).toBeTruthy();
+    expect(candidateA?.reason || '').not.toContain('站点熔断');
+    expect(candidateB?.reason || '').not.toContain('站点熔断');
+    expect(decision.summary.join(' ')).not.toContain('站点熔断避让');
+    expect((candidateA?.probability || 0)).toBeGreaterThan(0);
   });
 
   it('uses persisted site success and latency history to prefer historically healthier sites', async () => {

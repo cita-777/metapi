@@ -8,10 +8,10 @@ import { parseProxyUsage } from '../../services/proxyUsageParser.js';
 import { isModelAllowedByPolicyOrAllowedRoutes } from '../../services/downstreamApiKeyService.js';
 import { tokenRouter } from '../../services/tokenRouter.js';
 import { buildOauthProviderHeaders } from '../../services/oauth/service.js';
-import { getOauthInfoFromExtraConfig } from '../../services/oauth/oauthAccount.js';
+import { getOauthInfoFromAccount } from '../../services/oauth/oauthAccount.js';
 import { refreshOauthAccessTokenSingleflight } from '../../services/oauth/refreshSingleflight.js';
 import { resolveChannelProxyUrl, withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
-import { refreshModelsAndRebuildRoutes } from '../../services/modelService.js';
+import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { getDownstreamRoutingPolicy } from '../../routes/proxy/downstreamPolicy.js';
 import { executeEndpointFlow, type BuiltEndpointRequest } from '../../routes/proxy/endpointFlow.js';
 import { composeProxyLogMessage } from '../../routes/proxy/logPathMeta.js';
@@ -36,8 +36,7 @@ import { detectDownstreamClientContext, type DownstreamClientContext } from '../
 import { insertProxyLog } from '../../services/proxyLogStore.js';
 import { summarizeConversationFileInputsInOpenAiBody } from '../capabilities/conversationFileCapabilities.js';
 import { readRuntimeResponseText } from '../executors/types.js';
-
-const MAX_RETRIES = 2;
+import { canRetryProxyChannel, getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 const GEMINI_MODEL_PROBES = [
   'gemini-2.5-flash',
   'gemini-2.0-flash',
@@ -253,6 +252,18 @@ async function logProxy(
   }
 }
 
+async function recordGeminiChannelSuccessBestEffort(
+  channelId: number,
+  latencyMs: number,
+  modelName: string,
+): Promise<void> {
+  try {
+    await tokenRouter.recordSuccess?.(channelId, latencyMs, 0, modelName);
+  } catch (error) {
+    console.warn('[proxy/gemini] failed to record channel success', error);
+  }
+}
+
 export async function geminiProxyRoute(app: FastifyInstance) {
   const listModels = async (request: FastifyRequest, reply: FastifyReply) => {
     const apiVersion = geminiGenerateContentTransformer.resolveProxyApiVersion(
@@ -264,7 +275,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
     let lastText = 'No available channels for Gemini models';
     let lastContentType = 'application/json';
 
-    while (retryCount <= MAX_RETRIES) {
+    while (retryCount <= getProxyMaxChannelRetries()) {
       const selected = retryCount === 0
         ? await selectGeminiChannel(request)
         : await selectNextGeminiProbeChannel(request, excludeChannelIds);
@@ -278,7 +289,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
         if (!isDirectGeminiFamilyPlatform(selected.site.platform)) {
           let models = await readRouteAwareGeminiModels(request);
           if (models.length <= 0) {
-            await refreshModelsAndRebuildRoutes();
+            await routeRefreshWorkflow.refreshModelsAndRebuildRoutes();
             models = await readRouteAwareGeminiModels(request);
           }
           return reply.code(200).send({ models });
@@ -305,10 +316,11 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             status: upstream.status,
             errorText: text,
           });
-          if (retryCount < MAX_RETRIES) {
+          if (canRetryProxyChannel(retryCount)) {
             retryCount += 1;
             continue;
           }
+          return reply.code(lastStatus).type(lastContentType).send(lastText);
         }
 
         try {
@@ -330,10 +342,11 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             type: 'upstream_error',
           },
         });
-        if (retryCount < MAX_RETRIES) {
+        if (canRetryProxyChannel(retryCount)) {
           retryCount += 1;
           continue;
         }
+        return reply.code(lastStatus).type(lastContentType).send(lastText);
       }
     }
   };
@@ -392,7 +405,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
     let lastText = 'No available channels for this model';
     let lastContentType = 'application/json';
 
-    while (retryCount <= MAX_RETRIES) {
+    while (retryCount <= getProxyMaxChannelRetries()) {
       const selected = retryCount === 0
         ? await tokenRouter.selectChannel(requestedModel, policy)
         : await tokenRouter.selectNextChannel(requestedModel, excludeChannelIds, policy);
@@ -407,7 +420,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
         isGeminiCliDownstream ? omitGeminiCliModelField(request.body) : (request.body || {}),
         actualModel,
       );
-      let oauth = getOauthInfoFromExtraConfig(selected.account.extraConfig);
+      let oauth = getOauthInfoFromAccount(selected.account);
       const isGeminiCli = isGeminiCliPlatform(selected.site.platform);
       const isInternalGemini = isInternalGeminiPlatform(selected.site.platform);
       const isDirectGeminiFamily = isDirectGeminiFamilyPlatform(selected.site.platform);
@@ -429,7 +442,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               status: 500,
               errorText: 'Gemini CLI OAuth project is missing',
             });
-            if (retryCount < MAX_RETRIES) {
+            if (canRetryProxyChannel(retryCount)) {
               retryCount += 1;
               continue;
             }
@@ -463,7 +476,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
                 ...(isStreamAction ? { Accept: 'text/event-stream' } : {}),
                 Authorization: `Bearer ${selected.tokenValue}`,
                 ...buildOauthProviderHeaders({
-                  extraConfig: typeof selected.account.extraConfig === 'string' ? selected.account.extraConfig : null,
+                  account: selected.account,
                   downstreamHeaders: request.headers as Record<string, unknown>,
                 }),
               }
@@ -523,7 +536,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
                 accessToken: refreshed.accessToken,
                 extraConfig: refreshed.extraConfig ?? selected.account.extraConfig,
               };
-              oauth = getOauthInfoFromExtraConfig(selected.account.extraConfig);
+              oauth = getOauthInfoFromAccount(selected.account);
               upstream = await dispatchSelectedRequest();
               contentType = upstream.headers.get('content-type') || 'application/json';
             } catch {
@@ -550,7 +563,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               upstreamPath,
               clientContext,
             );
-            if (retryCount < MAX_RETRIES) {
+            if (canRetryProxyChannel(retryCount)) {
               retryCount += 1;
               continue;
             }
@@ -572,7 +585,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               : upstreamReader;
             if (!reader) {
               const latency = Date.now() - startTime;
-              await tokenRouter.recordSuccess?.(selected.channel.id, latency, 0);
+              await recordGeminiChannelSuccessBestEffort(selected.channel.id, latency, actualModel);
               await logProxy(
                 selected,
                 requestedModel,
@@ -622,7 +635,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             }
             const parsedUsage = parseProxyUsage(aggregateState);
             const latency = Date.now() - startTime;
-            await tokenRouter.recordSuccess?.(selected.channel.id, latency, 0);
+            await recordGeminiChannelSuccessBestEffort(selected.channel.id, latency, actualModel);
             await logProxy(
               selected,
               requestedModel,
@@ -658,7 +671,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               );
             parsedUsage = parseProxyUsage(aggregateState);
             const latency = Date.now() - startTime;
-            await tokenRouter.recordSuccess?.(selected.channel.id, latency, 0);
+            await recordGeminiChannelSuccessBestEffort(selected.channel.id, latency, actualModel);
             await logProxy(
               selected,
               requestedModel,
@@ -681,7 +694,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             );
           } catch {
             const latency = Date.now() - startTime;
-            await tokenRouter.recordSuccess?.(selected.channel.id, latency, 0);
+            await recordGeminiChannelSuccessBestEffort(selected.channel.id, latency, actualModel);
             await logProxy(
               selected,
               requestedModel,
@@ -758,7 +771,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             forceNormalizeClaudeBody: requestOptions.forceNormalizeClaudeBody,
             downstreamHeaders: request.headers as Record<string, unknown>,
             providerHeaders: buildOauthProviderHeaders({
-              extraConfig: typeof selected.account.extraConfig === 'string' ? selected.account.extraConfig : null,
+              account: selected.account,
               downstreamHeaders: request.headers as Record<string, unknown>,
             }),
           });
@@ -843,7 +856,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             null,
             clientContext,
           );
-          if (retryCount < MAX_RETRIES) {
+          if (canRetryProxyChannel(retryCount)) {
             retryCount += 1;
             continue;
           }
@@ -868,7 +881,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           },
         });
         const latency = Date.now() - startTime;
-        await tokenRouter.recordSuccess?.(selected.channel.id, latency, 0);
+        await recordGeminiChannelSuccessBestEffort(selected.channel.id, latency, actualModel);
         await logProxy(
           selected,
           requestedModel,
@@ -920,7 +933,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           upstreamPath || null,
           clientContext,
         );
-        if (retryCount < MAX_RETRIES) {
+        if (canRetryProxyChannel(retryCount)) {
           retryCount += 1;
           continue;
         }

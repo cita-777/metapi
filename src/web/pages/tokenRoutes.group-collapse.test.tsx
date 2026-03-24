@@ -122,7 +122,7 @@ describe('TokenRoutes grouped source models', () => {
       },
     ]);
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -181,7 +181,7 @@ describe('TokenRoutes grouped source models', () => {
     ]);
     apiMock.getRouteChannels.mockResolvedValue(channels);
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -241,7 +241,7 @@ describe('TokenRoutes grouped source models', () => {
     ]);
     apiMock.getRouteChannels.mockResolvedValue(channels);
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -296,7 +296,7 @@ describe('TokenRoutes grouped source models', () => {
     });
     apiMock.getRouteChannels.mockResolvedValue([]);
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -336,7 +336,7 @@ describe('TokenRoutes grouped source models', () => {
       },
     });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -382,7 +382,7 @@ describe('TokenRoutes grouped source models', () => {
       },
     });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -449,7 +449,7 @@ describe('TokenRoutes grouped source models', () => {
       },
     });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -497,7 +497,7 @@ describe('TokenRoutes grouped source models', () => {
     });
     apiMock.getRouteChannels.mockResolvedValue([]);
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -543,7 +543,7 @@ describe('TokenRoutes grouped source models', () => {
       },
     });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -594,7 +594,7 @@ describe('TokenRoutes grouped source models', () => {
       },
     ]);
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -640,7 +640,7 @@ describe('TokenRoutes grouped source models', () => {
       endpointTypesByModel: {},
     });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -683,7 +683,7 @@ describe('TokenRoutes grouped source models', () => {
       endpointTypesByModel: {},
     });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -735,7 +735,7 @@ describe('TokenRoutes grouped source models', () => {
       },
     ]);
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -774,7 +774,7 @@ describe('TokenRoutes grouped source models', () => {
       },
     });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -824,7 +824,7 @@ describe('TokenRoutes grouped source models', () => {
       },
     ]);
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -855,7 +855,7 @@ describe('TokenRoutes grouped source models', () => {
       },
     ]);
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -928,7 +928,7 @@ describe('TokenRoutes grouped source models', () => {
       },
     });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -1035,7 +1035,7 @@ describe('TokenRoutes grouped source models', () => {
       },
     ]);
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -1089,7 +1089,7 @@ describe('TokenRoutes grouped source models', () => {
       },
     ]);
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -1159,7 +1159,7 @@ describe('TokenRoutes grouped source models', () => {
       },
     ]);
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -1231,7 +1231,7 @@ describe('TokenRoutes grouped source models', () => {
       ]);
     apiMock.getRouteChannels.mockResolvedValue([]);
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -1317,7 +1317,7 @@ describe('TokenRoutes grouped source models', () => {
       ]);
     apiMock.getRouteChannels.mockResolvedValue([]);
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -1412,7 +1412,7 @@ describe('TokenRoutes grouped source models', () => {
       },
     ]);
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(

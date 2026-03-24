@@ -465,4 +465,46 @@ describe('databaseMigrationService', () => {
       vi.resetModules();
     }
   });
+
+  it('excludes runtime database config settings from migration statements', () => {
+    const statements = __databaseMigrationServiceTestUtils.buildStatements({
+      version: 'test',
+      timestamp: Date.now(),
+      accounts: {
+        sites: [],
+        siteAnnouncements: [],
+        siteDisabledModels: [],
+        accounts: [],
+        accountTokens: [],
+        checkinLogs: [],
+        modelAvailability: [],
+        tokenModelAvailability: [],
+        tokenRoutes: [],
+        routeChannels: [],
+        routeGroupSources: [],
+        proxyLogs: [],
+        proxyVideoTasks: [],
+        proxyFiles: [],
+        downstreamApiKeys: [],
+        events: [],
+      },
+      preferences: {
+        settings: [
+          { key: 'db_type', value: 'sqlite' },
+          { key: 'db_url', value: '/app/data/hub.db' },
+          { key: 'db_ssl', value: false },
+          { key: 'routing_fallback_unit_cost', value: 0.25 },
+        ],
+      },
+    } as any);
+
+    const migratedSettingKeys = statements
+      .filter((statement) => statement.table === 'settings')
+      .map((statement) => statement.values[0]);
+
+    expect(migratedSettingKeys).toContain('routing_fallback_unit_cost');
+    expect(migratedSettingKeys).not.toContain('db_type');
+    expect(migratedSettingKeys).not.toContain('db_url');
+    expect(migratedSettingKeys).not.toContain('db_ssl');
+  });
 });

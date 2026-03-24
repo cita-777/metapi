@@ -138,6 +138,28 @@ jobs:
       - name: Build desktop
         run: npm run build:desktop
 
+  typecheck:
+    name: Typecheck
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Run typecheck
+        run: npm run typecheck
+
   schema-sqlite:
     name: Schema Check (SQLite)
     if: github.event_name == 'pull_request'

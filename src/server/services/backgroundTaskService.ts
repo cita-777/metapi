@@ -40,6 +40,7 @@ const TASK_CLEANUP_INTERVAL_MS = 60 * 1000;
 
 const tasks = new Map<string, BackgroundTask>();
 const dedupeTaskIds = new Map<string, string>();
+let cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
 function nowIso() {
   return new Date().toISOString();
@@ -157,13 +158,17 @@ function cleanupExpiredTasks() {
   }
 }
 
-const cleanupTimer = setInterval(cleanupExpiredTasks, TASK_CLEANUP_INTERVAL_MS);
-cleanupTimer.unref?.();
+function ensureCleanupTimer() {
+  if (cleanupTimer) return;
+  cleanupTimer = setInterval(cleanupExpiredTasks, TASK_CLEANUP_INTERVAL_MS);
+  cleanupTimer.unref?.();
+}
 
 export function startBackgroundTask(
   options: BackgroundTaskStartOptions,
   runner: () => Promise<unknown>,
 ): { task: BackgroundTask; reused: boolean } {
+  ensureCleanupTimer();
   const dedupeKey = options.dedupeKey?.trim() || '';
   if (dedupeKey) {
     const existingTaskId = dedupeTaskIds.get(dedupeKey);
@@ -241,4 +246,8 @@ export function summarizeCheckinResults(results: Array<{ result?: any }>): { tot
 export function __resetBackgroundTasksForTests() {
   tasks.clear();
   dedupeTaskIds.clear();
+  if (cleanupTimer) {
+    clearInterval(cleanupTimer);
+    cleanupTimer = null;
+  }
 }

@@ -158,7 +158,7 @@ describe('ProxyLogs server-driven page', () => {
   });
 
   it('requests paginated data from the server and renders server summary counts', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {
@@ -194,7 +194,7 @@ describe('ProxyLogs server-driven page', () => {
   });
 
   it('keeps the model badge sized to the model name in desktop rows', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {
@@ -250,7 +250,7 @@ describe('ProxyLogs server-driven page', () => {
       ],
     }));
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {
@@ -277,7 +277,7 @@ describe('ProxyLogs server-driven page', () => {
   });
 
   it('re-queries the server for status, client, and search changes instead of filtering locally', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {
@@ -342,7 +342,7 @@ describe('ProxyLogs server-driven page', () => {
   });
 
   it('loads detail on first expand and reuses the cached detail on re-expand', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {
@@ -385,7 +385,7 @@ describe('ProxyLogs server-driven page', () => {
   });
 
   it('hydrates site and time filters from the route query', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {

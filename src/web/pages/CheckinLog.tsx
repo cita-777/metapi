@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api.js";
 import { MobileCard, MobileField } from "../components/MobileCard.js";
-import MobileFilterSheet from "../components/MobileFilterSheet.js";
+import ResponsiveFilterPanel from "../components/ResponsiveFilterPanel.js";
 import { useToast } from "../components/Toast.js";
 import { useIsMobile } from "../components/useIsMobile.js";
 import {
@@ -268,54 +268,44 @@ export default function CheckinLog() {
         </button>
       </div>
 
-      {isMobile ? (
-        <>
-          <div className="mobile-filter-row">
-            <button
-              type="button"
-              className="btn btn-ghost"
-              style={{ border: "1px solid var(--color-border)" }}
-              onClick={() => setShowFilters(true)}
-            >
-              筛选
-            </button>
-          </div>
-          <MobileFilterSheet
-            open={showFilters}
-            onClose={() => setShowFilters(false)}
-            title="筛选签到记录"
-          >
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {timeRangeControls}
-              {hasInvalidTimeRange && (
-                <div className="alert alert-error">
-                  结束时间必须晚于开始时间
-                </div>
-              )}
-              {filterTabs}
-            </div>
-          </MobileFilterSheet>
-        </>
-      ) : (
-        <div className="toolbar" style={{ marginBottom: "12px" }}>
-          <div style={{ minWidth: 280 }}>{filterTabs}</div>
-          <div
-            style={{
-              flex: "0 0 auto",
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-            }}
-          >
+      <ResponsiveFilterPanel
+        isMobile={isMobile}
+        mobileOpen={showFilters}
+        onMobileOpen={() => setShowFilters(true)}
+        onMobileClose={() => setShowFilters(false)}
+        mobileTitle="筛选签到记录"
+        mobileContent={(
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {timeRangeControls}
+            {hasInvalidTimeRange && (
+              <div className="alert alert-error">
+                结束时间必须晚于开始时间
+              </div>
+            )}
+            {filterTabs}
           </div>
-          {hasInvalidTimeRange && (
-            <div className="alert alert-error" style={{ width: "100%" }}>
-              结束时间必须晚于开始时间
+        )}
+        desktopContent={(
+          <div className="toolbar" style={{ marginBottom: "12px" }}>
+            <div style={{ minWidth: 280 }}>{filterTabs}</div>
+            <div
+              style={{
+                flex: "0 0 auto",
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+              }}
+            >
+              {timeRangeControls}
             </div>
-          )}
-        </div>
-      )}
+            {hasInvalidTimeRange && (
+              <div className="alert alert-error" style={{ width: "100%" }}>
+                结束时间必须晚于开始时间
+              </div>
+            )}
+          </div>
+        )}
+      />
 
       <div
         className="card"

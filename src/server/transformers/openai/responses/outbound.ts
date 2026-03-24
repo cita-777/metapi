@@ -3,6 +3,7 @@ import {
   type NormalizedFinalResponse,
 } from '../../shared/normalized.js';
 import { decodeOpenAiEncryptedReasoning } from '../../shared/reasoningTransport.js';
+import { decodeResponsesMcpCompatToolCall } from './mcpCompatibility.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
@@ -220,11 +221,16 @@ function extractSyntheticOutputItemsFromUpstream(payload: unknown): ResponsesOut
           result: cloneJson(rawItem.result),
           partial_images: Array.isArray(rawItem.partial_images) ? cloneJson(rawItem.partial_images) : [],
           ...(rawItem.background !== undefined ? { background: cloneJson(rawItem.background) } : {}),
+          ...(rawItem.mime_type !== undefined ? { mime_type: cloneJson(rawItem.mime_type) } : {}),
           ...(rawItem.output_format !== undefined ? { output_format: cloneJson(rawItem.output_format) } : {}),
           ...(rawItem.quality !== undefined ? { quality: cloneJson(rawItem.quality) } : {}),
           ...(rawItem.size !== undefined ? { size: cloneJson(rawItem.size) } : {}),
           ...(rawItem.revised_prompt !== undefined ? { revised_prompt: cloneJson(rawItem.revised_prompt) } : {}),
         };
+      }
+
+      if (itemType.startsWith('mcp_')) {
+        return cloneJson(rawItem);
       }
 
       return null;
@@ -393,6 +399,12 @@ export function serializeResponsesFinalPayload(input: {
 
   if (toolCalls.length > 0 && !hasToolLikeItem) {
     for (const toolCall of toolCalls) {
+      const mcpItem = decodeResponsesMcpCompatToolCall(toolCall.name, toolCall.arguments);
+      if (mcpItem) {
+        output.push(mcpItem);
+        continue;
+      }
+
       output.push({
         id: toolCall.id,
         type: 'function_call',
@@ -418,7 +430,7 @@ export function serializeResponsesFinalPayload(input: {
   return {
     id: responseId,
     object: 'response',
-    created: normalized.created,
+    created_at: normalized.created,
     status: 'completed',
     model: normalized.model,
     output,

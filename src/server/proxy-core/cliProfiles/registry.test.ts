@@ -14,6 +14,9 @@ describe('detectCliProfile', () => {
       id: 'codex',
       sessionId: 'codex-session-123',
       traceHint: 'codex-session-123',
+      clientAppId: 'codex_cli_rs',
+      clientAppName: 'Codex CLI',
+      clientConfidence: 'exact',
       capabilities: {
         supportsResponsesCompact: true,
         supportsResponsesWebsocketIncremental: true,
@@ -79,6 +82,9 @@ describe('detectCliProfile', () => {
       id: 'claude_code',
       sessionId: 'f25958b8-e75c-455d-8b40-f006d87cc2a4',
       traceHint: 'f25958b8-e75c-455d-8b40-f006d87cc2a4',
+      clientAppId: 'claude_code',
+      clientAppName: 'Claude Code',
+      clientConfidence: 'exact',
       capabilities: {
         supportsResponsesCompact: false,
         supportsResponsesWebsocketIncremental: false,
@@ -98,6 +104,9 @@ describe('detectCliProfile', () => {
       },
     })).toEqual({
       id: 'gemini_cli',
+      clientAppId: 'gemini_cli',
+      clientAppName: 'Gemini CLI',
+      clientConfidence: 'exact',
       capabilities: {
         supportsResponsesCompact: false,
         supportsResponsesWebsocketIncremental: false,

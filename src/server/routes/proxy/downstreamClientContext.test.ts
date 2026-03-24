@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import {
-  detectDownstreamClientContext,
-  extractClaudeCodeSessionId,
-  isCodexResponsesSurface,
-} from './downstreamClientContext.js';
+import { extractClaudeCodeSessionId } from '../../proxy-core/cliProfiles/claudeCodeProfile.js';
+import { isCodexResponsesSurface } from '../../proxy-core/cliProfiles/codexProfile.js';
+import { detectDownstreamClientContext } from './downstreamClientContext.js';
 
 describe('extractClaudeCodeSessionId', () => {
   it('extracts session uuid from axonhub-compatible Claude Code user ids', () => {

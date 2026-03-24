@@ -92,7 +92,7 @@ describe('SearchModal results', () => {
     });
 
     const onClose = vi.fn();
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(

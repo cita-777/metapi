@@ -80,7 +80,7 @@ describe('Accounts mobile actions', () => {
   });
 
   it('supports select-all-visible from the mobile toolbar', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -115,7 +115,7 @@ describe('Accounts mobile actions', () => {
   });
 
   it('clears only the visible segment selection when toggling mobile select-all off', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       apiMock.getAccounts.mockResolvedValue([
         {

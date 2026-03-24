@@ -1,4 +1,5 @@
 import { normalizeUpstreamFinalResponse, toClaudeStopReason, type NormalizedFinalResponse } from '../../shared/normalized.js';
+import { decodeAnthropicReasoningSignature } from '../../shared/reasoningTransport.js';
 import { toAnthropicUsagePayload } from './usage.js';
 
 type AnthropicRecord = Record<string, unknown>;
@@ -25,6 +26,10 @@ function cloneJsonValue<T>(value: T): T {
   return value;
 }
 
+function asTrimmedString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
 function parseJsonLike(raw: string): unknown {
   const trimmed = raw.trim();
   if (!trimmed) return {};
@@ -41,17 +46,46 @@ function buildClaudeMessageId(sourceId: string): string {
   return `msg_${sanitized || Date.now()}`;
 }
 
+function cleanAnthropicReasoningSignature(value: unknown): string | null {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) return null;
+  const decoded = decodeAnthropicReasoningSignature(raw);
+  if (decoded) return decoded;
+  if (raw.startsWith('metapi:')) return null;
+  return raw;
+}
+
 function buildAnthropicContent(normalized: NormalizedFinalResponse): Array<Record<string, unknown>> {
   const anthropicNormalized = normalized as AnthropicMessagesNormalizedFinalResponse;
   if (Array.isArray(anthropicNormalized.nativeContent) && anthropicNormalized.nativeContent.length > 0) {
-    return anthropicNormalized.nativeContent.map((block) => cloneJsonValue(block));
+    return anthropicNormalized.nativeContent.map((block) => {
+      const cloned = cloneJsonValue(block);
+      const blockType = asTrimmedString(cloned.type).toLowerCase();
+      if (blockType === 'thinking') {
+        const signature = cleanAnthropicReasoningSignature(cloned.signature);
+        if (signature) cloned.signature = signature;
+        else delete cloned.signature;
+      }
+      return cloned;
+    });
   }
 
   const contentBlocks: Array<Record<string, unknown>> = [];
-  if (normalized.reasoningContent) {
-    contentBlocks.push({
+  const cleanSignature = cleanAnthropicReasoningSignature(normalized.reasoningSignature);
+  if (normalized.reasoningContent || cleanSignature) {
+    const thinkingBlock: Record<string, unknown> = {
       type: 'thinking',
-      thinking: normalized.reasoningContent,
+      thinking: normalized.reasoningContent || '',
+    };
+    if (cleanSignature) {
+      thinkingBlock.signature = cleanSignature;
+    }
+    contentBlocks.push(thinkingBlock);
+  }
+  if (normalized.redactedReasoningContent) {
+    contentBlocks.push({
+      type: 'redacted_thinking',
+      data: normalized.redactedReasoningContent,
     });
   }
   if (normalized.content) {

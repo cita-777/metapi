@@ -180,7 +180,7 @@ describe('DownstreamKeys mobile layout', () => {
   });
 
   it('renders mobile cards and supports select-all-visible batch actions', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {

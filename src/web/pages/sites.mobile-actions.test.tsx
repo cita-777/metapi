@@ -59,7 +59,7 @@ describe('Sites mobile actions', () => {
   });
 
   it('supports select-all-visible and preserves the primary site url in mobile cards', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(

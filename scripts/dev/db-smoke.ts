@@ -52,6 +52,22 @@ function normalizeFirstScalar(value: unknown): number | string | null {
   return null;
 }
 
+async function selectScalar(db: any, query: ReturnType<typeof sql>): Promise<number | string | null> {
+  if (typeof db?.get === 'function') {
+    return normalizeFirstScalar(await db.get(query));
+  }
+  if (typeof db?.all === 'function') {
+    return normalizeFirstScalar(await db.all(query));
+  }
+  if (typeof db?.values === 'function') {
+    return normalizeFirstScalar(await db.values(query));
+  }
+  if (typeof db?.execute === 'function') {
+    return normalizeFirstScalar(await db.execute(query));
+  }
+  throw new Error('database client does not expose a scalar query method');
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.dbType) process.env.DB_TYPE = options.dbType;
@@ -75,26 +91,23 @@ async function main() {
       console.log('[db-smoke] dbUrl=(empty, using default sqlite path)');
     }
 
-    const pingRows = await db.execute(sql`select 1 as ok`);
-    const pingScalar = normalizeFirstScalar(pingRows);
+    const pingScalar = await selectScalar(db, sql`select 1 as ok`);
     if (Number(pingScalar) !== 1) {
-      throw new Error(`unexpected ping result: ${JSON.stringify(pingRows)}`);
+      throw new Error(`unexpected ping result: ${JSON.stringify(pingScalar)}`);
     }
     console.log('[db-smoke] ping ok');
 
-    const txRows = await db.transaction(async (tx: any) => tx.execute(sql`select 1 as ok`));
-    const txScalar = normalizeFirstScalar(txRows);
+    const txScalar = await db.transaction(async (tx: any) => selectScalar(tx, sql`select 1 as ok`));
     if (Number(txScalar) !== 1) {
-      throw new Error(`unexpected transaction ping result: ${JSON.stringify(txRows)}`);
+      throw new Error(`unexpected transaction ping result: ${JSON.stringify(txScalar)}`);
     }
     console.log('[db-smoke] transaction ok');
 
-    const versionRows = dbType === 'sqlite'
-      ? await db.execute(sql`select sqlite_version() as v`)
-      : await db.execute(sql`select version() as v`);
-    const version = normalizeFirstScalar(versionRows);
+    const version = dbType === 'sqlite'
+      ? await selectScalar(db, sql`select sqlite_version() as v`)
+      : await selectScalar(db, sql`select version() as v`);
     if (typeof version !== 'string' || version.trim().length === 0) {
-      throw new Error(`failed to read server version: ${JSON.stringify(versionRows)}`);
+      throw new Error(`failed to read server version: ${JSON.stringify(version)}`);
     }
     console.log(`[db-smoke] version=${version.slice(0, 120)}`);
 

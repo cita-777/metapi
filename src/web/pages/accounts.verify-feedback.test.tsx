@@ -53,7 +53,7 @@ describe('Accounts verify feedback', () => {
     ]);
     apiMock.verifyToken.mockRejectedValueOnce(new Error('Failed to fetch'));
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(

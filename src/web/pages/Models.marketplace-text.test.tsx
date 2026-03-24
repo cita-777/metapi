@@ -82,7 +82,7 @@ describe('Models marketplace text', () => {
   });
 
   it('renders readable Chinese labels and fallback descriptions for marketplace models', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {
@@ -172,7 +172,7 @@ describe('Models marketplace text', () => {
       ],
     });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {
@@ -213,7 +213,7 @@ describe('Models marketplace text', () => {
     globalThis.window = nextWindow;
     globalThis.matchMedia = nextWindow.matchMedia;
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {
@@ -241,7 +241,7 @@ describe('Models marketplace text', () => {
     } as unknown as Window & typeof globalThis;
     apiMock.getModelsMarketplace.mockImplementation(() => new Promise(() => {}));
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {
@@ -331,7 +331,7 @@ describe('Models marketplace text', () => {
       ],
     });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {
@@ -470,7 +470,7 @@ describe('Models marketplace text', () => {
       ],
     });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {
@@ -547,7 +547,7 @@ describe('Models marketplace text', () => {
       ],
     });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {

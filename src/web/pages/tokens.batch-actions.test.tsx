@@ -71,7 +71,7 @@ describe('Tokens batch actions', () => {
   });
 
   it('deletes selected tokens through the batch toolbar', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -117,7 +117,7 @@ describe('Tokens batch actions', () => {
   });
 
   it('selects a token when clicking the row instead of only the checkbox', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(

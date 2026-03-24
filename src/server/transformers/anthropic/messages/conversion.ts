@@ -29,6 +29,14 @@ function safeJsonStringify(value: unknown): string {
   }
 }
 
+function cloneJsonValue<T>(value: T): T | undefined {
+  try {
+    return JSON.parse(JSON.stringify(value)) as T;
+  } catch {
+    return undefined;
+  }
+}
+
 function parseJsonString(raw: string): unknown {
   const trimmed = raw.trim();
   if (!trimmed) return {};
@@ -187,6 +195,16 @@ function normalizeTextCandidate(value: unknown): string {
   return asTrimmedString(value.text ?? value.content ?? value.output_text);
 }
 
+function ensureAnthropicToolChoiceRecord(value: unknown): Record<string, unknown> | undefined {
+  if (isRecord(value)) return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) return undefined;
+    return { type: normalized };
+  }
+  return undefined;
+}
+
 function sanitizeToolReferenceBlock(item: Record<string, unknown>): Record<string, unknown> | null {
   const toolName = asTrimmedString(item.tool_name ?? item.toolName ?? item.name);
   if (!toolName) return null;
@@ -215,6 +233,13 @@ function normalizeToolMessageContent(raw: unknown): string | Array<Record<string
         if (type === 'text' || type === 'input_text' || type === 'output_text') {
           return toAnthropicTextBlock(normalizeTextCandidate(item));
         }
+        if (type === 'image_url' || type === 'input_image') {
+          return toAnthropicImageBlock(item);
+        }
+        if (type === 'file' || type === 'input_file') {
+          const fileBlock = normalizeInputFileBlock(item);
+          return fileBlock ? toAnthropicDocumentBlock(fileBlock) : null;
+        }
         return null;
       })
       .filter((item): item is Record<string, unknown> => item !== null);
@@ -232,6 +257,17 @@ function normalizeToolMessageContent(raw: unknown): string | Array<Record<string
   }
 
   if (isRecord(raw)) {
+    const type = asTrimmedString(raw.type).toLowerCase();
+    if (type === 'image_url' || type === 'input_image') {
+      const imageBlock = toAnthropicImageBlock(raw);
+      return imageBlock ? [imageBlock] : '';
+    }
+    if (type === 'file' || type === 'input_file') {
+      const fileBlock = normalizeInputFileBlock(raw);
+      if (!fileBlock) return '';
+      const documentBlock = toAnthropicDocumentBlock(fileBlock);
+      return documentBlock ? [documentBlock] : '';
+    }
     const text = normalizeTextCandidate(raw);
     return text || safeJsonStringify(raw);
   }
@@ -940,6 +976,14 @@ export function convertOpenAiBodyToAnthropicMessagesBody(
     max_tokens: toFiniteNumber(openaiBody.max_tokens) ?? 4096,
   };
 
+  const openAiMetadata = openaiBody.metadata;
+  if (isRecord(openAiMetadata)) {
+    const clonedMetadata = cloneJsonValue(openAiMetadata);
+    if (isRecord(clonedMetadata) && 'user_id' in clonedMetadata) {
+      body.metadata = clonedMetadata;
+    }
+  }
+
   if (systemContents.length > 0) {
     body.system = systemContents.join('\n\n');
   }
@@ -956,8 +1000,17 @@ export function convertOpenAiBodyToAnthropicMessagesBody(
 
   if (openaiBody.tools !== undefined) body.tools = convertOpenAiToolsToAnthropic(openaiBody.tools);
 
-  const anthropicToolChoice = convertOpenAiToolChoiceToAnthropic(openaiBody.tool_choice);
-  if (anthropicToolChoice !== undefined) body.tool_choice = anthropicToolChoice;
+  const parallelToolCalls = openaiBody.parallel_tool_calls;
+  let anthropicToolChoice = convertOpenAiToolChoiceToAnthropic(openaiBody.tool_choice);
+  if (parallelToolCalls === false) {
+    const choiceRecord = ensureAnthropicToolChoiceRecord(anthropicToolChoice) ?? { type: 'auto' };
+    choiceRecord.disable_parallel_tool_use = true;
+    anthropicToolChoice = choiceRecord;
+  }
+
+  if (anthropicToolChoice !== undefined) {
+    body.tool_choice = anthropicToolChoice;
+  }
 
   const reasoningSettings = resolveOpenAiReasoningSettings(openaiBody);
   if (reasoningSettings.thinking) body.thinking = reasoningSettings.thinking;

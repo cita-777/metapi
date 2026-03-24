@@ -1,3 +1,5 @@
+import { normalizeTokenRouteMode } from '../../../shared/tokenRouteContract.js';
+
 export type RouteListVisibilityItem = {
   id: number;
   modelPattern: string;
@@ -8,7 +10,7 @@ export type RouteListVisibilityItem = {
 };
 
 function normalizeRouteMode(routeMode: string | null | undefined): 'pattern' | 'explicit_group' {
-  return routeMode === 'explicit_group' ? 'explicit_group' : 'pattern';
+  return normalizeTokenRouteMode(routeMode);
 }
 
 function isExplicitGroupRoute(route: Pick<RouteListVisibilityItem, 'routeMode'>): boolean {

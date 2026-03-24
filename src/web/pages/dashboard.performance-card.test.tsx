@@ -74,7 +74,7 @@ describe('Dashboard performance stat card', () => {
       modelAnalysis: null,
     });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {
@@ -107,14 +107,14 @@ describe('Dashboard performance stat card', () => {
   });
 
   it('shows five skeleton stat cards while dashboard data is still loading', async () => {
-    let resolveDashboard: ((value: Record<string, unknown>) => void) | null = null;
+    let resolveDashboard: ((value: Record<string, unknown>) => void) | undefined;
     apiMock.getDashboard.mockImplementation(() => (
       new Promise((resolve) => {
         resolveDashboard = resolve as (value: Record<string, unknown>) => void;
       })
     ));
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {
@@ -133,18 +133,20 @@ describe('Dashboard performance stat card', () => {
 
       expect(statCards).toHaveLength(5);
     } finally {
-      resolveDashboard?.({
-        totalBalance: 0,
-        totalUsed: 0,
-        todaySpend: 0,
-        todayReward: 0,
-        activeAccounts: 0,
-        totalAccounts: 0,
-        todayCheckin: { success: 0, total: 0 },
-        proxy24h: { success: 0, total: 0, totalTokens: 0 },
-        performance: { windowSeconds: 60, requestsPerMinute: 0, tokensPerMinute: 0 },
-        modelAnalysis: null,
-      });
+      if (resolveDashboard) {
+        resolveDashboard({
+          totalBalance: 0,
+          totalUsed: 0,
+          todaySpend: 0,
+          todayReward: 0,
+          activeAccounts: 0,
+          totalAccounts: 0,
+          todayCheckin: { success: 0, total: 0 },
+          proxy24h: { success: 0, total: 0, totalTokens: 0 },
+          performance: { windowSeconds: 60, requestsPerMinute: 0, tokensPerMinute: 0 },
+          modelAnalysis: null,
+        });
+      }
       root?.unmount();
     }
   });

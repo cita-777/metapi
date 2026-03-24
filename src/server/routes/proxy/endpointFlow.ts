@@ -39,6 +39,8 @@ export type EndpointAttemptSuccessContext = {
 export type EndpointRecoverResult = {
   upstream: Awaited<ReturnType<typeof fetch>>;
   upstreamPath: string;
+  request?: BuiltEndpointRequest;
+  targetUrl?: string;
 } | null;
 
 export type EndpointFlowResult =
@@ -60,6 +62,7 @@ export function withUpstreamPath(path: string, message: string): string {
 
 type ExecuteEndpointFlowInput = {
   siteUrl: string;
+  proxyUrl?: string | null;
   endpointCandidates: UpstreamEndpoint[];
   buildRequest: (endpoint: UpstreamEndpoint, endpointIndex: number) => BuiltEndpointRequest;
   dispatchRequest?: (
@@ -73,6 +76,18 @@ type ExecuteEndpointFlowInput = {
   onAttemptSuccess?: (ctx: EndpointAttemptSuccessContext) => void | Promise<void>;
 };
 
+async function runEndpointFlowHook<T>(
+  hook: ((ctx: T) => void | Promise<void>) | undefined,
+  ctx: T,
+  hookName: string,
+): Promise<void> {
+  if (!hook) return;
+  try {
+    await hook(ctx);
+  } catch (error) {
+    console.error(`endpointFlow ${hookName} hook failed`, error);
+  }
+}
 export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Promise<EndpointFlowResult> {
   const endpointCount = input.endpointCandidates.length;
   if (endpointCount <= 0) {
@@ -90,7 +105,10 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
   for (let endpointIndex = 0; endpointIndex < endpointCount; endpointIndex += 1) {
     const endpoint = input.endpointCandidates[endpointIndex] as UpstreamEndpoint;
     const request = input.buildRequest(endpoint, endpointIndex);
-    const targetUrl = buildUpstreamUrl(input.siteUrl, request.path);
+    const defaultTarget = buildUpstreamUrl(input.siteUrl, request.path);
+    const targetUrl = input.proxyUrl
+      ? buildUpstreamUrl(input.proxyUrl, request.path)
+      : defaultTarget;
 
     let response = input.dispatchRequest
       ? await input.dispatchRequest(request, targetUrl)
@@ -101,13 +119,13 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
       }));
 
     if (response.ok) {
-      await input.onAttemptSuccess?.({
+      await runEndpointFlowHook(input.onAttemptSuccess, {
         endpointIndex,
         endpointCount,
         request,
         targetUrl,
         response,
-      });
+      }, 'onAttemptSuccess');
       return {
         ok: true,
         upstream: response,
@@ -128,13 +146,19 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
     if (input.tryRecover) {
       const recovered = await input.tryRecover(baseContext);
       if (recovered?.upstream?.ok) {
-        await input.onAttemptSuccess?.({
+        const recoveredRequest = recovered.request ?? baseContext.request;
+        const recoveredTargetUrl = recovered.targetUrl ?? (
+          input.proxyUrl
+            ? buildUpstreamUrl(input.proxyUrl, recovered.upstreamPath)
+            : buildUpstreamUrl(input.siteUrl, recovered.upstreamPath)
+        );
+        await runEndpointFlowHook(input.onAttemptSuccess, {
           endpointIndex,
           endpointCount,
-          request: baseContext.request,
-          targetUrl: baseContext.targetUrl,
+          request: recoveredRequest,
+          targetUrl: recoveredTargetUrl,
           response: recovered.upstream,
-        });
+        }, 'onAttemptSuccess');
         return {
           ok: true,
           upstream: recovered.upstream,
@@ -150,18 +174,18 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
       baseContext.request.path,
       summarizeUpstreamError(response.status, rawErrText),
     );
-    await input.onAttemptFailure?.({
+    await runEndpointFlowHook(input.onAttemptFailure, {
       ...baseContext,
       errText,
-    });
+    }, 'onAttemptFailure');
 
     const isLastEndpoint = endpointIndex >= endpointCount - 1;
     const shouldDowngrade = !isLastEndpoint && !!input.shouldDowngrade?.(baseContext);
     if (shouldDowngrade) {
-      await input.onDowngrade?.({
+      await runEndpointFlowHook(input.onDowngrade, {
         ...baseContext,
         errText,
-      });
+      }, 'onDowngrade');
       continue;
     }
 

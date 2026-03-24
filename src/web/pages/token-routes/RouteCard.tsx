@@ -29,6 +29,10 @@ import type {
 import type { RouteCandidateView, RouteTokenOption } from '../helpers/routeModelCandidatesIndex.js';
 import { SortableChannelRow } from './SortableChannelRow.js';
 import {
+  getRouteRoutingStrategyLabel,
+  normalizeRouteRoutingStrategyValue,
+} from './routingStrategy.js';
+import {
   isRouteExactModel,
   isExplicitGroupRoute,
   resolveRouteTitle,
@@ -75,18 +79,6 @@ type RouteCardProps = {
   expandedSourceGroupMap: Record<string, boolean>;
   onToggleSourceGroup: (groupKey: string) => void;
 };
-
-function normalizeRoutingStrategy(value?: RouteRoutingStrategy | null): RouteRoutingStrategy {
-  if (value === 'round_robin' || value === 'stable_first') return value;
-  return 'weighted';
-}
-
-function getRoutingStrategyLabel(value?: RouteRoutingStrategy | null): string {
-  const strategy = normalizeRoutingStrategy(value);
-  if (strategy === 'round_robin') return tr('轮询');
-  if (strategy === 'stable_first') return tr('稳定优先');
-  return tr('权重随机');
-}
 
 function AnimatedCollapseSection({ open, children }: { open: boolean; children: ReactNode }) {
   const presence = useAnimatedVisibility(open, 220);
@@ -139,7 +131,7 @@ function RouteCardInner({
   const readOnlyRoute = route.kind === 'zero_channel' || route.readOnly === true || route.isVirtual === true;
   const channelManagementDisabled = explicitGroupRoute;
   const title = resolveRouteTitle(route);
-  const routingStrategy = normalizeRoutingStrategy(route.routingStrategy);
+  const routingStrategy = normalizeRouteRoutingStrategyValue(route.routingStrategy);
   const routingStrategyOptions = [
     {
       value: 'weighted',
@@ -252,7 +244,7 @@ function RouteCardInner({
             </span>
           ) : (
             <span className="badge badge-muted" style={{ fontSize: 10, flexShrink: 0 }}>
-              {getRoutingStrategyLabel(routingStrategy)}
+              {getRouteRoutingStrategyLabel(routingStrategy)}
             </span>
           )}
 
@@ -394,7 +386,7 @@ function RouteCardInner({
 
       {explicitGroupRoute ? (
         <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 10 }}>
-          {tr('该群组会将多个来源模型聚合为一个对外模型名；通道信息继承自来源模型，当前仅支持查看，不支持直接维护。')}
+          {tr('该群组会将多个来源模型聚合为一个对外模型名；当前策略以群组设置为准，来源模型会尽量跟随同步，但已单独自定义或被其他群组复用的来源模型不会被覆盖。')}
         </div>
       ) : !exactRoute ? (
         <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 10 }}>

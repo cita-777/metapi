@@ -43,7 +43,7 @@ export default function SiteAnnouncements() {
   const [serverTimeZone, setServerTimeZone] = useState<string | undefined>(undefined);
   const [highlightAnnouncementId, setHighlightAnnouncementId] = useState<number | null>(null);
   const rowRefs = useRef<Map<number, HTMLDivElement>>(new Map());
-  const highlightTimerRef = useRef<number | null>(null);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const viewerTimeZone = useMemo(() => readClientTimeZone(), []);
   const displayTimeZone = resolveSiteAnnouncementTimeZone(viewerTimeZone, serverTimeZone);
 

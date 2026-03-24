@@ -244,6 +244,110 @@ describe('PUT /api/routes/:id route rebuild', () => {
     ]));
   });
 
+  it('syncs explicit-group routing strategy to unique source routes', async () => {
+    await seedAccountWithToken('claude-opus-4-5');
+    await seedAccountWithToken('claude-sonnet-4-5');
+
+    const exactRouteA = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'claude-opus-4-5',
+      enabled: true,
+      routingStrategy: 'weighted',
+    }).returning().get();
+    const exactRouteB = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'claude-sonnet-4-5',
+      enabled: true,
+      routingStrategy: 'weighted',
+    }).returning().get();
+
+    const createResponse = await app.inject({
+      method: 'POST',
+      url: '/api/routes',
+      payload: {
+        routeMode: 'explicit_group',
+        displayName: 'claude-opus-4-6',
+        sourceRouteIds: [exactRouteA.id, exactRouteB.id],
+        routingStrategy: 'stable_first',
+      },
+    });
+
+    expect(createResponse.statusCode).toBe(200);
+
+    const refreshedRouteA = await db.select().from(schema.tokenRoutes)
+      .where(eq(schema.tokenRoutes.id, exactRouteA.id))
+      .get();
+    const refreshedRouteB = await db.select().from(schema.tokenRoutes)
+      .where(eq(schema.tokenRoutes.id, exactRouteB.id))
+      .get();
+
+    expect(refreshedRouteA?.routingStrategy).toBe('stable_first');
+    expect(refreshedRouteB?.routingStrategy).toBe('stable_first');
+
+    const groupRouteId = (createResponse.json() as { id: number }).id;
+    const updateResponse = await app.inject({
+      method: 'PUT',
+      url: `/api/routes/${groupRouteId}`,
+      payload: {
+        routingStrategy: 'round_robin',
+      },
+    });
+
+    expect(updateResponse.statusCode).toBe(200);
+
+    const updatedRouteA = await db.select().from(schema.tokenRoutes)
+      .where(eq(schema.tokenRoutes.id, exactRouteA.id))
+      .get();
+    const updatedRouteB = await db.select().from(schema.tokenRoutes)
+      .where(eq(schema.tokenRoutes.id, exactRouteB.id))
+      .get();
+
+    expect(updatedRouteA?.routingStrategy).toBe('round_robin');
+    expect(updatedRouteB?.routingStrategy).toBe('round_robin');
+  });
+
+  it('does not overwrite source routes shared by another explicit-group', async () => {
+    await seedAccountWithToken('claude-opus-4-5');
+
+    const sharedSourceRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'claude-opus-4-5',
+      enabled: true,
+      routingStrategy: 'weighted',
+    }).returning().get();
+
+    const firstGroupResponse = await app.inject({
+      method: 'POST',
+      url: '/api/routes',
+      payload: {
+        routeMode: 'explicit_group',
+        displayName: 'claude-opus-4-6',
+        sourceRouteIds: [sharedSourceRoute.id],
+        routingStrategy: 'stable_first',
+      },
+    });
+    expect(firstGroupResponse.statusCode).toBe(200);
+
+    await db.update(schema.tokenRoutes).set({
+      routingStrategy: 'weighted',
+    }).where(eq(schema.tokenRoutes.id, sharedSourceRoute.id)).run();
+
+    const secondGroupResponse = await app.inject({
+      method: 'POST',
+      url: '/api/routes',
+      payload: {
+        routeMode: 'explicit_group',
+        displayName: 'claude-opus-4-6-alt',
+        sourceRouteIds: [sharedSourceRoute.id],
+        routingStrategy: 'round_robin',
+      },
+    });
+    expect(secondGroupResponse.statusCode).toBe(200);
+
+    const refreshedSharedRoute = await db.select().from(schema.tokenRoutes)
+      .where(eq(schema.tokenRoutes.id, sharedSourceRoute.id))
+      .get();
+
+    expect(refreshedSharedRoute?.routingStrategy).toBe('weighted');
+  });
+
   it('fills missing sourceModel from source exact routes when loading explicit-group channels', async () => {
     const sourceA = await seedAccountWithToken('deepseek-chat');
     const sourceB = await seedAccountWithToken('deepseek-reasoner');

@@ -1,5 +1,10 @@
 import type { CliProfileDefinition, DetectCliProfileInput } from './types.js';
 
+type CodexOfficialClientApp = {
+  clientAppId: string;
+  clientAppName: string;
+};
+
 const CODEX_OFFICIAL_CLIENT_USER_AGENT_PREFIXES = [
   'codex_cli_rs/',
   'codex_vscode/',
@@ -16,33 +21,88 @@ const CODEX_OFFICIAL_CLIENT_ORIGINATOR_PREFIXES = [
   'codex ',
 ];
 
-function headerValueToString(value: unknown): string | null {
+const CODEX_OFFICIAL_CLIENT_APP_RULES = [
+  {
+    id: 'codex_cli_rs',
+    name: 'Codex CLI',
+    userAgentPrefixes: ['codex_cli_rs/'],
+    originatorPrefixes: ['codex_cli_rs'],
+  },
+  {
+    id: 'codex_vscode',
+    name: 'Codex VSCode',
+    userAgentPrefixes: ['codex_vscode/'],
+    originatorPrefixes: ['codex_vscode'],
+  },
+  {
+    id: 'codex_app',
+    name: 'Codex App',
+    userAgentPrefixes: ['codex_app/'],
+    originatorPrefixes: ['codex_app'],
+  },
+  {
+    id: 'codex_chatgpt_desktop',
+    name: 'Codex Desktop',
+    userAgentPrefixes: ['codex_chatgpt_desktop/', 'codex desktop/'],
+    originatorPrefixes: ['codex_chatgpt_desktop', 'codex desktop'],
+  },
+  {
+    id: 'codex_atlas',
+    name: 'Codex Atlas',
+    userAgentPrefixes: ['codex_atlas/'],
+    originatorPrefixes: ['codex_atlas'],
+  },
+  {
+    id: 'codex_exec',
+    name: 'Codex Exec',
+    userAgentPrefixes: ['codex_exec/'],
+    originatorPrefixes: ['codex_exec'],
+  },
+  {
+    id: 'codex_sdk_ts',
+    name: 'Codex SDK TS',
+    userAgentPrefixes: ['codex_sdk_ts/'],
+    originatorPrefixes: ['codex_sdk_ts'],
+  },
+] as const;
+
+function headerValueToStrings(value: unknown): string[] {
   if (typeof value === 'string') {
     const trimmed = value.trim();
-    return trimmed || null;
+    return trimmed ? [trimmed] : [];
   }
 
   if (Array.isArray(value)) {
+    const values: string[] = [];
     for (const item of value) {
       if (typeof item !== 'string') continue;
       const trimmed = item.trim();
-      if (trimmed) return trimmed;
+      if (trimmed) values.push(trimmed);
     }
+    return values;
   }
 
-  return null;
+  return [];
+}
+
+function headerValueToString(value: unknown): string | null {
+  return headerValueToStrings(value)[0] || null;
 }
 
 function getHeaderValue(headers: Record<string, unknown> | undefined, targetKey: string): string | null {
-  if (!headers) return null;
+  return getHeaderValues(headers, targetKey)[0] || null;
+}
+
+function getHeaderValues(headers: Record<string, unknown> | undefined, targetKey: string): string[] {
+  if (!headers) return [];
   const normalizedTarget = targetKey.trim().toLowerCase();
+  const values: string[] = [];
 
   for (const [rawKey, rawValue] of Object.entries(headers)) {
     if (rawKey.trim().toLowerCase() !== normalizedTarget) continue;
-    return headerValueToString(rawValue);
+    values.push(...headerValueToStrings(rawValue));
   }
-
-  return null;
+  return values;
 }
 
 function hasHeaderPrefix(headers: Record<string, unknown> | undefined, prefix: string): boolean {
@@ -54,16 +114,18 @@ function hasHeaderPrefix(headers: Record<string, unknown> | undefined, prefix: s
   });
 }
 
-function matchesHeaderPrefixes(value: string | null, prefixes: string[]): boolean {
-  const normalizedValue = value?.trim().toLowerCase() || '';
-  if (!normalizedValue) return false;
+function matchesHeaderPrefixes(value: string | string[] | null, prefixes: readonly string[]): boolean {
+  const values = Array.isArray(value)
+    ? value.map((item) => item.trim().toLowerCase()).filter(Boolean)
+    : [value?.trim().toLowerCase() || ''].filter(Boolean);
+  if (values.length === 0) return false;
 
-  return prefixes.some((prefix) => {
+  return values.some((normalizedValue) => prefixes.some((prefix) => {
     const normalizedPrefix = prefix.trim().toLowerCase();
     if (!normalizedPrefix) return false;
     return normalizedValue.startsWith(normalizedPrefix)
       || normalizedValue.includes(normalizedPrefix);
-  });
+  }));
 }
 
 function isCodexPath(path: string): boolean {
@@ -71,6 +133,21 @@ function isCodexPath(path: string): boolean {
   return normalizedPath.startsWith('/v1/responses')
     || normalizedPath === '/v1/chat/completions'
     || normalizedPath.startsWith('/v1/messages');
+}
+
+export function detectCodexOfficialClientApp(
+  headers?: Record<string, unknown>,
+): CodexOfficialClientApp | null {
+  for (const rule of CODEX_OFFICIAL_CLIENT_APP_RULES) {
+    const matchesOriginator = matchesHeaderPrefixes(getHeaderValues(headers, 'originator'), rule.originatorPrefixes);
+    const matchesUserAgent = matchesHeaderPrefixes(getHeaderValues(headers, 'user-agent'), rule.userAgentPrefixes);
+    if (!matchesOriginator && !matchesUserAgent) continue;
+    return {
+      clientAppId: rule.id,
+      clientAppName: rule.name,
+    };
+  }
+  return null;
 }
 
 export function isCodexResponsesSurface(headers?: Record<string, unknown>): boolean {
@@ -89,9 +166,9 @@ export function isCodexRequest(input: DetectCliProfileInput): boolean {
   const headers = input.headers;
   if (!headers) return false;
 
-  const originator = getHeaderValue(headers, 'originator');
+  const originator = getHeaderValues(headers, 'originator');
   if (matchesHeaderPrefixes(originator, CODEX_OFFICIAL_CLIENT_ORIGINATOR_PREFIXES)) return true;
-  if (matchesHeaderPrefixes(getHeaderValue(headers, 'user-agent'), CODEX_OFFICIAL_CLIENT_USER_AGENT_PREFIXES)) return true;
+  if (matchesHeaderPrefixes(getHeaderValues(headers, 'user-agent'), CODEX_OFFICIAL_CLIENT_USER_AGENT_PREFIXES)) return true;
   if (getHeaderValue(headers, 'openai-beta')) return true;
   if (hasHeaderPrefix(headers, 'x-stainless-')) return true;
   if (getCodexSessionId(headers)) return true;
@@ -112,9 +189,21 @@ export const codexCliProfile: CliProfileDefinition = {
     if (!isCodexRequest(input)) return null;
 
     const sessionId = getCodexSessionId(input.headers) || undefined;
+    const clientApp = detectCodexOfficialClientApp(input.headers);
     return {
       id: 'codex',
       ...(sessionId ? { sessionId, traceHint: sessionId } : {}),
+      ...(clientApp
+        ? {
+          clientAppId: clientApp.clientAppId,
+          clientAppName: clientApp.clientAppName,
+          clientConfidence: 'exact' as const,
+        }
+        : {
+          clientAppId: 'codex',
+          clientAppName: 'Codex',
+          clientConfidence: 'heuristic' as const,
+        }),
     };
   },
 };

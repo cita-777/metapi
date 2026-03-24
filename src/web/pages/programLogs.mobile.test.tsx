@@ -68,7 +68,7 @@ describe('ProgramLogs mobile layout', () => {
   });
 
   it('renders mobile cards instead of only the desktop table on small screens', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {

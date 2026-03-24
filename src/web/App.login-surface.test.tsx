@@ -72,7 +72,7 @@ describe('Login surface', () => {
       expect(githubLink.props.target).toBe('_blank');
       expect(tokenInput.props.type).toBe('password');
     } finally {
-      root.unmount();
+      root?.unmount();
     }
   });
 });

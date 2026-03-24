@@ -17,8 +17,8 @@ describe('SiteDistributionChart', () => {
         getAttribute: vi.fn(),
       },
     } as unknown as Document;
-    delete (globalThis as typeof globalThis & { getComputedStyle?: typeof getComputedStyle }).getComputedStyle;
-    delete (globalThis as typeof globalThis & { MutationObserver?: typeof MutationObserver }).MutationObserver;
+    Reflect.deleteProperty(globalThis as typeof globalThis & Record<string, unknown>, 'getComputedStyle');
+    Reflect.deleteProperty(globalThis as typeof globalThis & Record<string, unknown>, 'MutationObserver');
   });
 
   afterEach(() => {
@@ -28,7 +28,7 @@ describe('SiteDistributionChart', () => {
   });
 
   it('renders with fallback label color when browser theme APIs are unavailable', async () => {
-    let renderer: ReturnType<typeof create> | null = null;
+    let renderer!: WebTestRenderer;
 
     await expect(act(async () => {
       renderer = create(
@@ -46,6 +46,6 @@ describe('SiteDistributionChart', () => {
       );
     })).resolves.toBeUndefined();
 
-    renderer?.unmount();
+    renderer.unmount();
   });
 });

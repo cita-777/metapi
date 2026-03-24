@@ -11,8 +11,8 @@ type Candidate = {
 
 describe('filterRecentlyFailedCandidates', () => {
   it('rejects unsafe nested-quantifier regex route patterns', () => {
-    expect(parseRegexModelPattern('re:^(a+)+$')).toBeNull();
-    expect(matchesModelPattern('aaaa', 're:^(a+)+$')).toBe(false);
+    expect(parseRegexModelPattern('re:(?=claude)')).toBeNull();
+    expect(matchesModelPattern('claude-sonnet-4-6', 're:(?=claude)')).toBe(false);
   });
 
   it('uses a short default recent-failure window', () => {

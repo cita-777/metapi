@@ -12,6 +12,8 @@ export type CliProfileCapabilities = {
   echoesTurnState: boolean;
 };
 
+export type CliProfileClientConfidence = 'exact' | 'heuristic';
+
 export type DetectCliProfileInput = {
   downstreamPath: string;
   headers?: Record<string, unknown>;
@@ -22,6 +24,9 @@ export type DetectedCliProfile = {
   id: CliProfileId;
   sessionId?: string;
   traceHint?: string;
+  clientAppId?: string;
+  clientAppName?: string;
+  clientConfidence?: CliProfileClientConfidence;
   capabilities: CliProfileCapabilities;
 };
 

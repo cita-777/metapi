@@ -177,10 +177,10 @@ describe('chat proxy codex oauth compatibility', () => {
     const forwardedBody = JSON.parse(options.body);
     expect(forwardedBody.stream).toBe(true);
     expect(forwardedBody.instructions).toBe('');
-    expect(forwardedBody.store).toBe(false);
-    expect(forwardedBody.parallel_tool_calls).toBe(true);
-    expect(forwardedBody.include).toEqual(['reasoning.encrypted_content']);
-    expect(forwardedBody.max_output_tokens).toBeUndefined();
+    expect(forwardedBody.store).toBeUndefined();
+    expect(forwardedBody.parallel_tool_calls).toBeUndefined();
+    expect(forwardedBody.include).toBeUndefined();
+    expect(forwardedBody.max_output_tokens).toBe(256);
     expect(forwardedBody.max_completion_tokens).toBeUndefined();
 
     const body = response.json();

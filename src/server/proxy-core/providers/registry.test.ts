@@ -39,7 +39,11 @@ describe('resolveProviderProfile', () => {
       modelName: 'gpt-5.2-codex',
       stream: true,
     });
-    expect(result.body.prompt_cache_key).toBe(result.headers.Session_id);
+    expect(result.body).toEqual({
+      model: 'gpt-5.2-codex',
+      stream: true,
+      store: false,
+    });
   });
 
   it('builds claude provider requests without rebuilding protocol bodies', () => {

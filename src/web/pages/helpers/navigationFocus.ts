@@ -1,3 +1,5 @@
+import { isTruthyFlag } from './accountConnection.js';
+
 const FOCUS_SITE_ID_KEY = 'focusSiteId';
 const FOCUS_ANNOUNCEMENT_ID_KEY = 'focusAnnouncementId';
 const FOCUS_ACCOUNT_ID_KEY = 'focusAccountId';
@@ -8,12 +10,6 @@ function normalizePositiveId(input: unknown): number | null {
   const value = Number.parseInt(String(input ?? ''), 10);
   if (!Number.isFinite(value) || value <= 0) return null;
   return value;
-}
-
-function isTruthyFlag(value: string | null): boolean {
-  if (!value) return false;
-  const normalized = value.trim().toLowerCase();
-  return normalized === '1' || normalized === 'true' || normalized === 'yes';
 }
 
 export function buildSiteFocusPath(siteId: number): string {

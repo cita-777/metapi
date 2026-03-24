@@ -2092,7 +2092,8 @@ body {
 }
 
 .site-balance-inline {
-  display: inline-flex;
+  display: flex;
+  width: 100%;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 6px;

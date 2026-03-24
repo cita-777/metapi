@@ -58,7 +58,7 @@ describe('Accounts rebind modal', () => {
     ]);
     apiMock.getSites.mockResolvedValue([{ id: 10, name: 'Demo Site', platform: 'new-api', status: 'active' }]);
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(

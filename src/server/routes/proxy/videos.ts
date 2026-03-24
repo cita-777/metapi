@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { fetch } from 'undici';
 import { tokenRouter } from '../../services/tokenRouter.js';
-import { refreshModelsAndRebuildRoutes } from '../../services/modelService.js';
+import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertService.js';
 import { isTokenExpiredError } from '../../services/alertRules.js';
 import { estimateProxyCost } from '../../services/modelPricingService.js';
@@ -17,8 +17,7 @@ import {
   refreshProxyVideoTaskSnapshot,
   saveProxyVideoTask,
 } from '../../services/proxyVideoTaskStore.js';
-
-const MAX_RETRIES = 2;
+import { canRetryProxyChannel, getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 
 function rewriteVideoResponsePublicId(payload: unknown, publicId: string): unknown {
   if (!payload || typeof payload !== 'object') return payload;
@@ -51,13 +50,13 @@ export async function videosProxyRoute(app: FastifyInstance) {
     const excludeChannelIds: number[] = [];
     let retryCount = 0;
 
-    while (retryCount <= MAX_RETRIES) {
+    while (retryCount <= getProxyMaxChannelRetries()) {
       let selected = retryCount === 0
         ? await tokenRouter.selectChannel(requestedModel, downstreamPolicy)
         : await tokenRouter.selectNextChannel(requestedModel, excludeChannelIds, downstreamPolicy);
 
       if (!selected && retryCount === 0) {
-        await refreshModelsAndRebuildRoutes();
+        await routeRefreshWorkflow.refreshModelsAndRebuildRoutes();
         selected = await tokenRouter.selectChannel(requestedModel, downstreamPolicy);
       }
 
@@ -73,6 +72,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
 
       excludeChannelIds.push(selected.channel.id);
       const targetUrl = buildUpstreamUrl(selected.site.url, '/v1/videos');
+      const upstreamModel = selected.actualModel || requestedModel;
       const startTime = Date.now();
 
       try {
@@ -84,7 +84,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
               Authorization: `Bearer ${selected.tokenValue}`,
             },
             body: cloneFormDataWithOverrides(multipartForm, {
-              model: selected.actualModel || requestedModel,
+              model: upstreamModel,
             }) as any,
           }, accountProxy)
           : withSiteRecordProxyRequestInit(selected.site, {
@@ -95,14 +95,18 @@ export async function videosProxyRoute(app: FastifyInstance) {
             },
             body: JSON.stringify({
               ...(jsonBody || {}),
-              model: selected.actualModel || requestedModel,
+              model: upstreamModel,
             }),
           }, accountProxy);
 
         const upstream = await fetch(targetUrl, requestInit);
         const text = await upstream.text();
         if (!upstream.ok) {
-          tokenRouter.recordFailure(selected.channel.id, selected.actualModel);
+          await recordTokenRouterEventBestEffort('record channel failure', () => tokenRouter.recordFailure(selected.channel.id, {
+            status: upstream.status,
+            errorText: text,
+            modelName: upstreamModel,
+          }));
           if (isTokenExpiredError({ status: upstream.status, message: text })) {
             await reportTokenExpired({
               accountId: selected.account.id,
@@ -111,7 +115,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
               detail: `HTTP ${upstream.status}`,
             });
           }
-          if (shouldRetryProxyRequest(upstream.status, text) && retryCount < MAX_RETRIES) {
+          if (shouldRetryProxyRequest(upstream.status, text) && canRetryProxyChannel(retryCount)) {
             retryCount += 1;
             continue;
           }
@@ -136,7 +140,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
           siteUrl: selected.site.url,
           tokenValue: selected.tokenValue,
           requestedModel,
-          actualModel: selected.actualModel || requestedModel,
+          actualModel: upstreamModel,
           channelId: typeof selected.channel.id === 'number' ? selected.channel.id : null,
           accountId: typeof selected.account.id === 'number' ? selected.account.id : null,
           statusSnapshot: data,
@@ -150,17 +154,23 @@ export async function videosProxyRoute(app: FastifyInstance) {
         const estimatedCost = await estimateProxyCost({
           site: selected.site,
           account: selected.account,
-          modelName: selected.actualModel || requestedModel,
+          modelName: upstreamModel,
           promptTokens: 0,
           completionTokens: 0,
           totalTokens: 0,
         });
-        tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost, selected.actualModel);
+        await recordTokenRouterEventBestEffort('record channel success', () => (
+          tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost, upstreamModel)
+        ));
         recordDownstreamCostUsage(request, estimatedCost);
         return reply.code(upstream.status).send(rewriteVideoResponsePublicId(data, mapping.publicId));
       } catch (error: any) {
-        tokenRouter.recordFailure(selected.channel.id, selected.actualModel);
-        if (retryCount < MAX_RETRIES) {
+        await recordTokenRouterEventBestEffort('record channel failure', () => tokenRouter.recordFailure(selected.channel.id, {
+          status: 0,
+          errorText: error?.message || 'network failure',
+          modelName: upstreamModel,
+        }));
+        if (canRetryProxyChannel(retryCount)) {
           retryCount += 1;
           continue;
         }
@@ -231,4 +241,15 @@ export async function videosProxyRoute(app: FastifyInstance) {
       error: { message: text || 'Upstream delete failed', type: 'upstream_error' },
     });
   });
+}
+
+async function recordTokenRouterEventBestEffort(
+  label: string,
+  operation: () => Promise<unknown>,
+): Promise<void> {
+  try {
+    await operation();
+  } catch (error) {
+    console.warn(`[proxy/videos] failed to ${label}`, error);
+  }
 }

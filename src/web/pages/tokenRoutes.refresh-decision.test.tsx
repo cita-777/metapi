@@ -81,7 +81,7 @@ describe('TokenRoutes refresh decision action', () => {
   });
 
   it('passes refreshPricingCatalog and persistSnapshots when user clicks refresh selection probability', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(

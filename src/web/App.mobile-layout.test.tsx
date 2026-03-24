@@ -155,7 +155,7 @@ describe('App mobile layout', () => {
     'uses the shared breakpoint at width $width',
     async ({ width, expectedLayout, hasHamburger }) => {
       setupRuntime(width);
-      let root: ReturnType<typeof create> | null = null;
+      let root!: WebTestRenderer;
 
       try {
         await act(async () => {

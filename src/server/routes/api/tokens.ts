@@ -1,12 +1,16 @@
 ﻿import { FastifyInstance } from 'fastify';
 import { and, eq, inArray } from 'drizzle-orm';
 import { db, schema } from '../../db/index.js';
-import { rebuildTokenRoutesFromAvailability, refreshModelsAndRebuildRoutes } from '../../services/modelService.js';
+import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import {
   ACCOUNT_TOKEN_VALUE_STATUS_READY,
   isUsableAccountToken,
 } from '../../services/accountTokenService.js';
-import { normalizeRouteRoutingStrategy } from '../../services/routeRoutingStrategy.js';
+import {
+  DEFAULT_ROUTE_ROUTING_STRATEGY,
+  normalizeRouteRoutingStrategy,
+  type RouteRoutingStrategy,
+} from '../../services/routeRoutingStrategy.js';
 import { invalidateTokenRouterCache, matchesModelPattern, tokenRouter } from '../../services/tokenRouter.js';
 import { startBackgroundTask } from '../../services/backgroundTaskService.js';
 import {
@@ -15,7 +19,7 @@ import {
   parseRouteDecisionSnapshot,
   saveRouteDecisionSnapshots,
 } from '../../services/routeDecisionSnapshotStore.js';
-
+import { normalizeTokenRouteMode, type RouteMode } from '../../../shared/tokenRouteContract.js';
 function isExactModelPattern(modelPattern: string): boolean {
   const normalized = modelPattern.trim();
   if (!normalized) return false;
@@ -23,14 +27,13 @@ function isExactModelPattern(modelPattern: string): boolean {
   return !/[\*\?]/.test(normalized);
 }
 
-type RouteMode = 'pattern' | 'explicit_group';
 type RouteRow = typeof schema.tokenRoutes.$inferSelect & {
   routeMode: RouteMode;
   sourceRouteIds: number[];
 };
 
 function normalizeRouteMode(routeMode: unknown): RouteMode {
-  return routeMode === 'explicit_group' ? 'explicit_group' : 'pattern';
+  return normalizeTokenRouteMode(routeMode);
 }
 
 function isExplicitGroupRoute(route: Pick<RouteRow, 'routeMode'> | Pick<typeof schema.tokenRoutes.$inferSelect, 'routeMode'>): boolean {
@@ -131,6 +134,68 @@ async function replaceRouteSourceRouteIds(routeId: number, sourceRouteIds: numbe
       sourceRouteId,
     })),
   ).run();
+}
+
+async function syncExplicitGroupSourceRouteStrategies(input: {
+  groupRouteId: number;
+  sourceRouteIds: number[];
+  targetStrategy: RouteRoutingStrategy;
+  previousStrategy?: RouteRoutingStrategy | null;
+}): Promise<number[]> {
+  const normalizedSourceRouteIds = Array.from(new Set(
+    input.sourceRouteIds.filter((routeId): routeId is number => Number.isFinite(routeId) && routeId > 0),
+  ));
+  if (normalizedSourceRouteIds.length === 0) return [];
+
+  const [sourceRoutes, sourceGroupRows] = await Promise.all([
+    db.select().from(schema.tokenRoutes)
+      .where(inArray(schema.tokenRoutes.id, normalizedSourceRouteIds))
+      .all(),
+    db.select({
+      groupRouteId: schema.routeGroupSources.groupRouteId,
+      sourceRouteId: schema.routeGroupSources.sourceRouteId,
+    }).from(schema.routeGroupSources)
+      .where(inArray(schema.routeGroupSources.sourceRouteId, normalizedSourceRouteIds))
+      .all(),
+  ]);
+
+  const otherGroupRefsBySourceRouteId = new Map<number, Set<number>>();
+  for (const row of sourceGroupRows) {
+    if (row.groupRouteId === input.groupRouteId) continue;
+    if (!otherGroupRefsBySourceRouteId.has(row.sourceRouteId)) {
+      otherGroupRefsBySourceRouteId.set(row.sourceRouteId, new Set());
+    }
+    otherGroupRefsBySourceRouteId.get(row.sourceRouteId)!.add(row.groupRouteId);
+  }
+
+  const previousStrategy = input.previousStrategy
+    ? normalizeRouteRoutingStrategy(input.previousStrategy)
+    : null;
+  const updatableRouteIds: number[] = [];
+  for (const route of sourceRoutes) {
+    if (normalizeRouteMode(route.routeMode) === 'explicit_group') continue;
+    if (!isExactModelPattern(route.modelPattern)) continue;
+    if ((otherGroupRefsBySourceRouteId.get(route.id)?.size || 0) > 0) continue;
+
+    const currentStrategy = normalizeRouteRoutingStrategy(route.routingStrategy);
+    const shouldSync = (
+      currentStrategy === DEFAULT_ROUTE_ROUTING_STRATEGY
+      || currentStrategy === input.targetStrategy
+      || (previousStrategy !== null && currentStrategy === previousStrategy)
+    );
+    if (!shouldSync) continue;
+    if (currentStrategy === input.targetStrategy) continue;
+    updatableRouteIds.push(route.id);
+  }
+
+  if (updatableRouteIds.length === 0) return [];
+
+  await db.update(schema.tokenRoutes).set({
+    routingStrategy: input.targetStrategy,
+    updatedAt: new Date().toISOString(),
+  }).where(inArray(schema.tokenRoutes.id, updatableRouteIds)).run();
+
+  return updatableRouteIds;
 }
 
 async function clearDependentExplicitGroupSnapshotsBySourceRouteIds(sourceRouteIds: number[]): Promise<void> {
@@ -894,6 +959,7 @@ export async function tokensRoutes(app: FastifyInstance) {
     const routeMode = normalizeRouteMode(body.routeMode);
     const displayName = typeof body.displayName === 'string' ? body.displayName.trim() : '';
     const sourceRouteIds = normalizeSourceRouteIdsInput(body.sourceRouteIds);
+    const normalizedRoutingStrategy = normalizeRouteRoutingStrategy(body.routingStrategy);
     const modelPattern = routeMode === 'explicit_group'
       ? displayName
       : (typeof body.modelPattern === 'string' ? body.modelPattern.trim() : '');
@@ -916,7 +982,7 @@ export async function tokensRoutes(app: FastifyInstance) {
       displayIcon: body.displayIcon,
       routeMode,
       modelMapping: body.modelMapping,
-      routingStrategy: normalizeRouteRoutingStrategy(body.routingStrategy),
+      routingStrategy: normalizedRoutingStrategy,
       enabled: body.enabled ?? true,
     }).run();
     const routeId = Number(insertedRoute.lastInsertRowid || 0);
@@ -930,6 +996,15 @@ export async function tokensRoutes(app: FastifyInstance) {
 
     if (routeMode === 'explicit_group') {
       await replaceRouteSourceRouteIds(route.id, sourceRouteIds);
+      const syncedRouteIds = await syncExplicitGroupSourceRouteStrategies({
+        groupRouteId: route.id,
+        sourceRouteIds,
+        targetStrategy: normalizedRoutingStrategy,
+      });
+      if (syncedRouteIds.length > 0) {
+        await clearRouteDecisionSnapshots(syncedRouteIds);
+        await clearDependentExplicitGroupSnapshotsBySourceRouteIds(syncedRouteIds);
+      }
     } else {
       await populateRouteChannelsByModelPattern(route.id, modelPattern);
     }
@@ -954,6 +1029,8 @@ export async function tokensRoutes(app: FastifyInstance) {
     let nextModelPattern = existingRoute.modelPattern;
     let nextDisplayName = existingRoute.displayName ?? '';
     let nextSourceRouteIds = existingRoute.sourceRouteIds;
+    const previousRoutingStrategy = normalizeRouteRoutingStrategy(existingRoute.routingStrategy);
+    let nextRoutingStrategy = previousRoutingStrategy;
 
     if (body.displayName !== undefined) {
       nextDisplayName = String(body.displayName || '').trim();
@@ -978,7 +1055,10 @@ export async function tokensRoutes(app: FastifyInstance) {
       updates.modelPattern = nextModelPattern;
     }
     if (body.modelMapping !== undefined) updates.modelMapping = body.modelMapping;
-    if (body.routingStrategy !== undefined) updates.routingStrategy = normalizeRouteRoutingStrategy(body.routingStrategy);
+    if (body.routingStrategy !== undefined) {
+      nextRoutingStrategy = normalizeRouteRoutingStrategy(body.routingStrategy);
+      updates.routingStrategy = nextRoutingStrategy;
+    }
     if (body.enabled !== undefined) updates.enabled = body.enabled;
     if (body.routeMode !== undefined) updates.routeMode = routeMode;
     updates.updatedAt = new Date().toISOString();
@@ -986,6 +1066,19 @@ export async function tokensRoutes(app: FastifyInstance) {
     await db.update(schema.tokenRoutes).set(updates).where(eq(schema.tokenRoutes.id, id)).run();
     if (routeMode === 'explicit_group' && body.sourceRouteIds !== undefined) {
       await replaceRouteSourceRouteIds(id, nextSourceRouteIds);
+    }
+    const shouldSyncExplicitGroupSources = (
+      routeMode === 'explicit_group'
+      && (body.routingStrategy !== undefined || body.sourceRouteIds !== undefined)
+    );
+    let syncedSourceRouteIds: number[] = [];
+    if (shouldSyncExplicitGroupSources) {
+      syncedSourceRouteIds = await syncExplicitGroupSourceRouteStrategies({
+        groupRouteId: id,
+        sourceRouteIds: nextSourceRouteIds,
+        targetStrategy: nextRoutingStrategy,
+        previousStrategy: previousRoutingStrategy,
+      });
     }
     const modelPatternChanged = nextModelPattern !== existingRoute.modelPattern;
     const routeBehaviorChanged = modelPatternChanged
@@ -999,6 +1092,10 @@ export async function tokensRoutes(app: FastifyInstance) {
     if (routeBehaviorChanged) {
       await clearRouteDecisionSnapshot(id);
       await clearDependentExplicitGroupSnapshotsBySourceRouteIds([id]);
+    }
+    if (syncedSourceRouteIds.length > 0) {
+      await clearRouteDecisionSnapshots(syncedSourceRouteIds);
+      await clearDependentExplicitGroupSnapshotsBySourceRouteIds(syncedSourceRouteIds);
     }
     invalidateTokenRouterCache();
     return await getRouteWithSources(id);
@@ -1165,17 +1262,16 @@ export async function tokensRoutes(app: FastifyInstance) {
     invalidateTokenRouterCache();
     return { success: true };
   });
-
   // Rebuild routes/channels from model availability.
   app.post<{ Body?: { refreshModels?: boolean; wait?: boolean } }>('/api/routes/rebuild', async (request, reply) => {
     const body = (request.body || {}) as { refreshModels?: boolean };
     if (body.refreshModels === false) {
-      const rebuild = await rebuildTokenRoutesFromAvailability();
+      const rebuild = await routeRefreshWorkflow.rebuildRoutesOnly();
       return { success: true, rebuild };
     }
 
     if ((request.body as { wait?: boolean } | undefined)?.wait) {
-      const result = await refreshModelsAndRebuildRoutes();
+      const result = await routeRefreshWorkflow.refreshModelsAndRebuildRoutes();
       return { success: true, ...result };
     }
 
@@ -1192,7 +1288,7 @@ export async function tokensRoutes(app: FastifyInstance) {
         },
         failureMessage: (currentTask) => `刷新模型并重建路由失败：${currentTask.error || 'unknown error'}`,
       },
-      async () => refreshModelsAndRebuildRoutes(),
+      async () => routeRefreshWorkflow.refreshModelsAndRebuildRoutes(),
     );
 
     return reply.code(202).send({
@@ -1207,4 +1303,3 @@ export async function tokensRoutes(app: FastifyInstance) {
     });
   });
 }
-

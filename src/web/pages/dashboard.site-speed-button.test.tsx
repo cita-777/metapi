@@ -69,7 +69,7 @@ describe('Dashboard site speed buttons', () => {
   });
 
   it('updates site speed status without imperative document lookups', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {
@@ -99,7 +99,7 @@ describe('Dashboard site speed buttons', () => {
   });
 
   it('updates bulk site speed status without imperative document lookups', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {

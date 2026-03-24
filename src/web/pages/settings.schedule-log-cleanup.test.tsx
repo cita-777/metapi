@@ -77,7 +77,7 @@ describe('Settings log cleanup schedule', () => {
   });
 
   it('saves schedule mode and interval fields together with other schedule settings', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -119,7 +119,7 @@ describe('Settings log cleanup schedule', () => {
   it('triggers a one-off checkin from the schedule card', async () => {
     apiMock.triggerCheckinAll.mockResolvedValue({ success: true });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -150,7 +150,7 @@ describe('Settings log cleanup schedule', () => {
   });
 
   it('renders schedule mode controls with modern selects and ghost action styling', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(

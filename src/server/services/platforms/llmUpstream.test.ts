@@ -4,6 +4,7 @@ import { AddressInfo } from 'node:net';
 import { OpenAiAdapter } from './openai.js';
 import { ClaudeAdapter } from './claude.js';
 import { GeminiAdapter } from './gemini.js';
+import { CliProxyApiAdapter } from './cliproxyapi.js';
 
 interface RequestSnapshot {
   method: string;
@@ -48,6 +49,20 @@ describe('official llm upstream adapters', () => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           data: [{ id: 'claude-sonnet-4-5-20250929' }, { id: 'claude-haiku-4-5-20251001' }],
+        }));
+        return;
+      }
+
+      if (req.url === '/cliproxy/v1/models') {
+        if (req.headers.authorization !== 'Bearer sk-cpa') {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: { message: 'unauthorized' } }));
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          object: 'list',
+          data: [{ id: 'gpt-5.4' }, { id: 'gpt-5.2-codex' }],
         }));
         return;
       }
@@ -110,6 +125,12 @@ describe('official llm upstream adapters', () => {
     const adapter = new ClaudeAdapter();
     const models = await adapter.getModels(`${baseUrl}/claude`, 'sk-claude');
     expect(models).toEqual(['claude-sonnet-4-5-20250929', 'claude-haiku-4-5-20251001']);
+  });
+
+  it('fetches models from cliproxy openai-compatible upstream', async () => {
+    const adapter = new CliProxyApiAdapter();
+    const models = await adapter.getModels(`${baseUrl}/cliproxy`, 'sk-cpa');
+    expect(models).toEqual(['gpt-5.4', 'gpt-5.2-codex']);
   });
 
   it('fetches models from gemini native endpoint and normalizes model names', async () => {

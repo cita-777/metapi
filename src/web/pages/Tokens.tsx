@@ -2,11 +2,16 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import CenteredModal from '../components/CenteredModal.js';
-import MobileBatchBar from '../components/MobileBatchBar.js';
-import MobileFilterSheet from '../components/MobileFilterSheet.js';
+import ResponsiveFilterPanel from '../components/ResponsiveFilterPanel.js';
 import ResponsiveFormGrid from '../components/ResponsiveFormGrid.js';
+import ResponsiveBatchActionBar from '../components/ResponsiveBatchActionBar.js';
 import { useToast } from '../components/Toast.js';
 import { formatDateTimeLocal } from './helpers/checkinLogTime.js';
+import {
+  isTruthyFlag,
+  parsePositiveInt,
+  resolveAccountCredentialMode,
+} from './helpers/accountConnection.js';
 import ModernSelect from '../components/ModernSelect.js';
 import { MobileCard, MobileField } from '../components/MobileCard.js';
 import { useIsMobile } from '../components/useIsMobile.js';
@@ -39,18 +44,20 @@ type AccountTokenSyncResult = {
   };
 };
 
-const resolveAccountCredentialMode = (account: any): 'session' | 'apikey' => {
-  const rawMode = String(account?.credentialMode || '').trim().toLowerCase();
-  if (rawMode === 'apikey') return 'apikey';
-  if (rawMode === 'session') return 'session';
-  if (typeof account?.capabilities?.proxyOnly === 'boolean') {
-    return account.capabilities.proxyOnly ? 'apikey' : 'session';
-  }
-  return typeof account?.accessToken === 'string' && account.accessToken.trim()
-    ? 'session'
-    : 'apikey';
+type SyncableAccount = {
+  id: number;
+  username?: string | null;
+  accessToken?: string | null;
+  status?: string | null;
+  credentialMode?: string | null;
+  capabilities?: {
+    proxyOnly?: boolean;
+  } | null;
+  site?: {
+    status?: string | null;
+    name?: string | null;
+  } | null;
 };
-
 const isAccountSyncable = (account: any) =>
   resolveAccountCredentialMode(account) === 'session'
   && account?.status === 'active'
@@ -103,18 +110,6 @@ async function copyText(text: string) {
   textarea.select();
   document.execCommand('copy');
   document.body.removeChild(textarea);
-}
-
-function parsePositiveInt(input: string | null): number {
-  const value = Number.parseInt(String(input || '').trim(), 10);
-  if (!Number.isFinite(value) || value <= 0) return 0;
-  return value;
-}
-
-function isTruthyFlag(input: string | null): boolean {
-  if (!input) return false;
-  const normalized = input.trim().toLowerCase();
-  return normalized === '1' || normalized === 'true' || normalized === 'yes';
 }
 
 export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: TokensPanelProps) {
@@ -181,11 +176,11 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
       const nextTokens = tokenRows || [];
       setTokens(nextTokens);
       setSelectedTokenIds((current) => current.filter((id) => nextTokens.some((token: any) => token.id === id)));
-      const latestAccounts = accountRows || [];
+      const latestAccounts: SyncableAccount[] = Array.isArray(accountRows) ? accountRows : [];
       setAccounts(latestAccounts);
 
       const syncableAccounts = latestAccounts.filter(isAccountSyncable);
-      const hasCurrentSelected = syncableAccounts.some((account) => account.id === syncingAccountId);
+      const hasCurrentSelected = syncableAccounts.some((account: SyncableAccount) => account.id === syncingAccountId);
       if (!hasCurrentSelected) {
         setSyncingAccountId(syncableAccounts[0]?.id || 0);
       }
@@ -228,7 +223,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
     api.getAccountTokenGroups(form.accountId)
       .then((res: any) => {
         if (cancelled) return;
-        const groups = Array.isArray(res?.groups)
+        const groups: string[] = Array.isArray(res?.groups)
           ? res.groups.map((item: any) => String(item || '').trim()).filter(Boolean)
           : [];
         const normalized = Array.from(new Set(groups));
@@ -844,41 +839,47 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
         </div>
       )}
 
-      <MobileFilterSheet open={showMobileTools} onClose={() => setShowMobileTools(false)} title="令牌同步与筛选">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>同步账号</div>
-            <ModernSelect
-              value={String(syncingAccountId || 0)}
-              onChange={(nextValue) => setSyncingAccountId(Number.parseInt(nextValue, 10) || 0)}
-              options={[
-                { value: '0', label: '选择账号后同步站点令牌' },
-                ...activeAccounts.map((account) => ({
-                  value: String(account.id),
-                  label: `${account.username || `account-${account.id}`} @ ${account.site?.name || '-'}`,
-                })),
-              ]}
-              placeholder="选择账号后同步站点令牌"
-            />
+      <ResponsiveFilterPanel
+        isMobile={isMobile}
+        mobileOpen={showMobileTools}
+        onMobileClose={() => setShowMobileTools(false)}
+        mobileTitle="令牌同步与筛选"
+        mobileContent={(
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>同步账号</div>
+              <ModernSelect
+                value={String(syncingAccountId || 0)}
+                onChange={(nextValue) => setSyncingAccountId(Number.parseInt(nextValue, 10) || 0)}
+                options={[
+                  { value: '0', label: '选择账号后同步站点令牌' },
+                  ...activeAccounts.map((account) => ({
+                    value: String(account.id),
+                    label: `${account.username || `account-${account.id}`} @ ${account.site?.name || '-'}`,
+                  })),
+                ]}
+                placeholder="选择账号后同步站点令牌"
+              />
+            </div>
+            <button
+              onClick={handleSync}
+              disabled={syncing || syncingAll || !syncingAccountId}
+              className="btn btn-ghost"
+              style={{ border: '1px solid var(--color-border)' }}
+            >
+              {syncing ? <><span className="spinner spinner-sm" /> 同步中...</> : '同步站点令牌'}
+            </button>
+            <button
+              onClick={handleSyncAll}
+              disabled={syncing || syncingAll || activeAccounts.length === 0}
+              className="btn btn-ghost"
+              style={{ border: '1px solid var(--color-border)' }}
+            >
+              {syncingAll ? <><span className="spinner spinner-sm" /> 同步中...</> : '同步全部账号'}
+            </button>
           </div>
-          <button
-            onClick={handleSync}
-            disabled={syncing || syncingAll || !syncingAccountId}
-            className="btn btn-ghost"
-            style={{ border: '1px solid var(--color-border)' }}
-          >
-            {syncing ? <><span className="spinner spinner-sm" /> 同步中...</> : '同步站点令牌'}
-          </button>
-          <button
-            onClick={handleSyncAll}
-            disabled={syncing || syncingAll || activeAccounts.length === 0}
-            className="btn btn-ghost"
-            style={{ border: '1px solid var(--color-border)' }}
-          >
-            {syncingAll ? <><span className="spinner spinner-sm" /> 同步中...</> : '同步全部账号'}
-          </button>
-        </div>
-      </MobileFilterSheet>
+        )}
+      />
 
       <div className="info-tip" style={{ marginBottom: 12 }}>
         新增令牌会调用站点 API 创建新密钥，再自动同步到本地。支持设置分组、额度、过期时间和 IP 白名单；已存在密钥可直接用“同步站点令牌”读取。
@@ -1015,9 +1016,12 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
         ) : null}
       </CenteredModal>
 
-      {!isMobile && selectedTokenIds.length > 0 && (
-        <div className="card" style={{ padding: 12, marginBottom: 12, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <span style={{ fontSize: 13, fontWeight: 600 }}>已选 {selectedTokenIds.length} 项</span>
+      {selectedTokenIds.length > 0 && (
+        <ResponsiveBatchActionBar
+          isMobile={isMobile}
+          info={`已选 ${selectedTokenIds.length} 项`}
+          desktopStyle={{ marginBottom: 12 }}
+        >
           <button onClick={() => runBatchTokenAction('enable')} disabled={batchActionLoading} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }}>
             批量启用
           </button>
@@ -1027,21 +1031,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
           <button data-testid="tokens-batch-delete" onClick={() => runBatchTokenAction('delete')} disabled={batchActionLoading} className="btn btn-link btn-link-danger">
             批量删除
           </button>
-        </div>
-      )}
-
-      {isMobile && selectedTokenIds.length > 0 && (
-        <MobileBatchBar info={`已选 ${selectedTokenIds.length} 项`}>
-            <button onClick={() => runBatchTokenAction('enable')} disabled={batchActionLoading} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }}>
-              批量启用
-            </button>
-            <button onClick={() => runBatchTokenAction('disable')} disabled={batchActionLoading} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }}>
-              批量禁用
-            </button>
-            <button data-testid="tokens-batch-delete" onClick={() => runBatchTokenAction('delete')} disabled={batchActionLoading} className="btn btn-link btn-link-danger">
-              批量删除
-            </button>
-        </MobileBatchBar>
+        </ResponsiveBatchActionBar>
       )}
 
       <CenteredModal

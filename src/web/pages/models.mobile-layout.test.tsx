@@ -105,7 +105,7 @@ describe('Models mobile layout', () => {
   });
 
   it('keeps a mobile filter entry and hides the table-view toggle on small screens', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {
@@ -130,7 +130,7 @@ describe('Models mobile layout', () => {
   });
 
   it('renders stacked account detail cards instead of tables when a mobile card expands', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {

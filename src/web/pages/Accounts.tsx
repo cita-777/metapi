@@ -2,20 +2,26 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import CenteredModal from '../components/CenteredModal.js';
-import MobileBatchBar from '../components/MobileBatchBar.js';
-import MobileFilterSheet from '../components/MobileFilterSheet.js';
+import ResponsiveFilterPanel from '../components/ResponsiveFilterPanel.js';
 import ResponsiveFormGrid from '../components/ResponsiveFormGrid.js';
+import ResponsiveBatchActionBar from '../components/ResponsiveBatchActionBar.js';
 import { useToast } from '../components/Toast.js';
 import ModernSelect from '../components/ModernSelect.js';
 import { MobileCard, MobileField } from '../components/MobileCard.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import DeleteConfirmModal from '../components/DeleteConfirmModal.js';
 import SiteBadgeLink from '../components/SiteBadgeLink.js';
+import AccountModelsModal from './accounts/AccountModelsModal.js';
 import {
   buildAddAccountPrereqHint,
   buildVerifyFailureHint,
   normalizeVerifyFailureMessage,
 } from './helpers/accountVerifyFeedback.js';
+import {
+  isTruthyFlag,
+  parsePositiveInt,
+  resolveAccountCredentialMode,
+} from './helpers/accountConnection.js';
 import { clearFocusParams, readFocusAccountIntent } from './helpers/navigationFocus.js';
 import { TokensPanel } from './Tokens.js';
 import { tr } from '../i18n.js';
@@ -56,17 +62,6 @@ function createTokenForm(credentialMode: 'session' | 'apikey' = 'session') {
 
 function createRebindForm(platformUserId = '') {
   return { accessToken: '', platformUserId, refreshToken: '', tokenExpiresAt: '' };
-}
-
-function isTruthyFlag(value: string | null): boolean {
-  if (!value) return false;
-  const normalized = value.trim().toLowerCase();
-  return normalized === '1' || normalized === 'true' || normalized === 'yes';
-}
-
-function parsePositiveInt(value: string | null): number {
-  const parsed = Number.parseInt(String(value || '').trim(), 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
 function resolveConnectionsSegment(search: string): ConnectionsSegment {
@@ -192,18 +187,6 @@ export default function Accounts() {
     setVerifying(false);
     setSaving(false);
     resetAddForms();
-  };
-
-  const resolveAccountCredentialMode = (account: any): 'session' | 'apikey' => {
-    const rawMode = String(account?.credentialMode || '').trim().toLowerCase();
-    if (rawMode === 'apikey') return 'apikey';
-    if (rawMode === 'session') return 'session';
-    const fromServer = account?.capabilities;
-    if (fromServer && typeof fromServer.proxyOnly === 'boolean') {
-      return fromServer.proxyOnly ? 'apikey' : 'session';
-    }
-    const hasSession = typeof account?.accessToken === 'string' && account.accessToken.trim().length > 0;
-    return hasSession ? 'session' : 'apikey';
   };
 
   const resolveAccountDisplayName = (account: any) => {
@@ -993,47 +976,53 @@ export default function Accounts() {
         {activeSegment === 'tokens' && embeddedTokenActions}
       </div>
 
-      <MobileFilterSheet open={showMobileTools} onClose={() => setShowMobileTools(false)} title="连接排序与操作">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>排序方式</div>
-            <ModernSelect
-              value={sortMode}
-              onChange={(nextValue) => setSortMode(nextValue as SortMode)}
-              options={[
-                { value: 'custom', label: '自定义排序' },
-                { value: 'balance-desc', label: '余额高到低' },
-                { value: 'balance-asc', label: '余额低到高' },
-              ]}
-              placeholder="自定义排序"
-            />
-          </div>
-          {activeSegment === 'session' && (
+      <ResponsiveFilterPanel
+        isMobile={isMobile}
+        mobileOpen={showMobileTools}
+        onMobileClose={() => setShowMobileTools(false)}
+        mobileTitle="连接排序与操作"
+        mobileContent={(
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>排序方式</div>
+              <ModernSelect
+                value={sortMode}
+                onChange={(nextValue) => setSortMode(nextValue as SortMode)}
+                options={[
+                  { value: 'custom', label: '自定义排序' },
+                  { value: 'balance-desc', label: '余额高到低' },
+                  { value: 'balance-asc', label: '余额低到高' },
+                ]}
+                placeholder="自定义排序"
+              />
+            </div>
+            {activeSegment === 'session' && (
+              <button
+                onClick={async () => {
+                  setShowMobileTools(false);
+                  await withLoading('checkin-all', () => api.triggerCheckinAll(), '已触发全部签到');
+                }}
+                disabled={actionLoading['checkin-all']}
+                className="btn btn-ghost"
+                style={{ border: '1px solid var(--color-border)' }}
+              >
+                {actionLoading['checkin-all'] ? <><span className="spinner spinner-sm" />{tr('签到中...')}</> : tr('全部签到')}
+              </button>
+            )}
             <button
               onClick={async () => {
                 setShowMobileTools(false);
-                await withLoading('checkin-all', () => api.triggerCheckinAll(), '已触发全部签到');
+                await handleRefreshRuntimeHealth();
               }}
-              disabled={actionLoading['checkin-all']}
+              disabled={actionLoading['health-refresh']}
               className="btn btn-ghost"
               style={{ border: '1px solid var(--color-border)' }}
             >
-              {actionLoading['checkin-all'] ? <><span className="spinner spinner-sm" />{tr('签到中...')}</> : tr('全部签到')}
+              {actionLoading['health-refresh'] ? <><span className="spinner spinner-sm" />{tr('刷新状态中...')}</> : tr('刷新账户状态')}
             </button>
-          )}
-          <button
-            onClick={async () => {
-              setShowMobileTools(false);
-              await handleRefreshRuntimeHealth();
-            }}
-            disabled={actionLoading['health-refresh']}
-            className="btn btn-ghost"
-            style={{ border: '1px solid var(--color-border)' }}
-          >
-            {actionLoading['health-refresh'] ? <><span className="spinner spinner-sm" />{tr('刷新状态中...')}</> : tr('刷新账户状态')}
-          </button>
-        </div>
-      </MobileFilterSheet>
+          </div>
+        )}
+      />
 
       <div
         style={{
@@ -1084,9 +1073,12 @@ export default function Accounts() {
           : <>确定要删除选中的 <strong>{deleteConfirm?.count || 0}</strong> 个连接吗？</>}
       />
 
-      {!isMobile && activeSegment !== 'tokens' && selectedAccountIds.length > 0 && (
-        <div className="card" style={{ padding: 12, marginBottom: 12, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <span style={{ fontSize: 13, fontWeight: 600 }}>已选 {selectedAccountIds.length} 项</span>
+      {activeSegment !== 'tokens' && selectedAccountIds.length > 0 && (
+        <ResponsiveBatchActionBar
+          isMobile={isMobile}
+          info={`已选 ${selectedAccountIds.length} 项`}
+          desktopStyle={{ marginBottom: 12 }}
+        >
           <button data-testid="accounts-batch-refresh-balance" onClick={() => runBatchAccountAction('refreshBalance')} disabled={batchActionLoading} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }}>
             批量刷新余额
           </button>
@@ -1099,24 +1091,7 @@ export default function Accounts() {
           <button onClick={() => runBatchAccountAction('delete')} disabled={batchActionLoading} className="btn btn-link btn-link-danger">
             批量删除
           </button>
-        </div>
-      )}
-
-      {isMobile && activeSegment !== 'tokens' && selectedAccountIds.length > 0 && (
-        <MobileBatchBar info={`已选 ${selectedAccountIds.length} 项`}>
-            <button data-testid="accounts-batch-refresh-balance" onClick={() => runBatchAccountAction('refreshBalance')} disabled={batchActionLoading} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }}>
-              批量刷新余额
-            </button>
-            <button onClick={() => runBatchAccountAction('enable')} disabled={batchActionLoading} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }}>
-              批量启用
-            </button>
-            <button onClick={() => runBatchAccountAction('disable')} disabled={batchActionLoading} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }}>
-              批量禁用
-            </button>
-            <button onClick={() => runBatchAccountAction('delete')} disabled={batchActionLoading} className="btn btn-link btn-link-danger">
-              批量删除
-            </button>
-        </MobileBatchBar>
+        </ResponsiveBatchActionBar>
       )}
 
       {activeSegment === 'tokens' ? (
@@ -2038,209 +2013,24 @@ export default function Accounts() {
         </>
       )}
 
-      {/* Model management modal */}
-      <CenteredModal
-        open={modelModal.open}
+      <AccountModelsModal
+        modelModal={modelModal}
+        inputStyle={inputStyle}
         onClose={closeModelModal}
-        title={modelModal.siteName ? `模型管理 · ${modelModal.siteName}` : '模型管理'}
-        maxWidth={600}
-        footer={
-          <>
-            <button onClick={closeModelModal} className="btn btn-ghost">取消</button>
-            <button
-              onClick={saveModelDisabled}
-              disabled={modelModal.saving || modelModal.loading}
-              className="btn btn-primary"
-            >
-              {modelModal.saving ? <><span className="spinner spinner-sm" />保存中...</> : '保存'}
-            </button>
-          </>
-        }
-      >
-        {modelModal.loading ? (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '48px 0', gap: 10 }}>
-            <span className="spinner" />
-            <span style={{ color: 'var(--color-text-muted)', fontSize: 14 }}>加载模型列表...</span>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {modelModal.models.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '32px 0' }}>
-                <div style={{ fontSize: 32, marginBottom: 8 }}>🤖</div>
-                <div style={{ fontSize: 14, color: 'var(--color-text-muted)', marginBottom: 8 }}>暂无可用模型</div>
-                <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 16 }}>请先点击账号操作栏中的「刷新」或「模型」按钮获取模型</div>
-                <button
-                  onClick={async () => {
-                    if (!modelModal.account) return;
-                    await loadModelModalModels(modelModal.account, {
-                      refreshUpstream: true,
-                      successMessage: '模型列表已刷新',
-                      errorMessage: '刷新失败',
-                    });
-                  }}
-                  className="btn btn-soft-primary"
-                >
-                  立即获取模型
-                </button>
-              </div>
-            ) : (
-              <>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
-                    <input
-                      type="checkbox"
-                      checked={modelModal.pendingDisabled.size === 0}
-                      ref={(el) => {
-                        if (el) {
-                          const total = modelModal.models.length;
-                          const disabled = modelModal.pendingDisabled.size;
-                          el.indeterminate = disabled > 0 && disabled < total;
-                        }
-                      }}
-                      onChange={() => {
-                        const allEnabled = modelModal.pendingDisabled.size === 0;
-                        setModelModal(s => ({
-                          ...s,
-                          pendingDisabled: allEnabled
-                            ? new Set(s.models.map((m) => m.name))
-                            : new Set(),
-                        }));
-                      }}
-                      style={{ accentColor: 'var(--color-primary)', width: 15, height: 15 }}
-                    />
-                    <span style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>
-                      已启用 <strong style={{ color: 'var(--color-text-primary)' }}>{modelModal.models.length - modelModal.pendingDisabled.size}</strong> / {modelModal.models.length} 个模型
-                    </span>
-                  </label>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <button
-                      onClick={async () => {
-                        if (!modelModal.account) return;
-                        await loadModelModalModels(modelModal.account, {
-                          refreshUpstream: true,
-                          successMessage: '模型列表已刷新',
-                          errorMessage: '刷新失败',
-                        });
-                      }}
-                      disabled={modelModal.saving}
-                      className="btn btn-ghost"
-                      style={{ fontSize: 12, padding: '4px 10px' }}
-                    >
-                      刷新模型
-                    </button>
-                    <button
-                      onClick={() => setModelModal(s => {
-                        const next = new Set<string>();
-                        for (const m of s.models) {
-                          if (!s.pendingDisabled.has(m.name)) next.add(m.name);
-                        }
-                        return { ...s, pendingDisabled: next };
-                      })}
-                      className="btn btn-ghost"
-                      style={{ fontSize: 12, padding: '4px 10px' }}
-                    >
-                      反选
-                    </button>
-                    <button
-                      onClick={() => setModelModal(s => ({ ...s, pendingDisabled: new Set(s.models.map((m) => m.name)) }))}
-                      className="btn btn-ghost"
-                      style={{ fontSize: 12, padding: '4px 10px' }}
-                    >
-                      全部禁用
-                    </button>
-                    <button
-                      onClick={() => setModelModal(s => ({ ...s, pendingDisabled: new Set() }))}
-                      className="btn btn-ghost"
-                      style={{ fontSize: 12, padding: '4px 10px' }}
-                    >
-                      全部启用
-                    </button>
-                  </div>
-                </div>
-
-                <div style={{
-                  maxHeight: 280,
-                  overflowY: 'auto',
-                  border: '1px solid var(--color-border-light)',
-                  borderRadius: 'var(--radius-sm)',
-                }}>
-                  {modelModal.models.map((model, idx) => {
-                    const isDisabled = modelModal.pendingDisabled.has(model.name);
-                    return (
-                      <label
-                        key={model.name}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 10,
-                          padding: '9px 14px',
-                          cursor: 'pointer',
-                          background: isDisabled ? 'var(--color-bg)' : undefined,
-                          borderBottom: idx < modelModal.models.length - 1 ? '1px solid var(--color-border-light)' : undefined,
-                          opacity: isDisabled ? 0.55 : 1,
-                          transition: 'opacity 0.15s, background 0.15s',
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={!isDisabled}
-                          onChange={() => toggleModelDisabled(model.name)}
-                          style={{ accentColor: 'var(--color-primary)', width: 15, height: 15, flexShrink: 0 }}
-                        />
-                        <span style={{ flex: 1, fontSize: 13, fontFamily: 'var(--font-mono)', wordBreak: 'break-all' }}>
-                          {model.name}
-                        </span>
-                        {model.latencyMs != null && (
-                          <span style={{ fontSize: 11, color: 'var(--color-text-muted)', flexShrink: 0 }}>
-                            {model.latencyMs}ms
-                          </span>
-                        )}
-                        {model.isManual && (
-                          <span className="badge badge-info" style={{ fontSize: 10, flexShrink: 0, padding: '0 4px' }}>手动</span>
-                        )}
-                        {isDisabled && (
-                          <span className="badge badge-error" style={{ fontSize: 10, flexShrink: 0 }}>禁用</span>
-                        )}
-                      </label>
-                    );
-                  })}
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>
-                  💡 禁用的模型将对整个站点生效，该站点下所有连接都不会使用这些模型进行代理。
-                </div>
-              </>
-            )}
-
-            <div style={{ marginTop: 16, padding: '12px', background: 'var(--color-bg)', border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)' }}>
-              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: 'var(--color-text-primary)' }}>手动添加可用模型</div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 8 }}>
-                如果您的账号支持某些未在上方列表中显示的模型，可以在此手动添加（多个以英文逗号分隔）。
-              </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input
-                  placeholder="例如: gpt-4-custom, claude-3-5-sonnet-20241022"
-                  value={modelModal.manualModelsInput}
-                  onChange={(e) => setModelModal(s => ({ ...s, manualModelsInput: e.target.value }))}
-                  style={{ ...inputStyle, flex: 1, fontFamily: 'var(--font-mono)' }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !modelModal.addingManualModels) {
-                      handleAddManualModels();
-                    }
-                  }}
-                />
-                <button
-                  disabled={!modelModal.manualModelsInput.trim() || modelModal.addingManualModels}
-                  onClick={handleAddManualModels}
-                  className="btn btn-primary btn-sm"
-                  style={{ whiteSpace: 'nowrap' }}
-                >
-                  {modelModal.addingManualModels ? <span className="spinner spinner-sm" /> : '添加'}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </CenteredModal>
+        onSave={saveModelDisabled}
+        onRefresh={async () => {
+          if (!modelModal.account) return;
+          await loadModelModalModels(modelModal.account, {
+            refreshUpstream: true,
+            successMessage: '模型列表已刷新',
+            errorMessage: '刷新失败',
+          });
+        }}
+        onToggleModelDisabled={toggleModelDisabled}
+        onSetPendingDisabled={(pendingDisabled) => setModelModal((state) => ({ ...state, pendingDisabled }))}
+        onManualInputChange={(value) => setModelModal((state) => ({ ...state, manualModelsInput: value }))}
+        onAddManualModels={handleAddManualModels}
+      />
     </div>
   );
 }

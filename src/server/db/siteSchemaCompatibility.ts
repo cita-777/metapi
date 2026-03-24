@@ -7,19 +7,19 @@ export interface SiteSchemaInspector {
   execute(sqlText: string): Promise<void>;
 }
 
-type SiteColumnCompatibilitySpec = {
+export type SiteColumnCompatibilitySpec = {
   column: string;
   addSql: Record<SiteSchemaDialect, string>;
   normalizeSql?: Record<SiteSchemaDialect, string>;
 };
 
-type SiteTableCompatibilitySpec = {
+export type SiteTableCompatibilitySpec = {
   table: string;
   createSql: Record<SiteSchemaDialect, string>;
   postCreateSql?: Record<SiteSchemaDialect, string[]>;
 };
 
-const SITE_COLUMN_COMPATIBILITY_SPECS: SiteColumnCompatibilitySpec[] = [
+export const SITE_COLUMN_COMPATIBILITY_SPECS: SiteColumnCompatibilitySpec[] = [
   {
     column: 'proxy_url',
     addSql: {
@@ -72,7 +72,7 @@ const SITE_COLUMN_COMPATIBILITY_SPECS: SiteColumnCompatibilitySpec[] = [
   },
 ];
 
-const SITE_TABLE_COMPATIBILITY_SPECS: SiteTableCompatibilitySpec[] = [
+export const SITE_TABLE_COMPATIBILITY_SPECS: SiteTableCompatibilitySpec[] = [
   {
     table: 'site_disabled_models',
     createSql: {

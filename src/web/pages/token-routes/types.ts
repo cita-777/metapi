@@ -1,13 +1,13 @@
 import type { ReactNode } from 'react';
 import type { BrandInfo } from '../../components/BrandIcon.js';
+import type { RouteDecision, RouteDecisionCandidate, RouteMode } from '../../../shared/tokenRouteContract.js';
+export type { RouteDecision, RouteDecisionCandidate, RouteMode } from '../../../shared/tokenRouteContract.js';
 
 export type RouteSortBy = 'modelPattern' | 'channelCount';
 export type RouteSortDir = 'asc' | 'desc';
 export type GroupFilter = null | '__all__' | number;
 export type RouteRoutingStrategy = 'weighted' | 'round_robin' | 'stable_first';
 export type RouteRowKind = 'persisted' | 'zero_channel';
-export type RouteMode = 'pattern' | 'explicit_group';
-
 export type RouteChannelDraft = {
   accountId: number;
   tokenId: number;
@@ -79,31 +79,6 @@ export type RouteSummaryRow = {
   kind?: RouteRowKind;
   readOnly?: boolean;
   isVirtual?: boolean;
-};
-
-export type RouteDecisionCandidate = {
-  channelId: number;
-  accountId: number;
-  username: string;
-  siteName: string;
-  tokenName: string;
-  priority: number;
-  weight: number;
-  eligible: boolean;
-  recentlyFailed: boolean;
-  avoidedByRecentFailure: boolean;
-  probability: number;
-  reason: string;
-};
-
-export type RouteDecision = {
-  requestedModel: string;
-  actualModel: string;
-  matched: boolean;
-  selectedChannelId?: number;
-  selectedLabel?: string;
-  summary: string[];
-  candidates: RouteDecisionCandidate[];
 };
 
 export type ChannelDecisionState = {

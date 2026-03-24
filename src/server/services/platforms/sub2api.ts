@@ -37,6 +37,15 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
     return undefined;
   }
 
+  private parseNonNegativeInteger(raw: unknown): number | undefined {
+    if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0) return Math.trunc(raw);
+    if (typeof raw === 'string') {
+      const parsed = Number.parseInt(raw.trim(), 10);
+      if (!Number.isNaN(parsed) && parsed >= 0) return parsed;
+    }
+    return undefined;
+  }
+
   private parseNonNegativeNumber(raw: unknown): number | undefined {
     if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0) {
       return this.roundCurrency(raw);
@@ -178,7 +187,7 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
       ? payload as Record<string, unknown>
       : {};
     const subscriptions = this.parseSubscriptionItems(payload);
-    const activeCount = this.parsePositiveInteger(body.active_count ?? body.activeCount);
+    const activeCount = this.parseNonNegativeInteger(body.active_count ?? body.activeCount);
     const totalUsedUsd = this.parseNonNegativeNumber(body.total_used_usd ?? body.totalUsedUsd);
     const inferredUsedUsd = subscriptions.reduce((sum, item) => sum + (item.monthlyUsedUsd || 0), 0);
 

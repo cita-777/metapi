@@ -94,7 +94,7 @@ describe('Accounts edit panel', () => {
   });
 
   it('opens edit panel from account row action', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -140,7 +140,7 @@ describe('Accounts edit panel', () => {
       disabledCount: 0,
     });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -205,7 +205,7 @@ describe('Accounts edit panel', () => {
       return Promise.resolve({ siteId: accountId, siteName: 'Unknown', models: [] });
     });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -269,7 +269,7 @@ describe('Accounts edit panel', () => {
     });
     apiMock.rebuildRoutes.mockRejectedValue(new Error('rebuild failed'));
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(

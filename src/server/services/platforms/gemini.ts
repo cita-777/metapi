@@ -1,8 +1,4 @@
-import { BasePlatformAdapter, type BalanceInfo, type CheckinResult, type UserInfo } from './base.js';
-
-function normalizeBaseUrl(baseUrl: string): string {
-  return (baseUrl || '').replace(/\/+$/, '');
-}
+import { StandardApiProviderAdapterBase, normalizePlatformBaseUrl } from './standardApiProvider.js';
 
 function stripModelPrefix(name: string): string {
   const trimmed = name.trim();
@@ -24,13 +20,13 @@ function isOpenAiCompatGeminiBase(baseUrl: string): boolean {
 }
 
 function resolveGeminiOpenAiModelsUrl(baseUrl: string): string {
-  const normalized = normalizeBaseUrl(baseUrl);
+  const normalized = normalizePlatformBaseUrl(baseUrl);
   if (/\/models$/i.test(normalized)) return normalized;
   return `${normalized}/models`;
 }
 
 function resolveGeminiNativeModelsUrl(baseUrl: string, apiToken: string): string {
-  const normalized = normalizeBaseUrl(baseUrl);
+  const normalized = normalizePlatformBaseUrl(baseUrl);
   const withVersion = /\/v\d+(?:beta)?(?:\/|$)/i.test(normalized)
     ? normalized
     : `${normalized}/v1beta`;
@@ -41,7 +37,7 @@ function resolveGeminiNativeModelsUrl(baseUrl: string, apiToken: string): string
   return `${listBase}${separator}key=${encodeURIComponent(apiToken)}`;
 }
 
-export class GeminiAdapter extends BasePlatformAdapter {
+export class GeminiAdapter extends StandardApiProviderAdapterBase {
   readonly platformName: string = 'gemini';
 
   async detect(url: string): Promise<boolean> {
@@ -53,34 +49,16 @@ export class GeminiAdapter extends BasePlatformAdapter {
     );
   }
 
-  override async login(_baseUrl: string, _username: string, _password: string) {
-    return { success: false, message: 'login endpoint not supported' };
-  }
-
-  override async getUserInfo(_baseUrl: string, _accessToken: string): Promise<UserInfo | null> {
-    return null;
-  }
-
-  async checkin(_baseUrl: string, _accessToken: string): Promise<CheckinResult> {
-    return { success: false, message: 'checkin endpoint not supported' };
-  }
-
-  async getBalance(_baseUrl: string, _accessToken: string): Promise<BalanceInfo> {
-    // Gemini API keys generally do not expose account balance via API.
-    return { balance: 0, used: 0, quota: 0 };
-  }
-
   async getModels(baseUrl: string, apiToken: string): Promise<string[]> {
-    const normalizedBase = normalizeBaseUrl(baseUrl);
+    const normalizedBase = normalizePlatformBaseUrl(baseUrl);
 
     if (isOpenAiCompatGeminiBase(normalizedBase)) {
-      try {
-        const res = await this.fetchJson<any>(resolveGeminiOpenAiModelsUrl(normalizedBase), {
-          headers: { Authorization: `Bearer ${apiToken}` },
-        });
-        const openAiModels = (res?.data || []).map((m: any) => String(m?.id || '').trim()).filter(Boolean);
-        if (openAiModels.length > 0) return normalizeModelList(openAiModels);
-      } catch {}
+      const openAiModels = await this.fetchModelsFromStandardEndpoint({
+        baseUrl: normalizedBase,
+        headers: { Authorization: `Bearer ${apiToken}` },
+        resolveUrl: resolveGeminiOpenAiModelsUrl,
+      });
+      if (openAiModels.length > 0) return normalizeModelList(openAiModels);
     }
 
     try {
@@ -92,13 +70,11 @@ export class GeminiAdapter extends BasePlatformAdapter {
     } catch {}
 
     if (!isOpenAiCompatGeminiBase(normalizedBase)) {
-      try {
-        const res = await this.fetchJson<any>(`${normalizedBase}/v1beta/openai/models`, {
-          headers: { Authorization: `Bearer ${apiToken}` },
-        });
-        const openAiModels = (res?.data || []).map((m: any) => String(m?.id || '').trim()).filter(Boolean);
-        if (openAiModels.length > 0) return normalizeModelList(openAiModels);
-      } catch {}
+      const openAiModels = await this.fetchModelsFromStandardEndpoint({
+        baseUrl: `${normalizedBase}/v1beta/openai`,
+        headers: { Authorization: `Bearer ${apiToken}` },
+      });
+      if (openAiModels.length > 0) return normalizeModelList(openAiModels);
     }
 
     return [];

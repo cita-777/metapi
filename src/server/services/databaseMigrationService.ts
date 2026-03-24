@@ -85,6 +85,7 @@ interface InsertStatement {
 }
 
 const DIALECTS: MigrationDialect[] = ['sqlite', 'mysql', 'postgres'];
+const RUNTIME_DATABASE_SETTING_KEYS = new Set(['db_type', 'db_url', 'db_ssl']);
 
 function asString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -628,6 +629,9 @@ function buildStatements(snapshot: BackupSnapshot): InsertStatement[] {
   }
 
   for (const row of snapshot.preferences.settings) {
+    if (RUNTIME_DATABASE_SETTING_KEYS.has(row.key)) {
+      continue;
+    }
     statements.push({
       table: 'settings',
       columns: ['key', 'value'],

@@ -7,7 +7,7 @@ import CenteredModal from './CenteredModal.js';
 describe('CenteredModal component', () => {
   it('does not close on backdrop click by default and exposes an explicit close button', async () => {
     const onClose = vi.fn();
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {

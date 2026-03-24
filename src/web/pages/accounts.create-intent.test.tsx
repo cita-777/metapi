@@ -31,7 +31,7 @@ async function renderAccounts(initialEntry: string) {
   ]);
   apiMock.getAccountTokens.mockResolvedValue([]);
 
-  let root: ReturnType<typeof create> | null = null;
+  let root!: WebTestRenderer;
   await act(async () => {
     root = create(
       <MemoryRouter initialEntries={[initialEntry]}>
@@ -64,7 +64,7 @@ describe('Accounts create intent handling', () => {
       const selects = root.root.findAllByType(ModernSelect);
       expect(selects[1]?.props.value).toBe('10');
     } finally {
-      root.unmount();
+      root?.unmount();
     }
   });
 
@@ -77,7 +77,7 @@ describe('Accounts create intent handling', () => {
       const selects = root.root.findAllByType(ModernSelect);
       expect(selects[1]?.props.value).toBe('10');
     } finally {
-      root.unmount();
+      root?.unmount();
     }
   });
 
@@ -88,7 +88,7 @@ describe('Accounts create intent handling', () => {
       expect(rendered).not.toContain('添加 Session 连接');
       expect(rendered).not.toContain('添加 API Key 连接');
     } finally {
-      root.unmount();
+      root?.unmount();
     }
   });
 });

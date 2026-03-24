@@ -22,7 +22,7 @@ describe('useIsMobile', () => {
       removeEventListener: (event: string, handler: () => void) => {
         listeners.get(event)?.delete(handler);
       },
-      dispatchEvent: (event: { type: string }) => {
+      dispatchEvent: (event: Event) => {
         listeners.get(event.type)?.forEach((handler) => handler());
         return true;
       },
@@ -39,7 +39,7 @@ describe('useIsMobile', () => {
       innerWidth: 767,
     });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {
@@ -66,7 +66,7 @@ describe('useIsMobile', () => {
       }),
     });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {
@@ -84,7 +84,7 @@ describe('useIsMobile', () => {
   });
 
   it('treats 767 and 768 as mobile, but 769 as desktop', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {
@@ -97,7 +97,7 @@ describe('useIsMobile', () => {
       widthRef.current = 767;
       window.innerWidth = 767;
       await act(async () => {
-        window.dispatchEvent({ type: 'resize' });
+        window.dispatchEvent(new Event('resize'));
       });
 
       expect(root.root.findByType('div').props['data-mobile']).toBe('true');
@@ -105,7 +105,7 @@ describe('useIsMobile', () => {
       widthRef.current = 768;
       window.innerWidth = 768;
       await act(async () => {
-        window.dispatchEvent({ type: 'resize' });
+        window.dispatchEvent(new Event('resize'));
       });
 
       expect(root.root.findByType('div').props['data-mobile']).toBe('true');
@@ -113,7 +113,7 @@ describe('useIsMobile', () => {
       widthRef.current = 769;
       window.innerWidth = 769;
       await act(async () => {
-        window.dispatchEvent({ type: 'resize' });
+        window.dispatchEvent(new Event('resize'));
       });
 
       expect(root.root.findByType('div').props['data-mobile']).toBe('false');

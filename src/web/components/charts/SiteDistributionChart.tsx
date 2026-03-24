@@ -17,6 +17,10 @@ interface SiteDistributionChartProps {
 
 type ViewMode = 'balance' | 'spend';
 
+function coerceDatumRecord(datum: unknown): Record<string, unknown> {
+  return datum && typeof datum === 'object' ? datum as Record<string, unknown> : {};
+}
+
 function safeNumber(value: unknown): number {
   if (typeof value !== 'number' || Number.isNaN(value) || !Number.isFinite(value)) return 0;
   return value;
@@ -120,24 +124,32 @@ export default function SiteDistributionChart({ data, loading }: SiteDistributio
         mark: {
           content: [
             {
-              key: (datum: Record<string, unknown>) => datum.siteName as string,
-              value: (datum: Record<string, unknown>) => {
-                const val = safeNumber(datum.value);
+              key: (datum: unknown) => {
+                const item = coerceDatumRecord(datum);
+                return String(item.siteName || '-');
+              },
+              value: (datum: unknown) => {
+                const item = coerceDatumRecord(datum);
+                const val = safeNumber(item.value);
                 return `$${val.toFixed(2)}`;
               },
             },
             {
               key: '占比',
-              value: (datum: Record<string, unknown>) => {
-                const pct = datum._percent_ as number;
-                return `${safeNumber(pct).toFixed(1)}%`;
+              value: (datum: unknown) => {
+                const item = coerceDatumRecord(datum);
+                const pct = safeNumber(item._percent_);
+                return `${pct.toFixed(1)}%`;
               },
             },
             {
               key: '账户数',
-              value: (datum: Record<string, unknown>) => `${datum.accountCount}`,
+              value: (datum: unknown) => {
+                const item = coerceDatumRecord(datum);
+                return String(item.accountCount || 0);
+              },
             },
-          ],
+          ] as any,
         },
       },
       color: PIE_COLORS,

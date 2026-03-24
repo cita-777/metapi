@@ -137,7 +137,7 @@ describe('TokenRoutes mobile layout', () => {
   });
 
   it('shows direct mobile actions and reveals the management panel after expansion', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {
@@ -178,7 +178,7 @@ describe('TokenRoutes mobile layout', () => {
   });
 
   it('lets mobile users toggle route enabled state from the summary card', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {

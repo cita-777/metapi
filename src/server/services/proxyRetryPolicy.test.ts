@@ -43,4 +43,13 @@ describe('proxyRetryPolicy', () => {
       shouldRetryProxyRequest(400, 'Unsupported legacy protocol: /v1/chat/completions is not supported. Please use /v1/responses.'),
     ).toBe(true);
   });
+
+  it('does not retry client-side timeout validation errors', () => {
+    expect(
+      shouldRetryProxyRequest(400, '{"error":{"message":"timeout must be <= 60"}}'),
+    ).toBe(false);
+    expect(
+      shouldRetryProxyRequest(400, '{"error":{"message":"invalid timeout parameter"}}'),
+    ).toBe(false);
+  });
 });

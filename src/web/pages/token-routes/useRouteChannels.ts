@@ -25,8 +25,11 @@ export function useRouteChannels() {
     }
   }, []);
 
-  const invalidateChannels = useCallback((routeId: number) => {
+  const invalidateChannels = useCallback((routeId?: number) => {
     setChannelsByRouteId((prev) => {
+      if (routeId === undefined) {
+        return {};
+      }
       const next = { ...prev };
       delete next[routeId];
       return next;

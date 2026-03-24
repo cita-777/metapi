@@ -23,6 +23,8 @@ type EndpointAttemptContext = {
 type EndpointRecoverResult = {
   upstream: UndiciResponse;
   upstreamPath: string;
+  request?: CompatibilityRequest;
+  targetUrl?: string;
 } | null;
 
 type CompatibilityRequest = {
@@ -70,6 +72,7 @@ export function createChatEndpointStrategy(input: CreateChatEndpointStrategyInpu
           return {
             upstream: normalizedResponse,
             upstreamPath: normalizedClaudeRequest.path,
+            request: normalizedClaudeRequest,
           };
         }
 
@@ -104,6 +107,8 @@ export function createChatEndpointStrategy(input: CreateChatEndpointStrategyInpu
         return {
           upstream: minimalResponse,
           upstreamPath: minimalRequest.path,
+          request: minimalRequest,
+          targetUrl: ctx.targetUrl,
         };
       }
 

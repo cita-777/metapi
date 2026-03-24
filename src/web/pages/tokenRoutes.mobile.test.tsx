@@ -125,7 +125,7 @@ describe('TokenRoutes mobile actions', () => {
   });
 
   it('shows mobile detail expansion and direct management actions', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {

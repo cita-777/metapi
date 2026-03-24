@@ -3,14 +3,13 @@ import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  normalizeLogicalColumnType,
+  normalizeSchemaMetadataDefaultValue,
+  type LogicalColumnType,
+} from './schemaMetadata.js';
 
-export type LogicalColumnType =
-  | 'integer'
-  | 'real'
-  | 'text'
-  | 'boolean'
-  | 'datetime'
-  | 'json';
+export type { LogicalColumnType } from './schemaMetadata.js';
 
 export interface SchemaContractColumn {
   logicalType: LogicalColumnType;
@@ -118,66 +117,16 @@ function applySqliteMigrations(sqlite: Database.Database, migrationsFolder: stri
 }
 
 function normalizeDefaultValue(defaultValue: string | null): string | null {
-  if (defaultValue == null) return null;
-  return String(defaultValue).trim() || null;
-}
-
-function isBooleanLikeColumn(columnName: string, defaultValue: string | null): boolean {
-  const normalizedColumn = columnName.toLowerCase();
-  const normalizedDefault = (defaultValue || '').trim().toLowerCase();
-  if (normalizedDefault === 'true' || normalizedDefault === 'false') {
-    return true;
-  }
-  return normalizedColumn.startsWith('is_')
-    || normalizedColumn.startsWith('use_')
-    || normalizedColumn.startsWith('has_')
-    || normalizedColumn.endsWith('_enabled')
-    || normalizedColumn.endsWith('_available')
-    || normalizedColumn === 'read'
-    || normalizedColumn === 'enabled'
-    || normalizedColumn === 'available'
-    || normalizedColumn === 'manual_override';
-}
-
-function isDateTimeLikeColumn(columnName: string, defaultValue: string | null): boolean {
-  const normalizedColumn = columnName.toLowerCase();
-  const normalizedDefault = (defaultValue || '').toLowerCase();
-  return normalizedColumn.endsWith('_at')
-    || normalizedColumn.endsWith('_until')
-    || normalizedColumn.endsWith('_refresh')
-    || normalizedDefault.includes('datetime(')
-    || normalizedDefault.includes('current_timestamp');
-}
-
-function isJsonLikeColumn(columnName: string): boolean {
-  const normalizedColumn = columnName.toLowerCase();
-  return normalizedColumn.endsWith('_json')
-    || normalizedColumn.includes('snapshot')
-    || normalizedColumn.includes('mapping')
-    || normalizedColumn.includes('headers')
-    || normalizedColumn.includes('config')
-    || normalizedColumn.includes('details')
-    || normalizedColumn.includes('meta')
-    || normalizedColumn.includes('models')
-    || normalizedColumn.includes('route_ids')
-    || normalizedColumn.includes('multipliers');
+  return normalizeSchemaMetadataDefaultValue(defaultValue);
 }
 
 function normalizeLogicalType(columnName: string, declaredType: string, defaultValue: string | null): LogicalColumnType {
-  const normalizedType = declaredType.trim().toLowerCase();
-  if (normalizedType.includes('int')) {
-    return isBooleanLikeColumn(columnName, defaultValue) ? 'boolean' : 'integer';
-  }
-  if (normalizedType.includes('real') || normalizedType.includes('double') || normalizedType.includes('float')) {
-    return 'real';
-  }
-  if (normalizedType.includes('text') || normalizedType.includes('char') || normalizedType.includes('clob')) {
-    if (isDateTimeLikeColumn(columnName, defaultValue)) return 'datetime';
-    if (isJsonLikeColumn(columnName)) return 'json';
-    return 'text';
-  }
-  if (isDateTimeLikeColumn(columnName, defaultValue)) return 'datetime';
-  return 'text';
+  return normalizeLogicalColumnType({
+    columnName,
+    declaredType,
+    defaultValue,
+    dialect: 'sqlite',
+  });
 }
 
 function readTables(sqlite: Database.Database): Record<string, SchemaContractTable> {

@@ -7,18 +7,18 @@ export interface RouteGroupingSchemaInspector {
   execute(sqlText: string): Promise<void>;
 }
 
-type RouteGroupingColumnCompatibilitySpec = {
+export type RouteGroupingColumnCompatibilitySpec = {
   table: 'token_routes' | 'route_channels';
   column: string;
   addSql: Record<RouteGroupingSchemaDialect, string>;
 };
 
-type RouteGroupingTableCompatibilitySpec = {
+export type RouteGroupingTableCompatibilitySpec = {
   table: 'route_group_sources';
   createSql: Record<RouteGroupingSchemaDialect, string[]>;
 };
 
-const ROUTE_GROUPING_COLUMN_COMPATIBILITY_SPECS: RouteGroupingColumnCompatibilitySpec[] = [
+export const ROUTE_GROUPING_COLUMN_COMPATIBILITY_SPECS: RouteGroupingColumnCompatibilitySpec[] = [
   {
     table: 'token_routes',
     column: 'display_name',
@@ -111,7 +111,7 @@ const ROUTE_GROUPING_COLUMN_COMPATIBILITY_SPECS: RouteGroupingColumnCompatibilit
   },
 ];
 
-const ROUTE_GROUPING_TABLE_COMPATIBILITY_SPECS: RouteGroupingTableCompatibilitySpec[] = [
+export const ROUTE_GROUPING_TABLE_COMPATIBILITY_SPECS: RouteGroupingTableCompatibilitySpec[] = [
   {
     table: 'route_group_sources',
     createSql: {

@@ -1,7 +1,11 @@
 import { eq } from 'drizzle-orm';
 import { db, schema } from '../../db/index.js';
 import { mergeAccountExtraConfig } from '../accountExtraConfig.js';
-import { buildOauthInfo, getOauthInfoFromExtraConfig, type OauthInfo } from './oauthAccount.js';
+import {
+  buildStoredOauthStateFromAccount,
+  getOauthInfoFromAccount,
+  type OauthInfo,
+} from './oauthAccount.js';
 import type { OauthQuotaSnapshot, OauthQuotaWindowSnapshot } from './quotaTypes.js';
 
 type CodexJwtClaims = {
@@ -192,12 +196,12 @@ async function persistQuotaSnapshot(accountId: number, snapshot: OauthQuotaSnaps
   if (!account) {
     throw new Error('oauth account not found');
   }
-  const oauth = getOauthInfoFromExtraConfig(account.extraConfig);
+  const oauth = getOauthInfoFromAccount(account);
   if (!oauth) {
     throw new Error('account is not managed by oauth');
   }
   const nextExtraConfig = mergeAccountExtraConfig(account.extraConfig, {
-    oauth: buildOauthInfo(account.extraConfig, {
+    oauth: buildStoredOauthStateFromAccount(account, {
       quota: snapshot,
     }),
   });
@@ -213,7 +217,7 @@ export async function refreshOauthQuotaSnapshot(accountId: number): Promise<Oaut
   if (!account) {
     throw new Error('oauth account not found');
   }
-  const oauth = getOauthInfoFromExtraConfig(account.extraConfig);
+  const oauth = getOauthInfoFromAccount(account);
   if (!oauth) {
     throw new Error('account is not managed by oauth');
   }
@@ -236,7 +240,7 @@ export async function recordOauthQuotaResetHint(input: {
 
   const account = await db.select().from(schema.accounts).where(eq(schema.accounts.id, input.accountId)).get();
   if (!account) return null;
-  const oauth = getOauthInfoFromExtraConfig(account.extraConfig);
+  const oauth = getOauthInfoFromAccount(account);
   if (!oauth || oauth.provider !== 'codex') return null;
 
   const baseSnapshot = buildQuotaSnapshotFromOauthInfo({

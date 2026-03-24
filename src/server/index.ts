@@ -22,13 +22,14 @@ import { oauthRoutes } from './routes/api/oauth.js';
 import { siteAnnouncementsRoutes } from './routes/api/siteAnnouncements.js';
 import { proxyRoutes } from './routes/proxy/router.js';
 import { startScheduler } from './services/checkinScheduler.js';
-import { rebuildTokenRoutesFromAvailability } from './services/modelService.js';
+import * as routeRefreshWorkflow from './services/routeRefreshWorkflow.js';
 import { startProxyFileRetentionService, stopProxyFileRetentionService } from './services/proxyFileRetentionService.js';
 import { setLegacyProxyLogRetentionFallbackEnabled, stopProxyLogRetentionService } from './services/proxyLogRetentionService.js';
 import { buildStartupSummaryLines } from './services/startupInfo.js';
 import { repairStoredCreatedAtValues } from './services/storedTimestampRepairService.js';
 import { migrateSiteApiKeysToAccounts } from './services/siteApiKeyMigrationService.js';
 import { ensureDefaultSitesSeeded } from './services/defaultSiteSeedService.js';
+import { ensureOauthIdentityBackfill } from './services/oauth/oauthIdentityBackfill.js';
 import { startOAuthLoopbackCallbackServers, stopOAuthLoopbackCallbackServers } from './services/oauth/localCallbackServer.js';
 import { startSiteAnnouncementPolling } from './services/siteAnnouncementPollingService.js';
 import { reloadBackupWebdavScheduler } from './services/backupService.js';
@@ -337,7 +338,8 @@ try {
   await repairStoredCreatedAtValues();
   await migrateSiteApiKeysToAccounts();
   await ensureDefaultSitesSeeded();
-  await rebuildTokenRoutesFromAvailability();
+  await ensureOauthIdentityBackfill();
+  await routeRefreshWorkflow.rebuildRoutesOnly();
 
   console.log('Loaded runtime settings overrides');
 } catch (error) {

@@ -4,7 +4,7 @@ import { fetch } from 'undici';
 import { config } from '../../config.js';
 import { db, runtimeDbDialect, schema } from '../../db/index.js';
 import { upsertSetting } from '../../db/upsertSetting.js';
-import { refreshModelsAndRebuildRoutes } from '../../services/modelService.js';
+import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { getAllBrandNames } from '../../services/brandMatcher.js';
 import { updateBalanceRefreshCron, updateCheckinSchedule, updateLogCleanupSettings } from '../../services/checkinScheduler.js';
 import { sendNotification } from '../../services/notifyService.js';
@@ -411,7 +411,7 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
                 title: '品牌屏蔽变更后重建路由',
                 dedupeKey: 'refresh-models-and-rebuild-routes',
               },
-              async () => refreshModelsAndRebuildRoutes(),
+              async () => routeRefreshWorkflow.refreshModelsAndRebuildRoutes(),
             );
           }
         }
@@ -996,7 +996,7 @@ export async function settingsRoutes(app: FastifyInstance) {
             title: '品牌屏蔽变更后重建路由',
             dedupeKey: 'refresh-models-and-rebuild-routes',
           },
-          async () => refreshModelsAndRebuildRoutes(),
+          async () => routeRefreshWorkflow.refreshModelsAndRebuildRoutes(),
         );
       }
     }
@@ -1459,7 +1459,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         },
         failureMessage: (currentTask) => `缓存清理后重建失败：${currentTask.error || 'unknown error'}`,
       },
-      async () => refreshModelsAndRebuildRoutes(),
+      async () => routeRefreshWorkflow.refreshModelsAndRebuildRoutes(),
     );
 
     return reply.code(202).send({

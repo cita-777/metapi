@@ -1,73 +1,29 @@
-import React, { Suspense, lazy, useDeferredValue, useEffect, useMemo, useState } from 'react';
-import { createPortal } from 'react-dom';
+import React, { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 import CenteredModal from '../components/CenteredModal.js';
 import DeleteConfirmModal from '../components/DeleteConfirmModal.js';
-import MobileBatchBar from '../components/MobileBatchBar.js';
 import { MobileCard, MobileField } from '../components/MobileCard.js';
-import MobileFilterSheet from '../components/MobileFilterSheet.js';
+import ResponsiveFilterPanel from '../components/ResponsiveFilterPanel.js';
+import ResponsiveBatchActionBar from '../components/ResponsiveBatchActionBar.js';
 import { useToast } from '../components/Toast.js';
 import ModernSelect from '../components/ModernSelect.js';
-import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import { tr } from '../i18n.js';
+import DownstreamKeyDrawer from './downstream-keys/DownstreamKeyDrawer.js';
+import {
+  formatCompactTokens,
+  formatIso,
+  formatMoney,
+  RangeToggle,
+  StatusBadge,
+  TagChips,
+  type Range,
+  type SummaryItem,
+} from './downstream-keys/shared.js';
 import { generateDownstreamSkKey } from './helpers/generateDownstreamSkKey.js';
 
-const DownstreamKeyTrendChart = lazy(() => import('../components/charts/DownstreamKeyTrendChart.js'));
-type DownstreamKeyTrendBucket = import('../components/charts/DownstreamKeyTrendChart.js').DownstreamKeyTrendBucket;
-
 const PROXY_TOKEN_PREFIX = 'sk-';
-
-type Range = '24h' | '7d' | 'all';
 type Status = 'all' | 'enabled' | 'disabled';
-
-type SummaryItem = {
-  id: number;
-  name: string;
-  keyMasked: string;
-  enabled: boolean;
-  description: string | null;
-  groupName: string | null;
-  tags: string[];
-  expiresAt: string | null;
-  maxCost: number | null;
-  usedCost: number;
-  maxRequests: number | null;
-  usedRequests: number;
-  supportedModels: string[];
-  allowedRouteIds: number[];
-  siteWeightMultipliers: Record<number, number>;
-  lastUsedAt: string | null;
-  createdAt: string | null;
-  updatedAt: string | null;
-  rangeUsage: {
-    totalRequests: number;
-    successRequests: number;
-    failedRequests: number;
-    successRate: number | null;
-    totalTokens: number;
-    totalCost: number;
-  };
-};
-
-type AggregateUsage = {
-  totalRequests: number;
-  successRequests: number;
-  failedRequests: number;
-  successRate: number | null;
-  totalTokens: number;
-  totalCost: number;
-};
-
-type OverviewResponse = {
-  success: boolean;
-  item: SummaryItem;
-  usage: null | {
-    last24h: AggregateUsage | null;
-    last7d: AggregateUsage | null;
-    all: AggregateUsage | null;
-  };
-};
 
 type DownstreamApiKeyItem = {
   id: number;
@@ -129,29 +85,7 @@ type BatchMetadataForm = {
   tags: string[];
 };
 
-function formatIso(value: string | null | undefined): string {
-  const text = (value || '').trim();
-  if (!text) return '--';
-  const date = new Date(text);
-  if (Number.isNaN(date.getTime())) return text;
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-function formatMoney(value: number): string {
-  if (!Number.isFinite(value)) return '$0';
-  if (value >= 1) return `$${value.toFixed(3)}`;
-  return `$${value.toFixed(6)}`;
-}
-
-function formatCompactTokens(value: number): string {
-  if (!Number.isFinite(value)) return '0';
-  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(2)}B`;
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
-  return String(Math.trunc(value));
-}
-
+type DefaultRouteSelections = Pick<EditorForm, 'selectedModels' | 'selectedGroupRouteIds'>;
 function toDateTimeLocal(isoString: string | null | undefined): string {
   if (!isoString) return '';
   const ts = Date.parse(isoString);
@@ -203,6 +137,21 @@ function normalizeTags(values: string[]): string[] {
 
 function uniqIds(values: number[]): number[] {
   return [...new Set(values.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0).map((value) => Math.trunc(value)))];
+}
+
+function buildDefaultRouteSelections(routeOptions: RouteSelectorItem[]): DefaultRouteSelections {
+  return {
+    selectedModels: uniqStrings(
+      routeOptions
+        .filter((item) => isExactModelPattern(item.modelPattern))
+        .map((item) => item.modelPattern),
+    ).sort((a, b) => a.localeCompare(b)),
+    selectedGroupRouteIds: uniqIds(
+      routeOptions
+        .filter(isGroupRouteOption)
+        .map((item) => item.id),
+    ),
+  };
 }
 
 function parseTagText(value: string): string[] {
@@ -346,7 +295,21 @@ function DownstreamKeyCopyIconButton({ fullKey }: { fullKey: string | undefined 
   );
 }
 
-function buildEditorForm(item?: ManagedItem | DownstreamApiKeyItem | null): EditorForm {
+function buildEditorForm(
+  item?: ManagedItem | DownstreamApiKeyItem | null,
+  routeOptions: RouteSelectorItem[] = [],
+  selectAllByDefault = false,
+): EditorForm {
+  const defaultSelections = selectAllByDefault
+    ? buildDefaultRouteSelections(routeOptions)
+    : { selectedModels: [], selectedGroupRouteIds: [] };
+  const selectedModels = Array.isArray(item?.supportedModels)
+    ? item.supportedModels
+    : defaultSelections.selectedModels;
+  const selectedGroupRouteIds = Array.isArray(item?.allowedRouteIds)
+    ? item.allowedRouteIds
+    : defaultSelections.selectedGroupRouteIds;
+
   return {
     name: item?.name || '',
     key: item?.key || '',
@@ -357,8 +320,8 @@ function buildEditorForm(item?: ManagedItem | DownstreamApiKeyItem | null): Edit
     maxRequests: item?.maxRequests === null || item?.maxRequests === undefined ? '' : String(item.maxRequests),
     expiresAt: toDateTimeLocal(item?.expiresAt),
     enabled: item?.enabled ?? true,
-    selectedModels: uniqStrings(Array.isArray(item?.supportedModels) ? item!.supportedModels : []),
-    selectedGroupRouteIds: uniqIds(Array.isArray(item?.allowedRouteIds) ? item!.allowedRouteIds : []),
+    selectedModels: uniqStrings(selectedModels),
+    selectedGroupRouteIds: uniqIds(selectedGroupRouteIds),
     siteWeightMultipliersText: JSON.stringify(item?.siteWeightMultipliers || {}, null, 2),
   };
 }
@@ -391,37 +354,6 @@ function summarizeTags(tags: string[]): string {
   if (!Array.isArray(tags) || tags.length === 0) return '无标签';
   if (tags.length === 1) return tags[0];
   return `${tags[0]} +${tags.length - 1}`;
-}
-
-function TagChips({
-  tags,
-  accent = false,
-  maxVisible = 3,
-}: {
-  tags: string[];
-  accent?: boolean;
-  maxVisible?: number;
-}) {
-  if (!Array.isArray(tags) || tags.length === 0) {
-    return <span className="badge badge-muted" style={{ fontSize: 11 }}>无标签</span>;
-  }
-
-  const visible = tags.slice(0, maxVisible);
-  const hidden = tags.length - visible.length;
-  return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-      {visible.map((tag) => (
-        <span
-          key={tag}
-          className={`badge ${accent ? 'badge-info' : 'badge-muted'}`}
-          style={{ fontSize: 11 }}
-        >
-          {tag}
-        </span>
-      ))}
-      {hidden > 0 ? <span className="badge badge-muted" style={{ fontSize: 11 }}>{`+${hidden}`}</span> : null}
-    </div>
-  );
 }
 
 function TagInput({
@@ -523,25 +455,6 @@ function SummaryMetric({
   );
 }
 
-function resolveOverviewUsageByRange(
-  overview: OverviewResponse | null,
-  range: Range,
-): AggregateUsage | null {
-  if (!overview?.usage) return null;
-  if (range === '24h') return overview.usage.last24h;
-  if (range === '7d') return overview.usage.last7d;
-  return overview.usage.all;
-}
-
-function TrendChartFallback({ height = 260 }: { height?: number }) {
-  return (
-    <div className="card" style={{ padding: 16 }}>
-      <div className="skeleton" style={{ width: 140, height: 28, borderRadius: 'var(--radius-sm)', marginBottom: 10 }} />
-      <div className="skeleton" style={{ width: '100%', height, borderRadius: 'var(--radius-sm)' }} />
-    </div>
-  );
-}
-
 function InlineToggle({
   value,
   onChange,
@@ -593,266 +506,6 @@ function InlineToggle({
       ))}
     </div>
   );
-}
-
-function RangeToggle({ range, onChange }: { range: Range; onChange: (r: Range) => void }) {
-  const base: React.CSSProperties = {
-    padding: '6px 12px',
-    fontSize: 12,
-    fontWeight: 600,
-    border: '1px solid var(--color-border)',
-    background: 'var(--color-bg-card)',
-    color: 'var(--color-text-muted)',
-    cursor: 'pointer',
-  };
-
-  const active: React.CSSProperties = {
-    background: 'var(--color-primary)',
-    color: '#fff',
-    borderColor: 'var(--color-primary)',
-  };
-
-  return (
-    <div style={{ display: 'inline-flex', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
-      <button onClick={() => onChange('24h')} style={{ ...base, ...(range === '24h' ? active : {}), borderRight: 'none' }}>
-        24h
-      </button>
-      <button onClick={() => onChange('7d')} style={{ ...base, ...(range === '7d' ? active : {}), borderRight: 'none' }}>
-        7d
-      </button>
-      <button onClick={() => onChange('all')} style={{ ...base, ...(range === 'all' ? active : {}), borderTopRightRadius: 'var(--radius-sm)', borderBottomRightRadius: 'var(--radius-sm)' }}>
-        全部
-      </button>
-    </div>
-  );
-}
-
-function StatusBadge({ enabled }: { enabled: boolean }) {
-  return (
-    <span className={`badge ${enabled ? 'badge-success' : 'badge-muted'}`} style={{ fontSize: 11 }}>
-      {enabled ? '启用' : '禁用'}
-    </span>
-  );
-}
-
-function Drawer({
-  open,
-  onClose,
-  item,
-  initialRange,
-}: {
-  open: boolean;
-  onClose: () => void;
-  item: SummaryItem | null;
-  initialRange: Range;
-}) {
-  const toast = useToast();
-  const presence = useAnimatedVisibility(open, 220);
-  const [overview, setOverview] = useState<OverviewResponse | null>(null);
-  const [overviewLoading, setOverviewLoading] = useState(false);
-  const [trendRange, setTrendRange] = useState<Range>(initialRange);
-  const [trendLoading, setTrendLoading] = useState(false);
-  const [buckets, setBuckets] = useState<DownstreamKeyTrendBucket[]>([]);
-
-  useEffect(() => {
-    if (!open) return;
-    setTrendRange(initialRange);
-  }, [open, initialRange]);
-
-  useEffect(() => {
-    if (!open || !item?.id) return;
-    let cancelled = false;
-    setOverviewLoading(true);
-    api.getDownstreamApiKeyOverview(item.id)
-      .then((res: any) => {
-        if (cancelled) return;
-        setOverview(res as OverviewResponse);
-      })
-      .catch((err: any) => {
-        if (cancelled) return;
-        toast.error(err?.message || '加载 Key 概览失败');
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setOverviewLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, item?.id, toast]);
-
-  useEffect(() => {
-    if (!open || !item?.id) return;
-    let cancelled = false;
-    setTrendLoading(true);
-    api.getDownstreamApiKeyTrend(item.id, { range: trendRange })
-      .then((res: any) => {
-        if (cancelled) return;
-        setBuckets(Array.isArray(res?.buckets) ? res.buckets : []);
-      })
-      .catch((err: any) => {
-        if (cancelled) return;
-        toast.error(err?.message || '加载趋势失败');
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setTrendLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, item?.id, trendRange, toast]);
-
-  if (!presence.shouldRender) return null;
-
-  const currentRangeUsage = resolveOverviewUsageByRange(overview, trendRange) || item?.rangeUsage || null;
-
-  const panel = (
-    <div
-      className={`modal-backdrop ${presence.isVisible ? '' : 'is-closing'}`.trim()}
-      onClick={onClose}
-      style={{ justifyContent: 'flex-end', alignItems: 'stretch', padding: 0 }}
-    >
-      <div
-        className={`modal-content ${presence.isVisible ? '' : 'is-closing'}`.trim()}
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: 'min(92vw, 560px)',
-          maxWidth: 560,
-          height: '100vh',
-          maxHeight: '100vh',
-          borderRadius: 0,
-          animation: presence.isVisible ? 'drawer-slide-in 0.3s cubic-bezier(0.22, 1, 0.36, 1) both' : 'drawer-slide-out 0.22s cubic-bezier(0.4, 0, 1, 1) both',
-        }}
-      >
-        <div className="modal-header" style={{ paddingTop: 18, paddingBottom: 12, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span>{item?.name || '--'}</span>
-              <StatusBadge enabled={!!item?.enabled} />
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-              {item?.keyMasked || '****'}
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
-              <span className={`badge ${item?.groupName ? 'badge-info' : 'badge-muted'}`} style={{ fontSize: 11 }}>
-                {item?.groupName ? `主分组 · ${item.groupName}` : '未分组'}
-              </span>
-              <TagChips tags={item?.tags || []} accent maxVisible={4} />
-            </div>
-          </div>
-          <button className="btn btn-ghost" onClick={onClose} style={{ border: '1px solid var(--color-border)' }}>
-            关闭
-          </button>
-        </div>
-
-        <div className="modal-body" style={{ paddingTop: 0 }}>
-          <div className="card" style={{ padding: 16, marginBottom: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>使用趋势</div>
-                <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>按选定时间窗口查看请求、Tokens 与成本变化。</div>
-              </div>
-              <RangeToggle range={trendRange} onChange={setTrendRange} />
-            </div>
-
-            <Suspense fallback={<TrendChartFallback height={260} />}>
-              <DownstreamKeyTrendChart buckets={buckets} loading={trendLoading} height={260} />
-            </Suspense>
-          </div>
-
-          <div className="card" style={{ padding: 16, marginBottom: 16 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: 10 }}>
-              基础信息
-            </div>
-            {overviewLoading ? (
-              <div className="skeleton" style={{ width: '100%', height: 72, borderRadius: 'var(--radius-sm)' }} />
-            ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, fontSize: 12 }}>
-                <div>
-                  <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>最近使用</div>
-                  <div style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{formatIso(item?.lastUsedAt)}</div>
-                </div>
-                <div>
-                  <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>累计请求</div>
-                  <div style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{(item?.usedRequests || 0).toLocaleString()}</div>
-                </div>
-                <div>
-                  <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>累计成本</div>
-                  <div style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{formatMoney(Number(item?.usedCost || 0))}</div>
-                </div>
-                <div>
-                  <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>到期时间</div>
-                  <div style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{formatIso(item?.expiresAt)}</div>
-                </div>
-                <div>
-                  <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>主分组</div>
-                  <div style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{item?.groupName || '未分组'}</div>
-                </div>
-                <div style={{ gridColumn: '1 / -1' }}>
-                  <div style={{ color: 'var(--color-text-muted)', marginBottom: 6 }}>标签</div>
-                  <TagChips tags={item?.tags || []} accent maxVisible={6} />
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="card" style={{ padding: 16 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: 10 }}>
-              当前范围汇总
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, fontSize: 12 }}>
-              <div>
-                <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>Tokens</div>
-                <div style={{ color: 'var(--color-text-primary)', fontWeight: 700 }}>{formatCompactTokens(currentRangeUsage?.totalTokens || 0)}</div>
-              </div>
-              <div>
-                <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>请求数</div>
-                <div style={{ color: 'var(--color-text-primary)', fontWeight: 700 }}>{(currentRangeUsage?.totalRequests || 0).toLocaleString()}</div>
-              </div>
-              <div>
-                <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>成功率</div>
-                <div style={{ color: 'var(--color-text-primary)', fontWeight: 700 }}>{currentRangeUsage?.successRate == null ? '--' : `${currentRangeUsage.successRate}%`}</div>
-              </div>
-              <div>
-                <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>成本</div>
-                <div style={{ color: 'var(--color-text-primary)', fontWeight: 700 }}>{formatMoney(Number(currentRangeUsage?.totalCost || 0))}</div>
-              </div>
-            </div>
-          </div>
-
-          {overview?.usage ? (
-            <>
-              <div className="card" style={{ padding: 16, marginTop: 16 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: 10 }}>
-                  固定窗口对比
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, fontSize: 12 }}>
-                  {[
-                    { label: '24h', data: overview.usage.last24h },
-                    { label: '7d', data: overview.usage.last7d },
-                    { label: '全部', data: overview.usage.all },
-                  ].map((section) => (
-                    <div key={section.label} style={{ border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)', padding: 12 }}>
-                      <div style={{ color: 'var(--color-text-primary)', fontWeight: 700, marginBottom: 8 }}>{section.label}</div>
-                      <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>Tokens</div>
-                      <div style={{ color: 'var(--color-text-primary)', fontWeight: 700, marginBottom: 8 }}>{formatCompactTokens(section.data?.totalTokens || 0)}</div>
-                      <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>请求数</div>
-                      <div style={{ color: 'var(--color-text-primary)', fontWeight: 700, marginBottom: 8 }}>{(section.data?.totalRequests || 0).toLocaleString()}</div>
-                      <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>成功率</div>
-                      <div style={{ color: 'var(--color-text-primary)', fontWeight: 700 }}>{section.data?.successRate == null ? '--' : `${section.data.successRate}%`}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
-
-  return createPortal(panel, document.body);
 }
 
 function EditorModal({
@@ -1200,6 +853,7 @@ export default function DownstreamKeys() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editorForm, setEditorForm] = useState<EditorForm>(() => buildEditorForm());
+  const [createDefaultsPending, setCreateDefaultsPending] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
@@ -1358,9 +1012,33 @@ export default function DownstreamKeys() {
     return acc;
   }, { tokens: 0, requests: 0, cost: 0, enabled: 0 }), [visibleItems]);
 
+  useEffect(() => {
+    if (!editorOpen || editingId !== null || !createDefaultsPending) {
+      return;
+    }
+
+    const defaultSelections = buildDefaultRouteSelections(routeOptions);
+    if (defaultSelections.selectedModels.length === 0 && defaultSelections.selectedGroupRouteIds.length === 0) {
+      return;
+    }
+
+    setEditorForm((prev) => {
+      if (prev.selectedModels.length > 0 || prev.selectedGroupRouteIds.length > 0) {
+        return prev;
+      }
+      return {
+        ...prev,
+        selectedModels: defaultSelections.selectedModels,
+        selectedGroupRouteIds: defaultSelections.selectedGroupRouteIds,
+      };
+    });
+    setCreateDefaultsPending(false);
+  }, [createDefaultsPending, editorOpen, editingId, routeOptions]);
+
   const openCreate = () => {
     setEditingId(null);
-    setEditorForm(buildEditorForm());
+    setEditorForm(buildEditorForm(null, routeOptions, true));
+    setCreateDefaultsPending(true);
     setEditorOpen(true);
   };
 
@@ -1375,6 +1053,7 @@ export default function DownstreamKeys() {
 
   const openEdit = (item: ManagedItem) => {
     setEditingId(item.id);
+    setCreateDefaultsPending(false);
     setEditorForm(buildEditorForm(rawItemMap.get(item.id) || item));
     setEditorOpen(true);
   };
@@ -1382,6 +1061,7 @@ export default function DownstreamKeys() {
   const closeEditor = () => {
     setEditorOpen(false);
     setEditingId(null);
+    setCreateDefaultsPending(false);
     setEditorForm(buildEditorForm());
   };
 
@@ -1687,24 +1367,17 @@ export default function DownstreamKeys() {
       </div>
 
       {selectedIds.length > 0 ? (
-        isMobile ? (
-          <MobileBatchBar info={`已选 ${selectedIds.length} 个密钥`}>
-            <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={openBatchMetadata} disabled={batchActionLoading}>归类/标签</button>
-            <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => void batchRun('批量启用', selectedIds)} disabled={batchActionLoading}>启用</button>
-            <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => void batchRun('批量禁用', selectedIds)} disabled={batchActionLoading}>禁用</button>
-            <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => void batchRun('批量清零用量', selectedIds)} disabled={batchActionLoading}>清零</button>
-            <button className="btn btn-link btn-link-danger" onClick={() => setDeleteConfirm({ mode: 'batch', ids: [...selectedIds] })} disabled={batchActionLoading}>删除</button>
-          </MobileBatchBar>
-        ) : (
-          <div className="card" style={{ padding: 12, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>已选 {selectedIds.length} 个密钥</span>
-            <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={openBatchMetadata} disabled={batchActionLoading}>批量归类/标签</button>
-            <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => void batchRun('批量启用', selectedIds)} disabled={batchActionLoading}>批量启用</button>
-            <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => void batchRun('批量禁用', selectedIds)} disabled={batchActionLoading}>批量禁用</button>
-            <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => void batchRun('批量清零用量', selectedIds)} disabled={batchActionLoading}>批量清零用量</button>
-            <button className="btn btn-link btn-link-danger" onClick={() => setDeleteConfirm({ mode: 'batch', ids: [...selectedIds] })} disabled={batchActionLoading}>批量删除</button>
-          </div>
-        )
+        <ResponsiveBatchActionBar
+          isMobile={isMobile}
+          info={`已选 ${selectedIds.length} 个密钥`}
+          infoStyle={{ color: 'var(--color-text-primary)' }}
+        >
+          <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={openBatchMetadata} disabled={batchActionLoading}>{isMobile ? '归类/标签' : '批量归类/标签'}</button>
+          <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => void batchRun('批量启用', selectedIds)} disabled={batchActionLoading}>{isMobile ? '启用' : '批量启用'}</button>
+          <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => void batchRun('批量禁用', selectedIds)} disabled={batchActionLoading}>{isMobile ? '禁用' : '批量禁用'}</button>
+          <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => void batchRun('批量清零用量', selectedIds)} disabled={batchActionLoading}>{isMobile ? '清零' : '批量清零用量'}</button>
+          <button className="btn btn-link btn-link-danger" onClick={() => setDeleteConfirm({ mode: 'batch', ids: [...selectedIds] })} disabled={batchActionLoading}>{isMobile ? '删除' : '批量删除'}</button>
+        </ResponsiveBatchActionBar>
       ) : null}
 
       <div className="card" style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -1729,13 +1402,14 @@ export default function DownstreamKeys() {
               </div>
             )}
           </div>
-          {isMobile ? (
-            <MobileFilterSheet open={showFilters} onClose={() => setShowFilters(false)} title="筛选下游密钥">
-              {filterControls}
-            </MobileFilterSheet>
-          ) : (
-            filterControls
-          )}
+          <ResponsiveFilterPanel
+            isMobile={isMobile}
+            mobileOpen={showFilters}
+            onMobileClose={() => setShowFilters(false)}
+            mobileTitle="筛选下游密钥"
+            mobileContent={filterControls}
+            desktopContent={filterControls}
+          />
         </div>
 
         {loading ? (
@@ -1967,7 +1641,7 @@ export default function DownstreamKeys() {
           : <>确定要删除选中的 <strong>{deleteConfirm?.ids.length || 0}</strong> 个密钥吗？</>}
       />
 
-      <Drawer
+      <DownstreamKeyDrawer
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         item={selectedItem}

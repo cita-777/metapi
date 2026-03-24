@@ -194,6 +194,35 @@ function waitForSocketMessages(socket: WebSocket, count: number, timeoutMs = 100
   });
 }
 
+function waitForSocketMessageMatching(
+  socket: WebSocket,
+  predicate: (message: any) => boolean,
+  timeoutMs = 1000,
+) {
+  return new Promise<any>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      socket.off('message', onMessage);
+      socket.off('error', onError);
+      reject(new Error('Timed out waiting for matching websocket message'));
+    }, timeoutMs);
+    const onMessage = (payload: WebSocket.RawData) => {
+      const message = JSON.parse(String(payload));
+      if (!predicate(message)) return;
+      clearTimeout(timeout);
+      socket.off('message', onMessage);
+      socket.off('error', onError);
+      resolve(message);
+    };
+    const onError = (error: Error) => {
+      clearTimeout(timeout);
+      socket.off('message', onMessage);
+      reject(error);
+    };
+    socket.on('message', onMessage);
+    socket.once('error', onError);
+  });
+}
+
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
@@ -559,6 +588,78 @@ describe('responses websocket transport', () => {
     expect(messages[0]?.response?.id).toBe('resp_http_fallback_401');
   });
 
+  it('preserves previous_response_id when websocket upgrade fallback uses HTTP on incremental-capable upstreams', async () => {
+    rejectedUpgradeStatus = 426;
+    rejectedUpgradeStatusText = 'Upgrade Required';
+    rejectedUpgradeBody = JSON.stringify({
+      error: {
+        message: 'upgrade required',
+        type: 'invalid_request_error',
+      },
+    });
+
+    const selectedChannel = createSelectedChannel({
+      siteUrl: rejectedUpgradeSiteUrl,
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    fetchMock
+      .mockResolvedValueOnce(createSseResponse([
+        'event: response.completed\n',
+        'data: {"type":"response.completed","response":{"id":"resp_http_fallback_1","model":"gpt-5.4","status":"completed","output":[{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"first"}]}],"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}\n\n',
+        'data: [DONE]\n\n',
+      ]))
+      .mockResolvedValueOnce(createSseResponse([
+        'event: response.completed\n',
+        'data: {"type":"response.completed","response":{"id":"resp_http_fallback_2","model":"gpt-5.4","status":"completed","output":[{"id":"msg_2","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"second"}]}],"usage":{"input_tokens":5,"output_tokens":1,"total_tokens":6}}}\n\n',
+        'data: [DONE]\n\n',
+      ]));
+
+    const socket = createClientSocket(baseUrl);
+    await waitForSocketOpen(socket);
+    const firstResponsePromise = waitForSocketMessages(socket, 1);
+
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      instructions: 'be helpful',
+      input: [],
+    }));
+
+    const firstMessages = await firstResponsePromise;
+    const secondResponsePromise = waitForSocketMessages(socket, 1);
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      previous_response_id: 'resp_http_fallback_1',
+      input: [
+        {
+          id: 'tool_out_1',
+          type: 'function_call_output',
+          call_id: 'call_1',
+          output: 'tool result',
+        },
+      ],
+    }));
+
+    await secondResponsePromise;
+    socket.close();
+
+    expect(firstMessages[0]?.type).toBe('response.completed');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [, secondOptions] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const secondBody = JSON.parse(String(secondOptions.body));
+    expect(secondBody.previous_response_id).toBe('resp_http_fallback_1');
+    expect(secondBody.input).toEqual([
+      {
+        id: 'tool_out_1',
+        type: 'function_call_output',
+        call_id: 'call_1',
+        output: 'tool result',
+      },
+    ]);
+  });
+
   it('preserves query parameter auth when websocket transport falls back to the HTTP responses route', async () => {
     rejectedUpgradeStatus = 401;
     rejectedUpgradeStatusText = 'Unauthorized';
@@ -793,7 +894,10 @@ describe('responses websocket transport', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    const messagesPromise = waitForSocketMessages(socket, 4);
+    const secondTurnPromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed' && message?.response?.id === 'resp_ws_2',
+    );
     firstResponseGate.resolve(createSseResponse([
       'event: response.output_item.done\n',
       'data: {"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","call_id":"call_1"}}\n\n',
@@ -804,16 +908,20 @@ describe('responses websocket transport', () => {
       'data: [DONE]\n\n',
     ]));
 
-    const messages = await messagesPromise;
+    while (fetchMock.mock.calls.length < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    const secondTurnMessage = await secondTurnPromise;
     socket.close();
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(messages.map((message) => message.type)).toEqual([
-      'response.output_item.done',
-      'response.output_item.done',
-      'response.completed',
-      'response.completed',
-    ]);
+    expect(secondTurnMessage).toMatchObject({
+      type: 'response.completed',
+      response: {
+        id: 'resp_ws_2',
+      },
+    });
     const [, secondOptions] = fetchMock.mock.calls[1] as [string, RequestInit];
     const secondBody = JSON.parse(String(secondOptions.body));
     expect(secondBody.input).toEqual([
@@ -916,7 +1024,10 @@ describe('responses websocket transport', () => {
     }));
     await firstResponsePromise;
 
-    const secondResponsePromise = waitForSocketMessages(socket, 1);
+    const secondResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed' && message?.response?.id === 'resp_ws_2',
+    );
     socket.send(JSON.stringify({
       type: 'response.create',
       previous_response_id: 'resp_ws_1',
@@ -929,10 +1040,15 @@ describe('responses websocket transport', () => {
         },
       ],
     }));
-    await secondResponsePromise;
+    const secondResponse = await secondResponsePromise;
     socket.close();
 
-    expect(fetchMock).toHaveBeenCalledTimes(0);
+    expect(secondResponse).toMatchObject({
+      type: 'response.completed',
+      response: {
+        id: 'resp_ws_2',
+      },
+    });
     expect(upstreamConnectionCount).toBe(1);
     expect(upstreamRequests).toHaveLength(2);
     expect(upstreamRequests[0]).toMatchObject({

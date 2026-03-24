@@ -48,6 +48,9 @@ export const claudeCodeCliProfile: CliProfileDefinition = {
       id: 'claude_code',
       sessionId,
       traceHint: sessionId,
+      clientAppId: 'claude_code',
+      clientAppName: 'Claude Code',
+      clientConfidence: 'exact',
     };
   },
 };

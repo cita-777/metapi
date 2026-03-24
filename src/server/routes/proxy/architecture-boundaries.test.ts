@@ -92,6 +92,12 @@ describe('proxy route architecture boundaries', () => {
     expect(source).not.toContain('normalizeContentText(');
   });
 
+  it('keeps codex runtime header and prompt-cache derivation inside provider profiles', () => {
+    const source = readSource('./upstreamEndpoint.ts');
+    expect(source).not.toContain('buildCodexRuntimeHeaders(');
+    expect(source).not.toContain('shouldInjectDerivedPromptCacheKey');
+  });
+
   it('keeps gemini runtime closure in transformer-owned helpers', () => {
     const source = readSource('./gemini.ts');
     const surfaceSource = readSource('../../proxy-core/surfaces/geminiSurface.ts');
@@ -137,6 +143,24 @@ describe('proxy route architecture boundaries', () => {
     expect(surfaceSource).not.toContain('openAiResponsesTransformer.aggregator.complete(');
     expect(surfaceSource).toContain('reply.hijack();');
     expect(surfaceSource).toContain('openAiResponsesTransformer.proxyStream.createSession(');
+  });
+
+  it('keeps oauth refresh recovery and success bookkeeping behind shared surface helpers', () => {
+    const chatSurfaceSource = readSource('../../proxy-core/surfaces/chatSurface.ts');
+    const responsesSurfaceSource = readSource('../../proxy-core/surfaces/openAiResponsesSurface.ts');
+
+    expect(chatSurfaceSource).toContain('trySurfaceOauthRefreshRecovery(');
+    expect(chatSurfaceSource).toContain('recordSurfaceSuccess(');
+    expect(chatSurfaceSource).not.toContain('refreshOauthAccessTokenSingleflight(');
+    expect(chatSurfaceSource).not.toContain('resolveProxyUsageWithSelfLogFallback(');
+    expect(chatSurfaceSource).not.toContain('resolveProxyLogBilling(');
+    expect((chatSurfaceSource.match(/bestEffortMetrics:/g) || []).length).toBeGreaterThanOrEqual(2);
+
+    expect(responsesSurfaceSource).toContain('trySurfaceOauthRefreshRecovery(');
+    expect(responsesSurfaceSource).toContain('recordSurfaceSuccess(');
+    expect(responsesSurfaceSource).not.toContain('refreshOauthAccessTokenSingleflight(');
+    expect(responsesSurfaceSource).not.toContain('resolveProxyUsageWithSelfLogFallback(');
+    expect(responsesSurfaceSource).not.toContain('resolveProxyLogBilling(');
   });
 
   it('keeps canonical transformer contracts imported from the transformer boundary only', () => {

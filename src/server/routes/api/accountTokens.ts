@@ -4,7 +4,6 @@ import { db, schema } from '../../db/index.js';
 import {
   ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING,
   ACCOUNT_TOKEN_VALUE_STATUS_READY,
-  ensureDefaultTokenForAccount,
   isMaskedPendingAccountToken,
   isMaskedTokenValue,
   isUsableAccountToken,
@@ -14,17 +13,17 @@ import {
   repairDefaultToken,
   resolveAccountTokenValueStatus,
   setDefaultToken,
-  syncTokensFromUpstream,
 } from '../../services/accountTokenService.js';
 import { getAdapter } from '../../services/platforms/index.js';
 import { getCredentialModeFromExtraConfig, getProxyUrlFromExtraConfig, resolvePlatformUserId } from '../../services/accountExtraConfig.js';
 import { startBackgroundTask } from '../../services/backgroundTaskService.js';
 import { withAccountProxyOverride } from '../../services/siteProxy.js';
+import { type ModelRefreshResult } from '../../services/modelService.js';
 import {
-  rebuildTokenRoutesFromAvailability,
-  refreshModelsForAccount,
-  type ModelRefreshResult,
-} from '../../services/modelService.js';
+  type CoverageBatchRebuildResult,
+  convergeAccountMutation,
+  refreshAccountCoverageBatch,
+} from '../../services/accountMutationWorkflow.js';
 
 type AccountWithSiteRow = {
   accounts: typeof schema.accounts.$inferSelect;
@@ -65,9 +64,7 @@ type CoverageRefreshFailureItem = {
 };
 
 type CoverageRefreshItem = ModelRefreshResult | CoverageRefreshFailureItem;
-type CoverageRefreshRebuildResult =
-  | { success: true; result: Awaited<ReturnType<typeof rebuildTokenRoutesFromAvailability>> }
-  | { success: false; error: string };
+type CoverageRefreshRebuildResult = CoverageBatchRebuildResult;
 
 const TOKEN_SYNC_TIMEOUT_MS = 15_000;
 const SYNC_ALL_BATCH_SIZE = 3;
@@ -231,7 +228,38 @@ async function executeAccountTokenSync(row: AccountWithSiteRow): Promise<SyncExe
 
   if (!row.accounts.accessToken) {
     if (row.accounts.apiToken) {
-      ensureDefaultTokenForAccount(accountId, row.accounts.apiToken, { name: 'default', source: 'legacy' });
+      try {
+        const convergence = await convergeAccountMutation({
+          accountId,
+          preferredApiToken: row.accounts.apiToken,
+          defaultTokenSource: 'legacy',
+        });
+        if (convergence.defaultTokenId != null) {
+          return {
+            ...base,
+            status: 'synced',
+            reason: 'legacy_default_token_restored',
+            message: 'restored local default token from legacy api token',
+            synced: true,
+            created: 0,
+            updated: 0,
+            total: 0,
+            defaultTokenId: convergence.defaultTokenId,
+          };
+        }
+      } catch (error: any) {
+        return {
+          ...base,
+          status: 'failed',
+          reason: 'sync_error',
+          message: error?.message || 'sync failed',
+          synced: false,
+          created: 0,
+          updated: 0,
+          total: 0,
+          defaultTokenId: null,
+        };
+      }
     }
     return {
       ...base,
@@ -296,7 +324,11 @@ async function executeAccountTokenSync(row: AccountWithSiteRow): Promise<SyncExe
       };
     }
 
-    const synced = await syncTokensFromUpstream(accountId, tokens);
+    const convergence = await convergeAccountMutation({
+      accountId,
+      upstreamTokens: tokens,
+    });
+    const synced = convergence.tokenSync!;
     if ((synced.maskedPending || 0) > 0) {
       return {
         ...base,
@@ -390,49 +422,26 @@ async function executeSyncAllAccountTokens() {
 }
 
 async function refreshCoverageForAccounts(accountIds: number[]) {
-  const uniqueAccountIds = Array.from(new Set(
-    accountIds.filter((id) => Number.isFinite(id) && id > 0),
-  ));
+  const result = await refreshAccountCoverageBatch({
+    accountIds,
+    batchSize: SYNC_ALL_BATCH_SIZE,
+    mapFailure: buildCoverageRefreshFailureItem,
+  });
 
-  if (uniqueAccountIds.length === 0) {
-    return { refresh: [], rebuild: null };
+  result.refresh.forEach((item) => {
+    if ((item as CoverageRefreshFailureItem).reason === 'coverage_refresh_failed') {
+      const failed = item as CoverageRefreshFailureItem;
+      console.warn(`[account-tokens] coverage refresh failed for account ${failed.accountId}: ${failed.errorMessage}`);
+    }
+  });
+  if (result.rebuild && !result.rebuild.success) {
+    console.warn(`[account-tokens] token route rebuild failed after coverage refresh: ${result.rebuild.error}`);
   }
 
-  const refresh: CoverageRefreshItem[] = [];
-  for (let offset = 0; offset < uniqueAccountIds.length; offset += SYNC_ALL_BATCH_SIZE) {
-    const batch = uniqueAccountIds.slice(offset, offset + SYNC_ALL_BATCH_SIZE);
-    const settled = await Promise.allSettled(
-      batch.map(async (accountId) => refreshModelsForAccount(accountId)),
-    );
-    settled.forEach((result, index) => {
-      if (result.status === 'fulfilled') {
-        refresh.push(result.value);
-        return;
-      }
-
-      const accountId = batch[index] || 0;
-      const errorMessage = result.reason instanceof Error ? result.reason.message : String(result.reason || 'coverage refresh failed');
-      refresh.push(buildCoverageRefreshFailureItem(accountId, errorMessage));
-      console.warn(`[account-tokens] coverage refresh failed for account ${accountId}: ${errorMessage}`);
-    });
-  }
-
-  let rebuild: CoverageRefreshRebuildResult | null = null;
-  try {
-    rebuild = {
-      success: true,
-      result: await rebuildTokenRoutesFromAvailability(),
-    };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error || 'route rebuild failed');
-    rebuild = {
-      success: false,
-      error: errorMessage,
-    };
-    console.warn(`[account-tokens] token route rebuild failed after coverage refresh: ${errorMessage}`);
-  }
-
-  return { refresh, rebuild };
+  return {
+    refresh: result.refresh as CoverageRefreshItem[],
+    rebuild: result.rebuild as CoverageRefreshRebuildResult | null,
+  };
 }
 
 function buildCoverageRefreshFailureItem(

@@ -149,4 +149,9 @@ describe('api proxy test timeout handling', () => {
       data: 'data:application/pdf;base64,UERG',
     });
   });
+
+  it('reuses the same proxy test implementations for legacy aliases', () => {
+    expect(api.proxyTest).toBe(api.testProxy);
+    expect(api.proxyTestStream).toBe(api.testProxyStream);
+  });
 });

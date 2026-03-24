@@ -11,7 +11,7 @@ vi.mock('react-dom', () => ({
 describe('MobileDrawer', () => {
   it('renders content, locks body scroll, and exposes explicit close affordances', async () => {
     const onClose = vi.fn();
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     vi.stubGlobal('document', {
       body: {
         style: {

@@ -165,7 +165,7 @@ afterEach(() => {
 
 describe('DownstreamKeys page', () => {
   it('loads management data and renders merged row content', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -213,7 +213,7 @@ describe('DownstreamKeys page', () => {
       ],
     });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -236,7 +236,7 @@ describe('DownstreamKeys page', () => {
 
       const select = root!.root.findAllByType('select').find((node) => collectText(node).includes('仅禁用'));
       await act(async () => {
-        select.props.onChange({ target: { value: 'disabled' } });
+        select!.props.onChange({ target: { value: 'disabled' } });
       });
       await flushMicrotasks();
       expect(collectText(root!.root)).toContain('batch-key');
@@ -247,7 +247,7 @@ describe('DownstreamKeys page', () => {
   });
 
   it('supports create flow and drawer trend loading', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -327,7 +327,7 @@ describe('DownstreamKeys page', () => {
         ],
       });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -360,8 +360,99 @@ describe('DownstreamKeys page', () => {
     }
   });
 
+  it('clears stale drawer overview and trend data when switching to another key', async () => {
+    apiMock.getDownstreamApiKeysSummary.mockResolvedValue({
+      success: true,
+      items: [
+        buildSummaryItem(),
+        buildSummaryItem({
+          id: 2,
+          name: 'batch-key',
+          keyMasked: 'sk-b****0315',
+          groupName: '项目B',
+          rangeUsage: {
+            totalRequests: 1,
+            successRequests: 1,
+            failedRequests: 0,
+            successRate: 100,
+            totalTokens: 12,
+            totalCost: 0.01,
+          },
+        }),
+      ],
+    });
+    apiMock.getDownstreamApiKeys.mockResolvedValue({
+      success: true,
+      items: [
+        buildRawItem(),
+        buildRawItem({
+          id: 2,
+          name: 'batch-key',
+          key: 'sk-batch-0315',
+          keyMasked: 'sk-b****0315',
+          groupName: '项目B',
+        }),
+      ],
+    });
+    apiMock.getDownstreamApiKeyOverview
+      .mockResolvedValueOnce({
+        success: true,
+        item: buildSummaryItem(),
+        usage: {
+          last24h: { totalRequests: 3, successRequests: 2, failedRequests: 1, successRate: 66.7, totalTokens: 4200, totalCost: 0.42 },
+          last7d: { totalRequests: 9, successRequests: 8, failedRequests: 1, successRate: 88.9, totalTokens: 12400, totalCost: 1.24 },
+          all: { totalRequests: 20, successRequests: 18, failedRequests: 2, successRate: 90, totalTokens: 55200, totalCost: 5.52 },
+        },
+      })
+      .mockImplementationOnce(() => new Promise(() => {}));
+    apiMock.getDownstreamApiKeyTrend
+      .mockResolvedValueOnce({
+        success: true,
+        buckets: [
+          { startUtc: '2026-03-15T08:00:00.000Z', totalRequests: 2, totalTokens: 1200, totalCost: 0.12, successRate: 100 },
+          { startUtc: '2026-03-15T09:00:00.000Z', totalRequests: 1, totalTokens: 3000, totalCost: 0.3, successRate: 0 },
+        ],
+      })
+      .mockImplementationOnce(() => new Promise(() => {}));
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/downstream-keys']}>
+            <ToastProvider>
+              <DownstreamKeys />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const rows = root!.root.findAll((node) => node.type === 'tr' && typeof node.props.onClick === 'function');
+      const smokeRow = rows.find((node) => collectText(node).includes('smoke-key'));
+      const batchRow = rows.find((node) => collectText(node).includes('batch-key'));
+      await act(async () => {
+        smokeRow!.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root!.root)).toContain('固定窗口对比');
+      expect(collectText(root!.root)).toContain('trend:2');
+
+      await act(async () => {
+        batchRow!.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root!.root)).not.toContain('固定窗口对比');
+      expect(collectText(root!.root)).not.toContain('trend:2');
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('separates exact models from group routes in advanced config and uses single-column layout', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -412,7 +503,7 @@ describe('DownstreamKeys page', () => {
       { id: 14, modelPattern: 'claude-opus-4-6', displayName: 'Claude Opus 4.6', enabled: true },
     ]);
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -478,8 +569,75 @@ describe('DownstreamKeys page', () => {
     }
   });
 
+  it('defaults new keys to all exact models and all group routes before saving', async () => {
+    apiMock.getRoutesLite.mockResolvedValue([
+      { id: 11, modelPattern: 'claude-*', displayName: '默认群组', enabled: true },
+      { id: 12, modelPattern: 'gpt-4.1-mini', displayName: 'GPT 4.1 Mini', enabled: true },
+      { id: 13, modelPattern: 're:^gemini-2\\..*$', displayName: 'Gemini 全家桶', enabled: true },
+      { id: 14, modelPattern: 'claude-opus-4-6', displayName: 'Claude Opus 4.6', enabled: true },
+    ]);
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/downstream-keys']}>
+            <ToastProvider>
+              <DownstreamKeys />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const createBtn = root!.root.findAll((node) => node.type === 'button' && collectText(node).includes('新增下游密钥'))[0];
+      await act(async () => {
+        createBtn.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const advancedBtn = root!.root.findAll((node) => node.type === 'button' && collectText(node).includes('高级配置'))[0];
+      await act(async () => {
+        advancedBtn.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const panels = root!.root.findAll((node) => node.props.className === 'downstream-key-advanced-panel');
+      const modelPanel = panels.find((node) => collectText(node).includes('模型白名单'));
+      const groupPanel = panels.find((node) => collectText(node).includes('群组范围'));
+      expect(modelPanel).toBeTruthy();
+      expect(groupPanel).toBeTruthy();
+      expect(collectText(modelPanel!)).toContain('已选 2 个模型');
+      expect(collectText(groupPanel!)).toContain('已选 2 个群组');
+
+      const inputs = root!.root.findAllByType('input');
+      const nameInput = inputs.find((node) => node.props.placeholder === '例如：项目 A / 移动端');
+      const keyInput = inputs.find((node) => node.props.placeholder === 'sk-...');
+      await act(async () => {
+        nameInput!.props.onChange({ target: { value: 'default-all-key' } });
+        keyInput!.props.onChange({ target: { value: 'sk-default-all-key-0323' } });
+      });
+      await flushMicrotasks();
+
+      const saveBtn = root!.root.findAll((node) => node.type === 'button' && collectText(node).includes('创建密钥'))[0];
+      await act(async () => {
+        saveBtn.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.createDownstreamApiKey).toHaveBeenCalledWith(expect.objectContaining({
+        name: 'default-all-key',
+        key: 'sk-default-all-key-0323',
+        supportedModels: ['claude-opus-4-6', 'gpt-4.1-mini'],
+        allowedRouteIds: [11, 13],
+      }));
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('uses backend batch api for selected rows', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -515,7 +673,7 @@ describe('DownstreamKeys page', () => {
   });
 
   it('supports group and tag editing plus batch metadata update', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(

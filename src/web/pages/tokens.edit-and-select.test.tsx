@@ -143,7 +143,7 @@ describe('Tokens edit modal and row selection', () => {
   });
 
   it('opens the centered edit modal when editing a token', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = buildRoot();
@@ -191,7 +191,7 @@ describe('Tokens edit modal and row selection', () => {
   });
 
   it('selects a token when clicking the row body, but not when clicking an action button', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = buildRoot();
@@ -211,8 +211,7 @@ describe('Tokens edit modal and row selection', () => {
       });
       await flushMicrotasks();
 
-      expect(JSON.stringify(root.toJSON())).toContain('已选 ');
-      expect(JSON.stringify(root.toJSON())).toContain('"1"');
+      expect(collectText(root.root)).toContain('已选 1 项');
 
       const copyButton = root.root
         .findAll((node) => node.type === 'button')
@@ -224,8 +223,7 @@ describe('Tokens edit modal and row selection', () => {
       });
       await flushMicrotasks();
 
-      expect(JSON.stringify(root.toJSON())).toContain('已选 ');
-      expect(JSON.stringify(root.toJSON())).toContain('"1"');
+      expect(collectText(root.root)).toContain('已选 1 项');
     } finally {
       root?.unmount();
     }
@@ -234,7 +232,7 @@ describe('Tokens edit modal and row selection', () => {
   it('does not repeatedly refetch groups when edit-group loading fails once', async () => {
     apiMock.getAccountTokenGroups.mockRejectedValueOnce(new Error('账号会话可能已过期，请重新登录后再拉取分组'));
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = buildRoot();
@@ -276,7 +274,7 @@ describe('Tokens edit modal and row selection', () => {
     ]);
     apiMock.getAccountTokenValue.mockRejectedValueOnce(new Error('当前仅保存了脱敏令牌，无法展开/复制。请在站点重新生成并同步，或手动更新为完整令牌。'));
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = buildTokensRoot();
@@ -358,7 +356,7 @@ describe('Tokens edit modal and row selection', () => {
     });
     apiMock.getAccountTokenValue.mockRejectedValueOnce(new Error('当前仅保存了脱敏令牌，无法展开/复制。请在站点重新生成并同步，或手动更新为完整令牌。'));
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = buildTokensRoot();

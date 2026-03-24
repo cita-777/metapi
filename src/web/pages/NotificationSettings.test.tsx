@@ -68,7 +68,7 @@ describe('NotificationSettings', () => {
   });
 
   it('loads and saves telegram api base url and topic id', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -139,7 +139,7 @@ describe('NotificationSettings', () => {
       notifyCooldownSec: 300,
     });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(

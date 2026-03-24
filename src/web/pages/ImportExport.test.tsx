@@ -283,7 +283,7 @@ describe('ImportExport', () => {
   });
 
   it('shows ALL-API-Hub V2 preview counts and ignored sections', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -309,7 +309,7 @@ describe('ImportExport', () => {
   });
 
   it('does not label native metapi backups as ALL-API-Hub V2', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -335,7 +335,7 @@ describe('ImportExport', () => {
 
   it('uses backend import summary in the completion toast', async () => {
     const confirmSpy = vi.mocked((window as { confirm: (...args: unknown[]) => boolean }).confirm);
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {
@@ -385,7 +385,7 @@ describe('ImportExport', () => {
   });
 
   it('loads webdav config and saves updates from the import/export page', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {
@@ -422,7 +422,7 @@ describe('ImportExport', () => {
   });
 
   it('shows v2.1 config-backup wording and local-state notice', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {
@@ -445,7 +445,7 @@ describe('ImportExport', () => {
   });
 
   it('renders webdav export type with ModernSelect instead of a native select', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {
@@ -493,7 +493,7 @@ describe('ImportExport', () => {
   });
 
   it('disables webdav actions while config has unsaved changes', async () => {
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {
@@ -552,7 +552,7 @@ describe('ImportExport', () => {
       },
     });
 
-    let root: ReturnType<typeof create> | null = null;
+    let root!: WebTestRenderer;
 
     try {
       await act(async () => {
