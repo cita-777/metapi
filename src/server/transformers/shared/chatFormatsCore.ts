@@ -110,6 +110,24 @@ function joinNonEmpty(parts: string[]): string {
   return parts.map((item) => item.trim()).filter((item) => item.length > 0).join('\n\n');
 }
 
+function joinIndexedResponsesText(partsByIndex: Record<number, string>): string {
+  const indexedParts = Object.entries(partsByIndex)
+    .map(([rawIndex, text]) => ({
+      index: Number(rawIndex),
+      text,
+    }))
+    .filter((entry) => Number.isFinite(entry.index) && entry.index >= 0 && typeof entry.text === 'string' && entry.text.length > 0)
+    .sort((left, right) => left.index - right.index)
+    .map((entry) => entry.text);
+
+  if (indexedParts.length > 0) {
+    return indexedParts.join('\n\n');
+  }
+
+  const snapshot = partsByIndex[-1];
+  return typeof snapshot === 'string' ? snapshot : '';
+}
+
 function textFromPart(part: unknown): string {
   if (typeof part === 'string') return part;
   if (!isRecord(part)) return '';
@@ -1641,13 +1659,13 @@ export function normalizeUpstreamStreamEvent(
     if (isNonEmptyString(responsePayload.id)) context.id = responsePayload.id;
     if (isNonEmptyString(responsePayload.model)) context.model = responsePayload.model;
     const content = parseResponsesOutputText(responsePayload);
-    const contentDelta = computeNovelResponsesDelta(joinNonEmpty(Object.values(context.responsesTextByIndex)), content);
+    const contentDelta = computeNovelResponsesDelta(joinIndexedResponsesText(context.responsesTextByIndex), content);
     if (content) {
       context.responsesTextByIndex = { ...context.responsesTextByIndex, [-1]: content } as Record<number, string>;
     }
     const responsesReasoning = parseResponsesReasoning(responsePayload);
     const reasoningDelta = computeNovelResponsesDelta(
-      joinNonEmpty(Object.values(context.responsesReasoningByIndex)),
+      joinIndexedResponsesText(context.responsesReasoningByIndex),
       responsesReasoning.reasoningContent,
     );
     if (responsesReasoning.reasoningContent) {

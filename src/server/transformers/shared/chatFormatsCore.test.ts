@@ -206,6 +206,41 @@ describe('chatFormatsCore inline think parsing', () => {
     });
   });
 
+  it('preserves streamed trailing whitespace when reconciling response.completed content', () => {
+    const context = createStreamTransformContext('gpt-test');
+
+    expect(normalizeUpstreamStreamEvent({
+      type: 'response.output_text.delta',
+      output_index: 0,
+      item_id: 'msg_ws_space',
+      delta: 'hello ',
+    }, context, 'gpt-test')).toEqual({
+      contentDelta: 'hello ',
+    });
+
+    expect(normalizeUpstreamStreamEvent({
+      type: 'response.completed',
+      response: {
+        id: 'resp_space_1',
+        status: 'completed',
+        output: [
+          {
+            id: 'msg_ws_space',
+            type: 'message',
+            role: 'assistant',
+            status: 'completed',
+            content: [{ type: 'output_text', text: 'hello world' }],
+          },
+        ],
+      },
+    }, context, 'gpt-test')).toEqual({
+      role: 'assistant',
+      contentDelta: 'world',
+      finishReason: 'stop',
+      done: true,
+    });
+  });
+
   it('preserves terminal response.completed custom tool metadata in stream normalization', () => {
     const context = createStreamTransformContext('gpt-test');
 
