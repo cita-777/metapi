@@ -583,7 +583,6 @@ describe('responses websocket transport', () => {
       'response.created',
       'response.incomplete',
     ]);
-    console.log('DEBUG_MESSAGES', JSON.stringify(messages, null, 2));
     expect(messages.some((message) => message?.type === 'error')).toBe(false);
     const terminalMessage = messages[1];
     expect(terminalMessage?.response?.incomplete_details?.reason).toBe('max_output_tokens');
