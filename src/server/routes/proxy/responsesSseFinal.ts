@@ -5,6 +5,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
 }
 
+function asTrimmedString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
 function parseResponsesSsePayload(data: string): Record<string, unknown> | null {
   try {
     const parsed = JSON.parse(data);
@@ -72,6 +76,27 @@ function hasMeaningfulFinalResponsesPayload(payload: Record<string, unknown>): b
   return hasMeaningfulResponsesOutput(payload.output);
 }
 
+function collectResponsesOutputText(payload: Record<string, unknown>): string {
+  const output = Array.isArray(payload.output) ? payload.output : [];
+  const parts: string[] = [];
+
+  for (const item of output) {
+    if (!isRecord(item)) continue;
+    if (asTrimmedString(item.type).toLowerCase() !== 'message') continue;
+    const content = Array.isArray(item.content) ? item.content : [];
+    for (const part of content) {
+      if (!isRecord(part)) continue;
+      const partType = asTrimmedString(part.type).toLowerCase();
+      const text = typeof part.text === 'string' ? part.text : '';
+      if ((partType === 'output_text' || partType === 'text') && text) {
+        parts.push(text);
+      }
+    }
+  }
+
+  return parts.join('');
+}
+
 function rememberStreamResponseEnvelope(
   streamContext: ReturnType<typeof openAiResponsesTransformer.createStreamContext>,
   payload: Record<string, unknown>,
@@ -118,6 +143,63 @@ function materializeCompletedPayloadFromAggregate(
     }
   }
   return null;
+}
+
+function enrichTerminalPayload(
+  payload: Record<string, unknown>,
+  aggregateState: ReturnType<typeof openAiResponsesTransformer.aggregator.createState>,
+  streamContext: ReturnType<typeof openAiResponsesTransformer.createStreamContext>,
+  usage: ReturnType<typeof parseProxyUsage>,
+): Record<string, unknown> {
+  const next = structuredClone(payload);
+  const materialized = materializeCompletedPayloadFromAggregate(aggregateState, streamContext, usage);
+
+  if (!hasMeaningfulResponsesOutput(next.output) && materialized && hasMeaningfulResponsesOutput(materialized.output)) {
+    next.output = materialized.output;
+  }
+
+  const currentOutputText = typeof next.output_text === 'string' ? next.output_text : '';
+  if (!currentOutputText) {
+    const derivedOutputText = collectResponsesOutputText(next)
+      || (materialized && typeof materialized.output_text === 'string' ? materialized.output_text : '');
+    if (derivedOutputText) {
+      next.output_text = derivedOutputText;
+    }
+  }
+
+  if (materialized && next.usage === undefined && materialized.usage !== undefined) {
+    next.usage = materialized.usage;
+  }
+
+  return next;
+}
+
+function mergeMissingResponsesTerminalFields(
+  payload: Record<string, unknown>,
+  fallbackPayload: Record<string, unknown> | null,
+): Record<string, unknown> {
+  if (!fallbackPayload) return payload;
+  const merged = { ...payload };
+  if (merged.output === undefined && fallbackPayload.output !== undefined) {
+    merged.output = fallbackPayload.output;
+  }
+  if (
+    (typeof merged.output_text !== 'string' || merged.output_text.length === 0)
+    && typeof fallbackPayload.output_text === 'string'
+    && fallbackPayload.output_text.length > 0
+  ) {
+    merged.output_text = fallbackPayload.output_text;
+  }
+  if (merged.object === undefined && fallbackPayload.object !== undefined) {
+    merged.object = fallbackPayload.object;
+  }
+  if (merged.created_at === undefined && fallbackPayload.created_at !== undefined) {
+    merged.created_at = fallbackPayload.created_at;
+  }
+  if (merged.usage === undefined && fallbackPayload.usage !== undefined) {
+    merged.usage = fallbackPayload.usage;
+  }
+  return merged;
 }
 
 export function looksLikeResponsesSseText(rawText: string): boolean {
@@ -175,10 +257,10 @@ export function collectResponsesFinalPayloadFromSseText(
     payload: Record<string, unknown>,
   ) => {
     if (completedPayload) return;
-    if (eventType === 'response.failed' || eventType === 'response.incomplete' || eventType === 'error') {
+    if (eventType === 'response.failed' || eventType === 'error') {
       throw new Error(getResponsesFailureMessage(payload));
     }
-    if (eventType !== 'response.completed') {
+    if (eventType !== 'response.completed' && eventType !== 'response.incomplete') {
       return;
     }
     if (isRecord(payload.response) && hasCompleteFinalResponsesPayload(payload.response)) {
@@ -239,6 +321,13 @@ export function collectResponsesFinalPayloadFromSseText(
     completedPayload = materializeCompletedPayloadFromAggregate(aggregateState, streamContext, usage);
   }
 
+  if (completedPayload) {
+    completedPayload = mergeMissingResponsesTerminalFields(
+      completedPayload,
+      materializeCompletedPayloadFromAggregate(aggregateState, streamContext, usage),
+    );
+  }
+
   if (!completedPayload) {
     const materialized = materializeCompletedPayloadFromAggregate(aggregateState, streamContext, usage);
     if (materialized) {
@@ -248,12 +337,12 @@ export function collectResponsesFinalPayloadFromSseText(
 
   if (completedPayload) {
     return {
-      payload: completedPayload,
+      payload: enrichTerminalPayload(completedPayload, aggregateState, streamContext, usage),
       rawText,
     };
   }
 
-  throw new Error('stream disconnected before response.completed');
+  throw new Error('stream disconnected before terminal responses event');
 }
 
 export async function collectResponsesFinalPayloadFromSse(

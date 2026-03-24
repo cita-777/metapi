@@ -51,6 +51,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
 }
 
+function isResponsesWebsocketTransportRequest(headers: Record<string, unknown>): boolean {
+  return Object.entries(headers)
+    .some(([rawKey, rawValue]) => rawKey.trim().toLowerCase() === 'x-metapi-responses-websocket-transport'
+      && String(rawValue).trim() === '1');
+}
+
 function normalizeIncludeList(value: unknown): string[] {
   if (typeof value === 'string') {
     const trimmed = value.trim();
@@ -439,12 +445,11 @@ export async function handleOpenAiResponsesSurfaceRequest(
           const writeLines = (lines: string[]) => {
             for (const line of lines) reply.raw.write(line);
           };
+          const websocketTransportRequest = isResponsesWebsocketTransportRequest(request.headers as Record<string, unknown>);
           const streamSession = openAiResponsesTransformer.proxyStream.createSession({
             modelName,
             successfulUpstreamPath,
-            strictTerminalEvents: Object.entries(request.headers as Record<string, unknown>)
-              .some(([rawKey, rawValue]) => rawKey.trim().toLowerCase() === 'x-metapi-responses-websocket-transport'
-                && String(rawValue).trim() === '1'),
+            strictTerminalEvents: websocketTransportRequest,
             getUsage: () => parsedUsage,
             onParsedPayload: (payload) => {
               if (payload && typeof payload === 'object') {
@@ -541,6 +546,61 @@ export async function handleOpenAiResponsesSurfaceRequest(
           }
 
           startSseResponse();
+
+          if (websocketTransportRequest) {
+            const rawText = await upstream.text();
+            if (looksLikeResponsesSseText(rawText)) {
+              try {
+                const collectedPayload = collectResponsesFinalPayloadFromSseText(rawText, modelName).payload;
+                parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(collectedPayload));
+                const createdPayload = {
+                  ...collectedPayload,
+                  status: 'in_progress',
+                  output: [],
+                  output_text: '',
+                };
+                const terminalEventType = String(collectedPayload.status || '').trim().toLowerCase() === 'incomplete'
+                  ? 'response.incomplete'
+                  : 'response.completed';
+                writeLines([
+                  `event: response.created\ndata: ${JSON.stringify({ type: 'response.created', response: createdPayload })}\n\n`,
+                  `event: ${terminalEventType}\ndata: ${JSON.stringify({ type: terminalEventType, response: collectedPayload })}\n\n`,
+                  'data: [DONE]\n\n',
+                ]);
+                reply.raw.end();
+                const latency = Date.now() - startTime;
+                await finalizeStreamSuccess(parsedUsage, latency);
+                return;
+              } catch {
+                // Fall through to the generic stream session for response.failed/error terminals.
+              }
+
+              const streamResult = await streamSession.run(
+                createSingleChunkStreamReader(rawText),
+                reply.raw,
+              );
+              const latency = Date.now() - startTime;
+              if (streamResult.status === 'failed') {
+                await failureToolkit.recordStreamFailure({
+                  selected,
+                  requestedModel,
+                  modelName,
+                  errorMessage: streamResult.errorMessage,
+                  latencyMs: latency,
+                  retryCount,
+                  promptTokens: parsedUsage.promptTokens,
+                  completionTokens: parsedUsage.completionTokens,
+                  totalTokens: parsedUsage.totalTokens,
+                  upstreamPath: successfulUpstreamPath,
+                  runtimeFailureStatus: 502,
+                });
+                return;
+              }
+
+              await finalizeStreamSuccess(parsedUsage, latency);
+              return;
+            }
+          }
 
           const upstreamReader = upstream.body?.getReader();
           const baseReader = String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli' && upstreamReader

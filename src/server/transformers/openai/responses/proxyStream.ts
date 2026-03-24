@@ -112,6 +112,59 @@ function getResponsesStreamFailureMessage(payload: unknown, fallback = 'upstream
   return fallback;
 }
 
+function preserveMeaningfulTerminalResponsesPayload(
+  lines: string[],
+  eventType: 'response.completed' | 'response.incomplete',
+  payload: Record<string, unknown>,
+): string[] {
+  const responsePayload = isRecord(payload.response) ? payload.response : null;
+  if (!responsePayload || !hasMeaningfulResponsesPayloadOutput(responsePayload)) {
+    return lines;
+  }
+
+  const parsed = openAiResponsesStream.pullSseEvents(lines.join(''));
+  let replaced = false;
+  const nextLines: string[] = [];
+
+  for (const event of parsed.events) {
+    if (event.data === '[DONE]') {
+      nextLines.push('data: [DONE]\n\n');
+      continue;
+    }
+
+    let parsedPayload: unknown = null;
+    try {
+      parsedPayload = JSON.parse(event.data);
+    } catch {
+      nextLines.push(`${event.event ? `event: ${event.event}\n` : ''}data: ${event.data}\n\n`);
+      continue;
+    }
+
+    if (
+      isRecord(parsedPayload)
+      && asTrimmedString(parsedPayload.type) === eventType
+      && isRecord(parsedPayload.response)
+      && !hasMeaningfulResponsesPayloadOutput(parsedPayload.response)
+    ) {
+      replaced = true;
+      nextLines.push(
+        `event: ${event.event || eventType}\ndata: ${JSON.stringify({
+          ...parsedPayload,
+          response: {
+            ...parsedPayload.response,
+            ...responsePayload,
+          },
+        })}\n\n`,
+      );
+      continue;
+    }
+
+    nextLines.push(`${event.event ? `event: ${event.event}\n` : ''}data: ${event.data}\n\n`);
+  }
+
+  return replaced ? nextLines : lines;
+}
+
 export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSessionInput) {
   const streamContext = openAiResponsesStream.createContext(input.modelName);
   const responsesState = createOpenAiResponsesAggregateState(input.modelName);
@@ -204,12 +257,17 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
 
     if (parsedPayload && typeof parsedPayload === 'object') {
       const normalizedEvent = openAiResponsesStream.normalizeEvent(parsedPayload, streamContext, input.modelName);
-      const convertedLines = serializeConvertedResponsesEvents({
+      let convertedLines = serializeConvertedResponsesEvents({
         state: responsesState,
         streamContext,
         event: normalizedEvent,
         usage: input.getUsage(),
       });
+      if (isIncompleteEvent) {
+        convertedLines = preserveMeaningfulTerminalResponsesPayload(convertedLines, 'response.incomplete', parsedPayload);
+      } else if (eventBlock.event === 'response.completed' || payloadType === 'response.completed') {
+        convertedLines = preserveMeaningfulTerminalResponsesPayload(convertedLines, 'response.completed', parsedPayload);
+      }
       if (
         (eventBlock.event === 'response.completed' || payloadType === 'response.completed')
         && shouldFailEmptyResponsesCompletion({

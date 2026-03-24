@@ -1154,6 +1154,56 @@ describe('chat proxy stream behavior', () => {
     expect(response.body).toContain('[DONE]');
   });
 
+  it('initializes reasoning items before emitting reasoning summary deltas on /v1/responses streams', async () => {
+    fetchModelPricingCatalogMock.mockResolvedValue({
+      models: [
+        {
+          modelName: 'upstream-gpt',
+          supportedEndpointTypes: ['/v1/chat/completions'],
+        },
+      ],
+      groupRatio: {},
+    });
+
+    const encoder = new TextEncoder();
+    const upstreamBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"id":"chatcmpl-r1-reasoning","model":"upstream-gpt","choices":[{"delta":{"role":"assistant"},"finish_reason":null}]}\n\n'));
+        controller.enqueue(encoder.encode('data: {"id":"chatcmpl-r1-reasoning","model":"upstream-gpt","choices":[{"delta":{"reasoning_content":"plan first"},"finish_reason":null}]}\n\n'));
+        controller.enqueue(encoder.encode('data: {"id":"chatcmpl-r1-reasoning","model":"upstream-gpt","choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'));
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      },
+    });
+
+    fetchMock.mockResolvedValue(new Response(upstreamBody, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-5.2',
+        input: 'hello',
+        stream: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/event-stream');
+    expect(response.body).toContain('event: response.output_item.added');
+    expect(response.body).toContain('event: response.reasoning_summary_part.added');
+    expect(response.body).toContain('event: response.reasoning_summary_text.delta');
+    expect(response.body.indexOf('event: response.output_item.added')).toBeLessThan(
+      response.body.indexOf('event: response.reasoning_summary_part.added'),
+    );
+    expect(response.body.indexOf('event: response.reasoning_summary_part.added')).toBeLessThan(
+      response.body.indexOf('event: response.reasoning_summary_text.delta'),
+    );
+  });
+
   it('converts chat tool_calls SSE to Responses function_call events on /v1/responses', async () => {
     fetchModelPricingCatalogMock.mockResolvedValue({
       models: [
