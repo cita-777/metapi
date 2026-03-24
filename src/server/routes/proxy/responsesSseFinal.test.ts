@@ -179,4 +179,54 @@ describe('collectResponsesFinalPayloadFromSse', () => {
         },
       });
   });
+
+  it('preserves incomplete item status when response.incomplete needs aggregate output repair', async () => {
+    const upstream = {
+      async text() {
+        return [
+          'event: response.created',
+          'data: {"type":"response.created","response":{"id":"resp_incomplete_repair","model":"gpt-5.4","created_at":1706000000,"status":"in_progress","output":[]}}',
+          '',
+          'event: response.output_item.added',
+          'data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_incomplete_repair","type":"message","role":"assistant","status":"in_progress","content":[]}}',
+          '',
+          'event: response.output_text.delta',
+          'data: {"type":"response.output_text.delta","output_index":0,"item_id":"msg_incomplete_repair","delta":"partial repair"}',
+          '',
+          'event: response.incomplete',
+          'data: {"type":"response.incomplete","response":{"id":"resp_incomplete_repair","model":"gpt-5.4","status":"incomplete","output":[],"incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}',
+          '',
+          'data: [DONE]',
+          '',
+        ].join('\n');
+      },
+    };
+
+    await expect(collectResponsesFinalPayloadFromSse(upstream, 'gpt-5.4'))
+      .resolves
+      .toMatchObject({
+        payload: {
+          id: 'resp_incomplete_repair',
+          status: 'incomplete',
+          output: [
+            {
+              id: 'msg_incomplete_repair',
+              type: 'message',
+              role: 'assistant',
+              status: 'incomplete',
+              content: [
+                {
+                  type: 'output_text',
+                  text: 'partial repair',
+                },
+              ],
+            },
+          ],
+          output_text: 'partial repair',
+          incomplete_details: {
+            reason: 'max_output_tokens',
+          },
+        },
+      });
+  });
 });

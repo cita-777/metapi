@@ -23,6 +23,9 @@ export type StreamTransformContext = {
   roleSent: boolean;
   doneSent: boolean;
   toolCalls: Record<number, { id?: string; name?: string; arguments?: string }>;
+  responsesToolCallIndexByOutputIndex: Record<number, number>;
+  responsesToolCallIndexById: Record<string, number>;
+  nextResponsesToolCallIndex: number;
   responsesTextByIndex: Record<number, string>;
   responsesReasoningByIndex: Record<number, string>;
   thinkTagParser: ThinkTagParserState;
@@ -258,6 +261,9 @@ export function createStreamTransformContext(modelName: string): StreamTransform
     roleSent: false,
     doneSent: false,
     toolCalls: {},
+    responsesToolCallIndexByOutputIndex: {},
+    responsesToolCallIndexById: {},
+    nextResponsesToolCallIndex: 0,
     responsesTextByIndex: {},
     responsesReasoningByIndex: {},
     thinkTagParser: createThinkTagParserState(),
@@ -611,6 +617,41 @@ function collectToolCallsFromResponsesPayload(payload: Record<string, unknown>):
   return toolCalls;
 }
 
+function collectIndexedToolCallsFromResponsesPayload(
+  payload: Record<string, unknown>,
+): Array<{ id: string; name: string; arguments: string; outputIndex: number }> {
+  const output = Array.isArray(payload.output) ? payload.output : [];
+  const toolCalls: Array<{ id: string; name: string; arguments: string; outputIndex: number }> = [];
+
+  for (let index = 0; index < output.length; index += 1) {
+    const item = output[index];
+    if (!isRecord(item)) continue;
+    if (item.type !== 'function_call' && item.type !== 'custom_tool_call') continue;
+
+    const id = (
+      typeof item.call_id === 'string' && item.call_id.trim().length > 0
+        ? item.call_id.trim()
+        : (typeof item.id === 'string' && item.id.trim().length > 0 ? item.id.trim() : `call_${index}`)
+    );
+    const name = typeof item.name === 'string' ? item.name.trim() : '';
+    const argumentsText = (
+      typeof item.arguments === 'string'
+        ? item.arguments
+        : (typeof item.input === 'string'
+          ? item.input
+          : stringifyUnknownValue(item.arguments ?? item.input))
+    );
+    toolCalls.push({
+      id,
+      name,
+      arguments: argumentsText,
+      outputIndex: index,
+    });
+  }
+
+  return toolCalls;
+}
+
 function computeNovelResponsesDelta(existingText: string, incomingText: string): string {
   if (!incomingText) return '';
   if (!existingText) return incomingText;
@@ -647,6 +688,86 @@ function extractResponsesItemText(item: Record<string, unknown>): string {
   return '';
 }
 
+function rememberResponsesToolCallIndex(
+  context: StreamTransformContext,
+  canonicalIndex: number,
+  input: {
+    outputIndex?: number;
+    itemId?: unknown;
+    callId?: unknown;
+  },
+): void {
+  if (typeof input.outputIndex === 'number' && Number.isFinite(input.outputIndex)) {
+    context.responsesToolCallIndexByOutputIndex[Math.max(0, Math.trunc(input.outputIndex))] = canonicalIndex;
+  }
+  const itemId = asTrimmedString(input.itemId);
+  if (itemId) {
+    context.responsesToolCallIndexById[`item:${itemId}`] = canonicalIndex;
+  }
+  const callId = asTrimmedString(input.callId);
+  if (callId) {
+    context.responsesToolCallIndexById[`call:${callId}`] = canonicalIndex;
+  }
+}
+
+function resolveResponsesToolCallIndex(
+  context: StreamTransformContext,
+  input: {
+    outputIndex?: number;
+    itemId?: unknown;
+    callId?: unknown;
+  },
+): number {
+  const normalizedOutputIndex = (
+    typeof input.outputIndex === 'number' && Number.isFinite(input.outputIndex)
+      ? Math.max(0, Math.trunc(input.outputIndex))
+      : undefined
+  );
+  if (
+    normalizedOutputIndex !== undefined
+    && context.responsesToolCallIndexByOutputIndex[normalizedOutputIndex] !== undefined
+  ) {
+    const canonicalIndex = context.responsesToolCallIndexByOutputIndex[normalizedOutputIndex]!;
+    rememberResponsesToolCallIndex(context, canonicalIndex, {
+      outputIndex: normalizedOutputIndex,
+      itemId: input.itemId,
+      callId: input.callId,
+    });
+    return canonicalIndex;
+  }
+
+  const itemId = asTrimmedString(input.itemId);
+  if (itemId && context.responsesToolCallIndexById[`item:${itemId}`] !== undefined) {
+    const canonicalIndex = context.responsesToolCallIndexById[`item:${itemId}`]!;
+    rememberResponsesToolCallIndex(context, canonicalIndex, {
+      outputIndex: normalizedOutputIndex,
+      itemId,
+      callId: input.callId,
+    });
+    return canonicalIndex;
+  }
+
+  const callId = asTrimmedString(input.callId);
+  if (callId && context.responsesToolCallIndexById[`call:${callId}`] !== undefined) {
+    const canonicalIndex = context.responsesToolCallIndexById[`call:${callId}`]!;
+    rememberResponsesToolCallIndex(context, canonicalIndex, {
+      outputIndex: normalizedOutputIndex,
+      itemId: input.itemId,
+      callId,
+    });
+    return canonicalIndex;
+  }
+
+  const canonicalIndex = context.nextResponsesToolCallIndex;
+  context.nextResponsesToolCallIndex += 1;
+  rememberResponsesToolCallIndex(context, canonicalIndex, {
+    outputIndex: normalizedOutputIndex,
+    itemId: input.itemId,
+    callId: input.callId,
+  });
+  return canonicalIndex;
+}
+
 function buildResponsesToolCallDeltaFromItem(
   item: Record<string, unknown>,
   outputIndex: number,
@@ -663,9 +784,14 @@ function buildResponsesToolCallDeltaFromItem(
   const rawArguments = itemType === 'custom_tool_call'
     ? (typeof item.input === 'string' ? item.input : stringifyUnknownValue(item.input))
     : (typeof item.arguments === 'string' ? item.arguments : stringifyUnknownValue(item.arguments));
-  const existingArguments = context.toolCalls[outputIndex]?.arguments || '';
+  const canonicalIndex = resolveResponsesToolCallIndex(context, {
+    outputIndex,
+    itemId: item.id,
+    callId: item.call_id,
+  });
+  const existingArguments = context.toolCalls[canonicalIndex]?.arguments || '';
   const argumentsDelta = computeNovelResponsesDelta(existingArguments, rawArguments);
-  const knownTool = context.toolCalls[outputIndex] || {};
+  const knownTool = context.toolCalls[canonicalIndex] || {};
   const shouldBackfillId = !!toolCallId && !knownTool.id;
   const shouldBackfillName = !!toolName && !knownTool.name;
 
@@ -675,7 +801,7 @@ function buildResponsesToolCallDeltaFromItem(
 
   return {
     toolCallDeltas: [{
-      index: outputIndex,
+      index: canonicalIndex,
       id: toolCallId,
       name: toolName,
       argumentsDelta: argumentsDelta || undefined,
@@ -1423,6 +1549,11 @@ export function normalizeUpstreamStreamEvent(
 
   if (type === 'response.function_call_arguments.delta' || type === 'response.function_call_arguments.done') {
     const outputIndex = extractResponsesOutputIndex(payload as Record<string, unknown>);
+    const canonicalIndex = resolveResponsesToolCallIndex(context, {
+      outputIndex,
+      itemId: (payload as any).item_id,
+      callId: (payload as any).call_id,
+    });
     const toolCallId = (
       isNonEmptyString((payload as any).call_id) ? (payload as any).call_id
         : (isNonEmptyString((payload as any).item_id) ? (payload as any).item_id : undefined)
@@ -1439,7 +1570,7 @@ export function normalizeUpstreamStreamEvent(
     );
     let argumentsDelta = rawArguments;
     if (type === 'response.function_call_arguments.done' && typeof rawArguments === 'string') {
-      const existingArguments = context.toolCalls[outputIndex]?.arguments || '';
+      const existingArguments = context.toolCalls[canonicalIndex]?.arguments || '';
       if (existingArguments && rawArguments.startsWith(existingArguments)) {
         const missingSuffix = rawArguments.slice(existingArguments.length);
         argumentsDelta = missingSuffix.length > 0 ? missingSuffix : undefined;
@@ -1448,7 +1579,7 @@ export function normalizeUpstreamStreamEvent(
       }
     }
 
-    const knownTool = context.toolCalls[outputIndex] || {};
+    const knownTool = context.toolCalls[canonicalIndex] || {};
     const shouldBackfillId = !!toolCallId && !knownTool.id;
     const shouldBackfillName = !!toolName && !knownTool.name;
     if (argumentsDelta === undefined && !shouldBackfillId && !shouldBackfillName) {
@@ -1457,7 +1588,7 @@ export function normalizeUpstreamStreamEvent(
 
     return {
       toolCallDeltas: [{
-        index: outputIndex,
+        index: canonicalIndex,
         id: toolCallId,
         name: toolName,
         argumentsDelta,
@@ -1467,6 +1598,11 @@ export function normalizeUpstreamStreamEvent(
 
   if (type === 'response.custom_tool_call_input.delta' || type === 'response.custom_tool_call_input.done') {
     const outputIndex = extractResponsesOutputIndex(payload as Record<string, unknown>);
+    const canonicalIndex = resolveResponsesToolCallIndex(context, {
+      outputIndex,
+      itemId: (payload as any).item_id,
+      callId: (payload as any).call_id,
+    });
     const toolCallId = (
       isNonEmptyString((payload as any).call_id) ? (payload as any).call_id
         : (isNonEmptyString((payload as any).item_id) ? (payload as any).item_id : undefined)
@@ -1481,9 +1617,9 @@ export function normalizeUpstreamStreamEvent(
             : stringifyUnknownValue((payload as any).input)
         )
     );
-    const existingArguments = context.toolCalls[outputIndex]?.arguments || '';
+    const existingArguments = context.toolCalls[canonicalIndex]?.arguments || '';
     const argumentsDelta = computeNovelResponsesDelta(existingArguments, rawArguments);
-    const knownTool = context.toolCalls[outputIndex] || {};
+    const knownTool = context.toolCalls[canonicalIndex] || {};
     const shouldBackfillId = !!toolCallId && !knownTool.id;
     const shouldBackfillName = !!toolName && !knownTool.name;
     if (!argumentsDelta && !shouldBackfillId && !shouldBackfillName) {
@@ -1492,7 +1628,7 @@ export function normalizeUpstreamStreamEvent(
 
     return {
       toolCallDeltas: [{
-        index: outputIndex,
+        index: canonicalIndex,
         id: toolCallId,
         name: toolName,
         argumentsDelta: argumentsDelta || undefined,
@@ -1520,10 +1656,14 @@ export function normalizeUpstreamStreamEvent(
         [-1]: responsesReasoning.reasoningContent,
       } as Record<number, string>;
     }
-    const toolCalls = collectToolCallsFromResponsesPayload(responsePayload);
+    const toolCalls = collectIndexedToolCallsFromResponsesPayload(responsePayload);
     const toolCallDeltas = toolCalls
-      .map((toolCall, index) => {
-        const knownTool = context.toolCalls[index] || {};
+      .map((toolCall) => {
+        const canonicalIndex = resolveResponsesToolCallIndex(context, {
+          outputIndex: toolCall.outputIndex,
+          callId: toolCall.id,
+        });
+        const knownTool = context.toolCalls[canonicalIndex] || {};
         const argumentsDelta = computeNovelResponsesDelta(knownTool.arguments || '', toolCall.arguments);
         const shouldBackfillId = !!toolCall.id && !knownTool.id;
         const shouldBackfillName = !!toolCall.name && !knownTool.name;
@@ -1531,7 +1671,7 @@ export function normalizeUpstreamStreamEvent(
           return null;
         }
         return {
-          index,
+          index: canonicalIndex,
           id: toolCall.id,
           name: toolCall.name,
           argumentsDelta: argumentsDelta || undefined,

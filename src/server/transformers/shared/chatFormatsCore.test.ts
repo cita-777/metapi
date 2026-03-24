@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { createStreamTransformContext, normalizeUpstreamStreamEvent, convertClaudeRequestToOpenAiBody } from './chatFormatsCore.js';
+import {
+  convertClaudeRequestToOpenAiBody,
+  createClaudeDownstreamContext,
+  createStreamTransformContext,
+  normalizeUpstreamStreamEvent,
+  serializeNormalizedStreamEvent,
+} from './chatFormatsCore.js';
 
 describe('chatFormatsCore inline think parsing', () => {
   it('tracks split think tags across stream chunks', () => {
@@ -112,11 +118,65 @@ describe('chatFormatsCore inline think parsing', () => {
       },
     }, context, 'gpt-test')).toEqual({
       toolCallDeltas: [{
-        index: 1,
+        index: 0,
         id: 'call_1',
         name: 'lookup',
         argumentsDelta: '{"q":"x"}',
       }],
+    });
+  });
+
+  it('keeps responses tool-call indices stable when response.completed replays mixed output arrays', () => {
+    const context = createStreamTransformContext('gpt-test');
+    const claudeContext = createClaudeDownstreamContext();
+
+    const streamingDelta = normalizeUpstreamStreamEvent({
+      type: 'response.function_call_arguments.delta',
+      output_index: 1,
+      call_id: 'call_1',
+      name: 'lookup',
+      delta: '{"q":"x"}',
+    }, context, 'gpt-test');
+
+    expect(streamingDelta).toEqual({
+      toolCallDeltas: [{
+        index: 0,
+        id: 'call_1',
+        name: 'lookup',
+        argumentsDelta: '{"q":"x"}',
+      }],
+    });
+    expect(serializeNormalizedStreamEvent('openai', streamingDelta, context, claudeContext)).toHaveLength(1);
+
+    expect(normalizeUpstreamStreamEvent({
+      type: 'response.completed',
+      response: {
+        id: 'resp_3',
+        model: 'gpt-test',
+        status: 'completed',
+        output: [
+          {
+            id: 'msg_1',
+            type: 'message',
+            role: 'assistant',
+            status: 'completed',
+            content: [{ type: 'output_text', text: 'working on it' }],
+          },
+          {
+            id: 'fc_1',
+            type: 'function_call',
+            call_id: 'call_1',
+            name: 'lookup',
+            arguments: '{"q":"x"}',
+            status: 'completed',
+          },
+        ],
+      },
+    }, context, 'gpt-test')).toEqual({
+      role: 'assistant',
+      contentDelta: 'working on it',
+      finishReason: 'stop',
+      done: true,
     });
   });
 

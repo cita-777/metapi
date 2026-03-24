@@ -332,7 +332,10 @@ function collectResponsesOutput(payloads: unknown[]): unknown[] {
       && isRecord(payload.response)
       && Array.isArray(payload.response.output)
     ) {
-      completedOutput = cloneJsonObject(payload.response.output);
+      const terminalOutput = cloneJsonObject(payload.response.output);
+      if (terminalOutput.length > 0 || outputByIndex.size === 0) {
+        completedOutput = terminalOutput;
+      }
       continue;
     }
     if (
@@ -354,15 +357,19 @@ function collectResponsesOutput(payloads: unknown[]): unknown[] {
       continue;
     }
     if (Array.isArray(payload.output)) {
-      completedOutput = cloneJsonObject(payload.output);
+      const terminalOutput = cloneJsonObject(payload.output);
+      if (terminalOutput.length > 0 || outputByIndex.size === 0) {
+        completedOutput = terminalOutput;
+      }
       continue;
     }
     if (typeof payload.output_text === 'string' && payload.output_text.trim()) {
+      const fallbackStatus = asTrimmedString(payload.status) || fallbackStatusForType(type || 'response.completed');
       completedOutput = [{
         id: `msg_${type || 'response'}`,
         type: 'message',
         role: 'assistant',
-        status: fallbackStatusForType(type),
+        status: fallbackStatus,
         content: [{
           type: 'output_text',
           text: payload.output_text,

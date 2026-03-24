@@ -1,6 +1,8 @@
 import { openAiResponsesTransformer } from '../../transformers/openai/responses/index.js';
 import { mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParser.js';
 
+type ResponsesTerminalStatus = 'completed' | 'incomplete';
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
 }
@@ -120,29 +122,69 @@ function rememberStreamResponseEnvelope(
   }
 }
 
-function materializeCompletedPayloadFromAggregate(
+function ensureResponseId(rawId: string): string {
+  const trimmed = rawId.trim() || `resp_${Date.now()}`;
+  return trimmed.startsWith('resp_') ? trimmed : `resp_${trimmed}`;
+}
+
+function buildUsagePayload(usage: ReturnType<typeof parseProxyUsage>): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    input_tokens: usage.promptTokens,
+    output_tokens: usage.completionTokens,
+    total_tokens: usage.totalTokens,
+  };
+  const inputDetails: Record<string, unknown> = {};
+  if ((usage.cacheReadTokens || 0) > 0) inputDetails.cached_tokens = usage.cacheReadTokens;
+  if ((usage.cacheCreationTokens || 0) > 0) inputDetails.cache_creation_tokens = usage.cacheCreationTokens;
+  if (Object.keys(inputDetails).length > 0) payload.input_tokens_details = inputDetails;
+  return payload;
+}
+
+function cloneAggregateOutputItem(
+  item: unknown,
+  terminalStatus: ResponsesTerminalStatus,
+): Record<string, unknown> | null {
+  if (!isRecord(item)) return null;
+  const next = structuredClone(item);
+  const currentStatus = asTrimmedString(next.status).toLowerCase();
+  next.status = currentStatus && currentStatus !== 'in_progress'
+    ? currentStatus
+    : terminalStatus;
+  return next;
+}
+
+function materializeTerminalPayloadFromAggregate(
   aggregateState: ReturnType<typeof openAiResponsesTransformer.aggregator.createState>,
   streamContext: ReturnType<typeof openAiResponsesTransformer.createStreamContext>,
   usage: ReturnType<typeof parseProxyUsage>,
-): Record<string, unknown> | null {
-  const lines = openAiResponsesTransformer.aggregator.complete(
-    aggregateState,
-    streamContext,
-    usage,
-  );
-  const { events } = openAiResponsesTransformer.pullSseEvents(lines.join(''));
-  for (const event of events) {
-    if (event.data === '[DONE]') continue;
-    const payload = parseResponsesSsePayload(event.data);
-    if (!payload) continue;
-    if (event.event === 'response.completed' && isRecord(payload.response)) {
-      return payload.response;
-    }
-    if (payload.type === 'response.completed' && hasCompleteFinalResponsesPayload(payload)) {
-      return payload;
-    }
-  }
-  return null;
+  terminalStatus: ResponsesTerminalStatus,
+): Record<string, unknown> {
+  const output = aggregateState.outputItems
+    .map((item) => cloneAggregateOutputItem(item, terminalStatus))
+    .filter((item): item is Record<string, unknown> => !!item);
+  const usagePayload = buildUsagePayload(usage);
+  const usageWithExtras = Object.keys(aggregateState.usageExtras).length > 0
+    ? { ...usagePayload, ...structuredClone(aggregateState.usageExtras) }
+    : usagePayload;
+
+  return {
+    id: ensureResponseId(
+      asTrimmedString(aggregateState.responseId)
+      || asTrimmedString(streamContext.id)
+      || asTrimmedString(aggregateState.modelName),
+    ),
+    object: 'response',
+    created_at: (
+      typeof aggregateState.createdAt === 'number' && Number.isFinite(aggregateState.createdAt)
+        ? aggregateState.createdAt
+        : streamContext.created
+    ) || Math.floor(Date.now() / 1000),
+    status: terminalStatus,
+    model: asTrimmedString(streamContext.model) || asTrimmedString(aggregateState.modelName),
+    output,
+    output_text: collectResponsesOutputText({ output }),
+    usage: usageWithExtras,
+  };
 }
 
 function enrichTerminalPayload(
@@ -150,9 +192,15 @@ function enrichTerminalPayload(
   aggregateState: ReturnType<typeof openAiResponsesTransformer.aggregator.createState>,
   streamContext: ReturnType<typeof openAiResponsesTransformer.createStreamContext>,
   usage: ReturnType<typeof parseProxyUsage>,
+  terminalStatus: ResponsesTerminalStatus,
 ): Record<string, unknown> {
   const next = structuredClone(payload);
-  const materialized = materializeCompletedPayloadFromAggregate(aggregateState, streamContext, usage);
+  const materialized = materializeTerminalPayloadFromAggregate(
+    aggregateState,
+    streamContext,
+    usage,
+    terminalStatus,
+  );
 
   if (!hasMeaningfulResponsesOutput(next.output) && materialized && hasMeaningfulResponsesOutput(materialized.output)) {
     next.output = materialized.output;
@@ -251,6 +299,7 @@ export function collectResponsesFinalPayloadFromSseText(
     promptTokensIncludeCache: null as boolean | null,
   };
   let completedPayload: Record<string, unknown> | null = null;
+  let terminalStatus: ResponsesTerminalStatus = 'completed';
 
   const captureCompletedPayloadFromEvent = (
     eventType: string,
@@ -263,6 +312,7 @@ export function collectResponsesFinalPayloadFromSseText(
     if (eventType !== 'response.completed' && eventType !== 'response.incomplete') {
       return;
     }
+    terminalStatus = eventType === 'response.incomplete' ? 'incomplete' : 'completed';
     if (isRecord(payload.response) && hasCompleteFinalResponsesPayload(payload.response)) {
       completedPayload = payload.response;
       return;
@@ -318,18 +368,36 @@ export function collectResponsesFinalPayloadFromSseText(
     && !hasMeaningfulFinalResponsesPayload(completedPayload)
     && hasMeaningfulResponsesOutput(aggregateState.outputItems)
   ) {
-    completedPayload = materializeCompletedPayloadFromAggregate(aggregateState, streamContext, usage);
+    completedPayload = mergeMissingResponsesTerminalFields(
+      completedPayload,
+      materializeTerminalPayloadFromAggregate(
+        aggregateState,
+        streamContext,
+        usage,
+        terminalStatus,
+      ),
+    );
   }
 
   if (completedPayload) {
     completedPayload = mergeMissingResponsesTerminalFields(
       completedPayload,
-      materializeCompletedPayloadFromAggregate(aggregateState, streamContext, usage),
+      materializeTerminalPayloadFromAggregate(
+        aggregateState,
+        streamContext,
+        usage,
+        terminalStatus,
+      ),
     );
   }
 
   if (!completedPayload) {
-    const materialized = materializeCompletedPayloadFromAggregate(aggregateState, streamContext, usage);
+    const materialized = materializeTerminalPayloadFromAggregate(
+      aggregateState,
+      streamContext,
+      usage,
+      terminalStatus,
+    );
     if (materialized) {
       completedPayload = materialized;
     }
@@ -337,7 +405,13 @@ export function collectResponsesFinalPayloadFromSseText(
 
   if (completedPayload) {
     return {
-      payload: enrichTerminalPayload(completedPayload, aggregateState, streamContext, usage),
+      payload: enrichTerminalPayload(
+        completedPayload,
+        aggregateState,
+        streamContext,
+        usage,
+        terminalStatus,
+      ),
       rawText,
     };
   }

@@ -663,6 +663,13 @@ describe('responses websocket transport', () => {
     }));
 
     const message = await messagePromise;
+    await expect(
+      waitForSocketMessageMatching(
+        socket,
+        (nextMessage) => nextMessage?.type === 'error',
+        150,
+      ),
+    ).rejects.toThrow('Timed out waiting for matching websocket message');
     socket.close();
 
     expect(message?.response?.id).toBe('resp_http_incomplete');
@@ -1103,6 +1110,91 @@ describe('responses websocket transport', () => {
       type: 'function_call_output',
       call_id: 'call_1',
       output: 'tool result',
+    });
+  });
+
+  it('keeps streamed output items for follow-up turns when the terminal HTTP fallback payload has an empty output array', async () => {
+    const selectedChannel = createSelectedChannel({
+      sitePlatform: 'openai',
+      actualModel: 'gpt-4.1',
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    fetchMock
+      .mockResolvedValueOnce(createSseResponse([
+        'event: response.output_item.done\n',
+        'data: {"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","call_id":"call_1"}}\n\n',
+        'event: response.output_item.done\n',
+        'data: {"type":"response.output_item.done","output_index":1,"item":{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"call tool"}]}}\n\n',
+        'event: response.completed\n',
+        'data: {"type":"response.completed","response":{"id":"resp_ws_empty_output","model":"gpt-4.1","status":"completed","output":[],"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}\n\n',
+        'data: [DONE]\n\n',
+      ]))
+      .mockResolvedValueOnce(createSseResponse([
+        'event: response.completed\n',
+        'data: {"type":"response.completed","response":{"id":"resp_ws_followup","model":"gpt-4.1","status":"completed","output":[{"id":"msg_2","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"done"}]}],"usage":{"input_tokens":5,"output_tokens":1,"total_tokens":6}}}\n\n',
+        'data: [DONE]\n\n',
+      ]));
+
+    const socket = createClientSocket(baseUrl);
+    await waitForSocketOpen(socket);
+
+    const firstResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-4.1',
+      instructions: 'be helpful',
+      input: [
+        {
+          id: 'msg_user_1',
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: 'call the tool' }],
+        },
+      ],
+    }));
+    await firstResponsePromise;
+
+    const secondResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-4.1',
+      instructions: 'be helpful',
+      previous_response_id: 'resp_ws_empty_output',
+      input: [
+        {
+          id: 'tool_out_1',
+          type: 'function_call_output',
+          call_id: 'call_1',
+          output: 'tool result',
+        },
+      ],
+    }));
+    await secondResponsePromise;
+    socket.close();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [, secondOptions] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const secondBody = JSON.parse(String(secondOptions.body));
+
+    expect(secondBody.input).toHaveLength(4);
+    expect(secondBody.input[1]).toMatchObject({
+      id: 'fc_1',
+      type: 'function_call',
+      call_id: 'call_1',
+    });
+    expect(secondBody.input[2]).toEqual({
+      id: 'msg_1',
+      type: 'message',
+      role: 'assistant',
+      status: 'completed',
+      content: [{ type: 'output_text', text: 'call tool' }],
     });
   });
 

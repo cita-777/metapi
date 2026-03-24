@@ -449,7 +449,6 @@ export async function handleOpenAiResponsesSurfaceRequest(
           const streamSession = openAiResponsesTransformer.proxyStream.createSession({
             modelName,
             successfulUpstreamPath,
-            strictTerminalEvents: websocketTransportRequest,
             getUsage: () => parsedUsage,
             onParsedPayload: (payload) => {
               if (payload && typeof payload === 'object') {
@@ -547,6 +546,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
 
           startSseResponse();
 
+          let replayReader: ReturnType<typeof createSingleChunkStreamReader> | null = null;
           if (websocketTransportRequest) {
             const rawText = await upstream.text();
             if (looksLikeResponsesSseText(rawText)) {
@@ -600,9 +600,11 @@ export async function handleOpenAiResponsesSurfaceRequest(
               await finalizeStreamSuccess(parsedUsage, latency);
               return;
             }
+
+            replayReader = createSingleChunkStreamReader(rawText);
           }
 
-          const upstreamReader = upstream.body?.getReader();
+          const upstreamReader = replayReader ?? upstream.body?.getReader();
           const baseReader = String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli' && upstreamReader
             ? createGeminiCliStreamReader(upstreamReader)
             : upstreamReader;
