@@ -302,7 +302,10 @@ export async function refreshModelsForAccount(
   const previousModelAvailability = restoreAvailabilityOnFailure
     ? await db.select()
       .from(schema.modelAvailability)
-      .where(eq(schema.modelAvailability.accountId, accountId))
+      .where(and(
+        eq(schema.modelAvailability.accountId, accountId),
+        eq(schema.modelAvailability.isManual, false),
+      ))
       .all()
     : [];
   const previousTokenModelAvailability = restoreAvailabilityOnFailure
@@ -314,7 +317,10 @@ export async function refreshModelsForAccount(
 
   const clearExistingAvailability = async () => {
     await db.delete(schema.modelAvailability)
-      .where(eq(schema.modelAvailability.accountId, accountId))
+      .where(and(
+        eq(schema.modelAvailability.accountId, accountId),
+        eq(schema.modelAvailability.isManual, false),
+      ))
       .run();
 
     const currentAccountTokens = await db.select({ id: schema.accountTokens.id })
@@ -346,6 +352,18 @@ export async function refreshModelsForAccount(
 
   await clearExistingAvailability();
 
+  // Collect manual model names so discovered models that collide are skipped (unique index).
+  const manualModelNames = new Set(
+    (await db.select({ modelName: schema.modelAvailability.modelName })
+      .from(schema.modelAvailability)
+      .where(and(
+        eq(schema.modelAvailability.accountId, accountId),
+        eq(schema.modelAvailability.isManual, true),
+      ))
+      .all()
+    ).map((r) => r.modelName),
+  );
+
   if (isSiteDisabled(site.status)) {
     return buildSkippedRefreshResult(accountId, 'site_disabled', '站点已禁用');
   }
@@ -368,15 +386,18 @@ export async function refreshModelsForAccount(
         throw new Error('未获取到可用模型');
       }
 
-      await db.insert(schema.modelAvailability).values(
-        codexModels.map((modelName) => ({
-          accountId,
-          modelName,
-          available: true,
-          latencyMs: Date.now() - startedAt,
-          checkedAt,
-        })),
-      ).run();
+      const newCodexModels = codexModels.filter((m) => !manualModelNames.has(m));
+      if (newCodexModels.length > 0) {
+        await db.insert(schema.modelAvailability).values(
+          newCodexModels.map((modelName) => ({
+            accountId,
+            modelName,
+            available: true,
+            latencyMs: Date.now() - startedAt,
+            checkedAt,
+          })),
+        ).run();
+      }
       await updateOauthModelDiscoveryState({
         account,
         checkedAt,
@@ -439,15 +460,18 @@ export async function refreshModelsForAccount(
       if (claudeModels.length === 0) {
         throw new Error('未获取到可用模型');
       }
-      await db.insert(schema.modelAvailability).values(
-        claudeModels.map((modelName) => ({
-          accountId,
-          modelName,
-          available: true,
-          latencyMs: Date.now() - startedAt,
-          checkedAt,
-        })),
-      ).run();
+      const newClaudeModels = claudeModels.filter((m) => !manualModelNames.has(m));
+      if (newClaudeModels.length > 0) {
+        await db.insert(schema.modelAvailability).values(
+          newClaudeModels.map((modelName) => ({
+            accountId,
+            modelName,
+            available: true,
+            latencyMs: Date.now() - startedAt,
+            checkedAt,
+          })),
+        ).run();
+      }
       await updateOauthModelDiscoveryState({
         account,
         checkedAt,
@@ -529,15 +553,18 @@ export async function refreshModelsForAccount(
           `gemini cli oauth validation timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
         );
       }
-      await db.insert(schema.modelAvailability).values(
-        GEMINI_CLI_STATIC_MODELS.map((modelName) => ({
-          accountId,
-          modelName,
-          available: true,
-          latencyMs: Date.now() - startedAt,
-          checkedAt,
-        })),
-      ).run();
+      const newGeminiModels = GEMINI_CLI_STATIC_MODELS.filter((m) => !manualModelNames.has(m));
+      if (newGeminiModels.length > 0) {
+        await db.insert(schema.modelAvailability).values(
+          newGeminiModels.map((modelName) => ({
+            accountId,
+            modelName,
+            available: true,
+            latencyMs: Date.now() - startedAt,
+            checkedAt,
+          })),
+        ).run();
+      }
       await updateOauthModelDiscoveryState({
         account: discoveryAccount,
         checkedAt,
@@ -601,15 +628,18 @@ export async function refreshModelsForAccount(
         throw new Error('未获取到可用模型');
       }
 
-      await db.insert(schema.modelAvailability).values(
-        antigravityModels.map((modelName) => ({
-          accountId,
-          modelName,
-          available: true,
-          latencyMs: Date.now() - startedAt,
-          checkedAt,
-        })),
-      ).run();
+      const newAntigravityModels = antigravityModels.filter((m) => !manualModelNames.has(m));
+      if (newAntigravityModels.length > 0) {
+        await db.insert(schema.modelAvailability).values(
+          newAntigravityModels.map((modelName) => ({
+            accountId,
+            modelName,
+            available: true,
+            latencyMs: Date.now() - startedAt,
+            checkedAt,
+          })),
+        ).run();
+      }
       await updateOauthModelDiscoveryState({
         account,
         checkedAt,
@@ -832,15 +862,18 @@ export async function refreshModelsForAccount(
   }
 
   const checkedAt = new Date().toISOString();
-  await db.insert(schema.modelAvailability).values(
-    Array.from(accountModels).map((modelName) => ({
-      accountId: account.id,
-      modelName,
-      available: true,
-      latencyMs: modelLatency.get(modelName) ?? null,
-      checkedAt,
-    })),
-  ).run();
+  const newAccountModels = Array.from(accountModels).filter((m) => !manualModelNames.has(m));
+  if (newAccountModels.length > 0) {
+    await db.insert(schema.modelAvailability).values(
+      newAccountModels.map((modelName) => ({
+        accountId: account.id,
+        modelName,
+        available: true,
+        latencyMs: modelLatency.get(modelName) ?? null,
+        checkedAt,
+      })),
+    ).run();
+  }
 
   await setAccountRuntimeHealth(account.id, {
     state: 'healthy',
