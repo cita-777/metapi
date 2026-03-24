@@ -11,7 +11,7 @@ into <strong>one API Key, one endpoint</strong>, with automatic model discovery,
 </p>
 
 <p align="center">
-  <a href="https://linux.do" alt="LINUX DO">
+  <a href="https://linux.do/t/topic/1671489" alt="LINUX DO">
     <img src="https://shorturl.at/ggSqS" alt="LINUX DO">
   </a>
 </p>
