@@ -214,4 +214,162 @@ describe('canonical request helpers', () => {
       include: ['reasoning.encrypted_content', 'message.input_image.image_url'],
     });
   });
+
+  it('preserves extra fields on tool-shaped raw tool_choice objects', () => {
+    const request = canonicalRequestFromOpenAiBody({
+      body: {
+        model: 'gpt-5',
+        tool_choice: {
+          type: 'tool',
+          name: 'browser',
+          mode: 'required',
+          disable_parallel_tool_use: true,
+        },
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+      surface: 'openai-responses',
+    });
+
+    const body = canonicalRequestToOpenAiChatBody(request);
+
+    expect(body.tool_choice).toEqual({
+      type: 'tool',
+      name: 'browser',
+      mode: 'required',
+      disable_parallel_tool_use: true,
+    });
+  });
+
+  it('preserves structured tool outputs and top-level attachments through canonical round-trips', () => {
+    const request = createCanonicalRequestEnvelope({
+      requestedModel: 'gpt-5',
+      surface: 'openai-chat',
+      attachments: [{
+        kind: 'file',
+        fileId: 'file-top-level',
+      }],
+      messages: [{
+        role: 'tool',
+        parts: [{
+          type: 'tool_result',
+          toolCallId: 'call_1',
+          resultContent: [
+            { type: 'text', text: 'tool result' },
+            { type: 'image_url', image_url: { url: 'https://example.com/tool.png' } },
+          ],
+        } as any],
+      }],
+    });
+
+    const body = canonicalRequestToOpenAiChatBody(request);
+
+    expect(body.attachments).toEqual([{
+      kind: 'file',
+      fileId: 'file-top-level',
+    }]);
+    expect(body.messages).toEqual([{
+      role: 'tool',
+      tool_call_id: 'call_1',
+      content: [
+        { type: 'text', text: 'tool result' },
+        { type: 'image_url', image_url: { url: 'https://example.com/tool.png' } },
+      ],
+    }]);
+  });
+
+  it('preserves richer Responses tools, raw tool_choice, assistant phase, and reasoning signatures through canonical round-trips', () => {
+    const request = canonicalRequestFromOpenAiBody({
+      body: {
+        model: 'gpt-5',
+        parallel_tool_calls: false,
+        tools: [
+          {
+            type: 'custom',
+            name: 'browser',
+            description: 'browse the web',
+            format: { type: 'text' },
+          },
+          {
+            type: 'image_generation',
+            background: 'transparent',
+          },
+        ],
+        tool_choice: {
+          type: 'allowed_tools',
+          mode: 'auto',
+          tools: [{ type: 'custom', name: 'browser' }],
+        },
+        messages: [
+          {
+            role: 'assistant',
+            phase: 'analysis',
+            reasoning_signature: 'sig_123',
+            content: 'thinking',
+          },
+          {
+            role: 'user',
+            content: 'hello',
+          },
+        ],
+      },
+      surface: 'openai-responses',
+    });
+
+    const body = canonicalRequestToOpenAiChatBody(request);
+
+    expect(body.parallel_tool_calls).toBe(false);
+    expect(body.tools).toEqual([
+      {
+        type: 'custom',
+        name: 'browser',
+        description: 'browse the web',
+        format: { type: 'text' },
+      },
+      {
+        type: 'image_generation',
+        background: 'transparent',
+      },
+    ]);
+    expect(body.tool_choice).toEqual({
+      type: 'allowed_tools',
+      mode: 'auto',
+      tools: [{ type: 'custom', name: 'browser' }],
+    });
+    expect(body.messages).toMatchObject([
+      {
+        role: 'assistant',
+        phase: 'analysis',
+        reasoning_signature: 'sig_123',
+        content: 'thinking',
+      },
+      {
+        role: 'user',
+        content: 'hello',
+      },
+    ]);
+  });
+
+  it('writes raw canonical tool types back into OpenAI-compatible bodies when the raw payload omits the discriminator', () => {
+    const request = createCanonicalRequestEnvelope({
+      requestedModel: 'gpt-5',
+      surface: 'openai-responses',
+      tools: [{
+        type: 'custom',
+        raw: {
+          name: 'browser',
+          description: 'browse the web',
+          format: { type: 'text' },
+        },
+      }],
+    });
+
+    const body = canonicalRequestToOpenAiChatBody(request);
+
+    expect(body.tools).toEqual([{
+      type: 'custom',
+      name: 'browser',
+      description: 'browse the web',
+      format: { type: 'text' },
+    }]);
+  });
 });

@@ -626,16 +626,16 @@ describe('buildUpstreamEndpointRequest', () => {
     expect(request.headers.Accept).toBe('text/event-stream');
     expect(request.headers.Connection).toBe('Keep-Alive');
     expect(request.body.instructions).toBe('');
-    expect(request.body.prompt_cache_key).toBe(request.headers.Session_id);
-    expect(request.body.stream).toBe(true);
-    expect(request.body.store).toBe(false);
-    expect(request.body.parallel_tool_calls).toBe(true);
-    expect(request.body.include).toEqual(['reasoning.encrypted_content']);
-    expect(request.body.max_output_tokens).toBeUndefined();
-    expect(request.body.temperature).toBeUndefined();
-    expect(request.body.top_p).toBeUndefined();
-    expect(request.body.user).toBeUndefined();
-    expect(request.body.service_tier).toBeUndefined();
+    expect(request.body.prompt_cache_key).toBeUndefined();
+    expect(request.body.stream).toBe(false);
+    expect(request.body.store).toBeUndefined();
+    expect(request.body.parallel_tool_calls).toBeUndefined();
+    expect(request.body.include).toBeUndefined();
+    expect(request.body.max_output_tokens).toBe(4096);
+    expect(request.body.temperature).toBe(0.2);
+    expect(request.body.top_p).toBe(0.9);
+    expect(request.body.user).toBe('drop-me');
+    expect(request.body.service_tier).toBe('auto');
   });
 
   it('reuses a stable codex session id when the same downstream continuity key is provided', () => {
@@ -727,6 +727,48 @@ describe('buildUpstreamEndpointRequest', () => {
     expect(request.headers.Session_id).toMatch(/^[0-9a-f-]{36}$/i);
     expect(request.headers.Conversation_id).toBeUndefined();
     expect(request.body.prompt_cache_key).toBe('codex-cache-123');
+  });
+
+  it('preserves native codex responses continuity and request fields without compatibility rewrites', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'responses',
+      modelName: 'gpt-5.4',
+      stream: false,
+      tokenValue: 'oauth-access-token',
+      sitePlatform: 'codex',
+      siteUrl: 'https://chatgpt.com/backend-api/codex',
+      openaiBody: {},
+      downstreamFormat: 'responses',
+      responsesOriginalBody: {
+        model: 'gpt-5.4',
+        input: 'hello codex',
+        stream: false,
+        store: true,
+        parallel_tool_calls: false,
+        include: ['reasoning.encrypted_content', 'mcp_approval_request.details'],
+        previous_response_id: 'resp_prev_123',
+        temperature: 0.3,
+        top_p: 0.8,
+        max_output_tokens: 512,
+      },
+      providerHeaders: {
+        Originator: 'codex_cli_rs',
+      },
+      codexSessionCacheKey: 'gpt-5.4:user-456',
+    } as any);
+
+    expect(request.headers.Session_id).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(request.headers.Conversation_id).toBe(request.headers.Session_id);
+    expect(request.body.prompt_cache_key).toBeUndefined();
+    expect(request.body.instructions).toBe('');
+    expect(request.body.stream).toBe(false);
+    expect(request.body.store).toBe(true);
+    expect(request.body.parallel_tool_calls).toBe(false);
+    expect(request.body.include).toEqual(['reasoning.encrypted_content', 'mcp_approval_request.details']);
+    expect(request.body.previous_response_id).toBe('resp_prev_123');
+    expect(request.body.temperature).toBe(0.3);
+    expect(request.body.top_p).toBe(0.8);
+    expect(request.body.max_output_tokens).toBe(512);
   });
 
   it('applies configured codex header defaults with CLIProxyAPI-compatible precedence', () => {

@@ -254,6 +254,52 @@ describe('serializeResponsesFinalPayload', () => {
     ]);
   });
 
+  it('restores mcp items from compatibility tool calls when serializing fallback response payloads', () => {
+    const mcpCall = {
+      type: 'mcp_call',
+      id: 'mcp_call_1',
+      call_id: 'mcp_call_1',
+      name: 'read_file',
+      server_label: 'filesystem',
+      arguments: {
+        path: '/tmp/demo.txt',
+      },
+    };
+
+    const payload = serializeResponsesFinalPayload({
+      upstreamPayload: {
+        id: 'opaque_mcp_1',
+        model: 'gpt-5',
+      },
+      normalized: {
+        id: 'opaque_mcp_1',
+        model: 'gpt-5',
+        created: 1700000000,
+        content: '',
+        reasoningContent: '',
+        finishReason: 'tool_calls',
+        toolCalls: [
+          {
+            id: 'mcp_call_1',
+            name: 'metapi_mcp_item__mcp_call',
+            arguments: JSON.stringify({
+              metapi_compat: 'responses_mcp_item',
+              itemType: 'mcp_call',
+              item: mcpCall,
+            }),
+          },
+        ],
+      },
+      usage: {
+        promptTokens: 1,
+        completionTokens: 2,
+        totalTokens: 3,
+      },
+    });
+
+    expect(payload.output).toEqual([mcpCall]);
+  });
+
   it('preserves response-like custom tool and image generation items when synthesizing object=response payloads', () => {
     const payload = serializeResponsesFinalPayload({
       upstreamPayload: {

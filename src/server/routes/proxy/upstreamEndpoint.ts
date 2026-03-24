@@ -413,12 +413,7 @@ function ensureCodexResponsesStoreFalse(
   body: Record<string, unknown>,
   sitePlatform: string,
 ): Record<string, unknown> {
-  if (sitePlatform !== 'codex') return body;
-  if (body.store === false) return body;
-  return {
-    ...body,
-    store: false,
-  };
+  return body;
 }
 
 function convertCodexSystemRoleToDeveloper(input: unknown): unknown {
@@ -437,44 +432,16 @@ function convertCodexSystemRoleToDeveloper(input: unknown): unknown {
 function applyCodexResponsesCompatibility(
   body: Record<string, unknown>,
   sitePlatform: string,
-  options?: {
-    preservePreviousResponseId?: boolean;
-  },
 ): Record<string, unknown> {
   if (sitePlatform !== 'codex') return body;
 
   const next: Record<string, unknown> = {
     ...body,
-    stream: true,
-    store: false,
-    parallel_tool_calls: true,
-    include: ['reasoning.encrypted_content'],
     input: convertCodexSystemRoleToDeveloper(body.input),
   };
 
   if (typeof next.instructions !== 'string') {
     next.instructions = '';
-  }
-
-  for (const key of [
-    'max_output_tokens',
-    'max_completion_tokens',
-    'temperature',
-    'top_p',
-    'truncation',
-    'user',
-    'context_management',
-    'prompt_cache_retention',
-    'safety_identifier',
-  ]) {
-    delete next[key];
-  }
-  if (!options?.preservePreviousResponseId) {
-    delete next.previous_response_id;
-  }
-
-  if (asTrimmedString(next.service_tier).toLowerCase() !== 'priority') {
-    delete next.service_tier;
   }
 
   return next;
@@ -1284,7 +1251,6 @@ export function buildUpstreamEndpointRequest(input: {
         applyCodexResponsesCompatibility(
           sanitizedResponsesBody,
           sitePlatform,
-          { preservePreviousResponseId: preserveWebsocketIncrementalMode },
         ),
         sitePlatform,
       ),

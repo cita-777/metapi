@@ -1921,6 +1921,7 @@ describe('chat proxy stream behavior', () => {
     expect(forwarded.tool_choice?.function?.name).toBe('Glob');
   });
 
+
   it('preserves function_call/function_call_output when /v1/responses falls back to /v1/messages', async () => {
     fetchModelPricingCatalogMock.mockResolvedValue({
       models: [

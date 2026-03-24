@@ -132,6 +132,10 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             downstreamPath,
             clientContext,
           );
+          if (canRetryProxyChannel(retryCount)) {
+            retryCount++;
+            continue;
+          }
           await reportProxyAllFailed({
             model: requestedModel,
             reason: data.message,
@@ -324,6 +328,10 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             downstreamPath,
             clientContext,
           );
+          if (canRetryProxyChannel(retryCount)) {
+            retryCount++;
+            continue;
+          }
           await reportProxyAllFailed({
             model: requestedModel,
             reason: data.message,

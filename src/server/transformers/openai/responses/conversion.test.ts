@@ -683,6 +683,86 @@ describe('convertOpenAiBodyToResponsesBody', () => {
     ]);
   });
 
+  it('preserves structured tool outputs and assistant phase when converting Responses bodies to OpenAI-compatible messages', () => {
+    const result = convertResponsesBodyToOpenAiBody(
+      {
+        model: 'gpt-5',
+        input: [
+          {
+            type: 'function_call',
+            call_id: 'call_1',
+            name: 'lookup_weather',
+            arguments: '{"city":"Shanghai"}',
+          },
+          {
+            type: 'function_call_output',
+            call_id: 'call_1',
+            output: [
+              {
+                type: 'output_text',
+                text: 'tool result',
+              },
+              {
+                type: 'input_image',
+                image_url: 'https://example.com/tool.png',
+              },
+            ],
+          },
+          {
+            type: 'message',
+            role: 'assistant',
+            phase: 'analysis',
+            content: [
+              {
+                type: 'output_text',
+                text: 'done',
+              },
+            ],
+          },
+        ],
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result.messages).toEqual([
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: 'call_1',
+          type: 'function',
+          function: {
+            name: 'lookup_weather',
+            arguments: '{"city":"Shanghai"}',
+          },
+        }],
+      },
+      {
+        role: 'tool',
+        tool_call_id: 'call_1',
+        content: [
+          {
+            type: 'text',
+            text: 'tool result',
+          },
+          {
+            type: 'image_url',
+            image_url: 'https://example.com/tool.png',
+          },
+        ],
+      },
+      {
+        role: 'assistant',
+        phase: 'analysis',
+        content: [{
+          type: 'text',
+          text: 'done',
+        }],
+      },
+    ]);
+  });
+
   it('shortens long MCP tool names consistently across tools, tool_choice and assistant tool calls', () => {
     const sharedSuffix = 'server__execute_super_long_nested_tool_name_that_needs_shortening';
     const firstName = `mcp__alpha_workspace__${sharedSuffix}`;
@@ -942,6 +1022,65 @@ describe('convertResponsesBodyToOpenAiBody', () => {
         reasoning_signature: 'enc_sig_1',
       },
     ]);
+  });
+
+  it('round-trips mcp item families through OpenAI-compatible fallback using compatibility tool calls', () => {
+    const source = {
+      model: 'gpt-5',
+      input: [
+        {
+          type: 'mcp_call',
+          id: 'mcp_call_1',
+          call_id: 'mcp_call_1',
+          name: 'read_file',
+          server_label: 'filesystem',
+          arguments: {
+            path: '/tmp/demo.txt',
+          },
+        },
+        {
+          type: 'mcp_approval_request',
+          id: 'mcp_approval_request_1',
+          approval_request_id: 'mcp_approval_request_1',
+          name: 'read_file',
+          server_label: 'filesystem',
+          arguments: {
+            path: '/tmp/demo.txt',
+          },
+        },
+        {
+          type: 'mcp_approval_response',
+          id: 'mcp_approval_response_1',
+          approval_request_id: 'mcp_approval_request_1',
+          approve: true,
+        },
+      ],
+    };
+
+    const openAiBody = convertResponsesBodyToOpenAiBody(
+      source,
+      'gpt-5',
+      false,
+    );
+
+    expect(openAiBody.messages).toHaveLength(1);
+    expect(openAiBody.messages[0]).toMatchObject({
+      role: 'assistant',
+      content: '',
+      tool_calls: [
+        { id: 'mcp_call_1', type: 'function' },
+        { id: 'mcp_approval_request_1', type: 'function' },
+        { id: 'mcp_approval_response_1', type: 'function' },
+      ],
+    });
+
+    const roundTripped = convertOpenAiBodyToResponsesBody(
+      openAiBody,
+      'gpt-5',
+      false,
+    );
+
+    expect(roundTripped.input).toEqual(source.input);
   });
 
   it('preserves remaining request fields needed for OpenAI-compatible downstream fallback', () => {

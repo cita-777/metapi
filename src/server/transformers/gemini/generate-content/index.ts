@@ -1,4 +1,8 @@
-import { canonicalRequestFromOpenAiBody } from '../../canonical/request.js';
+import {
+  canonicalRequestFromOpenAiBody,
+  isCanonicalFunctionTool,
+  isCanonicalNamedToolChoice,
+} from '../../canonical/request.js';
 import type { CanonicalContentPart, CanonicalRequestEnvelope } from '../../canonical/types.js';
 import type { ProtocolBuildContext, ProtocolParseContext } from '../../contracts.js';
 import {
@@ -218,13 +222,16 @@ function buildGeminiRequestFromCanonical(request: CanonicalRequestEnvelope): Rec
   }
 
   if (Array.isArray(request.tools) && request.tools.length > 0) {
-    payload.tools = [{
-      functionDeclarations: request.tools.map((tool) => ({
-        name: tool.name,
-        ...(tool.description ? { description: tool.description } : {}),
-        ...(tool.inputSchema ? { parameters: tool.inputSchema } : {}),
-      })),
-    }];
+    const functionTools = request.tools.filter(isCanonicalFunctionTool);
+    if (functionTools.length > 0) {
+      payload.tools = [{
+        functionDeclarations: functionTools.map((tool) => ({
+          name: tool.name,
+          ...(tool.description ? { description: tool.description } : {}),
+          ...(tool.inputSchema ? { parameters: tool.inputSchema } : {}),
+        })),
+      }];
+    }
   }
 
   if (request.toolChoice) {
@@ -234,7 +241,7 @@ function buildGeminiRequestFromCanonical(request: CanonicalRequestEnvelope): Rec
       payload.toolConfig = { functionCallingConfig: { mode: 'AUTO' } };
     } else if (request.toolChoice === 'required') {
       payload.toolConfig = { functionCallingConfig: { mode: 'ANY' } };
-    } else {
+    } else if (isCanonicalNamedToolChoice(request.toolChoice)) {
       payload.toolConfig = {
         functionCallingConfig: {
           mode: 'ANY',

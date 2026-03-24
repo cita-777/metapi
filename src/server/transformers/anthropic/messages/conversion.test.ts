@@ -562,6 +562,53 @@ describe('convertOpenAiBodyToAnthropicMessagesBody', () => {
     ]);
   });
 
+  it('preserves image blocks inside tool_result content arrays', () => {
+    const result = sanitizeAnthropicMessagesBody({
+      model: 'claude-opus-4-6',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'tool_1',
+              content: [
+                { type: 'text', text: 'found 1 image' },
+                {
+                  type: 'image_url',
+                  image_url: 'https://example.com/cat.png',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(result.messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'tool_1',
+            content: [
+              { type: 'text', text: 'found 1 image' },
+              {
+                type: 'image',
+                source: {
+                  type: 'url',
+                  url: 'https://example.com/cat.png',
+                },
+              },
+            ],
+            cache_control: { type: 'ephemeral' },
+          },
+        ],
+      },
+    ]);
+  });
+
   it('adds a second message cache anchor around the 20-block window for long prompts', () => {
     const longContent = Array.from({ length: 25 }, (_, index) => ({
       type: 'text',
@@ -601,6 +648,57 @@ describe('convertOpenAiBodyToAnthropicMessagesBody', () => {
 
     expect(body.thinking).toEqual({ type: 'adaptive' });
     expect(body.output_config).toEqual({ effort: 'high' });
+  });
+
+  it('copies metadata.user_id into the anthropic payload', () => {
+    const metadata = { user_id: 'anthropic-user-1', trace_id: 'trace-xyz' };
+    const body = convertOpenAiBodyToAnthropicMessagesBody(
+      {
+        model: 'gpt-5',
+        metadata,
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+      'claude-opus-4-6',
+      true,
+    );
+
+    expect(body.metadata).toEqual(metadata);
+  });
+
+  it('marks tool_choice.disable_parallel_tool_use when parallel_tool_calls is false', () => {
+    const body = convertOpenAiBodyToAnthropicMessagesBody(
+      {
+        model: 'gpt-5',
+        parallel_tool_calls: false,
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+      'claude-opus-4-6',
+      true,
+    );
+
+    expect(body.tool_choice).toMatchObject({
+      type: 'auto',
+      disable_parallel_tool_use: true,
+    });
+  });
+
+  it('augments explicit tool_choice with disable_parallel_tool_use when parallel_tool_calls is false', () => {
+    const body = convertOpenAiBodyToAnthropicMessagesBody(
+      {
+        model: 'gpt-5',
+        parallel_tool_calls: false,
+        tool_choice: { type: 'tool', name: 'search' },
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+      'claude-opus-4-6',
+      true,
+    );
+
+    expect(body.tool_choice).toMatchObject({
+      type: 'tool',
+      name: 'search',
+      disable_parallel_tool_use: true,
+    });
   });
 
   it('keeps inbound claude bodies thin instead of rebuilding cache anchors', () => {

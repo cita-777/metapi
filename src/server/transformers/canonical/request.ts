@@ -104,6 +104,9 @@ export function createCanonicalRequestEnvelope(
       : {}),
     ...(input.metadata ? { metadata: input.metadata } : {}),
     ...(input.passthrough ? { passthrough: input.passthrough } : {}),
+    ...(Array.isArray(input.attachments) && input.attachments.length > 0
+      ? { attachments: cloneJsonValue(input.attachments) as CanonicalAttachment[] }
+      : {}),
   };
 }
 
@@ -190,7 +193,7 @@ function parseToolChoice(rawToolChoice: unknown): CanonicalToolChoice | undefine
     const normalized = rawToolChoice.trim().toLowerCase();
     if (normalized === 'auto' || normalized === 'none' || normalized === 'required') return normalized;
     if (normalized === 'any') return 'required';
-    return undefined;
+    return rawToolChoice.trim() ? { type: 'raw', value: rawToolChoice } : undefined;
   }
 
   if (!isRecord(rawToolChoice)) return undefined;
@@ -204,20 +207,28 @@ function parseToolChoice(rawToolChoice: unknown): CanonicalToolChoice | undefine
     );
     return name ? { type: 'tool', name } : undefined;
   }
-  if (type !== 'tool') return undefined;
+  if (type && type !== 'tool') {
+    return { type: 'raw', value: cloneJsonValue(rawToolChoice) as Record<string, unknown> };
+  }
 
   const name = asTrimmedString(
     rawToolChoice.name
     ?? (isRecord(rawToolChoice.tool) ? rawToolChoice.tool.name : undefined),
   );
-  return name ? { type: 'tool', name } : undefined;
+  const toolChoiceKeys = Object.keys(rawToolChoice);
+  const hasExtraToolFields = toolChoiceKeys.some((key) => key !== 'type' && key !== 'name' && key !== 'tool');
+  if (hasExtraToolFields) {
+    return { type: 'raw', value: cloneJsonValue(rawToolChoice) as Record<string, unknown> };
+  }
+  if (name) return { type: 'tool', name };
+  return { type: 'raw', value: cloneJsonValue(rawToolChoice) as Record<string, unknown> };
 }
 
 function parseTools(rawTools: unknown): CanonicalTool[] | undefined {
   if (!Array.isArray(rawTools)) return undefined;
 
-  const tools = rawTools
-    .flatMap((item) => {
+  const tools: CanonicalTool[] = rawTools
+    .flatMap((item): CanonicalTool[] => {
       if (!isRecord(item)) return [];
       const itemType = asTrimmedString(item.type).toLowerCase();
 
@@ -264,6 +275,13 @@ function parseTools(rawTools: unknown): CanonicalTool[] | undefined {
         });
       }
 
+      if (itemType) {
+        return [{
+          type: itemType,
+          raw: cloneJsonValue(item) as Record<string, unknown>,
+        }];
+      }
+
       return [];
     });
 
@@ -277,6 +295,9 @@ export function canonicalRequestFromOpenAiBody(
   const metadata = isRecord(input.metadata)
     ? input.metadata
     : (isRecord(body.metadata) ? cloneJsonValue(body.metadata) : undefined);
+  const attachments = Array.isArray(body.attachments)
+    ? cloneJsonValue(body.attachments) as CanonicalAttachment[]
+    : undefined;
   const messages: CanonicalMessage[] = [];
   const rawMessages = Array.isArray(body.messages) ? body.messages : [];
 
@@ -286,15 +307,21 @@ export function canonicalRequestFromOpenAiBody(
 
     if (role === 'tool') {
       const toolCallId = asTrimmedString(rawMessage.tool_call_id ?? rawMessage.id);
-      const resultText = typeof rawMessage.content === 'string'
-        ? rawMessage.content
-        : safeJsonStringify(rawMessage.content ?? '');
+      const rawContent = rawMessage.content;
+      const resultText = typeof rawContent === 'string'
+        ? rawContent
+        : (!Array.isArray(rawContent) && !isRecord(rawContent) ? safeJsonStringify(rawContent ?? '') : '');
       messages.push({
         role: 'tool',
         parts: [{
           type: 'tool_result',
           toolCallId: toolCallId || 'tool',
           ...(resultText ? { resultText } : {}),
+          ...(Array.isArray(rawContent)
+            ? { resultContent: cloneJsonValue(rawContent) as Array<string | Record<string, unknown>> }
+            : (isRecord(rawContent)
+                ? { resultContent: [cloneJsonValue(rawContent) as Record<string, unknown>] }
+                : {})),
         }],
       });
       continue;
@@ -322,6 +349,10 @@ export function canonicalRequestFromOpenAiBody(
     messages.push({
       role,
       parts,
+      ...(asTrimmedString(rawMessage.phase) ? { phase: asTrimmedString(rawMessage.phase) } : {}),
+      ...(asTrimmedString(rawMessage.reasoning_signature)
+        ? { reasoningSignature: asTrimmedString(rawMessage.reasoning_signature) }
+        : {}),
     });
   }
 
@@ -343,6 +374,14 @@ export function canonicalRequestFromOpenAiBody(
       : {}),
   };
 
+  const passthrough = {
+    ...(input.passthrough ?? {}),
+    ...(typeof body.parallel_tool_calls === 'boolean'
+      ? { parallel_tool_calls: body.parallel_tool_calls }
+      : {}),
+    ...(reasoningResult.metadata ? { transformerMetadata: reasoningResult.metadata } : {}),
+  };
+
   return createCanonicalRequestEnvelope({
     operation: input.operation ?? 'generate',
     surface: input.surface,
@@ -355,14 +394,8 @@ export function canonicalRequestFromOpenAiBody(
     ...(parseToolChoice(body.tool_choice) !== undefined ? { toolChoice: parseToolChoice(body.tool_choice) } : {}),
     ...(Object.keys(continuation).length > 0 ? { continuation } : {}),
     ...(metadata ? { metadata } : {}),
-    ...((reasoningResult.metadata || input.passthrough)
-      ? {
-        passthrough: {
-          ...(input.passthrough ?? {}),
-          ...(reasoningResult.metadata ? { transformerMetadata: reasoningResult.metadata } : {}),
-        },
-      }
-      : {}),
+    ...(attachments ? { attachments } : {}),
+    ...(Object.keys(passthrough).length > 0 ? { passthrough } : {}),
   });
 }
 
@@ -418,7 +451,10 @@ function canonicalPartsToOpenAiContent(
       continue;
     }
     if (part.type === 'tool_result' && role !== 'tool') {
-      const text = part.resultText ?? safeJsonStringify(part.resultJson ?? '');
+      const text = part.resultText
+        ?? (typeof part.resultContent === 'string'
+          ? part.resultContent
+          : safeJsonStringify(part.resultJson ?? part.resultContent ?? ''));
       if (text) {
         visibleText.push(text);
       }
@@ -451,6 +487,7 @@ function canonicalToolChoiceToOpenAi(toolChoice: CanonicalToolChoice | undefined
   if (!toolChoice) return undefined;
   if (toolChoice === 'auto' || toolChoice === 'none') return toolChoice;
   if (toolChoice === 'required') return 'required';
+  if (toolChoice.type === 'raw') return cloneJsonValue(toolChoice.value);
   return {
     type: 'function',
     function: {
@@ -471,7 +508,9 @@ export function canonicalRequestToOpenAiChatBody(
         messages.push({
           role: 'tool',
           tool_call_id: part.toolCallId,
-          content: part.resultText ?? safeJsonStringify(part.resultJson ?? ''),
+          content: part.resultContent
+            ?? part.resultText
+            ?? safeJsonStringify(part.resultJson ?? ''),
         });
       }
       continue;
@@ -485,6 +524,8 @@ export function canonicalRequestToOpenAiChatBody(
     if (message.role === 'assistant' && converted.reasoning) {
       nextMessage.reasoning_content = converted.reasoning;
     }
+    if (message.phase) nextMessage.phase = message.phase;
+    if (message.reasoningSignature) nextMessage.reasoning_signature = message.reasoningSignature;
     if (message.role === 'assistant' && converted.toolCalls && converted.toolCalls.length > 0) {
       nextMessage.tool_calls = converted.toolCalls;
       if (typeof nextMessage.content !== 'string' && (nextMessage.content as Array<unknown>).length <= 0) {
@@ -517,18 +558,30 @@ export function canonicalRequestToOpenAiChatBody(
   ].filter((item, index, all) => all.indexOf(item) === index);
   if (mergedInclude.length > 0) body.include = mergedInclude;
   if (request.metadata !== undefined) body.metadata = cloneJsonValue(request.metadata);
+  if (Array.isArray(request.attachments) && request.attachments.length > 0) {
+    body.attachments = cloneJsonValue(request.attachments);
+  }
   if (request.continuation?.promptCacheKey) body.prompt_cache_key = request.continuation.promptCacheKey;
   if (request.continuation?.previousResponseId) body.previous_response_id = request.continuation.previousResponseId;
   if (Array.isArray(request.tools) && request.tools.length > 0) {
-    body.tools = request.tools.map((tool) => ({
-      type: 'function',
-      function: {
-        name: tool.name,
-        ...(tool.description ? { description: tool.description } : {}),
-        ...(typeof tool.strict === 'boolean' ? { strict: tool.strict } : {}),
-        parameters: cloneJsonValue(tool.inputSchema ?? { type: 'object' }),
-      },
-    }));
+    body.tools = request.tools.map((tool) => {
+      if ('raw' in tool) {
+        const raw = cloneJsonValue(tool.raw) as Record<string, unknown>;
+        if (typeof raw.type !== 'string' || raw.type.trim().length === 0) {
+          raw.type = tool.type;
+        }
+        return raw;
+      }
+      return {
+        type: 'function',
+        function: {
+          name: tool.name,
+          ...(tool.description ? { description: tool.description } : {}),
+          ...(typeof tool.strict === 'boolean' ? { strict: tool.strict } : {}),
+          parameters: cloneJsonValue(tool.inputSchema ?? { type: 'object' }),
+        },
+      };
+    });
   }
   const toolChoice = canonicalToolChoiceToOpenAi(request.toolChoice);
   if (toolChoice !== undefined) body.tool_choice = toolChoice;
