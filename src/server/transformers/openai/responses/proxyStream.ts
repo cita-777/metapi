@@ -41,6 +41,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
 }
 
+function asTrimmedString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
 function hasNonEmptyString(value: unknown): boolean {
   return typeof value === 'string' && value.trim().length > 0;
 }
@@ -236,7 +240,7 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
       parsedPayload = null;
     }
 
-    if (parsedPayload && typeof parsedPayload === 'object') {
+    if (isRecord(parsedPayload)) {
       input.onParsedPayload?.(parsedPayload);
     }
 
@@ -255,7 +259,7 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
     }
     const isIncompleteEvent = eventBlock.event === 'response.incomplete' || payloadType === 'response.incomplete';
 
-    if (parsedPayload && typeof parsedPayload === 'object') {
+    if (isRecord(parsedPayload)) {
       const normalizedEvent = openAiResponsesStream.normalizeEvent(parsedPayload, streamContext, input.modelName);
       let convertedLines = serializeConvertedResponsesEvents({
         state: responsesState,
