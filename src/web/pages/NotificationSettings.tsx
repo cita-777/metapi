@@ -223,7 +223,7 @@ export default function NotificationSettings() {
                             </div>
                             <div>
                                 <div style={{ fontWeight: 600, fontSize: 15 }}>Webhook & Bark</div>
-                                <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>通过 HTTP URL 推送简单消息通知</div>
+                                <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>通过 HTTP URL 推送消息通知（自动识别企业微信、飞书格式）</div>
                             </div>
                         </div>
 
