@@ -87,6 +87,38 @@ describe('chatFormatsCore inline think parsing', () => {
     });
   });
 
+  it('accumulates reasoning summary deltas before reconciling response.reasoning_summary_text.done', () => {
+    const context = createStreamTransformContext('gpt-test');
+
+    expect(normalizeUpstreamStreamEvent({
+      type: 'response.reasoning_summary_text.delta',
+      item_id: 'rs_multi',
+      output_index: 0,
+      summary_index: 0,
+      delta: 'plan ',
+    }, context, 'gpt-test')).toEqual({
+      reasoningDelta: 'plan ',
+    });
+
+    expect(normalizeUpstreamStreamEvent({
+      type: 'response.reasoning_summary_text.delta',
+      item_id: 'rs_multi',
+      output_index: 0,
+      summary_index: 0,
+      delta: 'first',
+    }, context, 'gpt-test')).toEqual({
+      reasoningDelta: 'first',
+    });
+
+    expect(normalizeUpstreamStreamEvent({
+      type: 'response.reasoning_summary_text.done',
+      item_id: 'rs_multi',
+      output_index: 0,
+      summary_index: 0,
+      text: 'plan first',
+    }, context, 'gpt-test')).toEqual({});
+  });
+
   it('preserves terminal-only native responses output item payloads in stream normalization', () => {
     const context = createStreamTransformContext('gpt-test');
 

@@ -1514,8 +1514,14 @@ export function normalizeUpstreamStreamEvent(
     const deltaText = type === 'response.reasoning_summary_text.done'
       ? (typeof (payload as any).text === 'string' ? (payload as any).text : extractTextAndReasoning(payload.text).content)
       : (typeof payload.delta === 'string' ? payload.delta : extractTextAndReasoning(payload.delta).content);
-    const novelDelta = computeNovelResponsesDelta(context.responsesReasoningByIndex[outputIndex] || '', deltaText);
-    context.responsesReasoningByIndex[outputIndex] = deltaText || context.responsesReasoningByIndex[outputIndex] || '';
+    const previousReasoning = context.responsesReasoningByIndex[outputIndex] || '';
+    const novelDelta = computeNovelResponsesDelta(previousReasoning, deltaText);
+    const nextReasoning = type === 'response.reasoning_summary_text.done'
+      ? (deltaText || previousReasoning)
+      : `${previousReasoning}${novelDelta}`;
+    if (nextReasoning) {
+      context.responsesReasoningByIndex[outputIndex] = nextReasoning;
+    }
     return {
       reasoningDelta: novelDelta || undefined,
     };
