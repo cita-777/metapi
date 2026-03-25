@@ -117,6 +117,54 @@ describe('TokenRouter selection scoring', () => {
     }).returning().get();
   }
 
+  it('reuses a preferred channel only while it remains healthy', async () => {
+    config.routingWeights = {
+      baseWeightFactor: 1,
+      valueScoreFactor: 0,
+      costWeight: 0,
+      balanceWeight: 0,
+      usageWeight: 0,
+    };
+
+    const route = await createRoute('gpt-5.2');
+    const site = await createSite('sticky-site');
+    const account = await createAccount(site.id, 'sticky-user');
+    const tokenA = await createToken(account.id, 'sticky-a');
+    const tokenB = await createToken(account.id, 'sticky-b');
+
+    const preferredChannel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: tokenA.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      failCount: 0,
+    }).returning().get();
+
+    await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: tokenB.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      failCount: 0,
+    }).run();
+
+    const router = new TokenRouter();
+    const selected = await router.selectPreferredChannel('gpt-5.2', preferredChannel.id);
+    expect(selected?.channel.id).toBe(preferredChannel.id);
+
+    await db.update(schema.routeChannels).set({
+      failCount: 4,
+      lastFailAt: new Date().toISOString(),
+    }).where(eq(schema.routeChannels.id, preferredChannel.id)).run();
+    invalidateTokenRouterCache();
+
+    await expect(router.selectPreferredChannel('gpt-5.2', preferredChannel.id)).resolves.toBeNull();
+  });
+
   it('normalizes probability across channels on the same site', async () => {
     config.routingWeights = {
       baseWeightFactor: 1,

@@ -17,6 +17,7 @@ import type { BuiltEndpointRequest } from '../../routes/proxy/endpointFlow.js';
 import { buildUpstreamUrl } from '../../routes/proxy/upstreamUrl.js';
 import { recordOauthQuotaResetHint } from '../../services/oauth/quota.js';
 import { refreshOauthAccessTokenSingleflight } from '../../services/oauth/refreshSingleflight.js';
+import { proxyChannelCoordinator } from '../../services/proxyChannelCoordinator.js';
 
 type SelectedChannel = Awaited<ReturnType<typeof tokenRouter.selectChannel>>;
 type SurfaceWarningScope = 'chat' | 'responses';
@@ -103,14 +104,34 @@ export async function selectSurfaceChannelForAttempt(input: {
   downstreamPolicy: DownstreamRoutingPolicy;
   excludeChannelIds: number[];
   retryCount: number;
+  stickySessionKey?: string | null;
 }): Promise<SelectedChannel> {
-  let selected = input.retryCount === 0
-    ? await tokenRouter.selectChannel(input.requestedModel, input.downstreamPolicy)
-    : await tokenRouter.selectNextChannel(
-      input.requestedModel,
-      input.excludeChannelIds,
-      input.downstreamPolicy,
-    );
+  let selected: SelectedChannel = null;
+
+  if (input.retryCount === 0 && input.stickySessionKey) {
+    const preferredChannelId = proxyChannelCoordinator.getStickyChannelId(input.stickySessionKey);
+    if (preferredChannelId && !input.excludeChannelIds.includes(preferredChannelId)) {
+      selected = await tokenRouter.selectPreferredChannel(
+        input.requestedModel,
+        preferredChannelId,
+        input.downstreamPolicy,
+        input.excludeChannelIds,
+      );
+      if (!selected) {
+        proxyChannelCoordinator.clearStickyChannel(input.stickySessionKey, preferredChannelId);
+      }
+    }
+  }
+
+  if (!selected) {
+    selected = input.retryCount === 0
+      ? await tokenRouter.selectChannel(input.requestedModel, input.downstreamPolicy)
+      : await tokenRouter.selectNextChannel(
+        input.requestedModel,
+        input.excludeChannelIds,
+        input.downstreamPolicy,
+      );
+  }
 
   if (!selected && input.retryCount === 0) {
     try {
@@ -122,6 +143,65 @@ export async function selectSurfaceChannelForAttempt(input: {
   }
 
   return selected;
+}
+
+export function buildSurfaceStickySessionKey(input: {
+  clientContext?: DownstreamClientContext | null;
+  requestedModel: string;
+  downstreamPath: string;
+  downstreamApiKeyId?: number | null;
+}): string | null {
+  return proxyChannelCoordinator.buildStickySessionKey({
+    clientKind: input.clientContext?.clientKind || null,
+    sessionId: input.clientContext?.sessionId || null,
+    requestedModel: input.requestedModel,
+    downstreamPath: input.downstreamPath,
+    downstreamApiKeyId: input.downstreamApiKeyId,
+  });
+}
+
+export function bindSurfaceStickyChannel(input: {
+  stickySessionKey?: string | null;
+  selected: {
+    channel: { id: number };
+    account?: { extraConfig?: string | null } | null;
+  };
+}): void {
+  proxyChannelCoordinator.bindStickyChannel(
+    input.stickySessionKey,
+    input.selected.channel.id,
+    input.selected.account?.extraConfig,
+  );
+}
+
+export function clearSurfaceStickyChannel(input: {
+  stickySessionKey?: string | null;
+  selected: {
+    channel: { id: number };
+  };
+}): void {
+  proxyChannelCoordinator.clearStickyChannel(
+    input.stickySessionKey,
+    input.selected.channel.id,
+  );
+}
+
+export async function acquireSurfaceChannelLease(input: {
+  selected: {
+    channel: { id: number };
+    account?: { extraConfig?: string | null } | null;
+  };
+}) {
+  return await proxyChannelCoordinator.acquireChannelLease({
+    channelId: input.selected.channel.id,
+    accountExtraConfig: input.selected.account?.extraConfig,
+  });
+}
+
+export function buildSurfaceChannelBusyMessage(waitMs: number): string {
+  return waitMs > 0
+    ? `Channel busy: waited ${waitMs}ms for an available session slot`
+    : 'Channel busy: no session slot available';
 }
 
 export async function writeSurfaceProxyLog(input: {
