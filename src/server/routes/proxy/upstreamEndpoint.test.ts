@@ -628,7 +628,7 @@ describe('buildUpstreamEndpointRequest', () => {
     expect(request.body.instructions).toBe('');
     expect(request.body.prompt_cache_key).toBeUndefined();
     expect(request.body.stream).toBe(false);
-    expect(request.body.store).toBeUndefined();
+    expect(request.body.store).toBe(false);
     expect(request.body.parallel_tool_calls).toBeUndefined();
     expect(request.body.include).toBeUndefined();
     expect(request.body.max_output_tokens).toBe(4096);
@@ -762,7 +762,7 @@ describe('buildUpstreamEndpointRequest', () => {
     expect(request.body.prompt_cache_key).toBeUndefined();
     expect(request.body.instructions).toBe('');
     expect(request.body.stream).toBe(false);
-    expect(request.body.store).toBe(true);
+    expect(request.body.store).toBe(false);
     expect(request.body.parallel_tool_calls).toBe(false);
     expect(request.body.include).toEqual(['reasoning.encrypted_content', 'mcp_approval_request.details']);
     expect(request.body.previous_response_id).toBe('resp_prev_123');

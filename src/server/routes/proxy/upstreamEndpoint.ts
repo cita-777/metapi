@@ -413,7 +413,11 @@ function ensureCodexResponsesStoreFalse(
   body: Record<string, unknown>,
   sitePlatform: string,
 ): Record<string, unknown> {
-  return body;
+  if (sitePlatform !== 'codex') return body;
+  return {
+    ...body,
+    store: false,
+  };
 }
 
 function convertCodexSystemRoleToDeveloper(input: unknown): unknown {

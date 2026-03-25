@@ -91,6 +91,26 @@ vi.mock('../../db/index.js', () => ({
 describe('responses proxy codex oauth refresh', () => {
   let app: FastifyInstance;
 
+  const createDeferred = <T>() => {
+    let resolve!: (value: T | PromiseLike<T>) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  };
+
+  const waitFor = async (predicate: () => boolean, timeoutMs = 1000) => {
+    const startedAt = Date.now();
+    while (!predicate()) {
+      if ((Date.now() - startedAt) >= timeoutMs) {
+        throw new Error('Timed out waiting for test condition');
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  };
+
   const createSseResponse = (chunks: string[], status = 200) => {
     const encoder = new TextEncoder();
     return new Response(new ReadableStream<Uint8Array>({
@@ -461,6 +481,84 @@ describe('responses proxy codex oauth refresh', () => {
     expect(options.headers.referer).toBeUndefined();
   });
 
+  it('serializes concurrent codex HTTP responses requests that share the same session id', async () => {
+    const firstUpstream = createDeferred<Response>();
+    fetchMock
+      .mockImplementationOnce(() => firstUpstream.promise)
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'resp_codex_serial_2',
+        object: 'response',
+        model: 'gpt-5.2-codex',
+        status: 'completed',
+        output_text: 'second request finished',
+        usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+
+    const firstResponsePromise = app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: {
+        session_id: 'session-http-serial-1',
+      },
+      payload: {
+        model: 'gpt-5.2-codex',
+        input: 'first request',
+      },
+    });
+
+    await waitFor(() => fetchMock.mock.calls.length === 1);
+
+    const secondResponsePromise = app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: {
+        session_id: 'session-http-serial-1',
+      },
+      payload: {
+        model: 'gpt-5.2-codex',
+        input: 'second request',
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    firstUpstream.resolve(new Response(JSON.stringify({
+      id: 'resp_codex_serial_1',
+      object: 'response',
+      model: 'gpt-5.2-codex',
+      status: 'completed',
+      output_text: 'first request finished',
+      usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const firstResponse = await firstResponsePromise;
+    expect(firstResponse.statusCode).toBe(200);
+    expect(firstResponse.json()).toMatchObject({
+      output_text: 'first request finished',
+    });
+
+    await waitFor(() => fetchMock.mock.calls.length === 2);
+
+    const secondResponse = await secondResponsePromise;
+    expect(secondResponse.statusCode).toBe(200);
+    expect(secondResponse.json()).toMatchObject({
+      output_text: 'second request finished',
+    });
+
+    const [, firstOptions] = fetchMock.mock.calls[0] as [string, any];
+    const [, secondOptions] = fetchMock.mock.calls[1] as [string, any];
+    expect(firstOptions.headers.Session_id || firstOptions.headers.session_id).toBe('session-http-serial-1');
+    expect(secondOptions.headers.Session_id || secondOptions.headers.session_id).toBe('session-http-serial-1');
+  });
+
   it('records codex usage_limit_reached reset hints on upstream 429 failures', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({
       error: {
@@ -525,7 +623,7 @@ describe('responses proxy codex oauth refresh', () => {
     const forwardedBody = JSON.parse(options.body);
     expect(forwardedBody.stream).toBe(true);
     expect(forwardedBody.instructions).toBe('');
-    expect(forwardedBody.store).toBeUndefined();
+    expect(forwardedBody.store).toBe(false);
     expect(forwardedBody.max_output_tokens).toBeUndefined();
 
     expect(response.json()).toMatchObject({
@@ -568,11 +666,11 @@ describe('responses proxy codex oauth refresh', () => {
     const secondBody = JSON.parse(secondOptions.body);
 
     expect(firstBody.instructions).toBe('');
-    expect(firstBody.store).toBeUndefined();
+    expect(firstBody.store).toBe(false);
     expect(firstBody.stream).toBe(true);
     expect(firstBody.max_output_tokens).toBeUndefined();
     expect(secondBody.instructions).toBe('');
-    expect(secondBody.store).toBeUndefined();
+    expect(secondBody.store).toBe(false);
     expect(secondBody.stream).toBe(true);
     expect(secondBody.max_output_tokens).toBeUndefined();
   });

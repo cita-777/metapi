@@ -1,3 +1,4 @@
+import { zstdCompressSync } from 'node:zlib';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../../config.js';
@@ -166,6 +167,79 @@ describe('chat proxy stream behavior', () => {
     expect(response.body).toContain('data: ');
     expect(response.body).toContain('"chat.completion.chunk"');
     expect(response.body).toContain('hello from upstream');
+    expect(response.body).toContain('data: [DONE]');
+  });
+
+  it('decodes zstd-compressed non-stream chat responses before serializing downstream JSON', async () => {
+    const payload = JSON.stringify({
+      id: 'chatcmpl-zstd',
+      object: 'chat.completion',
+      created: 1_706_000_000,
+      model: 'upstream-gpt',
+      choices: [{
+        index: 0,
+        message: { role: 'assistant', content: '你好，来自 zstd 非流式响应' },
+        finish_reason: 'stop',
+      }],
+      usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
+    });
+    fetchMock.mockResolvedValue(new Response(zstdCompressSync(Buffer.from(payload)), {
+      status: 200,
+      headers: {
+        'content-encoding': 'zstd',
+        'content-type': 'application/json; charset=utf-8',
+      },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: 'hi' }],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()?.choices?.[0]?.message?.content).toBe('你好，来自 zstd 非流式响应');
+  });
+
+  it('decodes zstd-compressed non-SSE streaming chat responses before SSE conversion', async () => {
+    const payload = JSON.stringify({
+      id: 'chatcmpl-zstd-stream',
+      object: 'chat.completion',
+      created: 1_706_000_000,
+      model: 'upstream-gpt',
+      choices: [{
+        index: 0,
+        message: { role: 'assistant', content: '你好，来自 zstd 流式回退' },
+        finish_reason: 'stop',
+      }],
+      usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
+    });
+    fetchMock.mockResolvedValue(new Response(zstdCompressSync(Buffer.from(payload)), {
+      status: 200,
+      headers: {
+        'content-encoding': 'zstd',
+        'content-type': 'application/json; charset=utf-8',
+      },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        model: 'gpt-4o-mini',
+        stream: true,
+        messages: [{ role: 'user', content: 'hi' }],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/event-stream');
+    expect(response.body).toContain('"chat.completion.chunk"');
+    expect(response.body).toContain('你好，来自 zstd 流式回退');
+    expect(response.body).not.toContain('(�/�');
     expect(response.body).toContain('data: [DONE]');
   });
 
