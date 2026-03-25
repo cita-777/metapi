@@ -684,23 +684,29 @@ async function sendStreamingEnvelope(
   try {
     if (contentType.includes('text/event-stream')) {
       const streamReader = reader!;
-      while (true) {
-        const { done, value } = await streamReader.read();
-        if (done) break;
-        if (value) {
-          reply.raw.write(Buffer.from(value));
-        }
-      }
       try {
-        await streamReader.cancel();
-      } catch {
-        // no-op
+        while (true) {
+          const { done, value } = await streamReader.read();
+          if (done) break;
+          if (value) {
+            reply.raw.write(Buffer.from(value));
+          }
+        }
       } finally {
-        streamReader.releaseLock();
+        try {
+          await streamReader.cancel();
+        } catch {
+          // no-op
+        } finally {
+          streamReader.releaseLock();
+        }
       }
     } else {
       const text = await readRuntimeResponseText(upstream);
-      reply.raw.write(`data: ${text}\n\n`);
+      for (const line of text.split(/\r?\n/)) {
+        reply.raw.write(`data: ${line}\n`);
+      }
+      reply.raw.write('\n');
       reply.raw.write('data: [DONE]\n\n');
     }
   } catch (error) {

@@ -848,7 +848,7 @@ describe('buildUpstreamEndpointRequest', () => {
     expect(httpRequest.headers['x-codex-beta-features']).toBeUndefined();
   });
 
-  it('applies configured payload rules before preparing codex responses requests', () => {
+  it('applies configured payload rules before preparing codex responses requests while forcing store false', () => {
     (config as any).payloadRules = {
       default: [
         {
@@ -864,6 +864,7 @@ describe('buildUpstreamEndpointRequest', () => {
           models: [{ name: 'gpt-5.4', protocol: 'codex' }],
           params: {
             'text.verbosity': 'low',
+            store: true,
           },
         },
       ],
@@ -899,6 +900,7 @@ describe('buildUpstreamEndpointRequest', () => {
     expect(request.body.reasoning).toEqual({ effort: 'high' });
     expect(request.body.text).toEqual({ verbosity: 'low' });
     expect(request.body.safety_identifier).toBeUndefined();
+    expect(request.body.store).toBe(false);
   });
 
   it('builds gemini-cli native requests with project envelope and bearer headers', () => {

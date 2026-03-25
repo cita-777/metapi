@@ -1260,7 +1260,10 @@ export function buildUpstreamEndpointRequest(input: {
       ),
       sitePlatform,
     );
-    const configuredResponsesBody = applyConfiguredPayloadRules(body);
+    const configuredResponsesBody = ensureCodexResponsesStoreFalse(
+      applyConfiguredPayloadRules(body),
+      sitePlatform,
+    );
 
     if (sitePlatform === 'codex') {
       if (providerProfile?.id !== 'codex') {

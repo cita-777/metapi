@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../../config.js';
+import { resetCodexHttpSessionQueue } from '../../proxy-core/runtime/codexHttpSessionQueue.js';
 
 const fetchMock = vi.fn();
 const selectChannelMock = vi.fn();
@@ -133,6 +134,7 @@ describe('responses proxy codex oauth refresh', () => {
   });
 
   beforeEach(() => {
+    resetCodexHttpSessionQueue();
     config.proxyEmptyContentFailEnabled = false;
     fetchMock.mockReset();
     selectChannelMock.mockReset();

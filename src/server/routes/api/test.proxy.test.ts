@@ -279,4 +279,79 @@ describe('testRoutes proxy tester transport', () => {
     expect(response.headers['content-type']).toContain('text/event-stream');
     expect(response.payload).toBe(`data: ${payload}\n\ndata: [DONE]\n\n`);
   });
+
+  it('encodes multiline non-SSE stream fallback responses as valid SSE', async () => {
+    const payload = 'line one\nline two\n';
+    fetchMock.mockResolvedValue(new Response(payload, {
+      status: 200,
+      headers: {
+        'content-type': 'text/plain; charset=utf-8',
+      },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/test/proxy/stream',
+      payload: {
+        method: 'POST',
+        path: '/v1/chat/completions',
+        requestKind: 'json',
+        stream: true,
+        jobMode: false,
+        rawMode: false,
+        jsonBody: {
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'user', content: 'ping' }],
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/event-stream');
+    expect(response.payload).toBe('data: line one\ndata: line two\ndata: \n\ndata: [DONE]\n\n');
+  });
+
+  it('cancels and releases SSE readers when stream forwarding fails', async () => {
+    const cancel = vi.fn().mockResolvedValue(undefined);
+    const releaseLock = vi.fn();
+    const read = vi.fn().mockRejectedValue(new Error('boom'));
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({
+        'content-type': 'text/event-stream; charset=utf-8',
+      }),
+      body: {
+        getReader: () => ({
+          read,
+          cancel,
+          releaseLock,
+        }),
+      },
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/test/proxy/stream',
+      payload: {
+        method: 'POST',
+        path: '/v1/chat/completions',
+        requestKind: 'json',
+        stream: true,
+        jobMode: false,
+        rawMode: false,
+        jsonBody: {
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'user', content: 'ping' }],
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/event-stream');
+    expect(response.payload).toContain('event: error');
+    expect(response.payload).toContain('"message":"boom"');
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(releaseLock).toHaveBeenCalledTimes(1);
+  });
 });
