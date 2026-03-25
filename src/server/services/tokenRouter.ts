@@ -1250,6 +1250,27 @@ export class TokenRouter {
     return await this.selectFromMatch(match, requestedModel, downstreamPolicy, excludeChannelIds);
   }
 
+  async selectPreferredChannel(
+    requestedModel: string,
+    preferredChannelId: number,
+    downstreamPolicy: DownstreamRoutingPolicy = DEFAULT_DOWNSTREAM_POLICY,
+    excludeChannelIds: number[] = [],
+  ): Promise<SelectedChannel | null> {
+    if (!isModelAllowedByDownstreamPolicy(requestedModel, downstreamPolicy)) return null;
+    const normalizedPreferredChannelId = Math.trunc(preferredChannelId || 0);
+    if (normalizedPreferredChannelId <= 0) return null;
+    await ensureSiteRuntimeHealthStateLoaded();
+
+    const match = await this.findRoute(requestedModel, downstreamPolicy);
+    if (!match) return null;
+    return await this.selectPreferredFromMatch(
+      match,
+      requestedModel,
+      normalizedPreferredChannelId,
+      excludeChannelIds,
+    );
+  }
+
   async explainSelection(
     requestedModel: string,
     excludeChannelIds: number[] = [],
@@ -1841,6 +1862,65 @@ export class TokenRouter {
     }
 
     return null;
+  }
+
+  private async selectPreferredFromMatch(
+    match: RouteMatch,
+    requestedModel: string,
+    preferredChannelId: number,
+    excludeChannelIds: number[] = [],
+    recordSelection = true,
+  ): Promise<SelectedChannel | null> {
+    const mappedModel = resolveMappedModel(requestedModel, match.route.modelMapping);
+    const requestedByDisplayName = isRouteDisplayNameMatch(requestedModel, match.route.displayName);
+    const bypassSourceModelCheck = requestedByDisplayName;
+    const routeStrategy = resolveRouteStrategy(match.route);
+    const runtimeModelResolver = requestedByDisplayName
+      ? ((candidate: RouteChannelCandidate) => normalizeChannelSourceModel(candidate.channel.sourceModel) || mappedModel)
+      : mappedModel;
+
+    const nowIso = new Date().toISOString();
+    const nowMs = Date.now();
+    const available = match.channels.filter((candidate) => (
+      this.getCandidateEligibilityReasons(candidate, {
+        requestedModel,
+        bypassSourceModelCheck,
+        excludeChannelIds,
+        nowIso,
+      }).length === 0
+    ));
+
+    const preferred = available.find((candidate) => candidate.channel.id === preferredChannelId);
+    if (!preferred) return null;
+
+    const breakerFiltered = filterSiteRuntimeBrokenCandidatesByModel([preferred], runtimeModelResolver, nowMs);
+    if (breakerFiltered.candidates.length <= 0) return null;
+
+    const selected = breakerFiltered.candidates.find((candidate) => candidate.channel.id === preferredChannelId);
+    if (!selected) return null;
+    if (routeStrategy !== 'round_robin' && isChannelRecentlyFailed(selected.channel, nowMs)) {
+      return null;
+    }
+
+    const tokenValue = this.resolveChannelTokenValue(selected);
+    if (!tokenValue) return null;
+    if (recordSelection && (routeStrategy === 'round_robin' || routeStrategy === 'stable_first')) {
+      await this.recordChannelSelection(selected.channel.id);
+    }
+
+    const actualModel = resolveActualModelForSelectedChannel(
+      requestedModel,
+      match.route,
+      mappedModel,
+      selected.channel.sourceModel,
+    );
+
+    return {
+      ...selected,
+      tokenValue,
+      tokenName: selected.token?.name || 'default',
+      actualModel,
+    };
   }
 
   private async findRoute(model: string, downstreamPolicy: DownstreamRoutingPolicy): Promise<RouteMatch | null> {

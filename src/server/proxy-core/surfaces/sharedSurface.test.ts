@@ -3,6 +3,7 @@ import { EMPTY_DOWNSTREAM_ROUTING_POLICY } from '../../services/downstreamPolicy
 
 const selectChannelMock = vi.fn();
 const selectNextChannelMock = vi.fn();
+const selectPreferredChannelMock = vi.fn();
 const recordFailureMock = vi.fn();
 const refreshModelsAndRebuildRoutesMock = vi.fn();
 const composeProxyLogMessageMock = vi.fn();
@@ -20,6 +21,11 @@ const recordSuccessMock = vi.fn();
 const resolveProxyUsageWithSelfLogFallbackMock = vi.fn();
 const resolveProxyLogBillingMock = vi.fn();
 const refreshOauthAccessTokenSingleflightMock = vi.fn();
+const getStickyChannelIdMock = vi.fn();
+const bindStickyChannelMock = vi.fn();
+const clearStickyChannelMock = vi.fn();
+const acquireChannelLeaseMock = vi.fn();
+const buildStickySessionKeyMock = vi.fn();
 const consoleWarnMock = vi.spyOn(console, 'warn').mockImplementation(() => {});
 const consoleErrorMock = vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -27,8 +33,19 @@ vi.mock('../../services/tokenRouter.js', () => ({
   tokenRouter: {
     selectChannel: (...args: unknown[]) => selectChannelMock(...args),
     selectNextChannel: (...args: unknown[]) => selectNextChannelMock(...args),
+    selectPreferredChannel: (...args: unknown[]) => selectPreferredChannelMock(...args),
     recordFailure: (...args: unknown[]) => recordFailureMock(...args),
     recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
+  },
+}));
+
+vi.mock('../../services/proxyChannelCoordinator.js', () => ({
+  proxyChannelCoordinator: {
+    getStickyChannelId: (...args: unknown[]) => getStickyChannelIdMock(...args),
+    bindStickyChannel: (...args: unknown[]) => bindStickyChannelMock(...args),
+    clearStickyChannel: (...args: unknown[]) => clearStickyChannelMock(...args),
+    acquireChannelLease: (...args: unknown[]) => acquireChannelLeaseMock(...args),
+    buildStickySessionKey: (...args: unknown[]) => buildStickySessionKeyMock(...args),
   },
 }));
 
@@ -95,6 +112,7 @@ describe('selectSurfaceChannelForAttempt', () => {
   beforeEach(() => {
     selectChannelMock.mockReset();
     selectNextChannelMock.mockReset();
+    selectPreferredChannelMock.mockReset();
     recordFailureMock.mockReset();
     refreshModelsAndRebuildRoutesMock.mockReset();
     composeProxyLogMessageMock.mockReset();
@@ -112,6 +130,11 @@ describe('selectSurfaceChannelForAttempt', () => {
     resolveProxyUsageWithSelfLogFallbackMock.mockReset();
     resolveProxyLogBillingMock.mockReset();
     refreshOauthAccessTokenSingleflightMock.mockReset();
+    getStickyChannelIdMock.mockReset();
+    bindStickyChannelMock.mockReset();
+    clearStickyChannelMock.mockReset();
+    acquireChannelLeaseMock.mockReset();
+    buildStickySessionKeyMock.mockReset();
     consoleWarnMock.mockClear();
     consoleErrorMock.mockClear();
   });
@@ -156,6 +179,51 @@ describe('selectSurfaceChannelForAttempt', () => {
       EMPTY_DOWNSTREAM_ROUTING_POLICY,
     );
     expect(refreshModelsAndRebuildRoutesMock).not.toHaveBeenCalled();
+  });
+
+  it('prefers the sticky session channel on the first attempt when it is still eligible', async () => {
+    const selected = { channel: { id: 55 } };
+    getStickyChannelIdMock.mockReturnValueOnce(55);
+    selectPreferredChannelMock.mockResolvedValueOnce(selected);
+
+    const { selectSurfaceChannelForAttempt } = await import('./sharedSurface.js');
+    const result = await selectSurfaceChannelForAttempt({
+      requestedModel: 'gpt-5.2',
+      downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
+      excludeChannelIds: [],
+      retryCount: 0,
+      stickySessionKey: 'sticky-session',
+    });
+
+    expect(result).toBe(selected);
+    expect(selectPreferredChannelMock).toHaveBeenCalledWith(
+      'gpt-5.2',
+      55,
+      EMPTY_DOWNSTREAM_ROUTING_POLICY,
+      [],
+    );
+    expect(selectChannelMock).not.toHaveBeenCalled();
+    expect(clearStickyChannelMock).not.toHaveBeenCalled();
+  });
+
+  it('clears stale sticky bindings and falls back to regular selection when the preferred channel is unavailable', async () => {
+    const selected = { channel: { id: 22 } };
+    getStickyChannelIdMock.mockReturnValueOnce(55);
+    selectPreferredChannelMock.mockResolvedValueOnce(null);
+    selectChannelMock.mockResolvedValueOnce(selected);
+
+    const { selectSurfaceChannelForAttempt } = await import('./sharedSurface.js');
+    const result = await selectSurfaceChannelForAttempt({
+      requestedModel: 'gpt-5.2',
+      downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
+      excludeChannelIds: [],
+      retryCount: 0,
+      stickySessionKey: 'sticky-session',
+    });
+
+    expect(result).toBe(selected);
+    expect(clearStickyChannelMock).toHaveBeenCalledWith('sticky-session', 55);
+    expect(selectChannelMock).toHaveBeenCalledWith('gpt-5.2', EMPTY_DOWNSTREAM_ROUTING_POLICY);
   });
 
   it('logs refresh failures and still retries selection once on the first attempt', async () => {

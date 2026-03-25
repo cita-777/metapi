@@ -312,6 +312,11 @@ function synthesizePrewarmResponsePayloads(request: Record<string, unknown>) {
 function collectResponsesOutput(payloads: unknown[]): unknown[] {
   const outputByIndex = new Map<number, unknown>();
   let completedOutput: unknown[] | null = null;
+  const fallbackStatusForType = (type: string): string => {
+    if (type === 'response.completed') return 'completed';
+    if (type === 'response.failed') return 'failed';
+    return 'incomplete';
+  };
 
   for (const payload of payloads) {
     if (!isRecord(payload)) continue;
@@ -322,8 +327,54 @@ function collectResponsesOutput(payloads: unknown[]): unknown[] {
       outputByIndex.set(Number(payload.output_index), cloneJsonObject(payload.item));
       continue;
     }
-    if (type === 'response.completed' && isRecord(payload.response) && Array.isArray(payload.response.output)) {
-      completedOutput = cloneJsonObject(payload.response.output);
+    if (
+      (type === 'response.completed' || type === 'response.incomplete' || type === 'response.failed')
+      && isRecord(payload.response)
+      && Array.isArray(payload.response.output)
+    ) {
+      const terminalOutput = cloneJsonObject(payload.response.output);
+      if (terminalOutput.length > 0 || outputByIndex.size === 0) {
+        completedOutput = terminalOutput;
+      }
+      continue;
+    }
+    if (
+      (type === 'response.completed' || type === 'response.incomplete' || type === 'response.failed')
+      && isRecord(payload.response)
+      && typeof payload.response.output_text === 'string'
+      && payload.response.output_text.trim()
+    ) {
+      completedOutput = [{
+        id: `msg_${asTrimmedString(payload.response.id) || type}`,
+        type: 'message',
+        role: 'assistant',
+        status: asTrimmedString(payload.response.status) || fallbackStatusForType(type),
+        content: [{
+          type: 'output_text',
+          text: payload.response.output_text,
+        }],
+      }];
+      continue;
+    }
+    if (Array.isArray(payload.output)) {
+      const terminalOutput = cloneJsonObject(payload.output);
+      if (terminalOutput.length > 0 || outputByIndex.size === 0) {
+        completedOutput = terminalOutput;
+      }
+      continue;
+    }
+    if (typeof payload.output_text === 'string' && payload.output_text.trim()) {
+      const fallbackStatus = asTrimmedString(payload.status) || fallbackStatusForType(type || 'response.completed');
+      completedOutput = [{
+        id: `msg_${type || 'response'}`,
+        type: 'message',
+        role: 'assistant',
+        status: fallbackStatus,
+        content: [{
+          type: 'output_text',
+          text: payload.output_text,
+        }],
+      }];
     }
   }
 
@@ -381,10 +432,9 @@ async function forwardResponsesRequestViaHttp(input: {
   if (!contentType.includes('text/event-stream')) {
     try {
       const payload = JSON.parse(response.body);
+      const output = collectResponsesOutput([payload]);
       input.socket.send(JSON.stringify(payload));
-      return isRecord(payload?.response) && Array.isArray(payload.response.output)
-        ? cloneJsonObject(payload.response.output)
-        : [];
+      return output;
     } catch {
       writeResponsesWebsocketError(input.socket, 502, 'Unexpected non-JSON websocket proxy response');
       return null;
@@ -400,7 +450,7 @@ async function forwardResponsesRequestViaHttp(input: {
       const payload = JSON.parse(event.data);
       forwardedPayloads.push(payload);
       const type = isRecord(payload) ? asTrimmedString(payload.type) : '';
-      if (type === 'response.completed' || type === 'response.failed') {
+      if (type === 'response.completed' || type === 'response.failed' || type === 'response.incomplete') {
         sawTerminalPayload = true;
       }
       input.socket.send(JSON.stringify(payload));
@@ -597,7 +647,7 @@ async function handleResponsesWebsocketConnection(
                 ? error
                 : new CodexWebsocketRuntimeError('upstream websocket request failed');
               if (runtimeError.status && runtimeError.events.length === 0) {
-                const fallbackOutput = await forwardResponsesRequestViaHttp({
+                const forwarded = await forwardResponsesRequestViaHttp({
                   app,
                   socket,
                   request,
@@ -605,8 +655,8 @@ async function handleResponsesWebsocketConnection(
                   preserveIncrementalMode: supportsIncrementalInput,
                   authToken: authContext.token,
                 });
-                if (fallbackOutput) {
-                  lastResponseOutput = fallbackOutput;
+                if (forwarded) {
+                  lastResponseOutput = forwarded;
                 }
                 return;
               }
@@ -614,17 +664,24 @@ async function handleResponsesWebsocketConnection(
               for (const payload of runtimeError.events) {
                 socket.send(JSON.stringify(payload));
               }
-              writeResponsesWebsocketError(
-                socket,
-                runtimeError.status || 408,
-                runtimeError.message,
-                runtimeError.payload,
-              );
+              const emittedTerminalResponsesEvent = runtimeError.events.some((payload) => {
+                if (!isRecord(payload)) return false;
+                const type = asTrimmedString(payload.type);
+                return type === 'response.completed' || type === 'response.failed' || type === 'response.incomplete';
+              });
+              if (!emittedTerminalResponsesEvent) {
+                writeResponsesWebsocketError(
+                  socket,
+                  runtimeError.status || 408,
+                  runtimeError.message,
+                  runtimeError.payload,
+                );
+              }
             }
             return;
           }
 
-          const forwardedOutput = await forwardResponsesRequestViaHttp({
+          const forwarded = await forwardResponsesRequestViaHttp({
             app,
             socket,
             request,
@@ -632,8 +689,8 @@ async function handleResponsesWebsocketConnection(
             preserveIncrementalMode: supportsIncrementalInput,
             authToken: authContext.token,
           });
-          if (forwardedOutput) {
-            lastResponseOutput = forwardedOutput;
+          if (forwarded) {
+            lastResponseOutput = forwarded;
           }
         } catch {
           writeResponsesWebsocketError(socket, 500, 'internal websocket proxy error');

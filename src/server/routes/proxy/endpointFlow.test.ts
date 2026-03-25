@@ -298,7 +298,6 @@ describe('executeEndpointFlow', () => {
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe('https://proxy.internal/base/v1/responses');
   });
-
   it('normalizes proxyUrl with versioned base paths instead of duplicating path segments', async () => {
     fetchMock.mockResolvedValueOnce(toUndiciResponse(new Response(JSON.stringify({ ok: true }), {
       status: 200,

@@ -20,7 +20,6 @@ import {
   saveRouteDecisionSnapshots,
 } from '../../services/routeDecisionSnapshotStore.js';
 import { normalizeTokenRouteMode, type RouteMode } from '../../../shared/tokenRouteContract.js';
-
 function isExactModelPattern(modelPattern: string): boolean {
   const normalized = modelPattern.trim();
   if (!normalized) return false;
@@ -1263,7 +1262,6 @@ export async function tokensRoutes(app: FastifyInstance) {
     invalidateTokenRouterCache();
     return { success: true };
   });
-
   // Rebuild routes/channels from model availability.
   app.post<{ Body?: { refreshModels?: boolean; wait?: boolean } }>('/api/routes/rebuild', async (request, reply) => {
     const body = (request.body || {}) as { refreshModels?: boolean };
@@ -1305,4 +1303,3 @@ export async function tokensRoutes(app: FastifyInstance) {
     });
   });
 }
-

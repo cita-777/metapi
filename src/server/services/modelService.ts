@@ -361,7 +361,7 @@ export async function refreshModelsForAccount(
         eq(schema.modelAvailability.isManual, true),
       ))
       .all()
-    ).map((r) => r.modelName),
+    ).map((r) => r.modelName.toLowerCase()),
   );
 
   if (isSiteDisabled(site.status)) {
@@ -386,7 +386,7 @@ export async function refreshModelsForAccount(
         throw new Error('未获取到可用模型');
       }
 
-      const newCodexModels = codexModels.filter((m) => !manualModelNames.has(m));
+      const newCodexModels = codexModels.filter((m) => !manualModelNames.has(m.toLowerCase()));
       if (newCodexModels.length > 0) {
         await db.insert(schema.modelAvailability).values(
           newCodexModels.map((modelName) => ({
@@ -460,7 +460,7 @@ export async function refreshModelsForAccount(
       if (claudeModels.length === 0) {
         throw new Error('未获取到可用模型');
       }
-      const newClaudeModels = claudeModels.filter((m) => !manualModelNames.has(m));
+      const newClaudeModels = claudeModels.filter((m) => !manualModelNames.has(m.toLowerCase()));
       if (newClaudeModels.length > 0) {
         await db.insert(schema.modelAvailability).values(
           newClaudeModels.map((modelName) => ({
@@ -553,7 +553,7 @@ export async function refreshModelsForAccount(
           `gemini cli oauth validation timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
         );
       }
-      const newGeminiModels = GEMINI_CLI_STATIC_MODELS.filter((m) => !manualModelNames.has(m));
+      const newGeminiModels = GEMINI_CLI_STATIC_MODELS.filter((m) => !manualModelNames.has(m.toLowerCase()));
       if (newGeminiModels.length > 0) {
         await db.insert(schema.modelAvailability).values(
           newGeminiModels.map((modelName) => ({
@@ -628,7 +628,7 @@ export async function refreshModelsForAccount(
         throw new Error('未获取到可用模型');
       }
 
-      const newAntigravityModels = antigravityModels.filter((m) => !manualModelNames.has(m));
+      const newAntigravityModels = antigravityModels.filter((m) => !manualModelNames.has(m.toLowerCase()));
       if (newAntigravityModels.length > 0) {
         await db.insert(schema.modelAvailability).values(
           newAntigravityModels.map((modelName) => ({
@@ -746,7 +746,7 @@ export async function refreshModelsForAccount(
     }
   }
 
-  const accountModels = new Set<string>();
+  const accountModels = new Map<string, string>();   // lowercase key → original name (first-wins)
   const modelLatency = new Map<string, number | null>();
   let scannedTokenCount = 0;
   let discoveredByCredential = false;
@@ -759,14 +759,15 @@ export async function refreshModelsForAccount(
 
   const mergeDiscoveredModels = (models: string[], latencyMs: number | null) => {
     for (const modelName of models) {
-      accountModels.add(modelName);
-      const prev = modelLatency.get(modelName);
+      const key = modelName.toLowerCase();
+      if (!accountModels.has(key)) accountModels.set(key, modelName);
+      const prev = modelLatency.get(key);
       if (prev === undefined || prev === null) {
-        modelLatency.set(modelName, latencyMs);
+        modelLatency.set(key, latencyMs);
         continue;
       }
       if (latencyMs === null) continue;
-      if (latencyMs < prev) modelLatency.set(modelName, latencyMs);
+      if (latencyMs < prev) modelLatency.set(key, latencyMs);
     }
   };
 
@@ -862,14 +863,14 @@ export async function refreshModelsForAccount(
   }
 
   const checkedAt = new Date().toISOString();
-  const newAccountModels = Array.from(accountModels).filter((m) => !manualModelNames.has(m));
+  const newAccountModels = Array.from(accountModels.values()).filter((m) => !manualModelNames.has(m.toLowerCase()));
   if (newAccountModels.length > 0) {
     await db.insert(schema.modelAvailability).values(
       newAccountModels.map((modelName) => ({
         accountId: account.id,
         modelName,
         available: true,
-        latencyMs: modelLatency.get(modelName) ?? null,
+        latencyMs: modelLatency.get(modelName.toLowerCase()) ?? null,
         checkedAt,
       })),
     ).run();
@@ -882,7 +883,7 @@ export async function refreshModelsForAccount(
     checkedAt,
   });
 
-  const modelsPreview = Array.from(accountModels).slice(0, 10);
+  const modelsPreview = Array.from(accountModels.values()).slice(0, 10);
   return buildSuccessfulRefreshResult({
     accountId,
     modelCount: accountModels.size,
@@ -944,12 +945,12 @@ export async function rebuildTokenRoutesFromAvailability() {
   const disabledModelsBySite = new Map<number, Set<string>>();
   for (const row of disabledModelRows) {
     if (!disabledModelsBySite.has(row.siteId)) disabledModelsBySite.set(row.siteId, new Set());
-    disabledModelsBySite.get(row.siteId)!.add(row.modelName);
+    disabledModelsBySite.get(row.siteId)!.add(row.modelName.toLowerCase());
   }
 
   function isModelDisabledForSite(siteId: number, modelName: string): boolean {
     const disabled = disabledModelsBySite.get(siteId);
-    return !!disabled && disabled.has(modelName);
+    return !!disabled && disabled.has(modelName.toLowerCase());
   }
 
   // Load global brand filter
