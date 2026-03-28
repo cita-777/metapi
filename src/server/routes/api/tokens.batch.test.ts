@@ -154,4 +154,29 @@ describe('PUT /api/channels/batch', () => {
     expect(dbA?.manualOverride).toBe(true);
     expect(dbB?.manualOverride).toBe(true);
   });
+
+  it('reports the number of routes actually updated in route batch operations', async () => {
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4o-mini',
+      enabled: true,
+    }).returning().get();
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/routes/batch',
+      payload: {
+        ids: [route.id, route.id + 999],
+        action: 'disable',
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      success: true,
+      updatedCount: 1,
+    });
+
+    const updatedRoute = await db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, route.id)).get();
+    expect(updatedRoute?.enabled).toBe(false);
+  });
 });

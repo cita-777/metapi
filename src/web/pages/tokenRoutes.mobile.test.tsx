@@ -11,6 +11,7 @@ const { apiMock, getBrandMock } = vi.hoisted(() => ({
     getModelTokenCandidates: vi.fn(),
     getRouteDecisionsBatch: vi.fn(),
     getRouteWideDecisionsBatch: vi.fn(),
+    batchUpdateRoutes: vi.fn(),
     updateRoute: vi.fn(),
     addRoute: vi.fn(),
   },
@@ -67,6 +68,7 @@ async function flushMicrotasks() {
 
 describe('TokenRoutes mobile actions', () => {
   const originalIntersectionObserver = globalThis.IntersectionObserver;
+  const originalWindow = (globalThis as { window?: { confirm?: (message?: string) => boolean } }).window;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -115,13 +117,23 @@ describe('TokenRoutes mobile actions', () => {
     apiMock.getModelTokenCandidates.mockResolvedValue({ models: {} });
     apiMock.getRouteDecisionsBatch.mockResolvedValue({ decisions: {} });
     apiMock.getRouteWideDecisionsBatch.mockResolvedValue({ decisions: {} });
+    apiMock.batchUpdateRoutes.mockResolvedValue({ success: true, updatedCount: 1 });
     apiMock.updateRoute.mockResolvedValue({});
     apiMock.addRoute.mockResolvedValue({});
+    (globalThis as { window?: { confirm?: (message?: string) => boolean } }).window = {
+      ...(originalWindow || {}),
+      confirm: vi.fn(() => true),
+    };
   });
 
   afterEach(() => {
     vi.clearAllMocks();
     globalThis.IntersectionObserver = originalIntersectionObserver;
+    if (originalWindow) {
+      (globalThis as { window?: { confirm?: (message?: string) => boolean } }).window = originalWindow;
+    } else {
+      delete (globalThis as { window?: { confirm?: (message?: string) => boolean } }).window;
+    }
   });
 
   it('shows mobile detail expansion and direct management actions', async () => {
@@ -162,6 +174,52 @@ describe('TokenRoutes mobile actions', () => {
       expect(text).toContain('user_a');
       expect(text).toContain('token-a');
       expect(text).toContain('site-a');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('lets mobile users select a route and batch disable it', async () => {
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const batchModeButton = findButtonByText(root!.root, '批量操作');
+      await act(async () => {
+        batchModeButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const routeCheckbox = root!.root.find((node) => (
+        node.type === 'input'
+        && node.props.type === 'checkbox'
+        && node.props['data-testid'] === 'route-select-1'
+      ));
+
+      await act(async () => {
+        routeCheckbox.props.onChange({ target: { checked: true } });
+      });
+      await flushMicrotasks();
+
+      const batchDisableButton = findButtonByText(root!.root, '批量禁用');
+      await act(async () => {
+        batchDisableButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(globalThis.window.confirm).toHaveBeenCalledWith('确认批量禁用 1 条路由？');
+      expect(apiMock.batchUpdateRoutes).toHaveBeenCalledWith({ ids: [1], action: 'disable' });
+      expect(collectText(root!.root)).toContain('批量操作');
     } finally {
       root?.unmount();
     }

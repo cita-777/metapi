@@ -1142,7 +1142,7 @@ export async function tokensRoutes(app: FastifyInstance) {
 
     const enabled = action === 'enable';
     const now = new Date().toISOString();
-    await db.update(schema.tokenRoutes)
+    const updateResult = await db.update(schema.tokenRoutes)
       .set({ enabled, updatedAt: now })
       .where(inArray(schema.tokenRoutes.id, ids))
       .run();
@@ -1151,7 +1151,7 @@ export async function tokensRoutes(app: FastifyInstance) {
     await clearDependentExplicitGroupSnapshotsBySourceRouteIds(ids);
     invalidateTokenRouterCache();
 
-    return { success: true, updatedCount: ids.length };
+    return { success: true, updatedCount: Number(updateResult?.changes || 0) };
   });
   // Add a channel to a route
   app.post<{ Params: { id: string }; Body: { accountId: number; tokenId?: number; sourceModel?: string; priority?: number; weight?: number } }>('/api/routes/:id/channels', async (request, reply) => {

@@ -1518,6 +1518,7 @@ export default function TokenRoutes() {
           const exactRoute = isRouteExactModel(route);
           const explicitGroupRoute = isExplicitGroupRoute(route);
           const channelManagementDisabled = explicitGroupRoute;
+          const routeTitle = resolveRouteTitle(route);
 
           const isSelectable = selectableRouteIds.has(route.id);
           const isSelected = selectedRouteIds.has(route.id);
@@ -1526,11 +1527,28 @@ export default function TokenRoutes() {
             return (
               <div key={route.id} style={{ display: 'grid', gap: 8 }}>
                 <MobileCard
-                  title={resolveRouteTitle(route)}
+                  title={routeTitle}
                   headerActions={(
-                    <span className={`badge ${isReadOnlyRoute ? 'badge-muted' : (route.enabled ? 'badge-success' : 'badge-muted')}`} style={{ fontSize: 10 }}>
-                      {isReadOnlyRoute ? tr('未生成') : (route.enabled ? tr('启用') : tr('禁用'))}
-                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {batchSelectMode && isSelectable && (
+                        <label
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: 12 }}
+                        >
+                          <input
+                            data-testid={`route-select-${route.id}`}
+                            aria-label={`选择路由 ${routeTitle}`}
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleRouteSelection(route.id)}
+                            style={{ width: 16, height: 16, cursor: 'pointer', accentColor: 'var(--color-primary, #4f46e5)' }}
+                          />
+                          <span>{tr('选择')}</span>
+                        </label>
+                      )}
+                      <span className={`badge ${isReadOnlyRoute ? 'badge-muted' : (route.enabled ? 'badge-success' : 'badge-muted')}`} style={{ fontSize: 10 }}>
+                        {isReadOnlyRoute ? tr('未生成') : (route.enabled ? tr('启用') : tr('禁用'))}
+                      </span>
+                    </div>
                   )}
                   footerActions={(
                     <>
@@ -1671,6 +1689,8 @@ export default function TokenRoutes() {
                   }}
                 >
                   <input
+                    data-testid={`route-select-${route.id}`}
+                    aria-label={`选择路由 ${routeTitle}`}
                     type="checkbox"
                     checked={isSelected}
                     onChange={() => toggleRouteSelection(route.id)}
