@@ -237,7 +237,7 @@ export const antigravityOauthProvider: OAuthProviderDefinition = {
     requiresProjectId: false,
     supportsDirectAccountRouting: true,
     supportsCloudValidation: true,
-    supportsNativeProxy: false,
+    supportsNativeProxy: true,
   },
   site: {
     name: 'Google Antigravity OAuth',

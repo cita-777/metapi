@@ -382,6 +382,9 @@ describe('oauth routes', { timeout: 15_000 }, () => {
         host: 'metapi.example',
         'x-forwarded-proto': 'https',
       },
+      payload: {
+        proxyUrl: 'http://127.0.0.1:7890',
+      },
     });
     const startBody = startResponse.json() as { state: string };
 
@@ -397,6 +400,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     expect(String(fetchMock.mock.calls[0]?.[1]?.body || '')).toContain(
       'redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback',
     );
+    expect(fetchMock.mock.calls[0]?.[1]?.dispatcher).toBeDefined();
 
     const sessionResponse = await app.inject({
       method: 'GET',
@@ -435,6 +439,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     });
     expect(JSON.parse(accounts[0]?.extraConfig || '{}')).toMatchObject({
       credentialMode: 'session',
+      proxyUrl: 'http://127.0.0.1:7890',
       oauth: {
         email: 'codex-user@example.com',
         planType: 'plus',
@@ -449,6 +454,70 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const models = await db.select().from(schema.modelAvailability).all();
     const modelNames = models.map((row) => row.modelName);
     expect(modelNames.sort()).toEqual(['gpt-5', 'gpt-5.2-codex', 'gpt-5.4']);
+  });
+
+  it('uses the stored account proxy when refreshing a codex oauth access token', async () => {
+    const oauthService = await import('../../services/oauth/service.js');
+    const refreshJwt = buildJwt({
+      email: 'codex-refreshed@example.com',
+      'https://api.openai.com/auth': {
+        chatgpt_account_id: 'chatgpt-account-refresh',
+        chatgpt_plan_type: 'team',
+      },
+    });
+    const site = await db.insert(schema.sites).values({
+      name: 'ChatGPT Codex OAuth',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+    const existing = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'codex-existing@example.com',
+      accessToken: 'oauth-access-token-old',
+      apiToken: null,
+      checkinEnabled: false,
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-account-refresh',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        proxyUrl: 'http://127.0.0.1:7890',
+        oauth: {
+          email: 'codex-existing@example.com',
+          refreshToken: 'oauth-refresh-token-old',
+          idToken: refreshJwt,
+        },
+      }),
+    }).returning().get();
+
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        access_token: 'oauth-access-token-new',
+        refresh_token: 'oauth-refresh-token-new',
+        id_token: refreshJwt,
+        expires_in: 3600,
+        token_type: 'Bearer',
+      }),
+      text: async () => JSON.stringify({ ok: true }),
+    });
+
+    const refreshed = await oauthService.refreshOauthAccessToken(existing.id);
+
+    expect(refreshed.accessToken).toBe('oauth-access-token-new');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[1]?.dispatcher).toBeDefined();
+
+    const updated = await db.select().from(schema.accounts).where(eq(schema.accounts.id, existing.id)).get();
+    expect(updated?.accessToken).toBe('oauth-access-token-new');
+    expect(JSON.parse(updated?.extraConfig || '{}')).toMatchObject({
+      proxyUrl: 'http://127.0.0.1:7890',
+      oauth: {
+        refreshToken: 'oauth-refresh-token-new',
+      },
+    });
   });
 
   it('includes dispatcher for codex token exchange when oauth site enables the system proxy', async () => {

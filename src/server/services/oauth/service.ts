@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { db, schema } from '../../db/index.js';
-import { mergeAccountExtraConfig } from '../accountExtraConfig.js';
+import { getProxyUrlFromExtraConfig, mergeAccountExtraConfig } from '../accountExtraConfig.js';
 import { refreshModelsForAccount } from '../modelService.js';
 import * as routeRefreshWorkflow from '../routeRefreshWorkflow.js';
 import {
@@ -200,6 +200,7 @@ async function upsertOauthAccount(input: {
     providerData?: Record<string, unknown>;
   };
   rebindAccountId?: number;
+  proxyUrl?: string;
 }) {
   const site = await ensureOauthSite(input.definition);
   const existing = await findExistingOauthAccount({
@@ -228,6 +229,7 @@ async function upsertOauthAccount(input: {
   });
   const extraConfig = mergeAccountExtraConfig(existing?.extraConfig, {
     credentialMode: 'session',
+    proxyUrl: input.proxyUrl ?? undefined,
     oauth: buildStoredOauthState(oauth),
   });
 
@@ -284,6 +286,7 @@ export async function startOauthProviderFlow(input: {
   provider: string;
   rebindAccountId?: number;
   projectId?: string;
+  proxyUrl?: string;
   requestOrigin?: string;
 }) {
   const definition = getOAuthProviderDefinition(input.provider);
@@ -300,6 +303,7 @@ export async function startOauthProviderFlow(input: {
     redirectUri,
     rebindAccountId: input.rebindAccountId,
     projectId: input.projectId,
+    proxyUrl: input.proxyUrl,
   });
   return {
     provider: input.provider,
@@ -355,7 +359,7 @@ export async function handleOauthCallback(input: {
   }
 
   try {
-    const proxyUrl = await resolveOauthProviderProxyUrl(input.provider);
+    const proxyUrl = session.proxyUrl || await resolveOauthProviderProxyUrl(input.provider);
     const exchange = await definition.exchangeAuthorizationCode({
       code,
       state: input.state,
@@ -368,6 +372,7 @@ export async function handleOauthCallback(input: {
       definition,
       exchange,
       rebindAccountId: session.rebindAccountId,
+      proxyUrl: session.proxyUrl || undefined,
     });
     if (!account) {
       markOauthSessionError(input.state, 'failed to persist oauth account');
@@ -534,6 +539,7 @@ export async function listOauthConnections(options: {
       routeChannelCount: routeChannelCountByAccount.get(row.accounts.id) || 0,
       lastModelSyncAt: oauth.lastModelSyncAt,
       lastModelSyncError: oauth.lastModelSyncError,
+      proxyUrl: getProxyUrlFromExtraConfig(row.accounts.extraConfig),
       site: {
         id: row.sites.id,
         name: row.sites.name,
@@ -567,7 +573,7 @@ export async function refreshOauthConnectionQuota(accountId: number) {
   return { success: true, quota };
 }
 
-export async function startOauthRebindFlow(accountId: number, requestOrigin?: string) {
+export async function startOauthRebindFlow(accountId: number, requestOrigin?: string, proxyUrl?: string) {
   const account = await db.select().from(schema.accounts)
     .where(eq(schema.accounts.id, accountId))
     .get();
@@ -582,6 +588,7 @@ export async function startOauthRebindFlow(accountId: number, requestOrigin?: st
     provider: oauth.provider,
     rebindAccountId: accountId,
     projectId: oauth.projectId,
+    proxyUrl: proxyUrl ?? getProxyUrlFromExtraConfig(account.extraConfig) ?? undefined,
     requestOrigin,
   });
 }
@@ -637,7 +644,10 @@ export async function refreshOauthAccessToken(accountId: number) {
       projectId: oauth.projectId,
       providerData: oauth.providerData,
     },
-    proxyUrl: await resolveOauthAccountProxyUrl(account.siteId),
+    proxyUrl: await resolveOauthAccountProxyUrl({
+      siteId: account.siteId,
+      extraConfig: account.extraConfig,
+    }),
   });
   const nextOauth = buildOauthInfoFromAccount(account, {
     provider: oauth.provider,

@@ -221,6 +221,25 @@ describe('OAuthManagement page', () => {
         await flushMicrotasks();
       });
 
+      const proxyToggle = root!.root.find((node) => (
+        node.type === 'input'
+        && node.props.type === 'checkbox'
+        && node.props['data-oauth-setting'] === 'use-proxy'
+      ));
+
+      await act(async () => {
+        proxyToggle.props.onChange({ target: { checked: true } });
+      });
+
+      const proxyInput = root!.root.find((node) => (
+        node.type === 'input'
+        && node.props['data-oauth-setting'] === 'proxy-url'
+      ));
+
+      await act(async () => {
+        proxyInput.props.onChange({ target: { value: 'http://127.0.0.1:7890' } });
+      });
+
       const startButton = root!.root.find((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
@@ -234,7 +253,10 @@ describe('OAuthManagement page', () => {
         await flushMicrotasks();
       });
 
-      expect(apiMock.startOAuthProvider).toHaveBeenCalledWith('codex', { projectId: undefined });
+      expect(apiMock.startOAuthProvider).toHaveBeenCalledWith('codex', {
+        projectId: undefined,
+        proxyUrl: 'http://127.0.0.1:7890',
+      });
       expect(openMock).toHaveBeenCalledWith(
         'https://auth.openai.com/oauth/authorize?state=oauth-state-123',
         'oauth-codex',
@@ -647,7 +669,7 @@ describe('OAuthManagement page', () => {
       });
 
       expect(promptMock).not.toHaveBeenCalled();
-      expect(apiMock.rebindOAuthConnection).toHaveBeenCalledWith(11);
+      expect(apiMock.rebindOAuthConnection).toHaveBeenCalledWith(11, {});
       expect(openMock).toHaveBeenCalledWith(
         'https://accounts.google.com/o/oauth2/v2/auth?state=gemini-rebind-123',
         'oauth-gemini-cli',
