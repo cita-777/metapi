@@ -529,7 +529,7 @@ export async function refreshModelsForAccount(
       try {
         await withTimeout(
           () => withAccountProxyOverride(accountProxyUrl,
-            () => validateGeminiCliOauthConnection({ account: discoveryAccount })),
+            () => validateGeminiCliOauthConnection({ site, account: discoveryAccount })),
           MODEL_DISCOVERY_TIMEOUT_MS,
           `gemini cli oauth validation timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
         );
@@ -548,7 +548,7 @@ export async function refreshModelsForAccount(
         };
         await withTimeout(
           () => withAccountProxyOverride(accountProxyUrl,
-            () => validateGeminiCliOauthConnection({ account: discoveryAccount })),
+            () => validateGeminiCliOauthConnection({ site, account: discoveryAccount })),
           MODEL_DISCOVERY_TIMEOUT_MS,
           `gemini cli oauth validation timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
         );

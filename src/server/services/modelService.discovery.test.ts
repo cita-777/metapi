@@ -75,7 +75,12 @@ describe('refreshModelsForAccount credential discovery', () => {
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
+    await db.delete(schema.settings).run();
     await db.delete(schema.sites).run();
+    const { config } = await import('../config.js');
+    config.systemProxyUrl = '';
+    const { invalidateSiteProxyCache } = await import('./siteProxy.js');
+    invalidateSiteProxyCache();
   });
 
   afterAll(() => {
@@ -868,6 +873,62 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(undiciFetchMock).toHaveBeenCalledTimes(1);
     expect(proxyAgentCtorMock).toHaveBeenCalledWith('http://127.0.0.1:1080');
     expect(String(undiciFetchMock.mock.calls[0]?.[0] || '')).toContain('/projects/project-proxy-demo/services/');
+    expect(undiciFetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: 'GET',
+      dispatcher: expect.any(MockProxyAgent),
+    });
+  });
+
+  it('inherits site system proxy for gemini oauth validation requests', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockRejectedValue(new Error('gemini oauth validation should not call adapter.getModels'));
+    undiciFetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        state: 'ENABLED',
+      }),
+      text: async () => JSON.stringify({ state: 'ENABLED' }),
+    });
+
+    const { config } = await import('../config.js');
+    config.systemProxyUrl = 'http://127.0.0.1:1081';
+
+    const site = await db.insert(schema.sites).values({
+      name: 'gemini-site-proxy-site',
+      url: 'https://cloudcode-pa.googleapis.com',
+      platform: 'gemini-cli',
+      status: 'active',
+      useSystemProxy: true,
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'gemini-site-proxy-user@example.com',
+      accessToken: 'gemini-access-token',
+      apiToken: null,
+      status: 'active',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'gemini-cli',
+          projectId: 'project-site-proxy-demo',
+          email: 'gemini-site-proxy-user@example.com',
+        },
+      }),
+    }).returning().get();
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      status: 'success',
+      modelCount: expect.any(Number),
+    });
+    expect(undiciFetchMock).toHaveBeenCalledTimes(1);
+    expect(proxyAgentCtorMock).toHaveBeenCalledWith('http://127.0.0.1:1081');
+    expect(String(undiciFetchMock.mock.calls[0]?.[0] || '')).toContain('/projects/project-site-proxy-demo/services/');
     expect(undiciFetchMock.mock.calls[0]?.[1]).toMatchObject({
       method: 'GET',
       dispatcher: expect.any(MockProxyAgent),
