@@ -238,11 +238,13 @@ describe('ProxyLogs server-driven page', () => {
       expect(text).toContain('推测');
       expect(text).toContain('下游 Key: 移动端灰度');
     } finally {
-      root?.unmount();
+      await act(async () => {
+        root?.unmount();
+      });
     }
   });
 
-  it('allows toggling proxy debug settings directly from the proxy logs page', async () => {
+  it('shows proxy debug traces inline and edits settings through the modal', async () => {
     let root!: WebTestRenderer;
 
     try {
@@ -257,21 +259,21 @@ describe('ProxyLogs server-driven page', () => {
       });
       await flushMicrotasks();
 
-      const debugButton = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.onClick === 'function'
-        && collectText(node).includes('调试')
-      ));
-
-      await act(async () => {
-        debugButton.props.onClick();
-      });
-      await flushMicrotasks();
-
       expect(apiMock.getRuntimeSettings).toHaveBeenCalled();
       expect(apiMock.getProxyDebugTraces).toHaveBeenCalled();
       expect(collectText(root.root)).toContain('最近调试追踪');
       expect(collectText(root.root)).toContain('sess-debug-1');
+
+      const debugSettingsButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '调试设置'
+      ));
+
+      await act(async () => {
+        debugSettingsButton.props.onClick();
+      });
+      await flushMicrotasks();
 
       const traceEnabledToggle = root.root.find((node) => (
         node.type === 'input'
@@ -318,6 +320,51 @@ describe('ProxyLogs server-driven page', () => {
       }));
     } finally {
       root?.unmount();
+    }
+  });
+
+  it('polls debug traces after tracing is enabled so new results are not hidden behind the settings modal', async () => {
+    vi.useFakeTimers();
+    apiMock.getRuntimeSettings.mockResolvedValue({
+      proxyDebugTraceEnabled: true,
+      proxyDebugCaptureHeaders: true,
+      proxyDebugCaptureBodies: false,
+      proxyDebugCaptureStreamChunks: false,
+      proxyDebugTargetSessionId: '',
+      proxyDebugTargetClientKind: '',
+      proxyDebugTargetModel: '',
+      proxyDebugRetentionHours: 24,
+      proxyDebugMaxBodyBytes: 262144,
+    });
+
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const initialCalls = apiMock.getProxyDebugTraces.mock.calls.length;
+
+      await act(async () => {
+        vi.advanceTimersByTime(2100);
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getProxyDebugTraces.mock.calls.length).toBeGreaterThan(initialCalls);
+    } finally {
+      await act(async () => {
+        root?.unmount();
+      });
+      vi.runOnlyPendingTimers();
+      vi.useRealTimers();
     }
   });
 
