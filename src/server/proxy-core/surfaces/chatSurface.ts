@@ -40,6 +40,7 @@ import {
   unwrapGeminiCliPayload,
 } from '../../routes/proxy/geminiCliCompat.js';
 import { summarizeConversationFileInputsInOpenAiBody } from '../capabilities/conversationFileCapabilities.js';
+import { readRuntimeResponseText } from '../executors/types.js';
 import { detectDownstreamClientContext } from '../../routes/proxy/downstreamClientContext.js';
 import { canRetryProxyChannel, getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 import {
@@ -263,6 +264,7 @@ export async function handleChatSurfaceRequest(
     };
     let startTime = Date.now();
     const leaseResult = await acquireSurfaceChannelLease({
+      stickySessionKey,
       selected,
     });
     if (leaseResult.status === 'timeout') {
@@ -394,7 +396,7 @@ export async function handleChatSurfaceRequest(
         });
         let rawText = '';
         if (!upstreamContentType.includes('text/event-stream')) {
-          const fallbackText = await upstream.text();
+          const fallbackText = await readRuntimeResponseText(upstream);
           rawText = fallbackText;
           if (looksLikeResponsesSseText(fallbackText)) {
             startSseResponse();
@@ -578,7 +580,7 @@ export async function handleChatSurfaceRequest(
         rawText = collected.rawText;
         upstreamData = collected.payload;
       } else {
-        rawText = await upstream.text();
+        rawText = await readRuntimeResponseText(upstream);
         if (looksLikeResponsesSseText(rawText)) {
           upstreamData = collectResponsesFinalPayloadFromSseText(rawText, modelName).payload;
         } else {
@@ -788,6 +790,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
     const oauth = getOauthInfoFromAccount(selected.account);
     const startTime = Date.now();
     const leaseResult = await acquireSurfaceChannelLease({
+      stickySessionKey,
       selected,
     });
     if (leaseResult.status === 'timeout') {
@@ -869,7 +872,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
 
       const latency = Date.now() - startTime;
       const contentType = upstream.headers.get('content-type') || 'application/json';
-      const text = await upstream.text();
+      const text = await readRuntimeResponseText(upstream);
       let payload: unknown = text;
       try {
         payload = JSON.parse(text);

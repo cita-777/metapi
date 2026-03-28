@@ -1,10 +1,10 @@
+import type { Response as UndiciResponse } from 'undici';
 import {
   buildMinimalJsonHeadersForCompatibility,
   isEndpointDowngradeError,
   isUnsupportedMediaTypeError,
   type CompatibilityEndpoint,
 } from '../../shared/endpointCompatibility.js';
-import type { EndpointAttemptContext, EndpointRecoverResult } from '../../../routes/proxy/endpointFlow.js';
 import {
   buildResponsesCompatibilityBodies,
   buildResponsesCompatibilityHeaderCandidates,
@@ -18,6 +18,20 @@ type CompatibilityRequest = {
   headers: Record<string, string>;
   body: Record<string, unknown>;
 };
+
+type EndpointAttemptContext = {
+  request: CompatibilityRequest;
+  targetUrl: string;
+  response: UndiciResponse;
+  rawErrText: string;
+};
+
+type EndpointRecoverResult = {
+  upstream: UndiciResponse;
+  upstreamPath: string;
+  request?: CompatibilityRequest;
+  targetUrl?: string;
+} | null;
 
 type UpstreamResponse = Exclude<EndpointRecoverResult, null>['upstream'];
 

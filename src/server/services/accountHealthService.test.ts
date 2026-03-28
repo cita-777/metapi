@@ -79,6 +79,28 @@ describe('accountHealthService', () => {
     });
   });
 
+  it('returns stored runtime health when extra config is already a parsed object', () => {
+    const health = buildRuntimeHealthForAccount({
+      accountStatus: 'active',
+      siteStatus: 'active',
+      extraConfig: {
+        runtimeHealth: {
+          state: 'healthy',
+          reason: '余额刷新成功',
+          source: 'balance',
+          checkedAt: '2026-02-25T12:00:00.000Z',
+        },
+      },
+    });
+
+    expect(health).toMatchObject({
+      state: 'healthy',
+      reason: '余额刷新成功',
+      source: 'balance',
+      checkedAt: '2026-02-25T12:00:00.000Z',
+    });
+  });
+
   it('falls back to unknown when no runtime health info exists', () => {
     const health = buildRuntimeHealthForAccount({
       accountStatus: 'active',

@@ -62,4 +62,27 @@ describe('today income reward service', () => {
     });
     expect(preferParsed).toBe(1.5);
   });
+
+  it('reads today income snapshots from parsed extraConfig objects', () => {
+    const day = formatLocalDate(new Date('2026-02-25T08:00:00.000Z'));
+    const extraConfig = {
+      todayIncomeSnapshot: {
+        day,
+        baseline: 8,
+        latest: 10.2,
+        updatedAt: '2026-02-25T12:00:00.000Z',
+      },
+    };
+
+    expect(getTodayIncomeValue(extraConfig, day)).toBeCloseTo(10.2, 6);
+    expect(getTodayIncomeDelta(extraConfig, day)).toBeCloseTo(2.2, 6);
+  });
+
+  it('preserves missing extraConfig when income is invalid', () => {
+    expect(updateTodayIncomeSnapshot(null, Number.NaN)).toBeNull();
+    expect(updateTodayIncomeSnapshot(undefined, -1)).toBeNull();
+    expect(updateTodayIncomeSnapshot('', Number.NaN)).toBeNull();
+    expect(updateTodayIncomeSnapshot('{"demo":true}', Number.NaN)).toBe('{"demo":true}');
+    expect(updateTodayIncomeSnapshot({ demo: true }, Number.NaN)).toBe('{"demo":true}');
+  });
 });

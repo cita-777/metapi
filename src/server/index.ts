@@ -137,6 +137,11 @@ function applyRuntimeSettings(settingsMap: Map<string, string>) {
   const systemProxyUrl = parseSettingFromMap<string>(settingsMap, 'system_proxy_url');
   if (typeof systemProxyUrl === 'string') config.systemProxyUrl = systemProxyUrl;
 
+  const codexUpstreamWebsocketEnabled = parseSettingFromMap<boolean>(settingsMap, 'codex_upstream_websocket_enabled');
+  if (typeof codexUpstreamWebsocketEnabled === 'boolean') {
+    config.codexUpstreamWebsocketEnabled = codexUpstreamWebsocketEnabled;
+  }
+
   const proxyErrorKeywords = parseSettingFromMap<string[] | string>(settingsMap, 'proxy_error_keywords');
   if (proxyErrorKeywords !== undefined) {
     config.proxyErrorKeywords = toStringList(proxyErrorKeywords);
@@ -201,6 +206,24 @@ function applyRuntimeSettings(settingsMap: Map<string, string>) {
   const logCleanupRetentionDays = parseSettingFromMap<number>(settingsMap, 'log_cleanup_retention_days');
   if (typeof logCleanupRetentionDays === 'number' && Number.isFinite(logCleanupRetentionDays) && logCleanupRetentionDays >= 1) {
     config.logCleanupRetentionDays = normalizeLogCleanupRetentionDays(logCleanupRetentionDays);
+  }
+
+  const proxySessionChannelConcurrencyLimit = parseSettingFromMap<number>(settingsMap, 'proxy_session_channel_concurrency_limit');
+  if (
+    typeof proxySessionChannelConcurrencyLimit === 'number'
+    && Number.isFinite(proxySessionChannelConcurrencyLimit)
+    && proxySessionChannelConcurrencyLimit >= 0
+  ) {
+    config.proxySessionChannelConcurrencyLimit = Math.trunc(proxySessionChannelConcurrencyLimit);
+  }
+
+  const proxySessionChannelQueueWaitMs = parseSettingFromMap<number>(settingsMap, 'proxy_session_channel_queue_wait_ms');
+  if (
+    typeof proxySessionChannelQueueWaitMs === 'number'
+    && Number.isFinite(proxySessionChannelQueueWaitMs)
+    && proxySessionChannelQueueWaitMs >= 0
+  ) {
+    config.proxySessionChannelQueueWaitMs = Math.trunc(proxySessionChannelQueueWaitMs);
   }
 
   const routingWeights = parseSettingFromMap<Partial<typeof config.routingWeights>>(settingsMap, 'routing_weights');

@@ -14,6 +14,7 @@ import { tokenRouter } from '../../services/tokenRouter.js';
 import { buildOauthProviderHeaders } from '../../services/oauth/service.js';
 import { openAiResponsesTransformer } from '../../transformers/openai/responses/index.js';
 import { buildUpstreamEndpointRequest } from './upstreamEndpoint.js';
+import { config } from '../../config.js';
 
 const installedApps = new WeakSet<FastifyInstance>();
 const WS_TURN_STATE_HEADER = 'x-codex-turn-state';
@@ -67,6 +68,7 @@ function toBooleanLike(value: unknown): boolean | null {
 }
 
 function parseExtraConfigRecord(extraConfig: unknown): Record<string, unknown> | null {
+  if (isRecord(extraConfig)) return extraConfig;
   if (typeof extraConfig !== 'string') return null;
   try {
     const parsed = JSON.parse(extraConfig);
@@ -81,7 +83,6 @@ function readNestedRecord(value: unknown, key: string): Record<string, unknown> 
   const nested = value[key];
   return isRecord(nested) ? nested : null;
 }
-
 function selectedChannelModelMatches(
   selectedChannel: SelectedChannel | null,
   requestModel: string,
@@ -101,6 +102,7 @@ function selectedChannelSupportsCodexWebsocketTransport(
   const platform = asTrimmedString(selectedChannel.site?.platform).toLowerCase();
   if (platform !== 'codex') return false;
   if (!selectedChannelModelMatches(selectedChannel, requestModel)) return false;
+  if (!config.codexUpstreamWebsocketEnabled) return false;
 
   const extraConfig = parseExtraConfigRecord(selectedChannel.account.extraConfig);
   const oauth = readNestedRecord(extraConfig, 'oauth');

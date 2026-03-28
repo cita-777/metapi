@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { fetch, File as UndiciFile, FormData as UndiciFormData } from 'undici';
 import { config } from '../../config.js';
+import { readRuntimeResponseText } from '../../proxy-core/executors/types.js';
 
 type UndiciRequestInit = Parameters<typeof fetch>[1];
 
@@ -521,7 +522,7 @@ async function fetchProxyBuffered(
   });
 
   const contentType = upstream.headers.get('content-type') || '';
-  const text = await upstream.text();
+  const text = await readRuntimeResponseText(upstream);
 
   if (!upstream.ok) {
     throw new UpstreamProxyError(upstream.status, normalizeErrorPayload(text));
@@ -656,14 +657,14 @@ async function sendStreamingEnvelope(
   }
 
   if (!upstream.ok) {
-    const text = await upstream.text();
+    const text = await readRuntimeResponseText(upstream);
     cleanupClientListeners();
     return reply.code(upstream.status).send(normalizeErrorPayload(text));
   }
 
   const contentType = upstream.headers.get('content-type') || '';
-  const reader = upstream.body?.getReader();
-  if (!reader) {
+  const reader = contentType.includes('text/event-stream') ? upstream.body?.getReader() : null;
+  if (contentType.includes('text/event-stream') && !reader) {
     cleanupClientListeners();
     return reply.code(502).send({
       error: {
@@ -682,25 +683,30 @@ async function sendStreamingEnvelope(
 
   try {
     if (contentType.includes('text/event-stream')) {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value) {
-          reply.raw.write(Buffer.from(value));
+      const streamReader = reader!;
+      try {
+        while (true) {
+          const { done, value } = await streamReader.read();
+          if (done) break;
+          if (value) {
+            reply.raw.write(Buffer.from(value));
+          }
+        }
+      } finally {
+        try {
+          await streamReader.cancel();
+        } catch {
+          // no-op
+        } finally {
+          streamReader.releaseLock();
         }
       }
     } else {
-      let text = '';
-      const decoder = new TextDecoder('utf-8');
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value) {
-          text += decoder.decode(value, { stream: true });
-        }
+      const text = await readRuntimeResponseText(upstream);
+      for (const line of text.split(/\r?\n/)) {
+        reply.raw.write(`data: ${line}\n`);
       }
-      text += decoder.decode();
-      reply.raw.write(`data: ${text}\n\n`);
+      reply.raw.write('\n');
       reply.raw.write('data: [DONE]\n\n');
     }
   } catch (error) {
@@ -711,11 +717,6 @@ async function sendStreamingEnvelope(
       reply.raw.write(`event: error\ndata: ${message}\n\n`);
     }
   } finally {
-    try {
-      await reader.cancel();
-    } catch {
-      // no-op
-    }
     cleanupClientListeners();
     if (!reply.raw.writableEnded) {
       reply.raw.end();

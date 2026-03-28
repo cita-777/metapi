@@ -1022,21 +1022,26 @@ function isModelAllowedByDownstreamPolicy(requestedModel: string, policy: Downst
   return false;
 }
 
-function resolveMappedModel(requestedModel: string, modelMapping?: string | null): string {
-  if (!modelMapping) return requestedModel;
-
-  let parsed: unknown;
+function parseModelMappingRecord(modelMapping?: string | Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!modelMapping) return null;
+  if (typeof modelMapping === 'object' && !Array.isArray(modelMapping)) {
+    return modelMapping as Record<string, unknown>;
+  }
+  if (typeof modelMapping !== 'string') return null;
   try {
-    parsed = JSON.parse(modelMapping);
+    const parsed = JSON.parse(modelMapping);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    return parsed as Record<string, unknown>;
   } catch {
-    return requestedModel;
+    return null;
   }
+}
 
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return requestedModel;
-  }
+function resolveMappedModel(requestedModel: string, modelMapping?: string | Record<string, unknown> | null): string {
+  const parsed = parseModelMappingRecord(modelMapping);
+  if (!parsed) return requestedModel;
 
-  const entries = Object.entries(parsed as Record<string, unknown>)
+  const entries = Object.entries(parsed)
     .filter(([, value]) => typeof value === 'string' && value.trim().length > 0) as Array<[string, string]>;
 
   const exact = entries.find(([pattern]) => pattern === requestedModel);
@@ -2254,4 +2259,8 @@ export class TokenRouter {
 }
 
 export const tokenRouter = new TokenRouter();
+
+export const __tokenRouterTestUtils = {
+  resolveMappedModel,
+};
 

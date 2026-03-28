@@ -33,6 +33,8 @@ import {
   unwrapGeminiCliPayload,
 } from '../../routes/proxy/geminiCliCompat.js';
 import { isCodexResponsesSurface } from '../cliProfiles/codexProfile.js';
+import { readRuntimeResponseText } from '../executors/types.js';
+import { runCodexHttpSessionTask } from '../runtime/codexHttpSessionQueue.js';
 import {
   summarizeConversationFileInputsInOpenAiBody,
   summarizeConversationFileInputsInResponsesBody,
@@ -56,6 +58,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
 }
 
+function getCodexSessionHeaderValue(headers: Record<string, string>): string {
+  for (const [rawKey, rawValue] of Object.entries(headers)) {
+    const normalizedKey = rawKey.trim().toLowerCase();
+    if (normalizedKey === 'session_id' || normalizedKey === 'session-id') {
+      return String(rawValue || '').trim();
+    }
+  }
+  return '';
+}
 function isResponsesWebsocketTransportRequest(headers: Record<string, unknown>): boolean {
   return Object.entries(headers)
     .some(([rawKey, rawValue]) => rawKey.trim().toLowerCase() === 'x-metapi-responses-websocket-transport'
@@ -324,10 +335,23 @@ export async function handleOpenAiResponsesSurfaceRequest(
           runtime: endpointRequest.runtime,
         };
       };
-      const dispatchRequest = createSurfaceDispatchRequest({
+      const baseDispatchRequest = createSurfaceDispatchRequest({
         site: selected.site,
         accountExtraConfig: selected.account.extraConfig,
       });
+      const dispatchRequest = (
+        endpointRequest: BuiltEndpointRequest,
+        targetUrl?: string,
+      ) => {
+        if (!isCodexSite || endpointRequest.path !== '/responses') {
+          return baseDispatchRequest(endpointRequest, targetUrl);
+        }
+        const sessionId = getCodexSessionHeaderValue(endpointRequest.headers);
+        return runCodexHttpSessionTask(
+          sessionId,
+          () => baseDispatchRequest(endpointRequest, targetUrl),
+        );
+      };
       const endpointStrategy = openAiResponsesTransformer.compatibility.createEndpointStrategy({
         isStream: isStream || isCodexSite,
         requiresNativeResponsesFileUrl,
@@ -356,6 +380,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
 
 	      const startTime = Date.now();
 	      const leaseResult = await acquireSurfaceChannelLease({
+	        stickySessionKey,
 	        selected,
 	      });
 	      if (leaseResult.status === 'timeout') {
@@ -507,7 +532,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
             },
           });
           if (!upstreamContentType.includes('text/event-stream')) {
-            const rawText = await upstream.text();
+            const rawText = await readRuntimeResponseText(upstream);
             if (looksLikeResponsesSseText(rawText)) {
               startSseResponse();
               const streamResult = await streamSession.run(
@@ -614,7 +639,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
 
           let replayReader: ReturnType<typeof createSingleChunkStreamReader> | null = null;
           if (websocketTransportRequest) {
-            const rawText = await upstream.text();
+            const rawText = await readRuntimeResponseText(upstream);
             if (looksLikeResponsesSseText(rawText)) {
               try {
                 const collectedPayload = collectResponsesFinalPayloadFromSseText(rawText, modelName).payload;
@@ -745,7 +770,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
           rawText = collected.rawText;
           upstreamData = collected.payload;
         } else {
-          rawText = await upstream.text();
+          rawText = await readRuntimeResponseText(upstream);
           if (looksLikeResponsesSseText(rawText)) {
             upstreamData = collectResponsesFinalPayloadFromSseText(rawText, modelName).payload;
           } else {

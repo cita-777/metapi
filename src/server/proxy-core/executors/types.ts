@@ -119,9 +119,13 @@ function decodeRuntimeResponseBuffer(buffer: Buffer, contentEncoding: string | n
 export async function readRuntimeResponseText(
   response: RuntimeResponse,
 ): Promise<string> {
-  const contentEncoding = response.headers.get('content-encoding');
+  const contentEncoding = typeof response.headers?.get === 'function'
+    ? response.headers.get('content-encoding')
+    : null;
   if (!hasZstdContentEncoding(contentEncoding)) {
-    return response.text().catch(() => '');
+    return typeof response.text === 'function'
+      ? response.text().catch(() => '')
+      : '';
   }
 
   const rawBuffer = Buffer.from(await response.arrayBuffer());

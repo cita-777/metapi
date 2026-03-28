@@ -38,6 +38,9 @@ type RoutingWeights = typeof config.routingWeights;
 interface RuntimeSettingsBody {
   proxyToken?: string;
   systemProxyUrl?: string;
+  codexUpstreamWebsocketEnabled?: boolean;
+  proxySessionChannelConcurrencyLimit?: number;
+  proxySessionChannelQueueWaitMs?: number;
   checkinCron?: string;
   checkinScheduleMode?: 'cron' | 'interval';
   checkinIntervalHours?: number;
@@ -381,12 +384,29 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       config.systemProxyUrl = normalizeSiteProxyUrl(value) || '';
       return;
     }
+    case 'codex_upstream_websocket_enabled': {
+      if (typeof value !== 'boolean') return;
+      config.codexUpstreamWebsocketEnabled = value;
+      return;
+    }
     case 'proxy_error_keywords': {
       try {
         config.proxyErrorKeywords = parseProxyErrorKeywords(value);
       } catch {
         return;
       }
+      return;
+    }
+    case 'proxy_session_channel_concurrency_limit': {
+      const limit = Number(value);
+      if (!Number.isFinite(limit) || limit < 0) return;
+      config.proxySessionChannelConcurrencyLimit = Math.trunc(limit);
+      return;
+    }
+    case 'proxy_session_channel_queue_wait_ms': {
+      const queueWaitMs = Number(value);
+      if (!Number.isFinite(queueWaitMs) || queueWaitMs < 0) return;
+      config.proxySessionChannelQueueWaitMs = Math.trunc(queueWaitMs);
       return;
     }
     case 'proxy_empty_content_fail_enabled': {
@@ -557,6 +577,9 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     logCleanupUsageLogsEnabled: config.logCleanupUsageLogsEnabled,
     logCleanupProgramLogsEnabled: config.logCleanupProgramLogsEnabled,
     logCleanupRetentionDays: config.logCleanupRetentionDays,
+    codexUpstreamWebsocketEnabled: config.codexUpstreamWebsocketEnabled,
+    proxySessionChannelConcurrencyLimit: config.proxySessionChannelConcurrencyLimit,
+    proxySessionChannelQueueWaitMs: config.proxySessionChannelQueueWaitMs,
     routingFallbackUnitCost: config.routingFallbackUnitCost,
     routingWeights: config.routingWeights,
     webhookUrl: config.webhookUrl,
@@ -938,6 +961,50 @@ export async function settingsRoutes(app: FastifyInstance) {
       config.systemProxyUrl = normalizedSystemProxyUrl || '';
       upsertSetting('system_proxy_url', config.systemProxyUrl);
       invalidateSiteProxyCache();
+    }
+
+    if (body.codexUpstreamWebsocketEnabled !== undefined) {
+      let nextValue = false;
+      try {
+        nextValue = parseBooleanFlag(body.codexUpstreamWebsocketEnabled, 'Codex 上游 WebSocket 开关');
+      } catch (err: any) {
+        return reply.code(400).send({
+          success: false,
+          message: err?.message || 'Codex 上游 WebSocket 开关格式无效',
+        });
+      }
+
+      if (nextValue !== config.codexUpstreamWebsocketEnabled) {
+        changedLabels.push('Codex 上游 WebSocket 默认策略');
+      }
+      config.codexUpstreamWebsocketEnabled = nextValue;
+      upsertSetting('codex_upstream_websocket_enabled', config.codexUpstreamWebsocketEnabled);
+    }
+
+    if (body.proxySessionChannelConcurrencyLimit !== undefined) {
+      const limit = Number(body.proxySessionChannelConcurrencyLimit);
+      if (!Number.isFinite(limit) || limit < 0) {
+        return reply.code(400).send({ success: false, message: '会话通道并发上限必须是大于等于 0 的整数' });
+      }
+      const nextLimit = Math.trunc(limit);
+      if (nextLimit !== config.proxySessionChannelConcurrencyLimit) {
+        changedLabels.push(`会话通道并发上限（${config.proxySessionChannelConcurrencyLimit} -> ${nextLimit}）`);
+      }
+      config.proxySessionChannelConcurrencyLimit = nextLimit;
+      upsertSetting('proxy_session_channel_concurrency_limit', config.proxySessionChannelConcurrencyLimit);
+    }
+
+    if (body.proxySessionChannelQueueWaitMs !== undefined) {
+      const rawQueueWaitMs = Number(body.proxySessionChannelQueueWaitMs);
+      if (!Number.isFinite(rawQueueWaitMs) || rawQueueWaitMs < 0) {
+        return reply.code(400).send({ success: false, message: '会话通道排队等待时间必须是大于等于 0 的整数毫秒' });
+      }
+      const nextQueueWaitMs = Math.trunc(rawQueueWaitMs);
+      if (nextQueueWaitMs !== config.proxySessionChannelQueueWaitMs) {
+        changedLabels.push(`会话通道排队等待（${config.proxySessionChannelQueueWaitMs}ms -> ${nextQueueWaitMs}ms）`);
+      }
+      config.proxySessionChannelQueueWaitMs = nextQueueWaitMs;
+      upsertSetting('proxy_session_channel_queue_wait_ms', config.proxySessionChannelQueueWaitMs);
     }
 
     if (body.proxyErrorKeywords !== undefined) {

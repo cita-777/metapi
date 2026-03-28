@@ -11,6 +11,7 @@ describe('TokenRouter patterns and model mapping', () => {
   let schema: DbModule['schema'];
   let TokenRouter: TokenRouterModule['TokenRouter'];
   let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'];
+  let tokenRouterTestUtils: TokenRouterModule['__tokenRouterTestUtils'];
   let dataDir = '';
   let idSeed = 0;
 
@@ -30,6 +31,7 @@ describe('TokenRouter patterns and model mapping', () => {
     schema = dbModule.schema;
     TokenRouter = tokenRouterModule.TokenRouter;
     invalidateTokenRouterCache = tokenRouterModule.invalidateTokenRouterCache;
+    tokenRouterTestUtils = tokenRouterModule.__tokenRouterTestUtils;
   });
 
   beforeEach(async () => {
@@ -153,6 +155,17 @@ describe('TokenRouter patterns and model mapping', () => {
     expect(exact?.actualModel).toBe('target-exact');
     expect(glob?.actualModel).toBe('target-glob');
     expect(regex?.actualModel).toBe('target-regex');
+  });
+
+  it('resolves mapped models from parsed object input for helper-level callers', () => {
+    expect(tokenRouterTestUtils.resolveMappedModel('claude-sonnet-4-6', {
+      'claude-sonnet-4-6': 'target-exact',
+      'claude-sonnet-*': 'target-glob',
+    })).toBe('target-exact');
+    expect(tokenRouterTestUtils.resolveMappedModel('claude-sonnet-4-7', {
+      'claude-sonnet-4-6': 'target-exact',
+      'claude-sonnet-*': 'target-glob',
+    })).toBe('target-glob');
   });
 
   it('matches a route by display name alias as an exposed model', async () => {

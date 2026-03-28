@@ -19,6 +19,7 @@ import type {
   SchemaContractUnique,
 } from './schemaContract.js';
 import { resolveMigrationsFolder } from './schemaContract.js';
+import { installPostgresJsonTextParsers } from './postgresJsonTextParsers.js';
 import {
   normalizeLogicalColumnType,
   type LogicalColumnType,
@@ -535,6 +536,7 @@ async function introspectPostgresSchema(input: SchemaIntrospectionInput): Promis
   if (input.ssl) {
     clientOptions.ssl = { rejectUnauthorized: false };
   }
+  installPostgresJsonTextParsers();
   const client = new pg.Client(clientOptions);
   await client.connect();
 
@@ -785,6 +787,7 @@ async function applyPostgresStatements(
   if (ssl) {
     clientOptions.ssl = { rejectUnauthorized: false };
   }
+  installPostgresJsonTextParsers();
   const client = new pg.Client(clientOptions);
   await client.connect();
   try {

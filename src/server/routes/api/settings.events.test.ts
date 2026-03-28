@@ -52,6 +52,9 @@ describe('settings and auth events', () => {
     config.logCleanupUsageLogsEnabled = false;
     config.logCleanupProgramLogsEnabled = false;
     config.logCleanupRetentionDays = 30;
+    config.codexUpstreamWebsocketEnabled = false;
+    config.proxySessionChannelConcurrencyLimit = 2;
+    config.proxySessionChannelQueueWaitMs = 1500;
     config.routingFallbackUnitCost = 1;
     (config as any).telegramEnabled = false;
     (config as any).telegramApiBaseUrl = 'https://api.telegram.org';
@@ -109,6 +112,38 @@ describe('settings and auth events', () => {
     const savedInterval = await db.select().from(schema.settings).where(eq(schema.settings.key, 'checkin_interval_hours')).get();
     expect(savedMode?.value).toBe(JSON.stringify('interval'));
     expect(savedInterval?.value).toBe(JSON.stringify(8));
+  });
+
+  it('persists codex upstream websocket and session lease settings from runtime settings', async () => {
+    const updateResponse = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      payload: {
+        codexUpstreamWebsocketEnabled: true,
+        proxySessionChannelConcurrencyLimit: 6,
+        proxySessionChannelQueueWaitMs: 4200,
+      },
+    });
+
+    expect(updateResponse.statusCode).toBe(200);
+    const updated = updateResponse.json() as {
+      codexUpstreamWebsocketEnabled?: boolean;
+      proxySessionChannelConcurrencyLimit?: number;
+      proxySessionChannelQueueWaitMs?: number;
+    };
+    expect(updated.codexUpstreamWebsocketEnabled).toBe(true);
+    expect(updated.proxySessionChannelConcurrencyLimit).toBe(6);
+    expect(updated.proxySessionChannelQueueWaitMs).toBe(4200);
+    expect(config.codexUpstreamWebsocketEnabled).toBe(true);
+    expect(config.proxySessionChannelConcurrencyLimit).toBe(6);
+    expect(config.proxySessionChannelQueueWaitMs).toBe(4200);
+
+    const savedWebsocket = await db.select().from(schema.settings).where(eq(schema.settings.key, 'codex_upstream_websocket_enabled')).get();
+    const savedConcurrency = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_session_channel_concurrency_limit')).get();
+    const savedQueueWait = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_session_channel_queue_wait_ms')).get();
+    expect(savedWebsocket?.value).toBe(JSON.stringify(true));
+    expect(savedConcurrency?.value).toBe(JSON.stringify(6));
+    expect(savedQueueWait?.value).toBe(JSON.stringify(4200));
   });
 
   it('returns current recognized admin IP in runtime settings response', async () => {

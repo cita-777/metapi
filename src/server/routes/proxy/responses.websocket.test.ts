@@ -120,7 +120,7 @@ function createSelectedChannel(options?: {
   siteUrl?: string;
   sitePlatform?: string;
   username?: string;
-  extraConfig?: string;
+  extraConfig?: unknown;
   tokenValue?: string;
   actualModel?: string;
 }) {
@@ -248,6 +248,7 @@ function createClientSocketForPath(path: string, headers: Record<string, string>
 
 describe('responses websocket transport', () => {
   const originalCodexResponsesWebsocketBeta = config.codexResponsesWebsocketBeta;
+  const originalCodexUpstreamWebsocketEnabled = config.codexUpstreamWebsocketEnabled;
   let app: FastifyInstance;
   let baseUrl: string;
   let upstreamServer: WebSocketServer;
@@ -328,6 +329,7 @@ describe('responses websocket transport', () => {
     upstreamUpgradeHeaders = {};
     upstreamRequests = [];
     (config as any).codexResponsesWebsocketBeta = originalCodexResponsesWebsocketBeta;
+    (config as any).codexUpstreamWebsocketEnabled = true;
     rejectedUpgradeStatus = 426;
     rejectedUpgradeStatusText = 'Upgrade Required';
     rejectedUpgradeBody = 'Upgrade Required';
@@ -363,6 +365,7 @@ describe('responses websocket transport', () => {
   });
 
   afterAll(async () => {
+    (config as any).codexUpstreamWebsocketEnabled = originalCodexUpstreamWebsocketEnabled;
     await new Promise<void>((resolve) => rejectedUpgradeServer.close(() => resolve()));
     await new Promise<void>((resolve) => upstreamServer.close(() => resolve()));
     await app.close();
@@ -1430,9 +1433,105 @@ describe('responses websocket transport', () => {
     });
   });
 
+  it('falls back to the HTTP responses route when codex upstream websocket is globally disabled', async () => {
+    (config as any).codexUpstreamWebsocketEnabled = false;
+
+    fetchMock
+      .mockResolvedValueOnce(createSseResponse([
+        'event: response.completed\n',
+        'data: {"type":"response.completed","response":{"id":"resp_http_1","model":"gpt-5.4","status":"completed","output":[{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"first"}]}],"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}\n\n',
+        'data: [DONE]\n\n',
+      ]))
+      .mockResolvedValueOnce(createSseResponse([
+        'event: response.completed\n',
+        'data: {"type":"response.completed","response":{"id":"resp_http_2","model":"gpt-5.4","status":"completed","output":[{"id":"msg_2","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"second"}]}],"usage":{"input_tokens":5,"output_tokens":1,"total_tokens":6}}}\n\n',
+        'data: [DONE]\n\n',
+      ]));
+
+    const socket = createClientSocket(baseUrl);
+    await waitForSocketOpen(socket);
+    const firstResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed' && message?.response?.id === 'resp_http_1',
+    );
+
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      instructions: 'be helpful',
+      input: [],
+    }));
+
+    const firstMessage = await firstResponsePromise;
+    const secondResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed' && message?.response?.id === 'resp_http_2',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      previous_response_id: 'resp_http_1',
+      input: [
+        {
+          id: 'tool_out_1',
+          type: 'function_call_output',
+          call_id: 'call_1',
+          output: 'tool result',
+        },
+      ],
+    }));
+    const secondMessage = await secondResponsePromise;
+    socket.close();
+
+    expect(firstMessage).toMatchObject({
+      type: 'response.completed',
+      response: {
+        id: 'resp_http_1',
+      },
+    });
+    expect(secondMessage).toMatchObject({
+      type: 'response.completed',
+      response: {
+        id: 'resp_http_2',
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'gpt-5.4',
+        instructions: 'be helpful',
+        input: [],
+        stream: true,
+        store: false,
+      }),
+    });
+    const [, secondOptions] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const secondBody = JSON.parse(String(secondOptions.body));
+    expect(secondBody.previous_response_id).toBeUndefined();
+    expect(secondBody.instructions).toBe('be helpful');
+    expect(secondBody.stream).toBe(true);
+    expect(secondBody.store).toBe(false);
+    expect(secondBody.input).toEqual([
+      {
+        id: 'msg_1',
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        content: [{ type: 'output_text', text: 'first' }],
+      },
+      {
+        id: 'tool_out_1',
+        type: 'function_call_output',
+        call_id: 'call_1',
+        output: 'tool result',
+      },
+    ]);
+  });
+
   it('disables codex websocket incremental transport when the selected account marks websockets as disabled', async () => {
     const selectedChannel = createSelectedChannel({
-      extraConfig: JSON.stringify({
+      extraConfig: {
         credentialMode: 'session',
         websockets: false,
         oauth: {
@@ -1440,7 +1539,7 @@ describe('responses websocket transport', () => {
           accountId: 'chatgpt-account-123',
           email: 'codex-user@example.com',
         },
-      }),
+      },
     });
     selectChannelMock.mockReturnValue(selectedChannel);
     previewSelectedChannelMock.mockResolvedValue(selectedChannel);

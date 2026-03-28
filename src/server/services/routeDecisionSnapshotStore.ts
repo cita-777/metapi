@@ -7,7 +7,8 @@ function serializeSnapshot(snapshot: unknown): string | null {
   return JSON.stringify(snapshot);
 }
 
-export function parseRouteDecisionSnapshot(value: string | null | undefined): unknown | null {
+export function parseRouteDecisionSnapshot(value: unknown): unknown | null {
+  if (value && typeof value === 'object') return value;
   if (typeof value !== 'string' || value.trim().length === 0) return null;
   try {
     return JSON.parse(value);

@@ -205,7 +205,21 @@ function RouteCardInner({
           </code>
 
           {route.displayName && route.displayName.trim() !== route.modelPattern ? (
-            <span className="badge badge-muted" style={{ fontSize: 10, flexShrink: 0 }}>{route.modelPattern}</span>
+            <span
+              className="badge badge-muted"
+              title={route.modelPattern}
+              style={{
+                fontSize: 10,
+                flexShrink: 1,
+                minWidth: 0,
+                maxWidth: 180,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {route.modelPattern}
+            </span>
           ) : null}
 
           {readOnlyRoute ? (

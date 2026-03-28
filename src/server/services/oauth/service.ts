@@ -21,13 +21,21 @@ import {
   buildStoredOauthState,
   buildStoredOauthStateFromAccount,
   getOauthInfoFromAccount,
+  type OauthInfo,
 } from './oauthAccount.js';
-import { buildCodexOauthInfo } from './codexAccount.js';
+import {
+  buildCodexOauthInfo,
+  type OauthExtraConfigInput,
+  type OauthIdentityCarrierLike,
+} from './codexAccount.js';
 import { ensureOauthIdentityBackfill } from './oauthIdentityBackfill.js';
 import { buildQuotaSnapshotFromOauthInfo, refreshOauthQuotaSnapshot } from './quota.js';
 
 type OAuthProviderMetadata = ReturnType<typeof listOauthProviders>[number];
 const MANUAL_CALLBACK_DELAY_MS = 15_000;
+type OauthProviderHeaderAccountInput = OauthIdentityCarrierLike & {
+  extraConfig?: OauthExtraConfigInput;
+};
 
 type OAuthStartInstructions = {
   redirectUri: string;
@@ -597,13 +605,8 @@ export async function startOauthRebindFlow(accountId: number, requestOrigin?: st
 }
 
 export function buildOauthProviderHeaders(input: {
-  account?: {
-    extraConfig?: string | null;
-    oauthProvider?: string | null;
-    oauthAccountKey?: string | null;
-    oauthProjectId?: string | null;
-  } | null;
-  extraConfig?: string | null;
+  account?: OauthProviderHeaderAccountInput | null;
+  extraConfig?: OauthExtraConfigInput;
   downstreamHeaders?: Record<string, unknown>;
 }) {
   const oauth = getOauthInfoFromAccount(input.account || {
@@ -619,7 +622,7 @@ export function buildOauthProviderHeaders(input: {
 }
 
 export function buildCodexOauthProviderHeaders(input: {
-  extraConfig?: string | null;
+  extraConfig?: OauthExtraConfigInput;
   downstreamHeaders?: Record<string, unknown>;
 }) {
   const oauth = buildCodexOauthInfo(input.extraConfig);

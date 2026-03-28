@@ -90,6 +90,7 @@ scripts/
 docs/
 ├── .vitepress/           # 文档站导航与主题配置
 ├── community/            # 社区贡献规范
+├── engineering/          # 仓库级工程规则、harness 与漂移治理说明
 ├── public/               # 文档站公开静态资源
 ├── logos/                # 可编辑 Logo 源文件与草稿
 ├── screenshots/          # 文档截图

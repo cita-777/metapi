@@ -8,6 +8,16 @@ function asTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+const RESPONSES_TOOL_CALL_ITEM_TYPES = new Set([
+  'function_call',
+  'custom_tool_call',
+]);
+
+const RESPONSES_TOOL_OUTPUT_ITEM_TYPES = new Set([
+  'function_call_output',
+  'custom_tool_call_output',
+]);
+
 const ALLOWED_RESPONSES_INPUT_STATUSES = new Set([
   'in_progress',
   'completed',
@@ -135,7 +145,7 @@ function normalizeResponsesContentItem(
     return fileBlock ? toResponsesInputFileBlock(fileBlock) : null;
   }
 
-  if (type === 'function_call' || type === 'function_call_output') {
+  if (RESPONSES_TOOL_CALL_ITEM_TYPES.has(type) || RESPONSES_TOOL_OUTPUT_ITEM_TYPES.has(type)) {
     return item;
   }
 
@@ -166,10 +176,71 @@ function toResponsesInputMessageFromText(text: string): Record<string, unknown> 
   };
 }
 
+function normalizeResponsesToolLifecycleItem(item: Record<string, unknown>): Record<string, unknown> | null {
+  const type = asTrimmedString(item.type).toLowerCase();
+  if (!RESPONSES_TOOL_CALL_ITEM_TYPES.has(type) && !RESPONSES_TOOL_OUTPUT_ITEM_TYPES.has(type)) {
+    return withNormalizedResponsesInputStatus(item);
+  }
+
+  const callId = asTrimmedString(item.call_id ?? item.id);
+  if (!callId) return null;
+
+  const normalized: Record<string, unknown> = {
+    ...item,
+    call_id: callId,
+  };
+
+  if (typeof item.id === 'string') {
+    const id = asTrimmedString(item.id);
+    if (id) normalized.id = id;
+    else delete normalized.id;
+  }
+
+  if (RESPONSES_TOOL_CALL_ITEM_TYPES.has(type)) {
+    if (Object.prototype.hasOwnProperty.call(item, 'name')) {
+      const name = asTrimmedString(item.name);
+      if (!name) return null;
+      normalized.name = name;
+    }
+  }
+
+  return withNormalizedResponsesInputStatus(normalized);
+}
+
+function sanitizeResponsesInputToolLifecycle(items: unknown[]): unknown[] {
+  const sanitized: unknown[] = [];
+
+  for (const item of items) {
+    if (!isRecord(item)) {
+      sanitized.push(item);
+      continue;
+    }
+
+    const type = asTrimmedString(item.type).toLowerCase();
+    if (RESPONSES_TOOL_CALL_ITEM_TYPES.has(type)) {
+      const normalized = normalizeResponsesToolLifecycleItem(item);
+      if (!normalized) continue;
+      sanitized.push(normalized);
+      continue;
+    }
+
+    if (RESPONSES_TOOL_OUTPUT_ITEM_TYPES.has(type)) {
+      const normalized = normalizeResponsesToolLifecycleItem(item);
+      if (!normalized) continue;
+      sanitized.push(normalized);
+      continue;
+    }
+
+    sanitized.push(item);
+  }
+
+  return sanitized;
+}
+
 export function normalizeResponsesMessageItem(item: Record<string, unknown>): Record<string, unknown> {
   const type = asTrimmedString(item.type).toLowerCase();
-  if (type === 'function_call' || type === 'function_call_output') {
-    return withNormalizedResponsesInputStatus(item);
+  if (RESPONSES_TOOL_CALL_ITEM_TYPES.has(type) || RESPONSES_TOOL_OUTPUT_ITEM_TYPES.has(type)) {
+    return normalizeResponsesToolLifecycleItem(item) ?? item;
   }
 
   const role = asTrimmedString(item.role).toLowerCase() || 'user';
@@ -211,7 +282,7 @@ export function normalizeResponsesInputForCompatibility(input: unknown): unknown
   }
 
   if (Array.isArray(input)) {
-    return input.flatMap((item) => {
+    const normalized = input.flatMap((item) => {
       if (typeof item === 'string') {
         const normalized = item.trim();
         return normalized ? [toResponsesInputMessageFromText(normalized)] : [];
@@ -219,10 +290,11 @@ export function normalizeResponsesInputForCompatibility(input: unknown): unknown
       if (!isRecord(item)) return [item];
       return [normalizeResponsesMessageItem(item)];
     });
+    return sanitizeResponsesInputToolLifecycle(normalized);
   }
 
   if (isRecord(input)) {
-    return [normalizeResponsesMessageItem(input)];
+    return sanitizeResponsesInputToolLifecycle([normalizeResponsesMessageItem(input)]);
   }
 
   return input;
