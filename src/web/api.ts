@@ -504,6 +504,8 @@ export const api = {
   addRoute: (data: any) => request('/api/routes', { method: 'POST', body: JSON.stringify(data) }),
   updateRoute: (id: number, data: any) => request(`/api/routes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteRoute: (id: number) => request(`/api/routes/${id}`, { method: 'DELETE' }),
+  batchUpdateRoutes: (data: { ids: number[]; action: 'enable' | 'disable' }) =>
+    request('/api/routes/batch', { method: 'POST', body: JSON.stringify(data) }),
   addChannel: (routeId: number, data: any) => request(`/api/routes/${routeId}/channels`, { method: 'POST', body: JSON.stringify(data) }),
   updateChannel: (id: number, data: any) => request(`/api/channels/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   batchUpdateChannels: (updates: Array<{ id: number; priority: number }>) =>

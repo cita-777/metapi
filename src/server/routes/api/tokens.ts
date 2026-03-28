@@ -20,6 +20,7 @@ import {
   saveRouteDecisionSnapshots,
 } from '../../services/routeDecisionSnapshotStore.js';
 import { normalizeTokenRouteMode, type RouteMode } from '../../../shared/tokenRouteContract.js';
+
 function isExactModelPattern(modelPattern: string): boolean {
   const normalized = modelPattern.trim();
   if (!normalized) return false;
@@ -1110,6 +1111,48 @@ export async function tokensRoutes(app: FastifyInstance) {
     return { success: true };
   });
 
+
+  // Batch update routes (enable/disable)
+  app.post<{ Body: { ids: number[]; action: 'enable' | 'disable' } }>('/api/routes/batch', async (request, reply) => {
+    const body = request.body;
+    if (!body || typeof body !== 'object') {
+      return reply.code(400).send({ success: false, message: '请求体必须是对象' });
+    }
+    const action = body.action;
+    if (action !== 'enable' && action !== 'disable') {
+      return reply.code(400).send({ success: false, message: 'action 必须是 enable 或 disable' });
+    }
+    const rawIds = body.ids;
+    if (!Array.isArray(rawIds) || rawIds.length === 0) {
+      return reply.code(400).send({ success: false, message: 'ids 必须是非空数组' });
+    }
+    const dedupe = new Set<number>();
+    const ids: number[] = [];
+    for (const raw of rawIds) {
+      if (typeof raw !== 'number' || !Number.isFinite(raw)) continue;
+      const id = Math.trunc(raw);
+      if (id <= 0 || dedupe.has(id)) continue;
+      dedupe.add(id);
+      ids.push(id);
+      if (ids.length >= 500) break;
+    }
+    if (ids.length === 0) {
+      return reply.code(400).send({ success: false, message: 'ids 中没有有效的路由 ID' });
+    }
+
+    const enabled = action === 'enable';
+    const now = new Date().toISOString();
+    await db.update(schema.tokenRoutes)
+      .set({ enabled, updatedAt: now })
+      .where(inArray(schema.tokenRoutes.id, ids))
+      .run();
+
+    await clearRouteDecisionSnapshots(ids);
+    await clearDependentExplicitGroupSnapshotsBySourceRouteIds(ids);
+    invalidateTokenRouterCache();
+
+    return { success: true, updatedCount: ids.length };
+  });
   // Add a channel to a route
   app.post<{ Params: { id: string }; Body: { accountId: number; tokenId?: number; sourceModel?: string; priority?: number; weight?: number } }>('/api/routes/:id/channels', async (request, reply) => {
     const routeId = parseInt(request.params.id, 10);
@@ -1262,6 +1305,7 @@ export async function tokensRoutes(app: FastifyInstance) {
     invalidateTokenRouterCache();
     return { success: true };
   });
+
   // Rebuild routes/channels from model availability.
   app.post<{ Body?: { refreshModels?: boolean; wait?: boolean } }>('/api/routes/rebuild', async (request, reply) => {
     const body = (request.body || {}) as { refreshModels?: boolean };
@@ -1303,3 +1347,4 @@ export async function tokensRoutes(app: FastifyInstance) {
     });
   });
 }
+
