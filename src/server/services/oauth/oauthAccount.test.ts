@@ -58,6 +58,30 @@ describe('oauth account identity helpers', () => {
     }));
   });
 
+  it('reads oauth metadata when extraConfig is already a parsed object', () => {
+    const oauth = getOauthInfoFromAccount({
+      oauthProvider: null,
+      oauthAccountKey: null,
+      oauthProjectId: null,
+      extraConfig: {
+        oauth: {
+          provider: 'codex',
+          accountKey: 'json-user',
+          projectId: 'json-project',
+          refreshToken: 'refresh-token',
+        },
+      },
+    });
+
+    expect(oauth).toEqual(expect.objectContaining({
+      provider: 'codex',
+      accountId: 'json-user',
+      accountKey: 'json-user',
+      projectId: 'json-project',
+      refreshToken: 'refresh-token',
+    }));
+  });
+
   it('reconstructs oauth runtime state from extraConfig even when identity fields are stripped', () => {
     const oauth = getOauthInfoFromAccount({
       oauthProvider: 'gemini-cli',

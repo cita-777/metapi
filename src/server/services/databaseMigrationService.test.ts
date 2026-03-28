@@ -245,6 +245,452 @@ describe('databaseMigrationService', () => {
     expect(siteStatement?.values[customHeadersIndex]).toBe('{"x-site-scope":"internal"}');
   });
 
+  it('serializes parsed JSON-column values when building migration statements', () => {
+    const statements = __databaseMigrationServiceTestUtils.buildStatements({
+      version: 'test',
+      timestamp: Date.now(),
+      accounts: {
+        sites: [{
+          id: 1,
+          name: 'demo',
+          url: 'https://example.com',
+          platform: 'openai',
+          customHeaders: { 'x-site-scope': 'internal' },
+          status: 'active',
+        }],
+        siteAnnouncements: [],
+        siteDisabledModels: [],
+        accounts: [{
+          id: 2,
+          siteId: 1,
+          username: 'user-1',
+          accessToken: 'access-1',
+          extraConfig: { platformUserId: 42 },
+          status: 'active',
+        }],
+        accountTokens: [],
+        checkinLogs: [],
+        modelAvailability: [],
+        tokenModelAvailability: [],
+        tokenRoutes: [{
+          id: 3,
+          modelPattern: '*',
+          modelMapping: { '*': 'gpt-4o-mini' },
+          decisionSnapshot: { channels: [1] },
+          enabled: true,
+        }],
+        routeChannels: [],
+        routeGroupSources: [],
+        proxyLogs: [{
+          id: 4,
+          billingDetails: { total: 1.25 },
+        }],
+        proxyVideoTasks: [{
+          id: 5,
+          publicId: 'video-public-id',
+          upstreamVideoId: 'upstream-video-id',
+          siteUrl: 'https://example.com',
+          tokenValue: 'sk-video',
+          statusSnapshot: { status: 'done' },
+          upstreamResponseMeta: { id: 'video' },
+        }],
+        proxyFiles: [],
+        downstreamApiKeys: [{
+          id: 6,
+          name: 'managed-key',
+          key: 'mk-demo',
+          supportedModels: ['gpt-4o-mini'],
+          allowedRouteIds: [3],
+          siteWeightMultipliers: { 1: 1.5 },
+          enabled: true,
+        }],
+        events: [],
+      },
+      preferences: {
+        settings: [],
+      },
+    } as any);
+
+    const siteStatement = statements.find((statement) => statement.table === 'sites');
+    const accountStatement = statements.find((statement) => statement.table === 'accounts');
+    const tokenRouteStatement = statements.find((statement) => statement.table === 'token_routes');
+    const proxyLogStatement = statements.find((statement) => statement.table === 'proxy_logs');
+    const proxyVideoStatement = statements.find((statement) => statement.table === 'proxy_video_tasks');
+    const downstreamKeyStatement = statements.find((statement) => statement.table === 'downstream_api_keys');
+
+    expect(siteStatement?.values[siteStatement.columns.indexOf('custom_headers')]).toBe('{"x-site-scope":"internal"}');
+    expect(accountStatement?.values[accountStatement.columns.indexOf('extra_config')]).toBe('{"platformUserId":42}');
+    expect(tokenRouteStatement?.values[tokenRouteStatement.columns.indexOf('model_mapping')]).toBe('{"*":"gpt-4o-mini"}');
+    expect(tokenRouteStatement?.values[tokenRouteStatement.columns.indexOf('decision_snapshot')]).toBe('{"channels":[1]}');
+    expect(proxyLogStatement?.values[proxyLogStatement.columns.indexOf('billing_details')]).toBe('{"total":1.25}');
+    expect(proxyVideoStatement?.values[proxyVideoStatement.columns.indexOf('status_snapshot')]).toBe('{"status":"done"}');
+    expect(proxyVideoStatement?.values[proxyVideoStatement.columns.indexOf('upstream_response_meta')]).toBe('{"id":"video"}');
+    expect(downstreamKeyStatement?.values[downstreamKeyStatement.columns.indexOf('supported_models')]).toBe('["gpt-4o-mini"]');
+    expect(downstreamKeyStatement?.values[downstreamKeyStatement.columns.indexOf('allowed_route_ids')]).toBe('[3]');
+    expect(downstreamKeyStatement?.values[downstreamKeyStatement.columns.indexOf('site_weight_multipliers')]).toBe('{"1":1.5}');
+  });
+
+  it('uses schema logical types to serialize JSON columns instead of String(value)', () => {
+    expect(__databaseMigrationServiceTestUtils.serializeColumnValue('sites', 'custom_headers', {
+      'x-site-scope': 'internal',
+    })).toBe('{"x-site-scope":"internal"}');
+    expect(__databaseMigrationServiceTestUtils.serializeColumnValue('downstream_api_keys', 'supported_models', [
+      'gpt-4o-mini',
+    ])).toBe('["gpt-4o-mini"]');
+    expect(__databaseMigrationServiceTestUtils.serializeColumnValue('sites', 'name', {
+      demo: true,
+    })).toBe('[object Object]');
+  });
+
+  it('serializes object-backed JSON columns when building migration statements', () => {
+    const statements = __databaseMigrationServiceTestUtils.buildStatements({
+      version: 'test',
+      timestamp: Date.now(),
+      accounts: {
+        sites: [{
+          id: 1,
+          name: 'demo',
+          url: 'https://example.com',
+          platform: 'openai',
+          customHeaders: { 'x-site-scope': 'internal' },
+          status: 'active',
+        }],
+        siteAnnouncements: [],
+        siteDisabledModels: [],
+        accounts: [{
+          id: 2,
+          siteId: 1,
+          accessToken: 'access',
+          extraConfig: { platformUserId: 1234 },
+          status: 'active',
+        }],
+        accountTokens: [],
+        checkinLogs: [],
+        modelAvailability: [],
+        tokenModelAvailability: [],
+        tokenRoutes: [{
+          id: 3,
+          modelPattern: 'gpt-*',
+          modelMapping: { 'gpt-*': 'gpt-5-mini' },
+          decisionSnapshot: { candidates: [1, 2] },
+          enabled: true,
+        }],
+        routeChannels: [],
+        routeGroupSources: [],
+        proxyLogs: [{
+          id: 4,
+          billingDetails: { currency: 'usd', total: 1.23 },
+        }],
+        proxyVideoTasks: [{
+          id: 5,
+          publicId: 'video-public-id',
+          upstreamVideoId: 'upstream-video-id',
+          siteUrl: 'https://example.com',
+          tokenValue: 'sk-video',
+          statusSnapshot: { status: 'done' },
+          upstreamResponseMeta: { id: 'video' },
+        }],
+        proxyFiles: [],
+        downstreamApiKeys: [{
+          id: 6,
+          name: 'managed',
+          key: 'sk-managed',
+          enabled: true,
+          supportedModels: ['gpt-5', 'gpt-5-mini'],
+          allowedRouteIds: [10, 11],
+          siteWeightMultipliers: { 1: 2, 2: 0.5 },
+        }],
+        events: [],
+      },
+      preferences: {
+        settings: [],
+      },
+    } as any);
+
+    const sitesStatement = statements.find((statement) => statement.table === 'sites');
+    expect(sitesStatement?.values[sitesStatement.columns.indexOf('custom_headers')]).toBe('{"x-site-scope":"internal"}');
+
+    const accountsStatement = statements.find((statement) => statement.table === 'accounts');
+    expect(accountsStatement?.values[accountsStatement.columns.indexOf('extra_config')]).toBe('{"platformUserId":1234}');
+
+    const tokenRoutesStatement = statements.find((statement) => statement.table === 'token_routes');
+    expect(tokenRoutesStatement?.values[tokenRoutesStatement.columns.indexOf('model_mapping')]).toBe('{"gpt-*":"gpt-5-mini"}');
+    expect(tokenRoutesStatement?.values[tokenRoutesStatement.columns.indexOf('decision_snapshot')]).toBe('{"candidates":[1,2]}');
+
+    const proxyLogsStatement = statements.find((statement) => statement.table === 'proxy_logs');
+    expect(proxyLogsStatement?.values[proxyLogsStatement.columns.indexOf('billing_details')]).toBe('{"currency":"usd","total":1.23}');
+
+    const proxyVideoTasksStatement = statements.find((statement) => statement.table === 'proxy_video_tasks');
+    expect(proxyVideoTasksStatement?.values[proxyVideoTasksStatement.columns.indexOf('status_snapshot')]).toBe('{"status":"done"}');
+    expect(proxyVideoTasksStatement?.values[proxyVideoTasksStatement.columns.indexOf('upstream_response_meta')]).toBe('{"id":"video"}');
+
+    const downstreamApiKeysStatement = statements.find((statement) => statement.table === 'downstream_api_keys');
+    expect(downstreamApiKeysStatement?.values[downstreamApiKeysStatement.columns.indexOf('supported_models')]).toBe('["gpt-5","gpt-5-mini"]');
+    expect(downstreamApiKeysStatement?.values[downstreamApiKeysStatement.columns.indexOf('allowed_route_ids')]).toBe('[10,11]');
+    expect(downstreamApiKeysStatement?.values[downstreamApiKeysStatement.columns.indexOf('site_weight_multipliers')]).toBe('{"1":2,"2":0.5}');
+  });
+
+  it('serializes JSON logical-type columns from object and array values', () => {
+    const statements = __databaseMigrationServiceTestUtils.buildStatements({
+      version: 'test',
+      timestamp: Date.now(),
+      accounts: {
+        sites: [{
+          id: 1,
+          name: 'demo',
+          url: 'https://example.com',
+          platform: 'openai',
+          customHeaders: { 'x-site-scope': 'internal' },
+          status: 'active',
+        }],
+        siteAnnouncements: [],
+        siteDisabledModels: [],
+        accounts: [{
+          id: 2,
+          siteId: 1,
+          username: 'user-1',
+          accessToken: 'token-1',
+          extraConfig: { platformUserId: 1001, credentialMode: 'session' },
+          status: 'active',
+        }],
+        accountTokens: [],
+        checkinLogs: [],
+        modelAvailability: [],
+        tokenModelAvailability: [],
+        tokenRoutes: [{
+          id: 3,
+          modelPattern: 'gpt-*',
+          modelMapping: { 'gpt-*': 'gpt-4.1' },
+          decisionSnapshot: { matched: true, channels: [1] },
+          enabled: true,
+        }],
+        routeChannels: [],
+        routeGroupSources: [],
+        proxyLogs: [{
+          id: 4,
+          billingDetails: { source: 'pricing', total: 1.25 },
+        }],
+        proxyVideoTasks: [{
+          id: 5,
+          publicId: 'video-1',
+          upstreamVideoId: 'upstream-1',
+          siteUrl: 'https://example.com',
+          tokenValue: 'sk-video',
+          requestedModel: 'veo-3',
+          actualModel: 'veo-3',
+          channelId: 9,
+          accountId: 2,
+          statusSnapshot: { status: 'done' },
+          upstreamResponseMeta: { id: 'video' },
+        }],
+        proxyFiles: [],
+        downstreamApiKeys: [{
+          id: 6,
+          name: 'managed',
+          key: 'sk-managed',
+          supportedModels: ['gpt-4.1', 'gpt-4o'],
+          allowedRouteIds: [3, 8],
+          siteWeightMultipliers: { 1: 2 },
+          enabled: true,
+        }],
+        events: [],
+      },
+      preferences: {
+        settings: [],
+      },
+    } as any);
+
+    const siteStatement = statements.find((statement) => statement.table === 'sites');
+    const accountStatement = statements.find((statement) => statement.table === 'accounts');
+    const routeStatement = statements.find((statement) => statement.table === 'token_routes');
+    const proxyLogStatement = statements.find((statement) => statement.table === 'proxy_logs');
+    const videoStatement = statements.find((statement) => statement.table === 'proxy_video_tasks');
+    const downstreamKeyStatement = statements.find((statement) => statement.table === 'downstream_api_keys');
+
+    expect(siteStatement?.values[siteStatement.columns.indexOf('custom_headers')]).toBe('{"x-site-scope":"internal"}');
+    expect(accountStatement?.values[accountStatement.columns.indexOf('extra_config')]).toBe('{"platformUserId":1001,"credentialMode":"session"}');
+    expect(routeStatement?.values[routeStatement.columns.indexOf('model_mapping')]).toBe('{"gpt-*":"gpt-4.1"}');
+    expect(routeStatement?.values[routeStatement.columns.indexOf('decision_snapshot')]).toBe('{"matched":true,"channels":[1]}');
+    expect(proxyLogStatement?.values[proxyLogStatement.columns.indexOf('billing_details')]).toBe('{"source":"pricing","total":1.25}');
+    expect(videoStatement?.values[videoStatement.columns.indexOf('status_snapshot')]).toBe('{"status":"done"}');
+    expect(videoStatement?.values[videoStatement.columns.indexOf('upstream_response_meta')]).toBe('{"id":"video"}');
+    expect(downstreamKeyStatement?.values[downstreamKeyStatement.columns.indexOf('supported_models')]).toBe('["gpt-4.1","gpt-4o"]');
+    expect(downstreamKeyStatement?.values[downstreamKeyStatement.columns.indexOf('allowed_route_ids')]).toBe('[3,8]');
+    expect(downstreamKeyStatement?.values[downstreamKeyStatement.columns.indexOf('site_weight_multipliers')]).toBe('{"1":2}');
+  });
+
+  it('serializes JSON logical-type columns from parsed objects and arrays', () => {
+    const statements = __databaseMigrationServiceTestUtils.buildStatements({
+      version: 'test',
+      timestamp: Date.now(),
+      accounts: {
+        sites: [{
+          id: 1,
+          name: 'demo',
+          url: 'https://example.com',
+          platform: 'openai',
+          customHeaders: { 'x-site-scope': 'internal' },
+          status: 'active',
+        }],
+        siteAnnouncements: [],
+        siteDisabledModels: [],
+        accounts: [{
+          id: 2,
+          siteId: 1,
+          username: 'demo-user',
+          accessToken: 'token',
+          extraConfig: { platformUserId: 42 },
+          status: 'active',
+        }],
+        accountTokens: [],
+        checkinLogs: [],
+        modelAvailability: [],
+        tokenModelAvailability: [],
+        tokenRoutes: [{
+          id: 3,
+          modelPattern: 'gpt-*',
+          modelMapping: { 'gpt-4.1': 'gpt-4o-mini' },
+          decisionSnapshot: { matched: true, routeId: 3 },
+          enabled: true,
+        }],
+        routeChannels: [],
+        routeGroupSources: [],
+        proxyLogs: [{
+          id: 4,
+          billingDetails: { total: 1.25, currency: 'USD' },
+        }],
+        proxyVideoTasks: [{
+          id: 5,
+          publicId: 'vid_1',
+          upstreamVideoId: 'upstream_1',
+          siteUrl: 'https://example.com',
+          tokenValue: 'sk-video',
+          statusSnapshot: { status: 'done' },
+          upstreamResponseMeta: { id: 'video-1' },
+        }],
+        proxyFiles: [],
+        downstreamApiKeys: [{
+          id: 6,
+          name: 'managed-key',
+          key: 'sk-managed',
+          supportedModels: ['gpt-4.1', 'gpt-4o-mini'],
+          allowedRouteIds: [3],
+          siteWeightMultipliers: { 1: 1.5 },
+        }],
+        events: [],
+      },
+      preferences: {
+        settings: [],
+      },
+    } as any);
+
+    const sitesStatement = statements.find((statement) => statement.table === 'sites');
+    const accountsStatement = statements.find((statement) => statement.table === 'accounts');
+    const tokenRoutesStatement = statements.find((statement) => statement.table === 'token_routes');
+    const proxyLogsStatement = statements.find((statement) => statement.table === 'proxy_logs');
+    const proxyVideoStatement = statements.find((statement) => statement.table === 'proxy_video_tasks');
+    const downstreamStatement = statements.find((statement) => statement.table === 'downstream_api_keys');
+
+    expect(sitesStatement?.values[sitesStatement.columns.indexOf('custom_headers')]).toBe('{"x-site-scope":"internal"}');
+    expect(accountsStatement?.values[accountsStatement.columns.indexOf('extra_config')]).toBe('{"platformUserId":42}');
+    expect(tokenRoutesStatement?.values[tokenRoutesStatement.columns.indexOf('model_mapping')]).toBe('{"gpt-4.1":"gpt-4o-mini"}');
+    expect(tokenRoutesStatement?.values[tokenRoutesStatement.columns.indexOf('decision_snapshot')]).toBe('{"matched":true,"routeId":3}');
+    expect(proxyLogsStatement?.values[proxyLogsStatement.columns.indexOf('billing_details')]).toBe('{"total":1.25,"currency":"USD"}');
+    expect(proxyVideoStatement?.values[proxyVideoStatement.columns.indexOf('status_snapshot')]).toBe('{"status":"done"}');
+    expect(proxyVideoStatement?.values[proxyVideoStatement.columns.indexOf('upstream_response_meta')]).toBe('{"id":"video-1"}');
+    expect(downstreamStatement?.values[downstreamStatement.columns.indexOf('supported_models')]).toBe('["gpt-4.1","gpt-4o-mini"]');
+    expect(downstreamStatement?.values[downstreamStatement.columns.indexOf('allowed_route_ids')]).toBe('[3]');
+    expect(downstreamStatement?.values[downstreamStatement.columns.indexOf('site_weight_multipliers')]).toBe('{"1":1.5}');
+  });
+
+  it('serializes JSON logical-type columns without coercing objects to [object Object]', () => {
+    const statements = __databaseMigrationServiceTestUtils.buildStatements({
+      version: 'test',
+      timestamp: Date.now(),
+      accounts: {
+        sites: [{
+          id: 1,
+          name: 'demo',
+          url: 'https://example.com',
+          platform: 'openai',
+          customHeaders: { 'x-site-scope': 'internal' },
+          status: 'active',
+        }],
+        siteAnnouncements: [],
+        siteDisabledModels: [],
+        accounts: [{
+          id: 2,
+          siteId: 1,
+          username: 'user',
+          accessToken: 'access',
+          apiToken: 'api',
+          extraConfig: { platformUserId: 42, credentialMode: 'session' },
+          status: 'active',
+        }],
+        accountTokens: [],
+        checkinLogs: [],
+        modelAvailability: [],
+        tokenModelAvailability: [],
+        tokenRoutes: [{
+          id: 3,
+          modelPattern: '*',
+          modelMapping: { 'gpt-4.1': 'gpt-4o-mini' },
+          decisionSnapshot: { matched: true, routeId: 3 },
+          enabled: true,
+        }],
+        routeChannels: [],
+        routeGroupSources: [],
+        proxyLogs: [{
+          id: 4,
+          billingDetails: { source: 'pricing', usd: 1.25 },
+        }],
+        proxyVideoTasks: [{
+          id: 5,
+          publicId: 'vid_1',
+          upstreamVideoId: 'upstream_1',
+          siteUrl: 'https://example.com',
+          tokenValue: 'sk-video',
+          requestedModel: 'veo-3',
+          actualModel: 'veo-3',
+          statusSnapshot: { status: 'done' },
+          upstreamResponseMeta: { id: 'video' },
+        }],
+        proxyFiles: [],
+        downstreamApiKeys: [{
+          id: 6,
+          name: 'managed',
+          key: 'key-1',
+          supportedModels: ['gpt-4.1'],
+          allowedRouteIds: [3],
+          siteWeightMultipliers: { 1: 2 },
+          enabled: true,
+        }],
+        events: [],
+      },
+      preferences: {
+        settings: [],
+      },
+    } as any);
+
+    const sitesStatement = statements.find((statement) => statement.table === 'sites');
+    const accountsStatement = statements.find((statement) => statement.table === 'accounts');
+    const tokenRoutesStatement = statements.find((statement) => statement.table === 'token_routes');
+    const proxyLogsStatement = statements.find((statement) => statement.table === 'proxy_logs');
+    const proxyVideoTasksStatement = statements.find((statement) => statement.table === 'proxy_video_tasks');
+    const downstreamKeysStatement = statements.find((statement) => statement.table === 'downstream_api_keys');
+
+    expect(sitesStatement?.values[sitesStatement.columns.indexOf('custom_headers')]).toBe('{"x-site-scope":"internal"}');
+    expect(accountsStatement?.values[accountsStatement.columns.indexOf('extra_config')]).toBe('{"platformUserId":42,"credentialMode":"session"}');
+    expect(tokenRoutesStatement?.values[tokenRoutesStatement.columns.indexOf('model_mapping')]).toBe('{"gpt-4.1":"gpt-4o-mini"}');
+    expect(tokenRoutesStatement?.values[tokenRoutesStatement.columns.indexOf('decision_snapshot')]).toBe('{"matched":true,"routeId":3}');
+    expect(proxyLogsStatement?.values[proxyLogsStatement.columns.indexOf('billing_details')]).toBe('{"source":"pricing","usd":1.25}');
+    expect(proxyVideoTasksStatement?.values[proxyVideoTasksStatement.columns.indexOf('status_snapshot')]).toBe('{"status":"done"}');
+    expect(proxyVideoTasksStatement?.values[proxyVideoTasksStatement.columns.indexOf('upstream_response_meta')]).toBe('{"id":"video"}');
+    expect(downstreamKeysStatement?.values[downstreamKeysStatement.columns.indexOf('supported_models')]).toBe('["gpt-4.1"]');
+    expect(downstreamKeysStatement?.values[downstreamKeysStatement.columns.indexOf('allowed_route_ids')]).toBe('[3]');
+    expect(downstreamKeysStatement?.values[downstreamKeysStatement.columns.indexOf('site_weight_multipliers')]).toBe('{"1":2}');
+  });
+
   it('includes disabled models, proxy video tasks, and proxy files in migration statements', () => {
     const statements = __databaseMigrationServiceTestUtils.buildStatements({
       version: 'test',

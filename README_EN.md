@@ -11,11 +11,20 @@ into <strong>one API Key, one endpoint</strong>, with automatic model discovery,
 </p>
 
 <p align="center">
+  <a href="https://linux.do/t/topic/1671489" alt="LINUX DO">
+    <img src="https://shorturl.at/ggSqS" alt="LINUX DO">
+  </a>
+</p>
+
+<p align="center">
 <a href="https://github.com/cita-777/metapi/releases">
   <img alt="GitHub Release" src="https://img.shields.io/github/v/release/cita-777/metapi?label=Release&logo=github&style=flat">
 </a><!--
 --><a href="https://github.com/cita-777/metapi/stargazers">
   <img alt="GitHub Stars" src="https://img.shields.io/github/stars/cita-777/metapi?style=flat&logo=github&label=Stars">
+</a><!--
+--><a href="https://deepwiki.com/cita-777/metapi">
+  <img alt="Ask DeepWiki" src="https://deepwiki.com/badge.svg">
 </a><!--
 --><a href="https://hub.docker.com/r/1467078763/metapi">
   <img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/1467078763/metapi?style=flat&logo=docker&label=Docker%20Pulls">

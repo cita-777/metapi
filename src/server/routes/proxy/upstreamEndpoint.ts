@@ -413,7 +413,11 @@ function ensureCodexResponsesStoreFalse(
   body: Record<string, unknown>,
   sitePlatform: string,
 ): Record<string, unknown> {
-  return body;
+  if (sitePlatform !== 'codex') return body;
+  return {
+    ...body,
+    store: false,
+  };
 }
 
 function convertCodexSystemRoleToDeveloper(input: unknown): unknown {
@@ -1256,7 +1260,10 @@ export function buildUpstreamEndpointRequest(input: {
       ),
       sitePlatform,
     );
-    const configuredResponsesBody = applyConfiguredPayloadRules(body);
+    const configuredResponsesBody = ensureCodexResponsesStoreFalse(
+      applyConfiguredPayloadRules(body),
+      sitePlatform,
+    );
 
     if (sitePlatform === 'codex') {
       if (providerProfile?.id !== 'codex') {

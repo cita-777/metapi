@@ -352,7 +352,7 @@ function convertOpenAiToolsToResponses(
     })
     .filter((item): item is Record<string, unknown> => !!item);
 
-  return converted.length > 0 ? converted : rawTools;
+  return converted;
 }
 
 function convertOpenAiToolChoiceToResponses(
@@ -382,6 +382,49 @@ function normalizeResponsesBodyForCompatibility(
     ...body,
     input: nextInput,
   };
+}
+
+const RESPONSES_TOOL_CALL_INPUT_TYPES = new Set([
+  'function_call',
+  'custom_tool_call',
+]);
+
+const RESPONSES_TOOL_CALL_OUTPUT_TYPES = new Set([
+  'function_call_output',
+  'custom_tool_call_output',
+]);
+
+function stripOrphanedResponsesToolOutputs(input: unknown): unknown {
+  if (!Array.isArray(input)) return input;
+
+  const seenToolCallIds = new Set<string>();
+  const sanitized: unknown[] = [];
+
+  for (const item of input) {
+    if (!isRecord(item)) {
+      sanitized.push(item);
+      continue;
+    }
+
+    const type = asTrimmedString(item.type).toLowerCase();
+    if (RESPONSES_TOOL_CALL_INPUT_TYPES.has(type)) {
+      const callId = asTrimmedString(item.call_id ?? item.id);
+      if (callId) seenToolCallIds.add(callId);
+      sanitized.push(item);
+      continue;
+    }
+
+    if (RESPONSES_TOOL_CALL_OUTPUT_TYPES.has(type)) {
+      const callId = asTrimmedString(item.call_id ?? item.id);
+      if (!callId || !seenToolCallIds.has(callId)) continue;
+      sanitized.push(item);
+      continue;
+    }
+
+    sanitized.push(item);
+  }
+
+  return sanitized;
 }
 
 export function normalizeResponsesMessageContent(role: string, content: unknown): Array<Record<string, unknown>> {
@@ -614,6 +657,9 @@ export function convertOpenAiBodyToResponsesBody(
 
   const responsesToolChoice = convertOpenAiToolChoiceToResponses(openaiBody.tool_choice, toolNameMap);
   if (responsesToolChoice !== undefined) body.tool_choice = responsesToolChoice;
+  if (Array.isArray(body.tools) && body.tools.length === 0) {
+    delete body.tool_choice;
+  }
 
   return normalizeResponsesBodyForCompatibility(
     normalizeResponsesRequestFieldParity(body, { verbositySource: openaiBody.verbosity }),
@@ -723,28 +769,30 @@ function toOpenAiMessageContent(content: unknown): string | Array<string | Recor
 function convertResponsesToolsToOpenAi(rawTools: unknown): unknown {
   if (!Array.isArray(rawTools)) return rawTools;
 
-  return rawTools.map((item) => {
-    if (!isRecord(item)) return item;
-    const type = asTrimmedString(item.type).toLowerCase();
+  return rawTools
+    .map((item) => {
+      if (!isRecord(item)) return item;
+      const type = asTrimmedString(item.type).toLowerCase();
 
-    if (type === 'custom' || type === 'image_generation') return item;
-    if (type !== 'function') return item;
-    if (isRecord(item.function) && asTrimmedString(item.function.name)) return item;
+      if (type === 'custom' || type === 'image_generation') return item;
+      if (type !== 'function') return item;
+      if (isRecord(item.function) && asTrimmedString(item.function.name)) return item;
 
-    const name = asTrimmedString(item.name);
-    if (!name) return item;
+      const name = asTrimmedString(item.name);
+      if (!name) return null;
 
-    const fn: Record<string, unknown> = { name };
-    const description = asTrimmedString(item.description);
-    if (description) fn.description = description;
-    if (item.parameters !== undefined) fn.parameters = item.parameters;
-    if (item.strict !== undefined) fn.strict = item.strict;
+      const fn: Record<string, unknown> = { name };
+      const description = asTrimmedString(item.description);
+      if (description) fn.description = description;
+      if (item.parameters !== undefined) fn.parameters = item.parameters;
+      if (item.strict !== undefined) fn.strict = item.strict;
 
-    return {
-      type: 'function',
-      function: fn,
-    };
-  });
+      return {
+        type: 'function',
+        function: fn,
+      };
+    })
+    .filter((item): item is Record<string, unknown> => !!item);
 }
 
 function convertResponsesToolChoiceToOpenAi(rawToolChoice: unknown): unknown {
@@ -787,11 +835,13 @@ export function convertResponsesBodyToOpenAiBody(
   stream: boolean,
   options?: { defaultEncryptedReasoningInclude?: boolean },
 ): Record<string, unknown> {
-  const normalizedBody = normalizeResponsesRequestFieldParity(body, {
-    defaultEncryptedReasoningInclude: options?.defaultEncryptedReasoningInclude,
-  });
+  const normalizedBody = normalizeResponsesBodyForCompatibility(
+    normalizeResponsesRequestFieldParity(body, {
+      defaultEncryptedReasoningInclude: options?.defaultEncryptedReasoningInclude,
+    }),
+  );
   const messages: Array<Record<string, unknown>> = [];
-  const input = normalizedBody.input;
+  const input = stripOrphanedResponsesToolOutputs(normalizedBody.input);
   let functionCallIndex = 0;
   let pendingToolCalls: OpenAiToolCall[] = [];
 
@@ -928,6 +978,9 @@ export function convertResponsesBodyToOpenAiBody(
   if (normalizedBody.parallel_tool_calls !== undefined) payload.parallel_tool_calls = normalizedBody.parallel_tool_calls;
   if (normalizedBody.tools !== undefined) payload.tools = convertResponsesToolsToOpenAi(normalizedBody.tools);
   if (normalizedBody.tool_choice !== undefined) payload.tool_choice = convertResponsesToolChoiceToOpenAi(normalizedBody.tool_choice);
+  if (Array.isArray(payload.tools) && payload.tools.length === 0) {
+    delete payload.tool_choice;
+  }
   if (normalizedBody.safety_identifier !== undefined) payload.safety_identifier = normalizedBody.safety_identifier;
   if (normalizedBody.max_tool_calls !== undefined) payload.max_tool_calls = normalizedBody.max_tool_calls;
   if (normalizedBody.prompt_cache_key !== undefined) payload.prompt_cache_key = normalizedBody.prompt_cache_key;

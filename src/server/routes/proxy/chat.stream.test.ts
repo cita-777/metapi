@@ -1,3 +1,4 @@
+import { zstdCompressSync } from 'node:zlib';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../../config.js';
@@ -166,6 +167,79 @@ describe('chat proxy stream behavior', () => {
     expect(response.body).toContain('data: ');
     expect(response.body).toContain('"chat.completion.chunk"');
     expect(response.body).toContain('hello from upstream');
+    expect(response.body).toContain('data: [DONE]');
+  });
+
+  it('decodes zstd-compressed non-stream chat responses before serializing downstream JSON', async () => {
+    const payload = JSON.stringify({
+      id: 'chatcmpl-zstd',
+      object: 'chat.completion',
+      created: 1_706_000_000,
+      model: 'upstream-gpt',
+      choices: [{
+        index: 0,
+        message: { role: 'assistant', content: '你好，来自 zstd 非流式响应' },
+        finish_reason: 'stop',
+      }],
+      usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
+    });
+    fetchMock.mockResolvedValue(new Response(zstdCompressSync(Buffer.from(payload)), {
+      status: 200,
+      headers: {
+        'content-encoding': 'zstd',
+        'content-type': 'application/json; charset=utf-8',
+      },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: 'hi' }],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()?.choices?.[0]?.message?.content).toBe('你好，来自 zstd 非流式响应');
+  });
+
+  it('decodes zstd-compressed non-SSE streaming chat responses before SSE conversion', async () => {
+    const payload = JSON.stringify({
+      id: 'chatcmpl-zstd-stream',
+      object: 'chat.completion',
+      created: 1_706_000_000,
+      model: 'upstream-gpt',
+      choices: [{
+        index: 0,
+        message: { role: 'assistant', content: '你好，来自 zstd 流式回退' },
+        finish_reason: 'stop',
+      }],
+      usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
+    });
+    fetchMock.mockResolvedValue(new Response(zstdCompressSync(Buffer.from(payload)), {
+      status: 200,
+      headers: {
+        'content-encoding': 'zstd',
+        'content-type': 'application/json; charset=utf-8',
+      },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        model: 'gpt-4o-mini',
+        stream: true,
+        messages: [{ role: 'user', content: 'hi' }],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/event-stream');
+    expect(response.body).toContain('"chat.completion.chunk"');
+    expect(response.body).toContain('你好，来自 zstd 流式回退');
+    expect(response.body).not.toContain('(�/�');
     expect(response.body).toContain('data: [DONE]');
   });
 
@@ -1152,6 +1226,112 @@ describe('chat proxy stream behavior', () => {
     expect(response.body).toContain('response.output_text.delta');
     expect(response.body).toContain('response.completed');
     expect(response.body).toContain('[DONE]');
+  });
+
+  it('replays downgraded chat-completions SSE for websocket transport without requiring native responses terminals', async () => {
+    fetchModelPricingCatalogMock.mockResolvedValue({
+      models: [
+        {
+          modelName: 'upstream-gpt',
+          supportedEndpointTypes: ['/v1/chat/completions'],
+        },
+      ],
+      groupRatio: {},
+    });
+
+    const encoder = new TextEncoder();
+    const upstreamBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"id":"chatcmpl-r1-ws","model":"upstream-gpt","choices":[{"delta":{"role":"assistant"},"finish_reason":null}]}\n\n'));
+        controller.enqueue(encoder.encode('data: {"id":"chatcmpl-r1-ws","model":"upstream-gpt","choices":[{"delta":{"content":"hello from fallback"},"finish_reason":null}]}\n\n'));
+        controller.enqueue(encoder.encode('data: {"id":"chatcmpl-r1-ws","model":"upstream-gpt","choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'));
+        controller.close();
+      },
+    });
+
+    fetchMock.mockResolvedValue(new Response(upstreamBody, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: {
+        'x-metapi-responses-websocket-transport': '1',
+      },
+      payload: {
+        model: 'gpt-5.2',
+        input: 'hello',
+        stream: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/event-stream');
+    expect(response.body).toContain('response.output_item.added');
+    expect(response.body).toContain('response.output_text.delta');
+    expect(response.body).toContain('response.completed');
+    expect(response.body).not.toContain('response.failed');
+    expect(response.body).toContain('[DONE]');
+  });
+
+  it('initializes reasoning items before emitting reasoning summary deltas on /v1/responses streams', async () => {
+    fetchModelPricingCatalogMock.mockResolvedValue({
+      models: [
+        {
+          modelName: 'upstream-gpt',
+          supportedEndpointTypes: ['/v1/chat/completions'],
+        },
+      ],
+      groupRatio: {},
+    });
+
+    const encoder = new TextEncoder();
+    const upstreamBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"id":"chatcmpl-r1-reasoning","model":"upstream-gpt","choices":[{"delta":{"role":"assistant"},"finish_reason":null}]}\n\n'));
+        controller.enqueue(encoder.encode('data: {"id":"chatcmpl-r1-reasoning","model":"upstream-gpt","choices":[{"delta":{"reasoning_content":"plan first"},"finish_reason":null}]}\n\n'));
+        controller.enqueue(encoder.encode('data: {"id":"chatcmpl-r1-reasoning","model":"upstream-gpt","choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'));
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      },
+    });
+
+    fetchMock.mockResolvedValue(new Response(upstreamBody, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-5.2',
+        input: 'hello',
+        stream: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/event-stream');
+    expect(response.body).toContain('event: response.output_item.added');
+    expect(response.body).toContain('event: response.reasoning_summary_part.added');
+    expect(response.body).toContain('event: response.reasoning_summary_text.delta');
+    const eventBlocks = response.body.split('\n\n').filter((block) => block.trim().length > 0);
+    const reasoningItemAddedIndex = eventBlocks.findIndex(
+      (block) => block.includes('event: response.output_item.added') && block.includes('"type":"reasoning"'),
+    );
+    const reasoningSummaryPartAddedIndex = eventBlocks.findIndex(
+      (block) => block.includes('event: response.reasoning_summary_part.added'),
+    );
+    const reasoningSummaryTextDeltaIndex = eventBlocks.findIndex(
+      (block) => block.includes('event: response.reasoning_summary_text.delta'),
+    );
+
+    expect(reasoningItemAddedIndex).toBeGreaterThanOrEqual(0);
+    expect(reasoningItemAddedIndex).toBeLessThan(reasoningSummaryPartAddedIndex);
+    expect(reasoningSummaryPartAddedIndex).toBeLessThan(reasoningSummaryTextDeltaIndex);
   });
 
   it('converts chat tool_calls SSE to Responses function_call events on /v1/responses', async () => {

@@ -61,14 +61,10 @@ describe('final transformer hard-cut architecture', () => {
 
     for (const file of files) {
       const source = readFileSync(file, 'utf8');
-      expect(source).not.toContain("from '../../routes/proxy/");
-      expect(source).not.toContain("from '../routes/proxy/");
-      expect(source).not.toContain("from '../../services/oauth/");
-      expect(source).not.toContain("from '../services/oauth/");
-      expect(source).not.toContain("from '../../services/tokenRouter.js'");
-      expect(source).not.toContain("from '../services/tokenRouter.js'");
-      expect(source).not.toContain("from '../../routes/proxy/runtimeExecutor.js'");
-      expect(source).not.toContain("from '../routes/proxy/runtimeExecutor.js'");
+      expect(source).not.toMatch(/(?:^|\n)\s*(?:import|export)\s+(?:type\s+)?(?:[^'"\n]*?\s+from\s+)?['"][^'"]*routes\/proxy\//m);
+      expect(source).not.toMatch(/(?:^|\n)\s*(?:import|export)\s+(?:type\s+)?(?:[^'"\n]*?\s+from\s+)?['"][^'"]*services\/oauth\//m);
+      expect(source).not.toMatch(/(?:^|\n)\s*(?:import|export)\s+(?:type\s+)?(?:[^'"\n]*?\s+from\s+)?['"][^'"]*services\/tokenRouter\.js['"]/m);
+      expect(source).not.toMatch(/(?:^|\n)\s*(?:import|export)\s+(?:type\s+)?(?:[^'"\n]*?\s+from\s+)?['"][^'"]*routes\/proxy\/runtimeExecutor\.js['"]/m);
       expect(source).not.toContain("from 'fastify'");
     }
   });

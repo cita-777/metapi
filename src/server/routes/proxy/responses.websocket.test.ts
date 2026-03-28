@@ -120,7 +120,7 @@ function createSelectedChannel(options?: {
   siteUrl?: string;
   sitePlatform?: string;
   username?: string;
-  extraConfig?: string;
+  extraConfig?: unknown;
   tokenValue?: string;
   actualModel?: string;
 }) {
@@ -248,6 +248,7 @@ function createClientSocketForPath(path: string, headers: Record<string, string>
 
 describe('responses websocket transport', () => {
   const originalCodexResponsesWebsocketBeta = config.codexResponsesWebsocketBeta;
+  const originalCodexUpstreamWebsocketEnabled = config.codexUpstreamWebsocketEnabled;
   let app: FastifyInstance;
   let baseUrl: string;
   let upstreamServer: WebSocketServer;
@@ -328,6 +329,7 @@ describe('responses websocket transport', () => {
     upstreamUpgradeHeaders = {};
     upstreamRequests = [];
     (config as any).codexResponsesWebsocketBeta = originalCodexResponsesWebsocketBeta;
+    (config as any).codexUpstreamWebsocketEnabled = true;
     rejectedUpgradeStatus = 426;
     rejectedUpgradeStatusText = 'Upgrade Required';
     rejectedUpgradeBody = 'Upgrade Required';
@@ -363,6 +365,7 @@ describe('responses websocket transport', () => {
   });
 
   afterAll(async () => {
+    (config as any).codexUpstreamWebsocketEnabled = originalCodexUpstreamWebsocketEnabled;
     await new Promise<void>((resolve) => rejectedUpgradeServer.close(() => resolve()));
     await new Promise<void>((resolve) => upstreamServer.close(() => resolve()));
     await app.close();
@@ -534,7 +537,40 @@ describe('responses websocket transport', () => {
 
     const socket = createClientSocket(baseUrl);
     await waitForSocketOpen(socket);
-    const messagesPromise = waitForSocketMessages(socket, 1);
+    const messagesPromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed',
+    );
+
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+
+    const message = await messagesPromise;
+    socket.close();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(message?.type).toBe('response.completed');
+    expect(message?.response?.id).toBe('resp_http_fallback');
+  });
+
+  it('treats response.incomplete as a terminal HTTP fallback payload without appending websocket error', async () => {
+    const selectedChannel = createSelectedChannel({
+      siteUrl: rejectedUpgradeSiteUrl,
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    fetchMock.mockResolvedValueOnce(createSseResponse([
+      'event: response.incomplete\n',
+      'data: {"type":"response.incomplete","response":{"id":"resp_http_incomplete","model":"gpt-5.4","status":"incomplete","output":[{"id":"msg_http_incomplete","type":"message","role":"assistant","status":"incomplete","content":[{"type":"output_text","text":"partial"}]}],"output_text":"partial","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+
+    const socket = createClientSocket(baseUrl);
+    await waitForSocketOpen(socket);
+    const messagesPromise = waitForSocketMessages(socket, 2);
 
     socket.send(JSON.stringify({
       type: 'response.create',
@@ -546,8 +582,13 @@ describe('responses websocket transport', () => {
     socket.close();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(messages.map((message) => message.type)).toEqual(['response.completed']);
-    expect(messages[0]?.response?.id).toBe('resp_http_fallback');
+    expect(messages.map((message) => message?.type)).toEqual([
+      'response.created',
+      'response.incomplete',
+    ]);
+    expect(messages.some((message) => message?.type === 'error')).toBe(false);
+    const terminalMessage = messages[1];
+    expect(terminalMessage?.response?.incomplete_details?.reason).toBe('max_output_tokens');
   });
 
   it('falls back to the HTTP responses executor when the upstream codex websocket upgrade returns 401', async () => {
@@ -572,7 +613,10 @@ describe('responses websocket transport', () => {
 
     const socket = createClientSocket(baseUrl);
     await waitForSocketOpen(socket);
-    const messagesPromise = waitForSocketMessages(socket, 1);
+    const messagesPromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed',
+    );
 
     socket.send(JSON.stringify({
       type: 'response.create',
@@ -580,12 +624,58 @@ describe('responses websocket transport', () => {
       input: [],
     }));
 
-    const messages = await messagesPromise;
+    const message = await messagesPromise;
     socket.close();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(messages.map((message) => message.type)).toEqual(['response.completed']);
-    expect(messages[0]?.response?.id).toBe('resp_http_fallback_401');
+    expect(message?.type).toBe('response.completed');
+    expect(message?.response?.id).toBe('resp_http_fallback_401');
+  });
+
+  it('treats response.incomplete as a terminal HTTP fallback event instead of appending a websocket error', async () => {
+    rejectedUpgradeStatus = 426;
+    rejectedUpgradeStatusText = 'Upgrade Required';
+    rejectedUpgradeBody = JSON.stringify({
+      error: {
+        message: 'upgrade required',
+        type: 'invalid_request_error',
+      },
+    });
+    const selectedChannel = createSelectedChannel({
+      siteUrl: rejectedUpgradeSiteUrl,
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    fetchMock.mockResolvedValueOnce(createSseResponse([
+      'event: response.incomplete\n',
+      'data: {"type":"response.incomplete","response":{"id":"resp_http_incomplete","model":"gpt-5.4","status":"incomplete","output":[{"id":"msg_incomplete","type":"message","role":"assistant","status":"incomplete","content":[{"type":"output_text","text":"partial"}]}],"output_text":"partial","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+
+    const socket = createClientSocket(baseUrl);
+    await waitForSocketOpen(socket);
+    const messagePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.incomplete',
+    );
+
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+
+    const message = await messagePromise;
+    await expect(
+      waitForSocketMessageMatching(
+        socket,
+        (nextMessage) => nextMessage?.type === 'error',
+        150,
+      ),
+    ).rejects.toThrow('Timed out waiting for matching websocket message');
+    socket.close();
+
+    expect(message?.response?.id).toBe('resp_http_incomplete');
   });
 
   it('preserves previous_response_id when websocket upgrade fallback uses HTTP on incremental-capable upstreams', async () => {
@@ -617,7 +707,10 @@ describe('responses websocket transport', () => {
 
     const socket = createClientSocket(baseUrl);
     await waitForSocketOpen(socket);
-    const firstResponsePromise = waitForSocketMessages(socket, 1);
+    const firstResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed',
+    );
 
     socket.send(JSON.stringify({
       type: 'response.create',
@@ -626,8 +719,11 @@ describe('responses websocket transport', () => {
       input: [],
     }));
 
-    const firstMessages = await firstResponsePromise;
-    const secondResponsePromise = waitForSocketMessages(socket, 1);
+    const firstMessage = await firstResponsePromise;
+    const secondResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed' && message?.response?.id === 'resp_http_fallback_2',
+    );
     socket.send(JSON.stringify({
       type: 'response.create',
       model: 'gpt-5.4',
@@ -645,7 +741,7 @@ describe('responses websocket transport', () => {
     await secondResponsePromise;
     socket.close();
 
-    expect(firstMessages[0]?.type).toBe('response.completed');
+    expect(firstMessage?.type).toBe('response.completed');
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const [, secondOptions] = fetchMock.mock.calls[1] as [string, RequestInit];
     const secondBody = JSON.parse(String(secondOptions.body));
@@ -658,6 +754,181 @@ describe('responses websocket transport', () => {
         output: 'tool result',
       },
     ]);
+  });
+
+  it('carries forward incomplete-turn output into the next fallback websocket request input', async () => {
+    rejectedUpgradeStatus = 426;
+    rejectedUpgradeStatusText = 'Upgrade Required';
+    rejectedUpgradeBody = JSON.stringify({
+      error: {
+        message: 'upgrade required',
+        type: 'invalid_request_error',
+      },
+    });
+
+    const selectedChannel = createSelectedChannel({
+      siteUrl: rejectedUpgradeSiteUrl,
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    fetchMock
+      .mockResolvedValueOnce(createSseResponse([
+        'event: response.incomplete\n',
+        'data: {"type":"response.incomplete","response":{"id":"resp_http_incomplete_1","model":"gpt-5.4","status":"incomplete","output":[{"id":"msg_http_incomplete_1","type":"message","role":"assistant","status":"incomplete","content":[{"type":"output_text","text":"carry me"}]}],"output_text":"carry me","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}\n\n',
+        'data: [DONE]\n\n',
+      ]))
+      .mockResolvedValueOnce(createSseResponse([
+        'event: response.completed\n',
+        'data: {"type":"response.completed","response":{"id":"resp_http_incomplete_2","model":"gpt-5.4","status":"completed","output":[],"usage":{"input_tokens":5,"output_tokens":1,"total_tokens":6}}}\n\n',
+        'data: [DONE]\n\n',
+      ]));
+
+    const socket = createClientSocket(baseUrl);
+    await waitForSocketOpen(socket);
+    const firstResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.incomplete',
+    );
+
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+
+    const firstMessage = await firstResponsePromise;
+    const secondResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [
+        {
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: 'continue' }],
+        },
+      ],
+    }));
+
+    await secondResponsePromise;
+    socket.close();
+
+    expect(firstMessage?.type).toBe('response.incomplete');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [, secondOptions] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const secondBody = JSON.parse(String(secondOptions.body));
+    expect(secondBody.input).toHaveLength(2);
+    expect(secondBody.input[0]).toMatchObject({
+      type: 'message',
+      role: 'assistant',
+      status: 'incomplete',
+      content: [{ type: 'output_text', text: 'carry me' }],
+    });
+    expect(secondBody.input[1]).toEqual({
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_text', text: 'continue' }],
+    });
+  });
+
+  it('carries forward terminal output from incomplete HTTP fallback turns on non-incremental upstreams', async () => {
+    rejectedUpgradeStatus = 426;
+    rejectedUpgradeStatusText = 'Upgrade Required';
+    rejectedUpgradeBody = JSON.stringify({
+      error: {
+        message: 'upgrade required',
+        type: 'invalid_request_error',
+      },
+    });
+
+    const selectedChannel = createSelectedChannel({
+      sitePlatform: 'openai',
+      siteUrl: rejectedUpgradeSiteUrl,
+      actualModel: 'gpt-4.1',
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    fetchMock
+      .mockResolvedValueOnce(createSseResponse([
+        'event: response.incomplete\n',
+        'data: {"type":"response.incomplete","response":{"id":"resp_http_incomplete_1","model":"gpt-4.1","status":"incomplete","output":[{"id":"msg_1","type":"message","role":"assistant","status":"incomplete","content":[{"type":"output_text","text":"partial tool call"}]}],"output_text":"partial tool call","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}\n\n',
+        'data: [DONE]\n\n',
+      ]))
+      .mockResolvedValueOnce(createSseResponse([
+        'event: response.completed\n',
+        'data: {"type":"response.completed","response":{"id":"resp_http_complete_2","model":"gpt-4.1","status":"completed","output":[{"id":"msg_2","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"done"}]}],"usage":{"input_tokens":5,"output_tokens":1,"total_tokens":6}}}\n\n',
+        'data: [DONE]\n\n',
+      ]));
+
+    const socket = createClientSocket(baseUrl);
+    await waitForSocketOpen(socket);
+
+    const firstResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.incomplete',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-4.1',
+      instructions: 'be helpful',
+      input: [
+        {
+          id: 'msg_user_1',
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: 'call the tool' }],
+        },
+      ],
+    }));
+    await firstResponsePromise;
+
+    const secondResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      previous_response_id: 'resp_http_incomplete_1',
+      input: [
+        {
+          id: 'tool_out_1',
+          type: 'function_call_output',
+          call_id: 'call_1',
+          output: 'tool result',
+        },
+      ],
+    }));
+    await secondResponsePromise;
+    socket.close();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [, secondOptions] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const secondBody = JSON.parse(String(secondOptions.body));
+    expect(secondBody.previous_response_id).toBeUndefined();
+    expect(secondBody.model).toBe('gpt-4.1');
+    expect(secondBody.instructions).toBe('be helpful');
+    expect(secondBody.input).toHaveLength(3);
+    expect(secondBody.input[0]).toEqual({
+      id: 'msg_user_1',
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_text', text: 'call the tool' }],
+    });
+    expect(secondBody.input[1]).toMatchObject({
+      type: 'message',
+      role: 'assistant',
+      status: 'incomplete',
+      content: [{ type: 'output_text', text: 'partial tool call' }],
+    });
+    expect(secondBody.input[2]).toEqual({
+      id: 'tool_out_1',
+      type: 'function_call_output',
+      call_id: 'call_1',
+      output: 'tool result',
+    });
   });
 
   it('preserves query parameter auth when websocket transport falls back to the HTTP responses route', async () => {
@@ -770,7 +1041,10 @@ describe('responses websocket transport', () => {
     const socket = createClientSocket(baseUrl);
     await waitForSocketOpen(socket);
 
-    const firstResponsePromise = waitForSocketMessages(socket, 1);
+    const firstResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed',
+    );
     socket.send(JSON.stringify({
       type: 'response.create',
       model: 'gpt-4.1',
@@ -786,7 +1060,10 @@ describe('responses websocket transport', () => {
     }));
     await firstResponsePromise;
 
-    const secondResponsePromise = waitForSocketMessages(socket, 1);
+    const secondResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed',
+    );
     socket.send(JSON.stringify({
       type: 'response.create',
       previous_response_id: 'resp_ws_1',
@@ -812,33 +1089,116 @@ describe('responses websocket transport', () => {
     expect(secondBody.previous_response_id).toBeUndefined();
     expect(secondBody.model).toBe('gpt-4.1');
     expect(secondBody.instructions).toBe('be helpful');
-    expect(secondBody.input).toEqual([
-      {
-        id: 'msg_user_1',
-        type: 'message',
-        role: 'user',
-        content: [{ type: 'input_text', text: 'call the tool' }],
-      },
-      {
-        id: 'fc_1',
-        type: 'function_call',
-        call_id: 'call_1',
-        status: 'completed',
-      },
-      {
-        id: 'msg_1',
-        type: 'message',
-        role: 'assistant',
-        status: 'completed',
-        content: [{ type: 'output_text', text: 'call tool' }],
-      },
-      {
-        id: 'tool_out_1',
-        type: 'function_call_output',
-        call_id: 'call_1',
-        output: 'tool result',
-      },
-    ]);
+    expect(secondBody.input).toHaveLength(4);
+    expect(secondBody.input[0]).toEqual({
+      id: 'msg_user_1',
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_text', text: 'call the tool' }],
+    });
+    expect(secondBody.input[1]).toMatchObject({
+      id: 'fc_1',
+      type: 'function_call',
+      call_id: 'call_1',
+    });
+    expect(secondBody.input[2]).toEqual({
+      id: 'msg_1',
+      type: 'message',
+      role: 'assistant',
+      status: 'completed',
+      content: [{ type: 'output_text', text: 'call tool' }],
+    });
+    expect(secondBody.input[3]).toEqual({
+      id: 'tool_out_1',
+      type: 'function_call_output',
+      call_id: 'call_1',
+      output: 'tool result',
+    });
+  });
+
+  it('keeps streamed output items for follow-up turns when the terminal HTTP fallback payload has an empty output array', async () => {
+    const selectedChannel = createSelectedChannel({
+      sitePlatform: 'openai',
+      actualModel: 'gpt-4.1',
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    fetchMock
+      .mockResolvedValueOnce(createSseResponse([
+        'event: response.output_item.done\n',
+        'data: {"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","call_id":"call_1"}}\n\n',
+        'event: response.output_item.done\n',
+        'data: {"type":"response.output_item.done","output_index":1,"item":{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"call tool"}]}}\n\n',
+        'event: response.completed\n',
+        'data: {"type":"response.completed","response":{"id":"resp_ws_empty_output","model":"gpt-4.1","status":"completed","output":[],"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}\n\n',
+        'data: [DONE]\n\n',
+      ]))
+      .mockResolvedValueOnce(createSseResponse([
+        'event: response.completed\n',
+        'data: {"type":"response.completed","response":{"id":"resp_ws_followup","model":"gpt-4.1","status":"completed","output":[{"id":"msg_2","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"done"}]}],"usage":{"input_tokens":5,"output_tokens":1,"total_tokens":6}}}\n\n',
+        'data: [DONE]\n\n',
+      ]));
+
+    const socket = createClientSocket(baseUrl);
+    await waitForSocketOpen(socket);
+
+    const firstResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-4.1',
+      instructions: 'be helpful',
+      input: [
+        {
+          id: 'msg_user_1',
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: 'call the tool' }],
+        },
+      ],
+    }));
+    await firstResponsePromise;
+
+    const secondResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-4.1',
+      instructions: 'be helpful',
+      previous_response_id: 'resp_ws_empty_output',
+      input: [
+        {
+          id: 'tool_out_1',
+          type: 'function_call_output',
+          call_id: 'call_1',
+          output: 'tool result',
+        },
+      ],
+    }));
+    await secondResponsePromise;
+    socket.close();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [, secondOptions] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const secondBody = JSON.parse(String(secondOptions.body));
+
+    expect(secondBody.input).toHaveLength(4);
+    expect(secondBody.input[1]).toMatchObject({
+      id: 'fc_1',
+      type: 'function_call',
+      call_id: 'call_1',
+    });
+    expect(secondBody.input[2]).toEqual({
+      id: 'msg_1',
+      type: 'message',
+      role: 'assistant',
+      status: 'completed',
+      content: [{ type: 'output_text', text: 'call tool' }],
+    });
   });
 
   it('serializes websocket messages per connection so follow-up turns wait for the previous HTTP fallback to finish', async () => {
@@ -924,33 +1284,31 @@ describe('responses websocket transport', () => {
     });
     const [, secondOptions] = fetchMock.mock.calls[1] as [string, RequestInit];
     const secondBody = JSON.parse(String(secondOptions.body));
-    expect(secondBody.input).toEqual([
-      {
-        id: 'msg_user_1',
-        type: 'message',
-        role: 'user',
-        content: [{ type: 'input_text', text: 'call the tool' }],
-      },
-      {
-        id: 'fc_1',
-        type: 'function_call',
-        call_id: 'call_1',
-        status: 'completed',
-      },
-      {
-        id: 'msg_1',
-        type: 'message',
-        role: 'assistant',
-        status: 'completed',
-        content: [{ type: 'output_text', text: 'call tool' }],
-      },
-      {
-        id: 'tool_out_1',
-        type: 'function_call_output',
-        call_id: 'call_1',
-        output: 'tool result',
-      },
-    ]);
+    expect(secondBody.input).toHaveLength(4);
+    expect(secondBody.input[0]).toEqual({
+      id: 'msg_user_1',
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_text', text: 'call the tool' }],
+    });
+    expect(secondBody.input[1]).toMatchObject({
+      id: 'fc_1',
+      type: 'function_call',
+      call_id: 'call_1',
+    });
+    expect(secondBody.input[2]).toEqual({
+      id: 'msg_1',
+      type: 'message',
+      role: 'assistant',
+      status: 'completed',
+      content: [{ type: 'output_text', text: 'call tool' }],
+    });
+    expect(secondBody.input[3]).toEqual({
+      id: 'tool_out_1',
+      type: 'function_call_output',
+      call_id: 'call_1',
+      output: 'tool result',
+    });
   });
 
   it('preserves incremental response.create payloads with previous_response_id for websocket-capable upstreams', async () => {
@@ -1008,7 +1366,10 @@ describe('responses websocket transport', () => {
     const socket = createClientSocket(baseUrl);
     await waitForSocketOpen(socket);
 
-    const firstResponsePromise = waitForSocketMessages(socket, 1);
+    const firstResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed',
+    );
     socket.send(JSON.stringify({
       type: 'response.create',
       model: 'gpt-5.4',
@@ -1072,9 +1433,105 @@ describe('responses websocket transport', () => {
     });
   });
 
+  it('falls back to the HTTP responses route when codex upstream websocket is globally disabled', async () => {
+    (config as any).codexUpstreamWebsocketEnabled = false;
+
+    fetchMock
+      .mockResolvedValueOnce(createSseResponse([
+        'event: response.completed\n',
+        'data: {"type":"response.completed","response":{"id":"resp_http_1","model":"gpt-5.4","status":"completed","output":[{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"first"}]}],"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}\n\n',
+        'data: [DONE]\n\n',
+      ]))
+      .mockResolvedValueOnce(createSseResponse([
+        'event: response.completed\n',
+        'data: {"type":"response.completed","response":{"id":"resp_http_2","model":"gpt-5.4","status":"completed","output":[{"id":"msg_2","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"second"}]}],"usage":{"input_tokens":5,"output_tokens":1,"total_tokens":6}}}\n\n',
+        'data: [DONE]\n\n',
+      ]));
+
+    const socket = createClientSocket(baseUrl);
+    await waitForSocketOpen(socket);
+    const firstResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed' && message?.response?.id === 'resp_http_1',
+    );
+
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      instructions: 'be helpful',
+      input: [],
+    }));
+
+    const firstMessage = await firstResponsePromise;
+    const secondResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed' && message?.response?.id === 'resp_http_2',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      previous_response_id: 'resp_http_1',
+      input: [
+        {
+          id: 'tool_out_1',
+          type: 'function_call_output',
+          call_id: 'call_1',
+          output: 'tool result',
+        },
+      ],
+    }));
+    const secondMessage = await secondResponsePromise;
+    socket.close();
+
+    expect(firstMessage).toMatchObject({
+      type: 'response.completed',
+      response: {
+        id: 'resp_http_1',
+      },
+    });
+    expect(secondMessage).toMatchObject({
+      type: 'response.completed',
+      response: {
+        id: 'resp_http_2',
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'gpt-5.4',
+        instructions: 'be helpful',
+        input: [],
+        stream: true,
+        store: false,
+      }),
+    });
+    const [, secondOptions] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const secondBody = JSON.parse(String(secondOptions.body));
+    expect(secondBody.previous_response_id).toBeUndefined();
+    expect(secondBody.instructions).toBe('be helpful');
+    expect(secondBody.stream).toBe(true);
+    expect(secondBody.store).toBe(false);
+    expect(secondBody.input).toEqual([
+      {
+        id: 'msg_1',
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        content: [{ type: 'output_text', text: 'first' }],
+      },
+      {
+        id: 'tool_out_1',
+        type: 'function_call_output',
+        call_id: 'call_1',
+        output: 'tool result',
+      },
+    ]);
+  });
+
   it('disables codex websocket incremental transport when the selected account marks websockets as disabled', async () => {
     const selectedChannel = createSelectedChannel({
-      extraConfig: JSON.stringify({
+      extraConfig: {
         credentialMode: 'session',
         websockets: false,
         oauth: {
@@ -1082,7 +1539,7 @@ describe('responses websocket transport', () => {
           accountId: 'chatgpt-account-123',
           email: 'codex-user@example.com',
         },
-      }),
+      },
     });
     selectChannelMock.mockReturnValue(selectedChannel);
     previewSelectedChannelMock.mockResolvedValue(selectedChannel);
@@ -1100,7 +1557,10 @@ describe('responses websocket transport', () => {
 
     const socket = createClientSocket(baseUrl);
     await waitForSocketOpen(socket);
-    const firstResponsePromise = waitForSocketMessages(socket, 1);
+    const firstResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed' && message?.response?.id === 'resp_http_1',
+    );
 
     socket.send(JSON.stringify({
       type: 'response.create',
@@ -1109,8 +1569,11 @@ describe('responses websocket transport', () => {
       input: [],
     }));
 
-    const firstMessages = await firstResponsePromise;
-    const secondResponsePromise = waitForSocketMessages(socket, 1);
+    const firstMessage = await firstResponsePromise;
+    const secondResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed' && message?.response?.id === 'resp_http_2',
+    );
     socket.send(JSON.stringify({
       type: 'response.create',
       model: 'gpt-5.4',
@@ -1128,13 +1591,20 @@ describe('responses websocket transport', () => {
     await secondResponsePromise;
     socket.close();
 
-    expect(firstMessages[0]?.type).toBe('response.completed');
+    expect(firstMessage?.type).toBe('response.completed');
     expect(upstreamConnectionCount).toBe(0);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const [, secondOptions] = fetchMock.mock.calls[1] as [string, RequestInit];
     const secondBody = JSON.parse(String(secondOptions.body));
     expect(secondBody.previous_response_id).toBeUndefined();
     expect(secondBody.input).toEqual([
+      {
+        id: 'msg_1',
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        content: [{ type: 'output_text', text: 'first' }],
+      },
       {
         id: 'tool_out_1',
         type: 'function_call_output',
@@ -1281,5 +1751,239 @@ describe('responses websocket transport', () => {
       'error',
     ]);
     expect(messages[2]?.error?.message).toContain('stream closed before response.completed');
+  });
+
+  it('does not append websocket error after an upstream response.incomplete terminal event', async () => {
+    const selectedChannel = createSelectedChannel({
+      siteUrl: upstreamSiteUrl,
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    upstreamMessageHandler = (socket) => {
+      socket.send(JSON.stringify({
+        type: 'response.incomplete',
+        response: {
+          id: 'resp_ws_incomplete',
+          model: 'gpt-5.4',
+          status: 'incomplete',
+          output: [{
+            id: 'msg_ws_incomplete',
+            type: 'message',
+            role: 'assistant',
+            status: 'incomplete',
+            content: [{ type: 'output_text', text: 'partial' }],
+          }],
+          incomplete_details: {
+            reason: 'max_output_tokens',
+          },
+        },
+      }));
+      socket.close();
+    };
+
+    const socket = createClientSocket(baseUrl);
+    await waitForSocketOpen(socket);
+    const incompletePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.incomplete',
+    );
+
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+
+    const message = await incompletePromise;
+    socket.close();
+
+    expect(message?.type).toBe('response.incomplete');
+    expect(message?.response?.incomplete_details?.reason).toBe('max_output_tokens');
+  });
+
+  it('does not append websocket error after an upstream response.failed terminal event with output', async () => {
+    const selectedChannel = createSelectedChannel({
+      siteUrl: upstreamSiteUrl,
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    upstreamMessageHandler = (socket) => {
+      socket.send(JSON.stringify({
+        type: 'response.failed',
+        response: {
+          id: 'resp_ws_failed',
+          model: 'gpt-5.4',
+          status: 'failed',
+          output: [{
+            id: 'msg_ws_failed',
+            type: 'message',
+            role: 'assistant',
+            status: 'failed',
+            content: [{ type: 'output_text', text: 'partial before failure' }],
+          }],
+          error: {
+            message: 'tool crashed',
+            type: 'server_error',
+          },
+        },
+      }));
+      socket.close();
+    };
+
+    const socket = createClientSocket(baseUrl);
+    await waitForSocketOpen(socket);
+    const failedPromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.failed',
+    );
+
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+
+    const message = await failedPromise;
+    socket.close();
+
+    expect(message?.type).toBe('response.failed');
+    expect(message?.response?.error?.message).toBe('tool crashed');
+    expect(message?.response?.output?.[0]?.content?.[0]?.text).toBe('partial before failure');
+  });
+
+  it('carries forward output from response.incomplete terminal payloads on non-incremental websocket turns', async () => {
+    const selectedChannel = createSelectedChannel({
+      sitePlatform: 'openai',
+      actualModel: 'gpt-4.1',
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    fetchMock
+      .mockResolvedValueOnce(createSseResponse([
+        'event: response.incomplete\n',
+        'data: {"type":"response.incomplete","response":{"id":"resp_incomplete_followup","model":"gpt-5.4","status":"incomplete","output":[{"id":"msg_incomplete_followup","type":"message","role":"assistant","status":"incomplete","content":[{"type":"output_text","text":"partial"}]}],"output_text":"partial","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n',
+        'data: [DONE]\n\n',
+      ]))
+      .mockResolvedValueOnce(createSseResponse([
+        'event: response.completed\n',
+        'data: {"type":"response.completed","response":{"id":"resp_followup_done","model":"gpt-5.4","status":"completed","output":[],"usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}}}\n\n',
+        'data: [DONE]\n\n',
+      ]));
+
+    const socket = createClientSocket(baseUrl);
+    await waitForSocketOpen(socket);
+    const firstMessagesPromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.incomplete',
+    );
+
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+
+    const firstMessage = await firstMessagesPromise;
+    const secondMessagesPromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed' && message?.response?.id === 'resp_followup_done',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      previous_response_id: 'resp_incomplete_followup',
+      input: [],
+    }));
+
+    await secondMessagesPromise;
+    socket.close();
+
+    expect(firstMessage?.response?.output).toEqual([
+      {
+        id: 'msg_incomplete_followup',
+        type: 'message',
+        role: 'assistant',
+        status: 'incomplete',
+        content: [{ type: 'output_text', text: 'partial' }],
+      },
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [, secondOptions] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const secondBody = JSON.parse(String(secondOptions.body));
+    expect(secondBody.input).toHaveLength(1);
+    expect(secondBody.input[0]).toMatchObject({
+      type: 'message',
+      role: 'assistant',
+      status: 'incomplete',
+      content: [{ type: 'output_text', text: 'partial' }],
+    });
+  });
+
+  it('carries forward output from response.failed terminal payloads on non-incremental websocket turns', async () => {
+    const selectedChannel = createSelectedChannel({
+      sitePlatform: 'openai',
+      actualModel: 'gpt-4.1',
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    fetchMock
+      .mockResolvedValueOnce(createSseResponse([
+        'event: response.failed\n',
+        'data: {"type":"response.failed","response":{"id":"resp_failed_followup","model":"gpt-4.1","status":"failed","output":[{"id":"msg_failed_followup","type":"message","role":"assistant","status":"failed","content":[{"type":"output_text","text":"partial failure"}]}],"error":{"message":"tool crashed","type":"server_error"},"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n',
+        'data: [DONE]\n\n',
+      ]))
+      .mockResolvedValueOnce(createSseResponse([
+        'event: response.completed\n',
+        'data: {"type":"response.completed","response":{"id":"resp_failed_followup_done","model":"gpt-4.1","status":"completed","output":[],"usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}}}\n\n',
+        'data: [DONE]\n\n',
+      ]));
+
+    const socket = createClientSocket(baseUrl);
+    await waitForSocketOpen(socket);
+    const firstMessagePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.failed',
+    );
+
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-4.1',
+      input: [],
+    }));
+
+    const firstMessage = await firstMessagePromise;
+    const secondMessagePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed' && message?.response?.id === 'resp_failed_followup_done',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-4.1',
+      previous_response_id: 'resp_failed_followup',
+      input: [],
+    }));
+
+    await secondMessagePromise;
+    socket.close();
+
+    expect(firstMessage?.response?.output).toEqual([
+      {
+        id: 'msg_failed_followup',
+        type: 'message',
+        role: 'assistant',
+        status: 'failed',
+        content: [{ type: 'output_text', text: 'partial failure' }],
+      },
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [, secondOptions] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const secondBody = JSON.parse(String(secondOptions.body));
+    expect(secondBody.input).toHaveLength(1);
+    expect(secondBody.input[0]).toMatchObject({
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'output_text', text: 'partial failure' }],
+    });
+    expect(['failed', 'incomplete']).toContain(secondBody.input[0]?.status);
   });
 });

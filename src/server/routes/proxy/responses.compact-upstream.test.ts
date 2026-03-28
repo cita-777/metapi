@@ -279,7 +279,8 @@ describe('responses proxy compact upstream routing', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({
+    const body = response.json();
+    expect(body).toMatchObject({
       id: 'cmp_sse_123',
       object: 'response.compaction',
       input_tokens: 12,
@@ -292,6 +293,12 @@ describe('responses proxy compact upstream routing', () => {
           encrypted_content: 'enc-from-sse',
         },
       ],
+      usage: {
+        input_tokens: 12,
+        output_tokens: 3,
+        total_tokens: 15,
+      },
     });
+    expect(body.created_at).toEqual(expect.any(Number));
   });
 });

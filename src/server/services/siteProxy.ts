@@ -35,7 +35,7 @@ type SiteProxyRow = {
   siteUrl: string;
   proxyUrl: string | null;
   useSystemProxy: boolean;
-  customHeaders: string | null;
+  customHeaders: unknown;
 };
 
 type ParsedSiteProxyInput = {
@@ -47,7 +47,7 @@ type ParsedSiteProxyInput = {
 export type SiteProxyConfigLike = {
   proxyUrl?: string | null;
   useSystemProxy?: boolean | null;
-  customHeaders?: string | null;
+  customHeaders?: unknown;
 };
 
 let siteProxyCache: {
@@ -147,7 +147,7 @@ async function getCachedSiteProxyRows(nowMs = Date.now()): Promise<SiteProxyRow[
         siteUrl: normalizeSiteUrl(row.siteUrl),
         proxyUrl: normalizeSiteProxyUrl(row.proxyUrl),
         useSystemProxy: !!row.useSystemProxy,
-        customHeaders: typeof row.customHeaders === 'string' ? row.customHeaders : null,
+        customHeaders: row.customHeaders ?? null,
       })),
       systemProxyUrl: parsedSystemProxyUrl,
     };
@@ -380,7 +380,7 @@ function findBestMatchingSiteRow(rows: SiteProxyRow[], normalizedRequestUrl: str
 
 async function resolveSiteRequestConfigByRequestUrl(requestUrl: string): Promise<{
   proxyUrl: string | null;
-  customHeaders: string | null;
+  customHeaders: unknown;
 }> {
   const normalizedRequestUrl = normalizeSiteUrl(requestUrl);
   if (!normalizedRequestUrl) {

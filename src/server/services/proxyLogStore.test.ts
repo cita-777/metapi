@@ -52,7 +52,7 @@ vi.mock('../db/index.js', () => ({
   hasProxyLogDownstreamApiKeyIdColumn: (...args: unknown[]) => hasProxyLogDownstreamApiKeyIdColumnMock(...args),
 }));
 
-import { insertProxyLog, withProxyLogSelectFields } from './proxyLogStore.js';
+import { insertProxyLog, parseProxyLogBillingDetails, withProxyLogSelectFields } from './proxyLogStore.js';
 
 describe('proxyLogStore', () => {
   beforeEach(() => {
@@ -87,6 +87,16 @@ describe('proxyLogStore', () => {
     expect(runner.mock.calls[0][0].fields.billingDetails).toBe('billing_details');
     expect(runner.mock.calls[1][0].includeBillingDetails).toBe(false);
     expect(runner.mock.calls[1][0].fields.billingDetails).toBeUndefined();
+  });
+
+  it('accepts parsed billing details objects for helper-level callers', () => {
+    expect(parseProxyLogBillingDetails({
+      source: 'pricing',
+      usd: 1.25,
+    })).toEqual({
+      source: 'pricing',
+      usd: 1.25,
+    });
   });
 
   it('retries proxy log inserts without billing details when the column is missing', async () => {

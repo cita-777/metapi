@@ -5,6 +5,10 @@ import { drizzle as drizzleSqliteProxy } from 'drizzle-orm/sqlite-proxy';
 import { drizzle as drizzleMysqlProxy } from 'drizzle-orm/mysql-proxy';
 import { drizzle as drizzlePgProxy } from 'drizzle-orm/pg-proxy';
 import * as schema from './schema.js';
+import {
+  installPostgresJsonTextParsers,
+  resetPostgresJsonTextParsersInstallStateForTests,
+} from './postgresJsonTextParsers.js';
 import { ensureSiteSchemaCompatibility, type SiteSchemaInspector } from './siteSchemaCompatibility.js';
 import { ensureRouteGroupingSchemaCompatibility } from './routeGroupingSchemaCompatibility.js';
 import { ensureProxyFileSchemaCompatibility } from './proxyFileSchemaCompatibility.js';
@@ -45,6 +49,31 @@ let pgPool: pg.Pool | null = null;
 let proxyLogBillingDetailsColumnAvailable: boolean | null = null;
 let proxyLogDownstreamApiKeyIdColumnAvailable: boolean | null = null;
 let proxyLogClientColumnsAvailable: boolean | null = null;
+
+function buildMysqlPoolOptions(
+  connectionString = config.dbUrl,
+  sslEnabled = config.dbSsl,
+): mysql.PoolOptions {
+  const poolOptions: mysql.PoolOptions = {
+    uri: connectionString,
+    jsonStrings: true,
+  };
+  if (sslEnabled) {
+    poolOptions.ssl = { rejectUnauthorized: false };
+  }
+  return poolOptions;
+}
+
+function buildPostgresPoolOptions(
+  connectionString = config.dbUrl,
+  sslEnabled = config.dbSsl,
+): pg.PoolConfig {
+  const poolOptions: pg.PoolConfig = { connectionString };
+  if (sslEnabled) {
+    poolOptions.ssl = { rejectUnauthorized: false };
+  }
+  return poolOptions;
+}
 
 function resolveSqlitePath(): string {
   const raw = (config.dbUrl || '').trim();
@@ -1238,11 +1267,7 @@ function initMysqlDb(): AppDb {
   if (!config.dbUrl) {
     throw new Error('DB_URL is required when DB_TYPE=mysql');
   }
-  const poolOptions: mysql.PoolOptions = { uri: config.dbUrl };
-  if (config.dbSsl) {
-    poolOptions.ssl = { rejectUnauthorized: false };
-  }
-  mysqlPool = mysql.createPool(poolOptions);
+  mysqlPool = mysql.createPool(buildMysqlPoolOptions());
 
   const rawDb = drizzleMysqlProxy(
     (sqlText, params, method) => mysqlProxyQuery(mysqlPool!, sqlText, params, method as SqlMethod),
@@ -1274,10 +1299,8 @@ function initPostgresDb(): AppDb {
   if (!config.dbUrl) {
     throw new Error('DB_URL is required when DB_TYPE=postgres');
   }
-  const poolOptions: pg.PoolConfig = { connectionString: config.dbUrl };
-  if (config.dbSsl) {
-    poolOptions.ssl = { rejectUnauthorized: false };
-  }
+  installPostgresJsonTextParsers();
+  const poolOptions = buildPostgresPoolOptions();
   pgPool = new pg.Pool(poolOptions);
 
   const rawDb = drizzlePgProxy(
@@ -1375,4 +1398,10 @@ export const __dbProxyTestUtils = {
   shouldWrapObject,
   resolveSqlitePath,
   resolveVitestSqlitePath,
+  buildMysqlPoolOptions,
+  buildPostgresPoolOptions,
+  installPostgresJsonTextParsers,
+  ensurePostgresJsonTextParsers: installPostgresJsonTextParsers,
+  resetPostgresJsonTextParsersInstallStateForTests,
+  pg,
 };

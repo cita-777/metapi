@@ -52,6 +52,7 @@
     "db:migrate": "tsx src/server/db/migrate.ts",
     "schema:contract": "tsx scripts/dev/generate-schema-contract.ts",
     "schema:generate": "npm run db:generate && npm run schema:contract",
+    "repo:drift-check": "tsx scripts/dev/repo-drift-check.ts",
     "test:schema:unit": "vitest run --root . src/server/db/schemaContract.test.ts src/server/db/schemaArtifactGenerator.test.ts src/server/db/schemaIntrospection.test.ts src/server/db/schemaParity.test.ts",
     "test:schema:parity": "vitest run --root . src/server/db/schemaParity.live.test.ts",
     "test:schema:upgrade": "vitest run --root . src/server/db/schemaUpgrade.live.test.ts",

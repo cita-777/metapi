@@ -117,7 +117,8 @@ export async function refreshProxyVideoTaskSnapshot(
     .run();
 }
 
-function parseJsonColumn(value: string | null | undefined): unknown | null {
+function parseJsonColumn(value: unknown): unknown | null {
+  if (value && typeof value === 'object') return value;
   if (typeof value !== 'string' || value.trim().length === 0) return null;
   try {
     return JSON.parse(value);
@@ -125,3 +126,7 @@ function parseJsonColumn(value: string | null | undefined): unknown | null {
     return value;
   }
 }
+
+export const __proxyVideoTaskStoreTestUtils = {
+  parseJsonColumn,
+};

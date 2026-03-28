@@ -1,0 +1,44 @@
+name: Harness Drift Report
+
+on:
+  schedule:
+    - cron: '37 17 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: 22
+
+jobs:
+  drift-report:
+    name: Generate Drift Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Generate repo drift report
+        run: npm run repo:drift-check -- --format markdown --output tmp/repo-drift-report.md --report-only
+
+      - name: Publish report to step summary
+        run: cat tmp/repo-drift-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: repo-drift-report
+          path: tmp/repo-drift-report.md
+          retention-days: 30

@@ -1,7 +1,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 type DbModule = typeof import('./index.js');
 
@@ -12,6 +12,10 @@ describe('db proxy query wrapper', () => {
     process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'metapi-db-proxy-wrap-'));
     const dbModule = await import('./index.js');
     testUtils = dbModule.__dbProxyTestUtils;
+  });
+
+  beforeEach(() => {
+    testUtils.resetPostgresJsonTextParsersInstallStateForTests();
   });
 
   it('wraps thenable query builders and provides all/get shims', async () => {
@@ -53,5 +57,46 @@ describe('db proxy query wrapper', () => {
     expect(runResult).toEqual({ changes: 3, lastInsertRowid: 9 });
     expect(testUtils.shouldWrapObject(Promise.resolve())).toBe(false);
   });
-});
 
+  it('builds mysql pool options with jsonStrings enabled', () => {
+    expect(testUtils.buildMysqlPoolOptions('mysql://root:pass@db.example.com:3306/metapi', false)).toMatchObject({
+      uri: 'mysql://root:pass@db.example.com:3306/metapi',
+      jsonStrings: true,
+    });
+    expect(testUtils.buildMysqlPoolOptions('mysql://root:pass@db.example.com:3306/metapi', true)).toMatchObject({
+      uri: 'mysql://root:pass@db.example.com:3306/metapi',
+      jsonStrings: true,
+      ssl: { rejectUnauthorized: false },
+    });
+  });
+
+  it('builds postgres pool options with ssl when requested', () => {
+    expect(testUtils.buildPostgresPoolOptions('postgres://user:pass@db.example.com:5432/metapi', false)).toEqual({
+      connectionString: 'postgres://user:pass@db.example.com:5432/metapi',
+    });
+    expect(testUtils.buildPostgresPoolOptions('postgres://user:pass@db.example.com:5432/metapi', true)).toMatchObject({
+      connectionString: 'postgres://user:pass@db.example.com:5432/metapi',
+      ssl: { rejectUnauthorized: false },
+    });
+  });
+
+  it('installs postgres JSON text parsers idempotently', () => {
+    const setTypeParser = vi.fn();
+    const fakeTypes = {
+      builtins: {
+        JSON: 114,
+        JSONB: 3802,
+      },
+      setTypeParser,
+    };
+
+    testUtils.installPostgresJsonTextParsers(fakeTypes as any);
+    testUtils.installPostgresJsonTextParsers(fakeTypes as any);
+
+    expect(setTypeParser).toHaveBeenCalledTimes(2);
+    expect(setTypeParser).toHaveBeenNthCalledWith(1, 114, 'text', expect.any(Function));
+    expect(setTypeParser).toHaveBeenNthCalledWith(2, 3802, 'text', expect.any(Function));
+    const parser = setTypeParser.mock.calls[0][2] as (value: string) => string;
+    expect(parser('{"ok":true}')).toBe('{"ok":true}');
+  });
+});

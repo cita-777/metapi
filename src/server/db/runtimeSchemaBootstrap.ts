@@ -12,6 +12,7 @@ import {
   generateUpgradeSql,
   type MysqlIndexPrefixRequirementMap,
 } from './schemaArtifactGenerator.js';
+import { installPostgresJsonTextParsers } from './postgresJsonTextParsers.js';
 import { introspectLiveSchema } from './schemaIntrospection.js';
 import { resolveGeneratedSchemaContractPath, type SchemaContract } from './schemaContract.js';
 
@@ -324,6 +325,7 @@ async function createPostgresClient(connectionString: string, ssl: boolean): Pro
   if (ssl) {
     clientOptions.ssl = { rejectUnauthorized: false };
   }
+  installPostgresJsonTextParsers();
   const client = new pg.Client(clientOptions);
   await client.connect();
 

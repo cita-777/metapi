@@ -19,12 +19,17 @@ const VALID_RUNTIME_HEALTH_STATES = new Set<RuntimeHealthState>([
   'disabled',
 ]);
 
-function parseObject(value: string | null | undefined): Record<string, unknown> {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function parseObject(value: string | Record<string, unknown> | null | undefined): Record<string, unknown> {
   if (!value) return {};
+  if (isRecord(value)) return value;
+  if (typeof value !== 'string') return {};
   try {
     const parsed = JSON.parse(value);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    return parsed as Record<string, unknown>;
+    return isRecord(parsed) ? parsed : {};
   } catch {
     return {};
   }
@@ -77,7 +82,7 @@ function defaultHealthReason(state: RuntimeHealthState): string {
   }
 }
 
-export function extractRuntimeHealth(extraConfig?: string | null): RuntimeHealthInfo | null {
+export function extractRuntimeHealth(extraConfig?: string | Record<string, unknown> | null): RuntimeHealthInfo | null {
   const parsed = parseObject(extraConfig);
   return normalizeRuntimeHealthRecord(parsed.runtimeHealth);
 }
@@ -94,7 +99,7 @@ function isProxyOnlyAuthFailure(
 export function buildRuntimeHealthForAccount(input: {
   accountStatus?: string | null;
   siteStatus?: string | null;
-  extraConfig?: string | null;
+  extraConfig?: string | Record<string, unknown> | null;
   sessionCapable?: boolean;
   hasDiscoveredModels?: boolean;
 }): RuntimeHealthInfo {

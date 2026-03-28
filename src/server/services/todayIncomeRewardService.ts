@@ -13,15 +13,20 @@ type EstimateRewardInput = {
   successCount: number;
   parsedRewardCount: number;
   rewardSum: number;
-  extraConfig?: string | null;
+  extraConfig?: string | Record<string, unknown> | null;
 };
 
-function parseObject(value: string | null | undefined): Record<string, unknown> {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function parseObject(value: string | Record<string, unknown> | null | undefined): Record<string, unknown> {
   if (!value) return {};
+  if (isRecord(value)) return value;
+  if (typeof value !== 'string') return {};
   try {
     const parsed = JSON.parse(value);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    return parsed as Record<string, unknown>;
+    return isRecord(parsed) ? parsed : {};
   } catch {
     return {};
   }
@@ -52,12 +57,15 @@ function normalizeSnapshot(raw: unknown): TodayIncomeSnapshot | null {
   };
 }
 
-function extractTodayIncomeSnapshot(extraConfig?: string | null): TodayIncomeSnapshot | null {
+function extractTodayIncomeSnapshot(extraConfig?: string | Record<string, unknown> | null): TodayIncomeSnapshot | null {
   const parsed = parseObject(extraConfig);
   return normalizeSnapshot(parsed.todayIncomeSnapshot);
 }
 
-export function getTodayIncomeDelta(extraConfig: string | null | undefined, day: string): number {
+export function getTodayIncomeDelta(
+  extraConfig: string | Record<string, unknown> | null | undefined,
+  day: string,
+): number {
   if (!day) return 0;
   const snapshot = extractTodayIncomeSnapshot(extraConfig);
   if (!snapshot || snapshot.day !== day) return 0;
@@ -68,7 +76,10 @@ export function getTodayIncomeDelta(extraConfig: string | null | undefined, day:
   return delta;
 }
 
-export function getTodayIncomeValue(extraConfig: string | null | undefined, day: string): number {
+export function getTodayIncomeValue(
+  extraConfig: string | Record<string, unknown> | null | undefined,
+  day: string,
+): number {
   if (!day) return 0;
   const snapshot = extractTodayIncomeSnapshot(extraConfig);
   if (!snapshot || snapshot.day !== day) return 0;
@@ -76,12 +87,16 @@ export function getTodayIncomeValue(extraConfig: string | null | undefined, day:
 }
 
 export function updateTodayIncomeSnapshot(
-  extraConfig: string | null | undefined,
+  extraConfig: string | Record<string, unknown> | null | undefined,
   todayIncome: number,
   now = new Date(),
-): string {
+): string | null {
   const income = toNonNegativeNumber(todayIncome);
-  if (income == null) return extraConfig || '{}';
+  if (income == null) {
+    if (typeof extraConfig === 'string') return extraConfig || null;
+    if (extraConfig == null) return null;
+    return JSON.stringify(parseObject(extraConfig));
+  }
 
   const day = formatLocalDate(now);
   const existing = extractTodayIncomeSnapshot(extraConfig);

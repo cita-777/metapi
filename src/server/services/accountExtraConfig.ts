@@ -39,11 +39,19 @@ type AccountExtraConfig = {
   [key: string]: unknown;
 };
 
-function parseExtraConfig(extraConfig?: string | null): AccountExtraConfig {
+type ExtraConfigInput = string | Record<string, unknown> | null | undefined;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function parseExtraConfig(extraConfig?: ExtraConfigInput): AccountExtraConfig {
   if (!extraConfig) return {};
+  if (isRecord(extraConfig)) return extraConfig as AccountExtraConfig;
+  if (typeof extraConfig !== 'string') return {};
   try {
     const parsed = JSON.parse(extraConfig) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    if (!isRecord(parsed)) return {};
     return parsed as AccountExtraConfig;
   } catch {
     return {};
@@ -114,34 +122,34 @@ export function normalizeCredentialMode(raw: unknown): AccountCredentialMode | u
   return normalized as AccountCredentialMode;
 }
 
-export function getProxyUrlFromExtraConfig(extraConfig?: string | null): string | null {
+export function getProxyUrlFromExtraConfig(extraConfig?: ExtraConfigInput): string | null {
   const parsed = parseExtraConfig(extraConfig);
   return normalizeNonEmptyString(parsed.proxyUrl) ?? null;
 }
 
-export function getPlatformUserIdFromExtraConfig(extraConfig?: string | null): number | undefined {
+export function getPlatformUserIdFromExtraConfig(extraConfig?: ExtraConfigInput): number | undefined {
   const parsed = parseExtraConfig(extraConfig);
   return normalizeUserId(parsed.platformUserId);
 }
 
-export function getCredentialModeFromExtraConfig(extraConfig?: string | null): AccountCredentialMode | undefined {
+export function getCredentialModeFromExtraConfig(extraConfig?: ExtraConfigInput): AccountCredentialMode | undefined {
   const parsed = parseExtraConfig(extraConfig);
   return normalizeCredentialMode(parsed.credentialMode);
 }
 
-export function getOauthProviderFromExtraConfig(extraConfig?: string | null): string | undefined {
+export function getOauthProviderFromExtraConfig(extraConfig?: ExtraConfigInput): string | undefined {
   const parsed = parseExtraConfig(extraConfig);
   return normalizeNonEmptyString(parsed.oauth?.provider);
 }
 
-export function hasOauthProvider(extraConfig?: string | null): boolean {
+export function hasOauthProvider(extraConfig?: ExtraConfigInput): boolean {
   return !!getOauthProviderFromExtraConfig(extraConfig);
 }
 
 type DirectAccountRoutingInput = {
   accessToken?: string | null;
   apiToken?: string | null;
-  extraConfig?: string | null;
+  extraConfig?: ExtraConfigInput;
 };
 
 function hasCredentialValue(value: string | null | undefined): boolean {
@@ -181,7 +189,7 @@ export type StoredSub2ApiSubscriptionSummary = SubscriptionSummary & {
   updatedAt: number;
 };
 
-export function getSub2ApiAuthFromExtraConfig(extraConfig?: string | null): ManagedSub2ApiAuth | null {
+export function getSub2ApiAuthFromExtraConfig(extraConfig?: ExtraConfigInput): ManagedSub2ApiAuth | null {
   const parsed = parseExtraConfig(extraConfig);
   const raw = parsed.sub2apiAuth;
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
@@ -284,7 +292,7 @@ export function buildStoredSub2ApiSubscriptionSummary(
 }
 
 export function getSub2ApiSubscriptionFromExtraConfig(
-  extraConfig?: string | null,
+  extraConfig?: ExtraConfigInput,
 ): StoredSub2ApiSubscriptionSummary | null {
   const parsed = parseExtraConfig(extraConfig);
   return normalizeSub2ApiSubscriptionSummary(parsed.sub2apiSubscription);
@@ -298,12 +306,12 @@ export function guessPlatformUserIdFromUsername(username?: string | null): numbe
   return normalizeUserId(match[1]);
 }
 
-export function resolvePlatformUserId(extraConfig?: string | null, username?: string | null): number | undefined {
+export function resolvePlatformUserId(extraConfig?: ExtraConfigInput, username?: string | null): number | undefined {
   return getPlatformUserIdFromExtraConfig(extraConfig) || guessPlatformUserIdFromUsername(username);
 }
 
 export function mergeAccountExtraConfig(
-  extraConfig: string | null | undefined,
+  extraConfig: ExtraConfigInput,
   patch: Record<string, unknown>,
 ): string {
   const merged: Record<string, unknown> = {
@@ -313,7 +321,7 @@ export function mergeAccountExtraConfig(
   return JSON.stringify(merged);
 }
 
-export function getAutoReloginConfig(extraConfig?: string | null): {
+export function getAutoReloginConfig(extraConfig?: ExtraConfigInput): {
   username: string;
   passwordCipher: string;
 } | null {
