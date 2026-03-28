@@ -359,7 +359,7 @@ export async function handleOauthCallback(input: {
   }
 
   try {
-    const resolvedProxyUrl = session.proxyUrl === undefined
+    const resolvedProxyUrl = session.proxyUrl == null
       ? await resolveOauthProviderProxyUrl(input.provider)
       : session.proxyUrl;
     const exchange = await definition.exchangeAuthorizationCode({
