@@ -45,6 +45,24 @@ function asTrimmedString(value: string | null | undefined): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function redactProxyUrl(value: string | null | undefined): string {
+  const text = asTrimmedString(value);
+  if (!text) return '';
+  try {
+    const parsed = new URL(text);
+    if (parsed.username || parsed.password) {
+      parsed.username = '***';
+      parsed.password = '';
+    }
+    const serialized = parsed.toString();
+    return parsed.pathname === '/' && !parsed.search && !parsed.hash
+      ? serialized.replace(/\/$/, '')
+      : serialized;
+  } catch {
+    return text.replace(/\/\/[^/@:\s]+(?::[^/@\s]*)?@/, '//***@');
+  }
+}
+
 function resolveProviderActionLabel(provider: OAuthProviderInfo, loading: boolean): string {
   if (loading) return '启动中...';
   if (!provider.enabled) return '当前不可用';
@@ -144,6 +162,7 @@ export default function OAuthManagement() {
   const [manualCallbackUrl, setManualCallbackUrl] = useState('');
   const [manualCallbackSubmitting, setManualCallbackSubmitting] = useState(false);
   const [oauthProxyEnabled, setOauthProxyEnabled] = useState(false);
+  const [oauthProxyClearEnabled, setOauthProxyClearEnabled] = useState(false);
   const [oauthProxyUrl, setOauthProxyUrl] = useState('');
 
   const loadConnections = async () => {
@@ -244,12 +263,18 @@ export default function OAuthManagement() {
       return;
     }
     const accountId = options?.accountId;
-    const resolvedProxyUrl = oauthProxyEnabled
-      ? asTrimmedString(oauthProxyUrl) || undefined
-      : asTrimmedString(options?.fallbackProxyUrl) || undefined;
-    if (oauthProxyEnabled && !resolvedProxyUrl) {
+    const customProxyUrl = asTrimmedString(oauthProxyUrl);
+    if (oauthProxyEnabled && !customProxyUrl) {
       setSessionMessage('已开启代理，请先输入完整代理地址');
       return;
+    }
+    let resolvedProxyUrl: string | null | undefined;
+    if (oauthProxyEnabled) {
+      resolvedProxyUrl = customProxyUrl;
+    } else if (oauthProxyClearEnabled) {
+      resolvedProxyUrl = null;
+    } else if (options?.fallbackProxyUrl !== undefined) {
+      resolvedProxyUrl = asTrimmedString(options.fallbackProxyUrl) || null;
     }
     const actionKey = `start:${provider.provider}:${accountId || 0}`;
     setActionLoadingKey(actionKey);
@@ -263,10 +288,13 @@ export default function OAuthManagement() {
         })()
         : undefined;
       const started = accountId
-        ? await api.rebindOAuthConnection(accountId, resolvedProxyUrl ? { proxyUrl: resolvedProxyUrl } : {})
+        ? await api.rebindOAuthConnection(
+          accountId,
+          resolvedProxyUrl !== undefined ? { proxyUrl: resolvedProxyUrl } : {},
+        )
         : await api.startOAuthProvider(provider.provider, {
           projectId,
-          ...(resolvedProxyUrl ? { proxyUrl: resolvedProxyUrl } : {}),
+          ...(resolvedProxyUrl !== undefined ? { proxyUrl: resolvedProxyUrl } : {}),
         });
       setSessionMessage('等待授权完成');
       setActiveSession({
@@ -349,26 +377,54 @@ export default function OAuthManagement() {
         <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
           这里的设置会作用于下一次“连接”或“重新授权”。填写代理地址后，本次 OAuth 换 token 和后续生成的账号都会直接带上这份账号级代理配置。
         </div>
-        <label
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            padding: '12px 14px',
-            borderRadius: 'var(--radius-md)',
-            border: '1px solid var(--color-border)',
-            background: 'var(--color-bg)',
-            width: 'fit-content',
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={oauthProxyEnabled}
-            data-oauth-setting="use-proxy"
-            onChange={(event) => setOauthProxyEnabled(!!event.target.checked)}
-          />
-          <span style={{ fontSize: 13, color: 'var(--color-text-primary)' }}>使用代理</span>
-        </label>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              padding: '12px 14px',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--color-border)',
+              background: 'var(--color-bg)',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={oauthProxyEnabled}
+              data-oauth-setting="use-proxy"
+              onChange={(event) => {
+                const checked = !!event.target.checked;
+                setOauthProxyEnabled(checked);
+                if (checked) setOauthProxyClearEnabled(false);
+              }}
+            />
+            <span style={{ fontSize: 13, color: 'var(--color-text-primary)' }}>使用自定义代理</span>
+          </label>
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              padding: '12px 14px',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--color-border)',
+              background: 'var(--color-bg)',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={oauthProxyClearEnabled}
+              data-oauth-setting="clear-proxy"
+              onChange={(event) => {
+                const checked = !!event.target.checked;
+                setOauthProxyClearEnabled(checked);
+                if (checked) setOauthProxyEnabled(false);
+              }}
+            />
+            <span style={{ fontSize: 13, color: 'var(--color-text-primary)' }}>清空已有账号代理</span>
+          </label>
+        </div>
         <div style={{ display: 'grid', gap: 6 }}>
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>代理地址</div>
           <input
@@ -392,6 +448,7 @@ export default function OAuthManagement() {
           />
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
             关闭时，新建连接会按站点/系统默认链路处理；重新授权已有账号时，会继续沿用该账号已有的代理配置。
+            勾选“清空已有账号代理”后，重新授权会显式移除当前账号上的代理覆盖。
           </div>
         </div>
       </div>
@@ -567,7 +624,7 @@ export default function OAuthManagement() {
                     )}
                     {connection.proxyUrl && (
                       <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>
-                        账号代理: {connection.proxyUrl}
+                        账号代理: {redactProxyUrl(connection.proxyUrl)}
                       </div>
                     )}
                     <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>

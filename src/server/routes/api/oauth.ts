@@ -135,7 +135,7 @@ export async function oauthRoutes(app: FastifyInstance) {
           provider: request.params.provider,
           rebindAccountId: rebindAccountId ?? undefined,
           projectId: projectId ?? undefined,
-          proxyUrl: normalizedProxyUrl.proxyUrl ?? undefined,
+          proxyUrl: normalizedProxyUrl.present ? normalizedProxyUrl.proxyUrl : undefined,
           requestOrigin: resolveRequestOrigin(request),
         });
       } catch (error: any) {
@@ -224,8 +224,10 @@ export async function oauthRoutes(app: FastifyInstance) {
       try {
         return await startOauthRebindFlow(
           accountId,
-          resolveRequestOrigin(request),
-          normalizedProxyUrl.proxyUrl ?? undefined,
+          {
+            requestOrigin: resolveRequestOrigin(request),
+            proxyUrl: normalizedProxyUrl.present ? normalizedProxyUrl.proxyUrl : undefined,
+          },
         );
       } catch (error: any) {
         return reply.code(404).send({ message: error?.message || 'oauth account not found' });

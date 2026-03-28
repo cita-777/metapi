@@ -200,7 +200,7 @@ async function upsertOauthAccount(input: {
     providerData?: Record<string, unknown>;
   };
   rebindAccountId?: number;
-  proxyUrl?: string;
+  proxyUrl?: string | null;
 }) {
   const site = await ensureOauthSite(input.definition);
   const existing = await findExistingOauthAccount({
@@ -229,7 +229,7 @@ async function upsertOauthAccount(input: {
   });
   const extraConfig = mergeAccountExtraConfig(existing?.extraConfig, {
     credentialMode: 'session',
-    proxyUrl: input.proxyUrl ?? undefined,
+    ...(input.proxyUrl !== undefined ? { proxyUrl: input.proxyUrl } : {}),
     oauth: buildStoredOauthState(oauth),
   });
 
@@ -286,7 +286,7 @@ export async function startOauthProviderFlow(input: {
   provider: string;
   rebindAccountId?: number;
   projectId?: string;
-  proxyUrl?: string;
+  proxyUrl?: string | null;
   requestOrigin?: string;
 }) {
   const definition = getOAuthProviderDefinition(input.provider);
@@ -359,20 +359,22 @@ export async function handleOauthCallback(input: {
   }
 
   try {
-    const proxyUrl = session.proxyUrl || await resolveOauthProviderProxyUrl(input.provider);
+    const resolvedProxyUrl = session.proxyUrl === undefined
+      ? await resolveOauthProviderProxyUrl(input.provider)
+      : session.proxyUrl;
     const exchange = await definition.exchangeAuthorizationCode({
       code,
       state: input.state,
       redirectUri: session.redirectUri,
       codeVerifier: session.codeVerifier,
       projectId: session.projectId,
-      proxyUrl,
+      proxyUrl: resolvedProxyUrl,
     });
     const { account, site, created, previousAccount } = await upsertOauthAccount({
       definition,
       exchange,
       rebindAccountId: session.rebindAccountId,
-      proxyUrl: session.proxyUrl || undefined,
+      proxyUrl: session.proxyUrl,
     });
     if (!account) {
       markOauthSessionError(input.state, 'failed to persist oauth account');
@@ -573,7 +575,11 @@ export async function refreshOauthConnectionQuota(accountId: number) {
   return { success: true, quota };
 }
 
-export async function startOauthRebindFlow(accountId: number, requestOrigin?: string, proxyUrl?: string) {
+export async function startOauthRebindFlow(
+  accountId: number,
+  options?: { requestOrigin?: string; proxyUrl?: string | null },
+) {
+  const { requestOrigin, proxyUrl } = options ?? {};
   const account = await db.select().from(schema.accounts)
     .where(eq(schema.accounts.id, accountId))
     .get();
@@ -588,7 +594,9 @@ export async function startOauthRebindFlow(accountId: number, requestOrigin?: st
     provider: oauth.provider,
     rebindAccountId: accountId,
     projectId: oauth.projectId,
-    proxyUrl: proxyUrl ?? getProxyUrlFromExtraConfig(account.extraConfig) ?? undefined,
+    proxyUrl: proxyUrl !== undefined
+      ? proxyUrl
+      : (getProxyUrlFromExtraConfig(account.extraConfig) ?? undefined),
     requestOrigin,
   });
 }
