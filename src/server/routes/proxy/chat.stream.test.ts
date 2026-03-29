@@ -244,6 +244,38 @@ describe('chat proxy stream behavior', () => {
     expect(response.body).toContain('data: [DONE]');
   });
 
+  it('decodes zstd-compressed native SSE chat streams before converting downstream chunks', async () => {
+    fetchMock.mockResolvedValue(new Response(zstdCompressSync(Buffer.from([
+      'data: {"id":"chatcmpl-zstd-native","model":"upstream-gpt","choices":[{"delta":{"role":"assistant"},"finish_reason":null}]}\n\n',
+      'data: {"id":"chatcmpl-zstd-native","model":"upstream-gpt","choices":[{"delta":{"content":"你好，来自 zstd 原生 SSE"},"finish_reason":null}]}\n\n',
+      'data: {"id":"chatcmpl-zstd-native","model":"upstream-gpt","choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+      'data: [DONE]\n\n',
+    ].join(''))), {
+      status: 200,
+      headers: {
+        'content-encoding': 'zstd',
+        'content-type': 'text/event-stream; charset=utf-8',
+      },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        model: 'gpt-4o-mini',
+        stream: true,
+        messages: [{ role: 'user', content: 'hi' }],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/event-stream');
+    expect(response.body).toContain('"chat.completion.chunk"');
+    expect(response.body).toContain('你好，来自 zstd 原生 SSE');
+    expect(response.body).not.toContain('(�/�');
+    expect(response.body).toContain('data: [DONE]');
+  });
+
   it('returns upstream_error for empty non-stream chat responses when empty-content failure is enabled', async () => {
     config.proxyEmptyContentFailEnabled = true;
 

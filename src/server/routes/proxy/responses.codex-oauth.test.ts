@@ -1,3 +1,4 @@
+import { zstdCompressSync } from 'node:zlib';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../../config.js';
@@ -129,6 +130,17 @@ describe('responses proxy codex oauth refresh', () => {
       headers: { 'content-type': 'text/event-stream; charset=utf-8' },
     });
   };
+
+  const createCompressedSseResponse = (chunks: string[], status = 200) => new Response(
+    zstdCompressSync(Buffer.from(chunks.join(''))),
+    {
+      status,
+      headers: {
+        'content-encoding': 'zstd',
+        'content-type': 'text/event-stream; charset=utf-8',
+      },
+    },
+  );
 
   beforeAll(async () => {
     const { responsesProxyRoute } = await import('./responses.js');
@@ -710,6 +722,36 @@ describe('responses proxy codex oauth refresh', () => {
         total_tokens: 4,
       },
     });
+  });
+
+  it('decodes zstd-compressed codex responses SSE before relaying native downstream streams', async () => {
+    fetchMock.mockResolvedValue(createCompressedSseResponse([
+      'event: response.created\n',
+      'data: {"type":"response.created","response":{"id":"resp_codex_zstd_stream","model":"gpt-5.4","created_at":1706000000,"status":"in_progress","output":[]}}\n\n',
+      'event: response.output_item.added\n',
+      'data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_codex_zstd_stream","type":"message","role":"assistant","status":"in_progress","content":[]}}\n\n',
+      'event: response.output_text.delta\n',
+      'data: {"type":"response.output_text.delta","output_index":0,"item_id":"msg_codex_zstd_stream","delta":"你好，来自 zstd responses SSE"}\n\n',
+      'event: response.completed\n',
+      'data: {"type":"response.completed","response":{"id":"resp_codex_zstd_stream","model":"gpt-5.4","status":"completed","usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-5.4',
+        input: 'hello codex',
+        stream: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('event: response.output_text.delta');
+    expect(response.body).toContain('你好，来自 zstd responses SSE');
+    expect(response.body).not.toContain('(�/�');
+    expect(response.body).toContain('data: [DONE]');
   });
 
   it('preserves codex-required instructions and store fields across responses compatibility retries', async () => {

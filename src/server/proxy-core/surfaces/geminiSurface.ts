@@ -39,7 +39,7 @@ import { dispatchRuntimeRequest } from '../../routes/proxy/runtimeExecutor.js';
 import { detectDownstreamClientContext, type DownstreamClientContext } from '../../routes/proxy/downstreamClientContext.js';
 import { insertProxyLog } from '../../services/proxyLogStore.js';
 import { summarizeConversationFileInputsInOpenAiBody } from '../capabilities/conversationFileCapabilities.js';
-import { readRuntimeResponseText } from '../executors/types.js';
+import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
 import { canRetryProxyChannel, getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 import {
   buildSurfaceProxyDebugResponseHeaders,
@@ -757,7 +757,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           }
 
           if (geminiGenerateContentTransformer.stream.isSseContentType(contentType)) {
-            const upstreamReader = upstream.body?.getReader();
+            const upstreamReader = getRuntimeResponseReader(upstream);
             const reader = isInternalGemini && !isGeminiCliDownstream && upstreamReader
               ? createGeminiCliStreamReader(upstreamReader)
               : upstreamReader;

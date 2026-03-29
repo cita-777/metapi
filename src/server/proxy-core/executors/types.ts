@@ -1,9 +1,14 @@
 import {
   brotliDecompressSync,
+  createBrotliDecompress,
+  createGunzip,
+  createInflate,
+  createZstdDecompress,
   gunzipSync,
   inflateSync,
   zstdDecompressSync,
 } from 'node:zlib';
+import { Readable } from 'node:stream';
 import {
   Response,
   fetch,
@@ -116,6 +121,41 @@ function decodeRuntimeResponseBuffer(buffer: Buffer, contentEncoding: string | n
   return decoded;
 }
 
+function decodeRuntimeResponseStream(
+  stream: Readable,
+  contentEncoding: string | null,
+): Readable {
+  if (!contentEncoding) return stream;
+
+  let decoded = stream;
+  const encodings = contentEncoding
+    .split(',')
+    .map((encoding) => encoding.trim().toLowerCase())
+    .filter(Boolean)
+    .reverse();
+
+  for (const encoding of encodings) {
+    if (encoding === 'zstd') {
+      decoded = decoded.pipe(createZstdDecompress()) as Readable;
+      continue;
+    }
+    if (encoding === 'br') {
+      decoded = decoded.pipe(createBrotliDecompress()) as Readable;
+      continue;
+    }
+    if (encoding === 'gzip' || encoding === 'x-gzip') {
+      decoded = decoded.pipe(createGunzip()) as Readable;
+      continue;
+    }
+    if (encoding === 'deflate') {
+      decoded = decoded.pipe(createInflate()) as Readable;
+      continue;
+    }
+  }
+
+  return decoded;
+}
+
 export async function readRuntimeResponseText(
   response: RuntimeResponse,
 ): Promise<string> {
@@ -134,6 +174,26 @@ export async function readRuntimeResponseText(
   } catch {
     return looksLikeZstdFrame(rawBuffer) ? '' : rawBuffer.toString('utf8');
   }
+}
+
+export function getRuntimeResponseReader(
+  response: RuntimeResponse,
+): ReadableStreamDefaultReader<Uint8Array> | undefined {
+  const body = response.body as globalThis.ReadableStream<Uint8Array> | null | undefined;
+  if (!body) return undefined;
+
+  const contentEncoding = typeof response.headers?.get === 'function'
+    ? response.headers.get('content-encoding')
+    : null;
+  if (!hasZstdContentEncoding(contentEncoding)) {
+    return body.getReader();
+  }
+
+  const decoded = decodeRuntimeResponseStream(
+    Readable.fromWeb(body as globalThis.ReadableStream<any>),
+    contentEncoding,
+  );
+  return (Readable.toWeb(decoded) as ReadableStream<Uint8Array>).getReader();
 }
 
 export async function materializeErrorResponse(
