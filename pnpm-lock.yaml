@@ -24,8 +24,8 @@ importers:
         specifier: ^9.0.0
         version: 9.0.0
       '@visactor/react-vchart':
-        specifier: ^2.0.19
-        version: 2.0.19(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+        specifier: ^2.0.20
+        version: 2.0.20(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       better-sqlite3:
         specifier: ^12.8.0
         version: 12.8.0
@@ -34,7 +34,7 @@ importers:
         version: 17.3.1
       drizzle-orm:
         specifier: ^0.45.1
-        version: 0.45.1(@types/better-sqlite3@7.6.13)(@types/pg@8.18.0)(better-sqlite3@12.8.0)(mysql2@3.20.0(@types/node@22.19.15))(pg@8.20.0)
+        version: 0.45.1(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(better-sqlite3@12.8.0)(mysql2@3.20.0(@types/node@22.19.15))(pg@8.20.0)
       electron-log:
         specifier: ^5.2.4
         version: 5.4.3
@@ -42,14 +42,14 @@ importers:
         specifier: ^6.6.2
         version: 6.8.3
       fastify:
-        specifier: ^5.8.2
-        version: 5.8.2
+        specifier: ^5.8.4
+        version: 5.8.4
       get-port:
-        specifier: ^7.1.0
-        version: 7.1.0
+        specifier: ^7.2.0
+        version: 7.2.0
       marked:
-        specifier: ^17.0.4
-        version: 17.0.4
+        specifier: ^17.0.5
+        version: 17.0.5
       minimatch:
         specifier: ^10.2.4
         version: 10.2.4
@@ -63,8 +63,8 @@ importers:
         specifier: ^4.2.1
         version: 4.2.1
       nodemailer:
-        specifier: ^8.0.3
-        version: 8.0.3
+        specifier: ^8.0.4
+        version: 8.0.4
       pg:
         specifier: ^8.16.3
         version: 8.20.0
@@ -75,8 +75,8 @@ importers:
         specifier: ^6.24.1
         version: 6.24.1
       ws:
-        specifier: ^8.19.0
-        version: 8.19.0
+        specifier: ^8.20.0
+        version: 8.20.0
     devDependencies:
       '@electron/notarize':
         specifier: ^3.1.0
@@ -97,14 +97,17 @@ importers:
         specifier: ^7.0.11
         version: 7.0.11
       '@types/pg':
-        specifier: ^8.15.6
-        version: 8.18.0
+        specifier: ^8.20.0
+        version: 8.20.0
       '@types/react':
         specifier: ^18.3.12
         version: 18.3.28
       '@types/react-dom':
         specifier: ^18.3.1
         version: 18.3.7(@types/react@18.3.28)
+      '@types/react-test-renderer':
+        specifier: ^19.1.0
+        version: 19.1.0
       '@vitejs/plugin-react':
         specifier: ^4.3.4
         version: 4.7.0(vite@6.4.1(@types/node@22.19.15)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0))
@@ -118,8 +121,8 @@ importers:
         specifier: ^0.31.10
         version: 0.31.10
       electron:
-        specifier: ^41.0.3
-        version: 41.0.3
+        specifier: ^41.1.0
+        version: 41.1.0
       electron-builder:
         specifier: ^26.0.12
         version: 26.8.1(electron-builder-squirrel-windows@26.8.1)
@@ -1871,8 +1874,8 @@ packages:
   '@types/nodemailer@7.0.11':
     resolution: {integrity: sha512-E+U4RzR2dKrx+u3N4DlsmLaDC6mMZOM/TPROxA0UAPiTgI0y4CEFBmZE+coGWTjakDriRsXG368lNk1u9Q0a2g==}
 
-  '@types/pg@8.18.0':
-    resolution: {integrity: sha512-gT+oueVQkqnj6ajGJXblFR4iavIXWsGAFCk3dP4Kki5+a9R4NMt0JARdk6s8cUKcfUoqP5dAtDSLU8xYUTFV+Q==}
+  '@types/pg@8.20.0':
+    resolution: {integrity: sha512-bEPFOaMAHTEP1EzpvHTbmwR8UsFyHSKsRisLIHVMXnpNefSbGA1bD6CVy+qKjGSqmZqNqBDV2azOBo8TgkcVow==}
 
   '@types/plist@3.0.5':
     resolution: {integrity: sha512-E6OCaRmAe4WDmWNsL/9RMqdkkzDCY1etutkflWk4c+AcjDU07Pcz1fQwTX0TQz+Pxqn9i4L1TU3UFpjnrcDgxA==}
@@ -1884,6 +1887,9 @@ packages:
     resolution: {integrity: sha512-MEe3UeoENYVFXzoXEWsvcpg6ZvlrFNlOQ7EOsvhI3CfAXwzPfO8Qwuxd40nepsYKqyyVQnTdEfv68q91yLcKrQ==}
     peerDependencies:
       '@types/react': ^18.0.0
+
+  '@types/react-test-renderer@19.1.0':
+    resolution: {integrity: sha512-XD0WZrHqjNrxA/MaR9O22w/RNidWR9YZmBdRGI7wcnWGrv/3dA8wKCJ8m63Sn+tLJhcjmuhOi629N66W6kgWzQ==}
 
   '@types/react@18.3.28':
     resolution: {integrity: sha512-z9VXpC7MWrhfWipitjNdgCauoMLRdIILQsAEV+ZesIzBq/oUlxk0m3ApZuMFCXdnS4U7KrI+l3WRUEGQ8K1QKw==}
@@ -1912,17 +1918,17 @@ packages:
   '@upsetjs/venn.js@2.0.0':
     resolution: {integrity: sha512-WbBhLrooyePuQ1VZxrJjtLvTc4NVfpOyKx0sKqioq9bX1C1m7Jgykkn8gLrtwumBioXIqam8DLxp88Adbue6Hw==}
 
-  '@visactor/react-vchart@2.0.19':
-    resolution: {integrity: sha512-gLEJ8Q6DhI21xX6PDUEmhSUu4Ft8+Foho7TktiMMX6Nll5RYgXagjtjRAI1kSSKm6t/7ZXbBsmP4RdL+KaGtNA==}
+  '@visactor/react-vchart@2.0.20':
+    resolution: {integrity: sha512-SlOmCWQ/dd8QA4ez2pcE8dRSzKjt5/0/M6PQ0X8AkawFBcVwHgDPweZnEExsmDN6fvyfB2HqmKH0tefL/J6tUA==}
     peerDependencies:
       react: '>=16.0.0'
       react-dom: '>=16.0.0'
 
-  '@visactor/vchart-extension@2.0.19':
-    resolution: {integrity: sha512-SCFysGMRGdNK6wYFKDrvZzGdYbVjGhdbqlWA5t2fdbuVcCN7wNBTDKI+pL4yUL3n9M1ZtVxQp5uOw9I0AjFHZQ==}
+  '@visactor/vchart-extension@2.0.20':
+    resolution: {integrity: sha512-+D1eVABTjQ/tla/nQUaWyECQ8GTcQU7oNU9ovPheOfYnPleSjPgDOJnEH2w2mEdiXNh8P+oIaVqm0ItwSPvprA==}
 
-  '@visactor/vchart@2.0.19':
-    resolution: {integrity: sha512-pPNAHUuNlw1FNgbSSwT9comeJUXpaTAe8yed1MVI5rT+TspIg9Wpio29ZlUjrevUxosQqka5VAD63jQS6PMaOg==}
+  '@visactor/vchart@2.0.20':
+    resolution: {integrity: sha512-nolgr7b+kSa1GQ8q99UjKCoMEYib3brmnRtDC+/iYr4Idbr9hSHS+60wteZgX8GOIUxivOEKYcpTPNXVRNmBAg==}
 
   '@visactor/vdataset@1.0.23':
     resolution: {integrity: sha512-zrLk9FBUWJoW6b30XnPKzXwAXl8USdLDfed6QZLsmdkylRU8V7yZeXE2aKwU8Lg1U4HmQngqmqOx7/QlbX44Tg==}
@@ -1930,23 +1936,23 @@ packages:
   '@visactor/vlayouts@1.0.23':
     resolution: {integrity: sha512-fK1f5LmuumhYanLArk5yrT4BZxu4IAmdc8WMwfB/KAvV+2dTPFuBUMWbWnDl0siQoU9SX9l/bLozUnI9n7BwBQ==}
 
-  '@visactor/vrender-animate@1.0.41':
-    resolution: {integrity: sha512-kdMoIh7OEo6z4rZfnJHX7d+izBhGVWq6MR22uppk0LPilfdBd/1hSNAEKO6C9JWAy5uROGFpEkh+kk+ar/zSZg==}
+  '@visactor/vrender-animate@1.0.44':
+    resolution: {integrity: sha512-MKtoaucmbQNJnuff5F6ws+c8+mRBz1gXVY/bHw38nfvSTZcsJcXYug2aDPf4V9XaUSValDnkx9TyLLbKJ0o0TA==}
 
-  '@visactor/vrender-components@1.0.41':
-    resolution: {integrity: sha512-B7iXJE1TdkYapPZN6DNxoaErY4FzGf5AbcbG/z6Q0hnzO4Iw1hKdtlTGOIYA1+JXhehDWcyy+D0bnoNQNf+rgw==}
+  '@visactor/vrender-components@1.0.44':
+    resolution: {integrity: sha512-vbCa/eME1UJL2iy0l4JHYJh1m6SG3rR5jt5umblLVRQjjBEWPAnhnPwQAA2TNiyO5eHG6qnyvcjgV5aeCeuJYw==}
 
-  '@visactor/vrender-core@1.0.41':
-    resolution: {integrity: sha512-P7YVUJ45vwqPA460W6JJjg201ThvxBrjEgTBJ4tHKaHZPP/nVyF8rPyUOCL8QesEFDB+R0e/sUJUVs+ckHhd2w==}
+  '@visactor/vrender-core@1.0.44':
+    resolution: {integrity: sha512-DrB+cg9//RkCZjchWConeXGOC99xwvEDdPfY7eEqajjPxUooJpSQ+pt51uD0VIwQCYtpsc2jVspefqdBh/e2Cg==}
 
-  '@visactor/vrender-kits@1.0.41':
-    resolution: {integrity: sha512-ffJlKkNseOsnRjvBmxKxQ9dsQXu+K288NFCtB0ZZ2N/mtcTsZUlH5SDCcsAvDhPGEvJ22Ye4MFKcXSEDctpGzA==}
+  '@visactor/vrender-kits@1.0.44':
+    resolution: {integrity: sha512-B28zr+aTWlFIziH3b/ufUlpKQMv1Ie9ck8kTkHIGdBM/ES+CO6//GHMa/5OxuId19a9UhJxzj8cpeE/9mZLIoQ==}
 
   '@visactor/vscale@1.0.23':
     resolution: {integrity: sha512-XePhYuRoNAp+8MeSMuEOOvhVAlOwvM1sDT2yFxE6zdwVB2GjZk8mH+5N2xQGQWk75YmGJjlJASFtgwjlb1yWxw==}
 
-  '@visactor/vutils-extension@2.0.19':
-    resolution: {integrity: sha512-uRYCZFw7bYFdrSPQNIrYYsEGKuVn7lTMd4zDKBA2qnAfAZ/Y4WeXzZhQKdXgTFu5UGa292CqmVqMlVKFNWjC+A==}
+  '@visactor/vutils-extension@2.0.20':
+    resolution: {integrity: sha512-now0AqIHimJr1/+7U9cJBkZ022VAsVlVANTN8mKLVIG1C5wnEYfKYG1Ew6ghjcSmkXi1c+pdrsAsj6i+ifRlwA==}
 
   '@visactor/vutils@1.0.23':
     resolution: {integrity: sha512-M8SLqgdHhKN8QmQKTWD1gzEaHptpIV9pvMYvC6+VeOsqYvZZ6UdhSCAAczTYVo+m/uwcEC2JHSUspbrs8rzlRQ==}
@@ -2867,8 +2873,8 @@ packages:
     resolution: {integrity: sha512-bO3y10YikuUwUuDUQRM4KfwNkKhnpVO7IPdbsrejwN9/AABJzzTQ4GeHwyzNSrVO+tEH3/Np255a3sVZpZDjvg==}
     engines: {node: '>=8.0.0'}
 
-  electron@41.0.3:
-    resolution: {integrity: sha512-IDjx8liW1q+r7+MOip5W1Eo1eMwJzVObmYrd9yz2dPCkS7XlgLq3qPVMR80TpiROFp73iY30kTzMdpA6fEVs3A==}
+  electron@41.1.0:
+    resolution: {integrity: sha512-0XRFyxRqetmqtkkBvV++wGbHYJ7bD++f6EgJW8y9kX4pPRagwlmKDtzqXZhKiu0DIQppm3sXxzHWK9GYP91OKQ==}
     engines: {node: '>= 12.20.55'}
     hasBin: true
 
@@ -3009,8 +3015,8 @@ packages:
   fastify-plugin@5.1.0:
     resolution: {integrity: sha512-FAIDA8eovSt5qcDgcBvDuX/v0Cjz0ohGhENZ/wpc3y+oZCY2afZ9Baqql3g/lC+OHRnciQol4ww7tuthOb9idw==}
 
-  fastify@5.8.2:
-    resolution: {integrity: sha512-lZmt3navvZG915IE+f7/TIVamxIwmBd+OMB+O9WBzcpIwOo6F0LTh0sluoMFk5VkrKTvvrwIaoJPkir4Z+jtAg==}
+  fastify@5.8.4:
+    resolution: {integrity: sha512-sa42J1xylbBAYUWALSBoyXKPDUvM3OoNOibIefA+Oha57FryXKKCZarA1iDntOCWp3O35voZLuDg2mdODXtPzQ==}
 
   fastq@1.20.1:
     resolution: {integrity: sha512-GGToxJ/w1x32s/D2EKND7kTil4n8OVk/9mycTc4VDza13lOvpUZTGX3mFSCtV9ksdGBVzvsyAVLM6mHFThxXxw==}
@@ -3127,8 +3133,8 @@ packages:
     resolution: {integrity: sha512-9fSjSaos/fRIVIp+xSJlE6lfwhES7LNtKaCBIamHsjr2na1BiABJPo0mOjjz8GJDURarmCPGqaiVg5mfjb98CQ==}
     engines: {node: '>= 0.4'}
 
-  get-port@7.1.0:
-    resolution: {integrity: sha512-QB9NKEeDg3xxVwCCwJQ9+xycaz6pBB6iQ76wiWMl1927n0Kir6alPiP+yuiICLLU4jpMe08dXfpebuQppFA2zw==}
+  get-port@7.2.0:
+    resolution: {integrity: sha512-afP4W205ONCuMoPBqcR6PSXnzX35KTcJygfJfcp+QY+uwm3p20p1YczWXhlICIzGMCxYBQcySEcOgsJcrkyobg==}
     engines: {node: '>=16'}
 
   get-proto@1.0.1:
@@ -3563,8 +3569,8 @@ packages:
     engines: {node: '>= 20'}
     hasBin: true
 
-  marked@17.0.4:
-    resolution: {integrity: sha512-NOmVMM+KAokHMvjWmC5N/ZOvgmSWuqJB8FoYI019j4ogb/PeRMKoKIjReZ2w3376kkA8dSJIP8uD993Kxc0iRQ==}
+  marked@17.0.5:
+    resolution: {integrity: sha512-6hLvc0/JEbRjRgzI6wnT2P1XuM1/RrrDEX0kPt0N7jGm1133g6X7DlxFasUIx+72aKAr904GTxhSLDrd5DIlZg==}
     engines: {node: '>= 20'}
     hasBin: true
 
@@ -3753,8 +3759,8 @@ packages:
   node-releases@2.0.36:
     resolution: {integrity: sha512-TdC8FSgHz8Mwtw9g5L4gR/Sh9XhSP/0DEkQxfEFXOpiul5IiHgHan2VhYYb6agDSfp4KuvltmGApc8HMgUrIkA==}
 
-  nodemailer@8.0.3:
-    resolution: {integrity: sha512-JQNBqvK+bj3NMhUFR3wmCl3SYcOeMotDiwDBvIoCuQdF0PvlIY0BH+FJ2CG7u4cXKPChplE78oowlH/Otsc4ZQ==}
+  nodemailer@8.0.4:
+    resolution: {integrity: sha512-k+jf6N8PfQJ0Fe8ZhJlgqU5qJU44Lpvp2yvidH3vp1lPnVQMgi4yEEMPXg5eJS1gFIJTVq1NHBk7Ia9ARdSBdQ==}
     engines: {node: '>=6.0.0'}
 
   non-layered-tidy-tree-layout@2.0.2:
@@ -4156,8 +4162,9 @@ packages:
   safe-buffer@5.2.1:
     resolution: {integrity: sha512-rp3So07KcdmmKbGvgaNxQSJr7bGVSVk5S9Eq1F+ppbRo70+YeaDxkw5Dd8NPN+GD6bjnYm2VuPuCXmpuYvmCXQ==}
 
-  safe-regex2@5.0.0:
-    resolution: {integrity: sha512-YwJwe5a51WlK7KbOJREPdjNrpViQBI3p4T50lfwPuDhZnE3XGVTlGvi+aolc5+RvxDD6bnUmjVsU9n1eboLUYw==}
+  safe-regex2@5.1.0:
+    resolution: {integrity: sha512-pNHAuBW7TrcleFHsxBr5QMi/Iyp0ENjUKz7GCcX1UO7cMh+NmVK6HxQckNL1tJp1XAJVjG6B8OKIPqodqj9rtw==}
+    hasBin: true
 
   safe-stable-stringify@2.5.0:
     resolution: {integrity: sha512-b3rppTKm9T+PsVCBEOUR46GWI7fdOs00VKZ1+9c1EWDaDMvjQc6tUwuFyIprgGgTcWoVHSKrU8H31ZHA2e0RHA==}
@@ -4811,8 +4818,8 @@ packages:
   wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
 
-  ws@8.19.0:
-    resolution: {integrity: sha512-blAT2mjOEIi0ZzruJfIhb3nps74PRWTCz1IjglWEEpQl5XS/UNama6u2/rjFkDDouqr4L67ry+1aGIALViWjDg==}
+  ws@8.20.0:
+    resolution: {integrity: sha512-sAt8BhgNbzCtgGbt2OxmpuryO63ZoDk/sqaB/znQm94T4fCEsy/yV+7CdC1kJhOU9lboAEU7R3kquuycDoibVA==}
     engines: {node: '>=10.0.0'}
     peerDependencies:
       bufferutil: ^4.0.1
@@ -6375,7 +6382,7 @@ snapshots:
     dependencies:
       '@types/node': 22.19.15
 
-  '@types/pg@8.18.0':
+  '@types/pg@8.20.0':
     dependencies:
       '@types/node': 22.19.15
       pg-protocol: 1.13.0
@@ -6390,6 +6397,10 @@ snapshots:
   '@types/prop-types@15.7.15': {}
 
   '@types/react-dom@18.3.7(@types/react@18.3.28)':
+    dependencies:
+      '@types/react': 18.3.28
+
+  '@types/react-test-renderer@19.1.0':
     dependencies:
       '@types/react': 18.3.28
 
@@ -6424,39 +6435,39 @@ snapshots:
       d3-selection: 3.0.0
       d3-transition: 3.0.1(d3-selection@3.0.0)
 
-  '@visactor/react-vchart@2.0.19(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
+  '@visactor/react-vchart@2.0.20(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
     dependencies:
-      '@visactor/vchart': 2.0.19
-      '@visactor/vchart-extension': 2.0.19
-      '@visactor/vrender-core': 1.0.41
-      '@visactor/vrender-kits': 1.0.41
+      '@visactor/vchart': 2.0.20
+      '@visactor/vchart-extension': 2.0.20
+      '@visactor/vrender-core': 1.0.44
+      '@visactor/vrender-kits': 1.0.44
       '@visactor/vutils': 1.0.23
       react: 18.3.1
       react-dom: 18.3.1(react@18.3.1)
       react-is: 18.3.1
 
-  '@visactor/vchart-extension@2.0.19':
+  '@visactor/vchart-extension@2.0.20':
     dependencies:
-      '@visactor/vchart': 2.0.19
+      '@visactor/vchart': 2.0.20
       '@visactor/vdataset': 1.0.23
       '@visactor/vlayouts': 1.0.23
-      '@visactor/vrender-animate': 1.0.41
-      '@visactor/vrender-components': 1.0.41
-      '@visactor/vrender-core': 1.0.41
-      '@visactor/vrender-kits': 1.0.41
+      '@visactor/vrender-animate': 1.0.44
+      '@visactor/vrender-components': 1.0.44
+      '@visactor/vrender-core': 1.0.44
+      '@visactor/vrender-kits': 1.0.44
       '@visactor/vutils': 1.0.23
 
-  '@visactor/vchart@2.0.19':
+  '@visactor/vchart@2.0.20':
     dependencies:
       '@visactor/vdataset': 1.0.23
       '@visactor/vlayouts': 1.0.23
-      '@visactor/vrender-animate': 1.0.41
-      '@visactor/vrender-components': 1.0.41
-      '@visactor/vrender-core': 1.0.41
-      '@visactor/vrender-kits': 1.0.41
+      '@visactor/vrender-animate': 1.0.44
+      '@visactor/vrender-components': 1.0.44
+      '@visactor/vrender-core': 1.0.44
+      '@visactor/vrender-kits': 1.0.44
       '@visactor/vscale': 1.0.23
       '@visactor/vutils': 1.0.23
-      '@visactor/vutils-extension': 2.0.19
+      '@visactor/vutils-extension': 2.0.20
 
   '@visactor/vdataset@1.0.23':
     dependencies:
@@ -6486,28 +6497,28 @@ snapshots:
       '@visactor/vutils': 1.0.23
       eventemitter3: 4.0.7
 
-  '@visactor/vrender-animate@1.0.41':
+  '@visactor/vrender-animate@1.0.44':
     dependencies:
-      '@visactor/vrender-core': 1.0.41
+      '@visactor/vrender-core': 1.0.44
       '@visactor/vutils': 1.0.23
 
-  '@visactor/vrender-components@1.0.41':
+  '@visactor/vrender-components@1.0.44':
     dependencies:
-      '@visactor/vrender-animate': 1.0.41
-      '@visactor/vrender-core': 1.0.41
-      '@visactor/vrender-kits': 1.0.41
+      '@visactor/vrender-animate': 1.0.44
+      '@visactor/vrender-core': 1.0.44
+      '@visactor/vrender-kits': 1.0.44
       '@visactor/vscale': 1.0.23
       '@visactor/vutils': 1.0.23
 
-  '@visactor/vrender-core@1.0.41':
+  '@visactor/vrender-core@1.0.44':
     dependencies:
       '@visactor/vutils': 1.0.23
       color-convert: 2.0.1
 
-  '@visactor/vrender-kits@1.0.41':
+  '@visactor/vrender-kits@1.0.44':
     dependencies:
       '@resvg/resvg-js': 2.4.1
-      '@visactor/vrender-core': 1.0.41
+      '@visactor/vrender-core': 1.0.44
       '@visactor/vutils': 1.0.23
       gifuct-js: 2.1.2
       lottie-web: 5.13.0
@@ -6517,7 +6528,7 @@ snapshots:
     dependencies:
       '@visactor/vutils': 1.0.23
 
-  '@visactor/vutils-extension@2.0.19':
+  '@visactor/vutils-extension@2.0.20':
     dependencies:
       '@visactor/vdataset': 1.0.23
       '@visactor/vutils': 1.0.23
@@ -7433,10 +7444,10 @@ snapshots:
       esbuild: 0.25.12
       tsx: 4.21.0
 
-  drizzle-orm@0.45.1(@types/better-sqlite3@7.6.13)(@types/pg@8.18.0)(better-sqlite3@12.8.0)(mysql2@3.20.0(@types/node@22.19.15))(pg@8.20.0):
+  drizzle-orm@0.45.1(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(better-sqlite3@12.8.0)(mysql2@3.20.0(@types/node@22.19.15))(pg@8.20.0):
     optionalDependencies:
       '@types/better-sqlite3': 7.6.13
-      '@types/pg': 8.18.0
+      '@types/pg': 8.20.0
       better-sqlite3: 12.8.0
       mysql2: 3.20.0(@types/node@22.19.15)
       pg: 8.20.0
@@ -7520,7 +7531,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  electron@41.0.3:
+  electron@41.1.0:
     dependencies:
       '@electron/get': 2.0.3
       '@types/node': 24.12.0
@@ -7742,7 +7753,7 @@ snapshots:
 
   fastify-plugin@5.1.0: {}
 
-  fastify@5.8.2:
+  fastify@5.8.4:
     dependencies:
       '@fastify/ajv-compiler': 4.0.5
       '@fastify/error': 4.2.0
@@ -7786,7 +7797,7 @@ snapshots:
     dependencies:
       fast-deep-equal: 3.1.3
       fast-querystring: 1.1.2
-      safe-regex2: 5.0.0
+      safe-regex2: 5.1.0
 
   focus-trap@7.8.0:
     dependencies:
@@ -7893,7 +7904,7 @@ snapshots:
       hasown: 2.0.2
       math-intrinsics: 1.1.0
 
-  get-port@7.1.0: {}
+  get-port@7.2.0: {}
 
   get-proto@1.0.1:
     dependencies:
@@ -8342,7 +8353,7 @@ snapshots:
 
   marked@16.4.2: {}
 
-  marked@17.0.4: {}
+  marked@17.0.5: {}
 
   matcher@3.0.0:
     dependencies:
@@ -8553,7 +8564,7 @@ snapshots:
 
   node-releases@2.0.36: {}
 
-  nodemailer@8.0.3: {}
+  nodemailer@8.0.4: {}
 
   non-layered-tidy-tree-layout@2.0.2:
     optional: true
@@ -8987,7 +8998,7 @@ snapshots:
 
   safe-buffer@5.2.1: {}
 
-  safe-regex2@5.0.0:
+  safe-regex2@5.1.0:
     dependencies:
       ret: 0.5.0
 
@@ -9666,7 +9677,7 @@ snapshots:
 
   wrappy@1.0.2: {}
 
-  ws@8.19.0: {}
+  ws@8.20.0: {}
 
   xml-name-validator@5.0.0: {}
 
