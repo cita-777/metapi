@@ -59,6 +59,7 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
   return {
     authToken: env.AUTH_TOKEN || 'change-me-admin-token',
     proxyToken: env.PROXY_TOKEN || 'change-me-proxy-sk-token',
+    deployHelperToken: parseOptionalSecret(env.DEPLOY_HELPER_TOKEN || env.UPDATE_CENTER_HELPER_TOKEN),
     codexClientId: parseOptionalSecret(env.CODEX_CLIENT_ID) || DEFAULT_CODEX_CLIENT_ID,
     claudeClientId: parseOptionalSecret(env.CLAUDE_CLIENT_ID) || DEFAULT_CLAUDE_CLIENT_ID,
     claudeClientSecret: parseOptionalSecret(env.CLAUDE_CLIENT_SECRET),

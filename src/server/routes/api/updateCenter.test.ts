@@ -32,11 +32,13 @@ vi.mock('../../services/updateCenterHelperClient.js', () => ({
 }));
 
 type DbModule = typeof import('../../db/index.js');
+type ConfigModule = typeof import('../../config.js');
 
 describe('update center routes', () => {
   let app: FastifyInstance;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
+  let appConfig: ConfigModule['config'];
   let dataDir = '';
   let resetBackgroundTasks: (() => void) | null = null;
   let getBackgroundTask: ((taskId: string) => { status: string; logs?: Array<{ message: string }> } | null) | null = null;
@@ -67,10 +69,12 @@ describe('update center routes', () => {
     process.env.DEPLOY_HELPER_TOKEN = 'helper-token';
 
     await import('../../db/migrate.js');
+    const configModule = await import('../../config.js');
     const dbModule = await import('../../db/index.js');
     const routesModule = await import('./updateCenter.js');
     const backgroundTaskModule = await import('../../services/backgroundTaskService.js');
 
+    appConfig = configModule.config;
     db = dbModule.db;
     schema = dbModule.schema;
     resetBackgroundTasks = backgroundTaskModule.__resetBackgroundTasksForTests;
@@ -206,6 +210,54 @@ describe('update center routes', () => {
         healthy: true,
       },
     });
+  });
+
+  it('uses the shared config helper token when request-time env lookup is unavailable', async () => {
+    fetchLatestStableGitHubReleaseMock.mockResolvedValue({
+      source: 'github-release',
+      rawVersion: 'v1.3.0',
+      normalizedVersion: '1.3.0',
+      url: 'https://github.com/cita-777/metapi/releases/tag/v1.3.0',
+    });
+    getUpdateCenterHelperStatusMock.mockResolvedValue({
+      ok: true,
+      releaseName: 'metapi',
+      namespace: 'ai',
+      revision: '12',
+      imageRepository: '1467078763/metapi',
+      imageTag: '1.2.3',
+      healthy: true,
+    });
+
+    await saveValidConfig();
+
+    const originalEnvToken = process.env.DEPLOY_HELPER_TOKEN;
+    delete process.env.DEPLOY_HELPER_TOKEN;
+    (appConfig as typeof appConfig & { deployHelperToken?: string }).deployHelperToken = 'helper-token';
+
+    try {
+      const statusResponse = await app.inject({
+        method: 'GET',
+        url: '/api/update-center/status',
+      });
+
+      expect(statusResponse.statusCode).toBe(200);
+      expect(getUpdateCenterHelperStatusMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          helperBaseUrl: 'http://metapi-deploy-helper.ai.svc.cluster.local:9850',
+        }),
+        'helper-token',
+      );
+      expect(statusResponse.json()).toMatchObject({
+        helper: {
+          ok: true,
+          healthy: true,
+        },
+      });
+    } finally {
+      process.env.DEPLOY_HELPER_TOKEN = originalEnvToken;
+      delete (appConfig as typeof appConfig & { deployHelperToken?: string }).deployHelperToken;
+    }
   });
 
   it('dedupes deploy requests while a task is already running', async () => {

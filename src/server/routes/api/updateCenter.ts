@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import { config as runtimeConfig } from '../../config.js';
 
 import {
   appendBackgroundTaskLog,
@@ -35,7 +36,12 @@ const UPDATE_CENTER_DEPLOY_TASK_TYPE = 'update-center.deploy';
 const UPDATE_CENTER_DEPLOY_DEDUPE_KEY = 'update-center.deploy';
 
 function getUpdateCenterHelperToken(): string {
-  return String(process.env.DEPLOY_HELPER_TOKEN || process.env.UPDATE_CENTER_HELPER_TOKEN || '').trim();
+  return String(
+    runtimeConfig.deployHelperToken
+    || process.env.DEPLOY_HELPER_TOKEN
+    || process.env.UPDATE_CENTER_HELPER_TOKEN
+    || '',
+  ).trim();
 }
 
 function assertDeployableConfig(config: UpdateCenterConfig) {
