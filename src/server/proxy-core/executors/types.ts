@@ -177,6 +177,81 @@ export async function readRuntimeResponseText(
   }
 }
 
+function asNodeReadableStream(
+  stream: globalThis.ReadableStream<Uint8Array>,
+): NodeReadableStream<any> {
+  return stream as unknown as NodeReadableStream<any>;
+}
+
+function asWebReadableStream(
+  stream: NodeReadableStream<any>,
+): globalThis.ReadableStream<Uint8Array> {
+  return stream as unknown as globalThis.ReadableStream<Uint8Array>;
+}
+
+function prependReadableStreamChunks(
+  initialChunks: Uint8Array[],
+  sourceReader: ReadableStreamDefaultReader<Uint8Array>,
+): globalThis.ReadableStream<Uint8Array> {
+  const pendingChunks = [...initialChunks];
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const nextPendingChunk = pendingChunks.shift();
+      if (nextPendingChunk) {
+        controller.enqueue(nextPendingChunk);
+        return;
+      }
+
+      const nextChunk = await sourceReader.read();
+      if (nextChunk.done) {
+        controller.close();
+        return;
+      }
+
+      controller.enqueue(nextChunk.value);
+    },
+    cancel(reason) {
+      return sourceReader.cancel(reason);
+    },
+  });
+}
+
+async function resolveRuntimeResponseReader(
+  sourceReader: ReadableStreamDefaultReader<Uint8Array>,
+  contentEncoding: string | null,
+): Promise<ReadableStreamDefaultReader<Uint8Array>> {
+  const initialChunks: Uint8Array[] = [];
+  let probeBuffer = Buffer.alloc(0);
+
+  while (probeBuffer.length < 4) {
+    const nextChunk = await sourceReader.read();
+    if (nextChunk.done) {
+      break;
+    }
+    if (!nextChunk.value || nextChunk.value.byteLength === 0) {
+      continue;
+    }
+
+    initialChunks.push(nextChunk.value);
+    probeBuffer = Buffer.concat([probeBuffer, Buffer.from(nextChunk.value)]);
+  }
+
+  if (initialChunks.length === 0) {
+    return sourceReader;
+  }
+
+  const reconstructedBody = prependReadableStreamChunks(initialChunks, sourceReader);
+  if (!looksLikeZstdFrame(probeBuffer)) {
+    return reconstructedBody.getReader();
+  }
+
+  const decoded = decodeRuntimeResponseStream(
+    Readable.fromWeb(asNodeReadableStream(reconstructedBody)),
+    contentEncoding,
+  );
+  return asWebReadableStream(Readable.toWeb(decoded)).getReader();
+}
+
 export function getRuntimeResponseReader(
   response: RuntimeResponse,
 ): ReadableStreamDefaultReader<Uint8Array> | undefined {
@@ -190,11 +265,37 @@ export function getRuntimeResponseReader(
     return body.getReader();
   }
 
-  const decoded = decodeRuntimeResponseStream(
-    Readable.fromWeb(body as unknown as NodeReadableStream<any>),
-    contentEncoding,
-  );
-  return (Readable.toWeb(decoded) as unknown as globalThis.ReadableStream<Uint8Array>).getReader();
+  const sourceReader = body.getReader();
+  let resolvedReaderPromise: Promise<ReadableStreamDefaultReader<Uint8Array>> | null = null;
+  const ensureResolvedReader = () => {
+    if (!resolvedReaderPromise) {
+      resolvedReaderPromise = resolveRuntimeResponseReader(sourceReader, contentEncoding);
+    }
+    return resolvedReaderPromise;
+  };
+
+  // Keep the public API synchronous while delaying the zstd probe until the first read.
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const reader = await ensureResolvedReader();
+      const nextChunk = await reader.read();
+      if (nextChunk.done) {
+        controller.close();
+        return;
+      }
+
+      controller.enqueue(nextChunk.value);
+    },
+    async cancel(reason) {
+      if (!resolvedReaderPromise) {
+        await sourceReader.cancel(reason);
+        return;
+      }
+
+      const reader = await resolvedReaderPromise.catch(() => sourceReader);
+      await reader.cancel(reason);
+    },
+  }).getReader();
 }
 
 export async function materializeErrorResponse(
