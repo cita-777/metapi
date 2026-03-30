@@ -74,6 +74,7 @@ type StoredDebugPreviewPayload = {
 const PAGE_SIZES = [20, 50, 100];
 const DEFAULT_PAGE_SIZE = 50;
 const TRACE_TABLE_LIMIT = 20;
+const DEBUG_TRACE_PAGE_SIZE = 5;
 const PROXY_LOG_CLIENT_FAMILY_LABELS: Record<string, string> = {
   codex: 'Codex',
   claude_code: 'Claude Code',
@@ -181,8 +182,11 @@ const detailExpandableCardStyle: React.CSSProperties = {
   overflow: 'hidden',
 };
 const detailExpandableSummaryStyle: React.CSSProperties = {
-  cursor: 'pointer',
-  listStyle: 'none',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 10,
+  width: '100%',
   padding: '10px 12px',
   fontSize: 13,
   fontWeight: 600,
@@ -190,6 +194,33 @@ const detailExpandableSummaryStyle: React.CSSProperties = {
   borderBottom: '1px solid var(--color-border-light)',
   background: 'color-mix(in srgb, var(--color-bg-card) 86%, var(--color-bg) 14%)',
 };
+
+type DetailDisclosureCardProps = {
+  title: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+};
+
+function DetailDisclosureCard({ title, defaultOpen = false, children }: DetailDisclosureCardProps) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <div style={detailExpandableCardStyle}>
+      <button
+        type="button"
+        aria-label={`${open ? '收起' : '展开'}${title}`}
+        style={{ ...detailExpandableSummaryStyle, border: 'none', cursor: 'pointer' }}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span>{title}</span>
+        <span style={{ fontSize: 12, color: 'var(--color-text-muted)', flexShrink: 0 }}>
+          {open ? '收起' : '展开'}
+        </span>
+      </button>
+      {open ? children : null}
+    </div>
+  );
+}
 
 async function copyTextToClipboard(text: string) {
   if (navigator.clipboard?.writeText) {
@@ -594,6 +625,7 @@ export default function ProxyLogs() {
   const [debugSettings, setDebugSettings] = useState<ProxyDebugSettingsState>(DEFAULT_PROXY_DEBUG_SETTINGS);
   const [debugDraftSettings, setDebugDraftSettings] = useState<ProxyDebugSettingsState>(DEFAULT_PROXY_DEBUG_SETTINGS);
   const [debugTraces, setDebugTraces] = useState<ProxyDebugTraceListItem[]>([]);
+  const [debugTracePage, setDebugTracePage] = useState(1);
   const [selectedDebugTraceId, setSelectedDebugTraceId] = useState<number | null>(null);
   const [showDebugTraceDetailModal, setShowDebugTraceDetailModal] = useState(false);
   const [debugDetailById, setDebugDetailById] = useState<Record<number, ProxyDebugTraceDetailState>>({});
@@ -674,6 +706,12 @@ export default function ProxyLogs() {
   const currentOffset = (safePage - 1) * pageSize;
   const displayedStart = total === 0 ? 0 : currentOffset + 1;
   const displayedEnd = total === 0 ? 0 : Math.min(currentOffset + logs.length, total);
+  const debugTraceTotalPages = Math.max(1, Math.ceil(debugTraces.length / DEBUG_TRACE_PAGE_SIZE));
+  const safeDebugTracePage = Math.min(debugTracePage, debugTraceTotalPages);
+  const debugTraceOffset = (safeDebugTracePage - 1) * DEBUG_TRACE_PAGE_SIZE;
+  const visibleDebugTraces = debugTraces.slice(debugTraceOffset, debugTraceOffset + DEBUG_TRACE_PAGE_SIZE);
+  const debugTraceDisplayedStart = debugTraces.length === 0 ? 0 : debugTraceOffset + 1;
+  const debugTraceDisplayedEnd = debugTraces.length === 0 ? 0 : Math.min(debugTraceOffset + visibleDebugTraces.length, debugTraces.length);
 
   const pageNumbers = useMemo(() => (
     Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
@@ -779,6 +817,11 @@ export default function ProxyLogs() {
     if (page <= totalPages) return;
     setPage(totalPages);
   }, [page, totalPages]);
+
+  useEffect(() => {
+    if (debugTracePage <= debugTraceTotalPages) return;
+    setDebugTracePage(debugTraceTotalPages);
+  }, [debugTracePage, debugTraceTotalPages]);
 
   useEffect(() => {
     setExpanded((current) => (
@@ -1057,10 +1100,10 @@ export default function ProxyLogs() {
     ].join('\n');
 
     return (
-      <details key={attempt.id} style={detailExpandableCardStyle}>
-        <summary style={detailExpandableSummaryStyle}>
-          #{attempt.attemptIndex + 1} · {attempt.endpoint} · {attempt.responseStatus ?? '-'} · {attempt.requestPath}
-        </summary>
+      <DetailDisclosureCard
+        key={attempt.id}
+        title={`#${attempt.attemptIndex + 1} · ${attempt.endpoint} · ${attempt.responseStatus ?? '-'} · ${attempt.requestPath}`}
+      >
         <div style={{ padding: 12, display: 'grid', gap: 12 }}>
           <div style={detailInfoGridStyle}>
             <div style={detailInfoItemStyle}>
@@ -1087,7 +1130,7 @@ export default function ProxyLogs() {
           ) : null}
           <pre style={debugCodeBlockStyle}>{serializedAttempt}</pre>
         </div>
-      </details>
+      </DetailDisclosureCard>
     );
   }
 
@@ -1096,10 +1139,7 @@ export default function ProxyLogs() {
     const copyLabel = options?.copyLabel || title;
 
     return (
-      <details open={options?.defaultOpen} style={detailExpandableCardStyle}>
-        <summary style={detailExpandableSummaryStyle}>
-          <span>{title}</span>
-        </summary>
+      <DetailDisclosureCard title={title} defaultOpen={options?.defaultOpen}>
         <div style={{ padding: 12, display: 'grid', gap: 10 }}>
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
             <button
@@ -1121,7 +1161,7 @@ export default function ProxyLogs() {
           ) : null}
           <pre style={debugCodeBlockStyle}>{normalized.displayText}</pre>
         </div>
-      </details>
+      </DetailDisclosureCard>
     );
   }
 
@@ -1169,31 +1209,14 @@ export default function ProxyLogs() {
               <div style={detailInfoLabelStyle}>最终上游路径</div>
               <div style={detailInfoValueStyle}>{traceDetail.finalUpstreamPath || '-'}</div>
             </div>
-            <div style={{ ...detailInfoItemStyle, gridColumn: '1 / -1' }}>
-              <div style={detailInfoLabelStyle}>候选 endpoint</div>
-              <div style={{ display: 'grid', gap: 8 }}>
-                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    style={{ border: '1px solid var(--color-border)', padding: '6px 12px' }}
-                    aria-label="复制候选 endpoint"
-                    onClick={() => void handleCopyStoredDebugValue('候选 endpoint', traceDetail.endpointCandidatesJson)}
-                  >
-                    复制当前保存内容
-                  </button>
-                </div>
-                <code style={{ ...debugCodeBlockStyle, margin: 0, fontSize: 11 }}>
-                  {parseStoredDebugPreview(traceDetail.endpointCandidatesJson).displayText}
-                </code>
-              </div>
-            </div>
           </div>
         </div>
 
         <div style={{ display: 'grid', gap: 10 }}>
+          {renderStoredDebugDetails('候选 endpoint', traceDetail.endpointCandidatesJson, {
+            copyLabel: '候选 endpoint',
+          })}
           {renderStoredDebugDetails('原始下游请求头', traceDetail.requestHeadersJson, {
-            defaultOpen: true,
             copyLabel: '原始下游请求头',
           })}
           {renderStoredDebugDetails('原始下游请求体', traceDetail.requestBodyJson, {
@@ -1204,14 +1227,15 @@ export default function ProxyLogs() {
           })}
         </div>
 
-        <div style={{ display: 'grid', gap: 8 }}>
-          <div style={detailSectionTitleStyle}>Attempt 记录</div>
-          {selectedDebugTraceDetail.data.attempts.length === 0 ? (
-            <div style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>暂无 attempt 记录</div>
-          ) : (
-            selectedDebugTraceDetail.data.attempts.map(renderAttemptDetail)
-          )}
-        </div>
+        <DetailDisclosureCard title={`Attempt 记录 (${selectedDebugTraceDetail.data.attempts.length})`}>
+          <div style={{ padding: 12, display: 'grid', gap: 8 }}>
+            {selectedDebugTraceDetail.data.attempts.length === 0 ? (
+              <div style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>暂无 attempt 记录</div>
+            ) : (
+              selectedDebugTraceDetail.data.attempts.map(renderAttemptDetail)
+            )}
+          </div>
+        </DetailDisclosureCard>
       </div>
     );
   }
@@ -1567,7 +1591,7 @@ export default function ProxyLogs() {
           <div>
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>最近调试追踪</div>
             <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>
-              按最新 20 条展示，点击查看详情会打开完整请求与 attempt 链路。
+              最多抓最近 20 条，列表分页每页 5 条；打开详情后各段内容可按需展开和收起。
             </div>
           </div>
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
@@ -1595,7 +1619,7 @@ export default function ProxyLogs() {
           </div>
         ) : isMobile ? (
           <div className="mobile-card-list">
-            {debugTraces.map((trace) => (
+            {visibleDebugTraces.map((trace) => (
               <MobileCard
                 key={trace.id}
                 title={trace.sessionId || `trace-${trace.id}`}
@@ -1634,7 +1658,7 @@ export default function ProxyLogs() {
               </tr>
             </thead>
             <tbody>
-              {debugTraces.map((trace) => (
+              {visibleDebugTraces.map((trace) => (
                 <tr key={trace.id}>
                   <td style={{ fontSize: 12, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-secondary)' }}>
                     {formatDateTimeLocal(trace.createdAt)}
@@ -1659,6 +1683,38 @@ export default function ProxyLogs() {
             </tbody>
           </table>
         )}
+        {debugTraces.length > 0 ? (
+          <div className="pagination" style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginRight: 'auto' }}>
+              显示第 {debugTraceDisplayedStart} - {debugTraceDisplayedEnd} 条，共 {debugTraces.length} 条
+            </div>
+            <button
+              className="pagination-btn"
+              aria-label="调试追踪上一页"
+              disabled={safeDebugTracePage <= 1}
+              onClick={() => setDebugTracePage((current) => current - 1)}
+            >
+              <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+            </button>
+            {Array.from({ length: debugTraceTotalPages }, (_, index) => index + 1).map((num) => (
+              <button
+                key={`debug-trace-page-${num}`}
+                className={`pagination-btn ${safeDebugTracePage === num ? 'active' : ''}`}
+                onClick={() => setDebugTracePage(num)}
+              >
+                {num}
+              </button>
+            ))}
+            <button
+              className="pagination-btn"
+              aria-label="调试追踪下一页"
+              disabled={safeDebugTracePage >= debugTraceTotalPages}
+              onClick={() => setDebugTracePage((current) => current + 1)}
+            >
+              <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {isMobile ? (

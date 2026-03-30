@@ -42,6 +42,10 @@ describe('About update center', () => {
         normalizedVersion: 'latest',
         displayVersion: 'latest @ sha256:efb2ee655386',
       },
+      helper: {
+        imageTag: 'latest',
+        imageDigest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+      },
     });
   });
 
@@ -49,7 +53,7 @@ describe('About update center', () => {
     vi.clearAllMocks();
   });
 
-  it('shows current version and newer release summaries', async () => {
+  it('shows current version, newer release summaries, and a highlighted update reminder', async () => {
     let root!: ReactTestRenderer;
     try {
       await act(async () => {
@@ -67,7 +71,15 @@ describe('About update center', () => {
       expect(text).toContain('1.3.0');
       expect(text).toContain('Docker Hub');
       expect(text).toContain('latest @ sha256:efb2ee655386');
+      expect(text).toContain('发现新版本');
       expect(text).toContain('前往更新中心');
+
+      const highlightedReminder = root.root.find((node) => (
+        typeof node.props.className === 'string'
+        && node.props.className.includes('stat-value-glow')
+        && collectText(node).includes('发现新版本')
+      ));
+      expect(collectText(highlightedReminder)).toContain('发现新版本');
     } finally {
       root?.unmount();
     }

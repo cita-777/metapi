@@ -4,6 +4,12 @@ import { api } from '../../api.js';
 import ModernSelect from '../../components/ModernSelect.js';
 import { useToast } from '../../components/Toast.js';
 import { useIsMobile } from '../../components/useIsMobile.js';
+import {
+  buildUpdateReminder,
+  describeDockerDeployState,
+  describeGitHubDeployState,
+} from '../helpers/updateCenterPresentation.js';
+import UpdateCenterHistoryModal from './UpdateCenterHistoryModal.js';
 
 type UpdateCenterStatus = {
   currentVersion?: string;
@@ -206,6 +212,7 @@ export default function UpdateCenterSection() {
   const [config, setConfig] = useState(DEFAULT_CONFIG);
   const [logs, setLogs] = useState<string[]>([]);
   const [taskStatus, setTaskStatus] = useState('');
+  const [historyModalOpen, setHistoryModalOpen] = useState(false);
   const streamAbortRef = useRef<AbortController | null>(null);
 
   const loadStatus = async () => {
@@ -367,29 +374,33 @@ export default function UpdateCenterSection() {
   const runningTaskBadge = getTaskBadge(status?.runningTask?.status || taskStatus || undefined);
   const lastFinishedTaskBadge = getTaskBadge(status?.lastFinishedTask?.status || undefined);
   const visibleTaskStatus = taskStatus || status?.runningTask?.status || status?.lastFinishedTask?.status || 'idle';
-
-  const canDeployGithub = Boolean(
-    !deploying
-    && config.enabled
-    && helperHealthy
-    && config.githubReleasesEnabled
-    && status?.githubRelease?.normalizedVersion,
-  );
-  const canDeployDocker = Boolean(
-    !deploying
-    && config.enabled
-    && helperHealthy
-    && config.dockerHubTagsEnabled
-    && status?.dockerHubTag?.normalizedVersion,
-  );
-
-  const renderDeployReason = (enabled: boolean, version?: string, helperError?: string | null) => {
-    if (!config.enabled) return '更新中心已关闭，保存启用后才能部署。';
-    if (!enabled) return '当前来源已停用，开启后才会参与检查和部署。';
-    if (!helperHealthy) return helperError || 'Deploy Helper 未健康，先修复 helper 再部署。';
-    if (!version) return '当前来源还没有可部署版本。';
-    return '版本可用，点击按钮即可通过 helper 发起滚动更新。';
-  };
+  const githubDeployState = describeGitHubDeployState({
+    enabled: config.enabled && config.githubReleasesEnabled,
+    helperHealthy,
+    helperError: status?.helper?.error,
+    currentVersion: status?.currentVersion,
+    helperImageTag: status?.helper?.imageTag,
+    candidate: status?.githubRelease,
+  });
+  const dockerDeployState = describeDockerDeployState({
+    enabled: config.enabled && config.dockerHubTagsEnabled,
+    helperHealthy,
+    helperError: status?.helper?.error,
+    currentVersion: status?.currentVersion,
+    helper: status?.helper,
+    candidate: status?.dockerHubTag,
+  });
+  const updateReminder = buildUpdateReminder({
+    currentVersion: status?.currentVersion,
+    helper: status?.helper,
+    githubRelease: status?.githubRelease,
+    dockerHubTag: status?.dockerHubTag,
+  });
+  const canDeployGithub = !deploying && githubDeployState.canDeploy;
+  const canDeployDocker = !deploying && dockerDeployState.canDeploy;
+  const helperHistory = Array.isArray(status?.helper?.history) ? status.helper.history : [];
+  const historyPreview = helperHistory.slice(0, 2);
+  const currentRevision = String(status?.helper?.revision || '').trim();
 
   if (loading) {
     return (
@@ -405,9 +416,17 @@ export default function UpdateCenterSection() {
   return (
     <div className="card" style={{ padding: 20 }}>
       <div style={{ marginBottom: 14 }}>
-        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 6 }}>更新中心</div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
+          <div style={{ fontWeight: 600, fontSize: 14 }}>更新中心</div>
+          <span className={`${updateReminder.badgeClassName} ${updateReminder.highlight ? 'stat-value-glow' : ''}`.trim()}>
+            {updateReminder.label}
+          </span>
+        </div>
         <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.55 }}>
           在设置页里统一查看 GitHub Releases、Docker Hub 版本和 K3s helper 状态，避免部署信息散落在多个入口。
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.5, marginTop: 6 }}>
+          {updateReminder.detail}
         </div>
       </div>
 
@@ -612,17 +631,20 @@ export default function UpdateCenterSection() {
                 <span className={getSourceBadge(config.githubReleasesEnabled, status?.githubRelease?.normalizedVersion).className}>
                   {getSourceBadge(config.githubReleasesEnabled, status?.githubRelease?.normalizedVersion).label}
                 </span>
+                <span className={`${githubDeployState.badgeClassName} ${githubDeployState.highlight ? 'stat-value-glow' : ''}`.trim()}>
+                  {githubDeployState.badgeLabel}
+                </span>
                 {config.defaultDeploySource === 'github-release' ? (
                   <span className="badge badge-info">默认来源</span>
                 ) : null}
               </div>
             </div>
             <div style={{ ...fieldHintStyle, marginBottom: 10 }}>优先使用仓库稳定版 release，适合保留语义化版本节奏。</div>
-            <div style={{ ...summaryValueStyle, fontFamily: 'var(--font-mono)', marginBottom: 8 }}>
+            <div className={githubDeployState.highlight ? 'stat-value-glow' : ''} style={{ ...summaryValueStyle, fontFamily: 'var(--font-mono)', marginBottom: 8 }}>
               {status?.githubRelease?.displayVersion || status?.githubRelease?.normalizedVersion || '未发现'}
             </div>
             <div style={{ ...fieldHintStyle, marginBottom: 12 }}>
-              {renderDeployReason(config.githubReleasesEnabled, status?.githubRelease?.normalizedVersion, status?.helper?.error)}
+              {githubDeployState.reason}
             </div>
             <button
               type="button"
@@ -648,17 +670,20 @@ export default function UpdateCenterSection() {
                 <span className={getSourceBadge(config.dockerHubTagsEnabled, status?.dockerHubTag?.normalizedVersion).className}>
                   {getSourceBadge(config.dockerHubTagsEnabled, status?.dockerHubTag?.normalizedVersion).label}
                 </span>
+                <span className={`${dockerDeployState.badgeClassName} ${dockerDeployState.highlight ? 'stat-value-glow' : ''}`.trim()}>
+                  {dockerDeployState.badgeLabel}
+                </span>
                 {config.defaultDeploySource === 'docker-hub-tag' ? (
                   <span className="badge badge-info">默认来源</span>
                 ) : null}
               </div>
             </div>
             <div style={{ ...fieldHintStyle, marginBottom: 10 }}>适合镜像标签领先于 release 的场景，直接跟随容器分发节奏。</div>
-            <div style={{ ...summaryValueStyle, fontFamily: 'var(--font-mono)', marginBottom: 8 }}>
+            <div className={dockerDeployState.highlight ? 'stat-value-glow' : ''} style={{ ...summaryValueStyle, fontFamily: 'var(--font-mono)', marginBottom: 8 }}>
               {status?.dockerHubTag?.displayVersion || status?.dockerHubTag?.normalizedVersion || '未发现'}
             </div>
             <div style={{ ...fieldHintStyle, marginBottom: 12 }}>
-              {renderDeployReason(config.dockerHubTagsEnabled, status?.dockerHubTag?.normalizedVersion, status?.helper?.error)}
+              {dockerDeployState.reason}
             </div>
             <div style={{ ...fieldHintStyle, marginBottom: 12 }}>
               最近推送：{formatTaskTime(status?.dockerHubTag?.publishedAt)}
@@ -730,26 +755,40 @@ export default function UpdateCenterSection() {
       <div style={{ ...sectionPanelStyle, marginBottom: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
           <div style={{ fontWeight: 600, fontSize: 13 }}>回退历史</div>
-          <span className="badge badge-muted">最近 revision</span>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <span className="badge badge-muted">最近 revision</span>
+            {helperHistory.length > historyPreview.length ? (
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ border: '1px solid var(--color-border)', padding: '4px 10px', minHeight: 0 }}
+                onClick={() => setHistoryModalOpen(true)}
+              >
+                展开全部 {helperHistory.length} 条
+              </button>
+            ) : null}
+          </div>
         </div>
         <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 10 }}>
-          这里展示 helper 读到的最近 Helm revision。支持直接回退到某个旧 revision，适合快速滚回上一次稳定镜像。
+          页面里默认只保留最近 revision 预览，完整历史放进弹窗，避免设置页被长回退列表拖得过长。
         </div>
-        {status?.helper?.history && status.helper.history.length > 0 ? (
+        {helperHistory.length > 0 ? (
           <div style={{ display: 'grid', gap: 10 }}>
-            {status.helper.history.map((entry) => {
+            {historyPreview.map((entry) => {
               const revision = String(entry?.revision || '').trim();
-              const isCurrentRevision = revision && revision === String(status?.helper?.revision || '').trim();
+              const isCurrentRevision = revision && revision === currentRevision;
               return (
                 <div
                   key={revision || 'unknown-revision'}
                   style={{
                     border: '1px solid var(--color-border-light)',
                     borderRadius: 'var(--radius-sm)',
-                    padding: 12,
+                    padding: 10,
                     display: 'grid',
-                    gap: 6,
-                    background: 'var(--color-bg-card)',
+                    gap: 5,
+                    background: isCurrentRevision
+                      ? 'color-mix(in srgb, var(--color-primary) 6%, var(--color-bg-card))'
+                      : 'var(--color-bg-card)',
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
@@ -845,6 +884,20 @@ export default function UpdateCenterSection() {
       <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 10 }}>
         最近状态：{visibleTaskStatus}
       </div>
+      <UpdateCenterHistoryModal
+        open={historyModalOpen}
+        helperHealthy={helperHealthy}
+        deploying={deploying}
+        currentRevision={currentRevision}
+        history={helperHistory}
+        formatTaskTime={formatTaskTime}
+        formatImageTarget={formatImageTarget}
+        onClose={() => setHistoryModalOpen(false)}
+        onRollback={(revision) => {
+          setHistoryModalOpen(false);
+          void runRollback(revision);
+        }}
+      />
     </div>
   );
 }

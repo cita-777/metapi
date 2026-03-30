@@ -40,6 +40,12 @@ describe('UpdateCenterSection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     globalThis.document = {
+      body: {
+        nodeType: 1,
+        style: {
+          overflow: '',
+        },
+      },
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
     } as unknown as Document;
@@ -70,9 +76,19 @@ describe('UpdateCenterSection', () => {
       helper: {
         ok: true,
         healthy: true,
+        revision: '17',
         imageTag: 'latest',
         imageDigest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
         history: [
+          {
+            revision: '17',
+            updatedAt: '2026-03-29T12:00:00Z',
+            status: 'deployed',
+            description: 'Upgrade complete',
+            imageRepository: '1467078763/metapi',
+            imageTag: 'latest',
+            imageDigest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+          },
           {
             revision: '16',
             updatedAt: '2026-03-28T12:00:00Z',
@@ -81,6 +97,15 @@ describe('UpdateCenterSection', () => {
             imageRepository: '1467078763/metapi',
             imageTag: 'main',
             imageDigest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          },
+          {
+            revision: '15',
+            updatedAt: '2026-03-27T12:00:00Z',
+            status: 'superseded',
+            description: 'Earlier stable release',
+            imageRepository: '1467078763/metapi',
+            imageTag: '1.2.2',
+            imageDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
           },
         ],
       },
@@ -228,6 +253,7 @@ describe('UpdateCenterSection', () => {
 
       const text = collectText(root.root);
       expect(text).toContain('latest @ sha256:efb2ee655386');
+      expect(text).toContain('发现新版本');
       expect(text).toContain('Running helm upgrade');
       expect(text).toContain('Waiting for rollout');
       expect(text).toContain('任务状态 · 已完成');
@@ -301,6 +327,111 @@ describe('UpdateCenterSection', () => {
       });
 
       expect(apiMock.deployUpdateCenter).not.toHaveBeenCalled();
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('keeps rollback history compact and opens the full revision list in a centered modal', async () => {
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ToastProvider>
+              <UpdateCenterSection />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const compactText = collectText(root.root);
+      expect(compactText).toContain('展开全部 3 条');
+      expect(compactText).not.toContain('Earlier stable release');
+      expect(compactText).not.toContain('回退到 revision 15');
+
+      const openHistoryButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).includes('展开全部 3 条')
+      ));
+
+      await act(async () => {
+        await openHistoryButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const modal = root.root.find((node) => (
+        typeof node.props.className === 'string'
+        && node.props.className.includes('modal-content')
+        && collectText(node).includes('全部 revision')
+      ));
+
+      expect(collectText(modal)).toContain('Earlier stable release');
+      expect(collectText(modal)).toContain('回退到 revision 15');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('blocks Docker Hub deploys when the current helper image already matches the target digest', async () => {
+    apiMock.getUpdateCenterStatus.mockResolvedValueOnce({
+      currentVersion: '1.2.3',
+      config: {
+        enabled: true,
+        helperBaseUrl: 'http://metapi-deploy-helper.ai.svc.cluster.local:9850',
+        namespace: 'ai',
+        releaseName: 'metapi',
+        chartRef: 'oci://ghcr.io/cita-777/charts/metapi',
+        imageRepository: '1467078763/metapi',
+        githubReleasesEnabled: true,
+        dockerHubTagsEnabled: true,
+        defaultDeploySource: 'docker-hub-tag',
+      },
+      githubRelease: {
+        normalizedVersion: '1.3.0',
+        displayVersion: '1.3.0',
+      },
+      dockerHubTag: {
+        normalizedVersion: 'latest',
+        tagName: 'latest',
+        digest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
+        displayVersion: 'latest @ sha256:efb2ee655386',
+      },
+      helper: {
+        ok: true,
+        healthy: true,
+        revision: '17',
+        imageTag: 'latest',
+        imageDigest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
+      },
+      runningTask: null,
+      lastFinishedTask: null,
+    });
+
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ToastProvider>
+              <UpdateCenterSection />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const dockerDeployButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.className === 'string'
+        && node.props.className.includes('btn')
+        && collectText(node).includes('部署 Docker Hub 标签')
+      ));
+
+      expect(dockerDeployButton.props.disabled).toBe(true);
+      expect(collectText(root.root)).toContain('当前已运行该镜像');
     } finally {
       root?.unmount();
     }

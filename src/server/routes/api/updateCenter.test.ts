@@ -409,6 +409,38 @@ describe('update center routes', () => {
     }), expect.any(Function));
   });
 
+  it('rejects deploy requests when the target image is already running', async () => {
+    await saveValidConfig();
+
+    getUpdateCenterHelperStatusMock.mockResolvedValue({
+      ok: true,
+      releaseName: 'metapi',
+      namespace: 'ai',
+      revision: '17',
+      imageRepository: '1467078763/metapi',
+      imageTag: 'latest',
+      imageDigest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
+      healthy: true,
+    });
+
+    const deployResponse = await app.inject({
+      method: 'POST',
+      url: '/api/update-center/deploy',
+      payload: {
+        source: 'docker-hub-tag',
+        targetTag: 'latest',
+        targetDigest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
+      },
+    });
+
+    expect(deployResponse.statusCode).toBe(409);
+    expect(deployResponse.json()).toMatchObject({
+      success: false,
+      message: 'target image is already running',
+    });
+    expect(streamUpdateCenterDeployMock).not.toHaveBeenCalled();
+  });
+
   it('starts rollback tasks for explicit revision requests', async () => {
     await saveValidConfig();
 

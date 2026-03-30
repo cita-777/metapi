@@ -82,5 +82,10 @@ export default function CenteredModal({
     </div>
   );
 
-  return typeof document !== 'undefined' ? createPortal(modal, document.body) : modal;
+  const canUsePortal = typeof document !== 'undefined'
+    && !!document.body
+    && typeof document.body.appendChild === 'function'
+    && typeof document.body.removeChild === 'function';
+
+  return canUsePortal ? createPortal(modal, document.body) : modal;
 }

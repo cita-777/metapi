@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 import { tr } from '../i18n.js';
 import { SITE_DOCS_URL } from '../docsLink.js';
+import { buildUpdateReminder } from './helpers/updateCenterPresentation.js';
 
 const VERSION = '1.2.3';
 
@@ -37,6 +38,12 @@ export default function About() {
   const [currentVersion, setCurrentVersion] = useState(`v${VERSION}`);
   const [latestGitHubVersion, setLatestGitHubVersion] = useState('');
   const [latestDockerHubVersion, setLatestDockerHubVersion] = useState('');
+  const [updateReminder, setUpdateReminder] = useState(() => buildUpdateReminder({
+    currentVersion: VERSION,
+    helper: null,
+    githubRelease: null,
+    dockerHubTag: null,
+  }));
 
   useEffect(() => {
     let cancelled = false;
@@ -45,15 +52,21 @@ export default function About() {
       try {
         const status = await api.getUpdateCenterStatus() as {
           currentVersion?: string;
-          githubRelease?: { normalizedVersion?: string; displayVersion?: string } | null;
-          dockerHubTag?: { normalizedVersion?: string; displayVersion?: string } | null;
+          githubRelease?: { normalizedVersion?: string; displayVersion?: string; tagName?: string | null; digest?: string | null } | null;
+          dockerHubTag?: { normalizedVersion?: string; displayVersion?: string; tagName?: string | null; digest?: string | null } | null;
+          helper?: { imageTag?: string | null; imageDigest?: string | null } | null;
         };
+        const resolvedCurrentVersion = String(status.currentVersion || VERSION);
         if (cancelled) return;
-        if (status.currentVersion) {
-          setCurrentVersion(`v${status.currentVersion}`);
-        }
+        setCurrentVersion(`v${resolvedCurrentVersion}`);
         setLatestGitHubVersion(String(status.githubRelease?.displayVersion || status.githubRelease?.normalizedVersion || ''));
         setLatestDockerHubVersion(String(status.dockerHubTag?.displayVersion || status.dockerHubTag?.normalizedVersion || ''));
+        setUpdateReminder(buildUpdateReminder({
+          currentVersion: resolvedCurrentVersion,
+          helper: status.helper,
+          githubRelease: status.githubRelease,
+          dockerHubTag: status.dockerHubTag,
+        }));
       } catch {
         // ignore update-center lookup failures on about page
       }
@@ -92,6 +105,14 @@ export default function About() {
 
       <div className="card animate-slide-up stagger-1" style={{ padding: 22, marginBottom: 14 }}>
         <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>更新提醒</h3>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+          <span className={`${updateReminder.badgeClassName} ${updateReminder.highlight ? 'stat-value-glow' : ''}`.trim()}>
+            {updateReminder.label}
+          </span>
+          <span className={updateReminder.highlight ? 'stat-value-glow' : ''} style={{ fontSize: 13, color: 'var(--color-text-primary)', fontWeight: 600 }}>
+            {updateReminder.detail}
+          </span>
+        </div>
         <div style={{ display: 'grid', gap: 8, fontSize: 13 }}>
           <div>GitHub 稳定版：{latestGitHubVersion || '暂无数据'}</div>
           <div>Docker Hub：{latestDockerHubVersion || '暂无数据'}</div>

@@ -12,6 +12,7 @@ import {
   fetchLatestDockerHubTag,
   fetchLatestStableGitHubRelease,
   getCurrentRuntimeVersion,
+  parseStableSemVer,
   type UpdateCenterVersionCandidate,
   type UpdateCenterVersionSource,
 } from '../../services/updateCenterVersionService.js';
@@ -72,6 +73,44 @@ function getDeployTasks() {
 function summarizeHelperError(error: unknown) {
   if (error instanceof Error && error.message) return error.message;
   return String(error || 'unknown helper error');
+}
+
+function normalizeDigest(value: string | null | undefined) {
+  const digest = String(value || '').trim();
+  return /^sha256:[a-f0-9]{64}$/i.test(digest) ? digest.toLowerCase() : '';
+}
+
+function isSameTargetVersion(currentVersion: string, targetTag: string) {
+  const current = parseStableSemVer(currentVersion);
+  const target = parseStableSemVer(targetTag);
+  return !!current && !!target && current.normalized === target.normalized;
+}
+
+async function getDeployBlockMessage(input: {
+  config: UpdateCenterConfig;
+  targetTag: string;
+  targetDigest: string | null;
+}): Promise<string | null> {
+  if (isSameTargetVersion(getCurrentRuntimeVersion(), input.targetTag)) {
+    return 'target version is already running';
+  }
+
+  const normalizedTargetDigest = normalizeDigest(input.targetDigest);
+  if (!normalizedTargetDigest) {
+    return null;
+  }
+
+  try {
+    const helperStatus = await getUpdateCenterHelperStatus(input.config, getUpdateCenterHelperToken());
+    const currentDigest = normalizeDigest(helperStatus?.imageDigest);
+    if (currentDigest && currentDigest === normalizedTargetDigest) {
+      return 'target image is already running';
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
 }
 
 async function settleOptional<T>(enabled: boolean, loader: () => Promise<T>): Promise<{
@@ -180,6 +219,18 @@ export async function updateCenterRoutes(app: FastifyInstance) {
       return reply.code(400).send({
         success: false,
         message: 'targetTag is required',
+      });
+    }
+
+    const deployBlockMessage = await getDeployBlockMessage({
+      config,
+      targetTag,
+      targetDigest,
+    });
+    if (deployBlockMessage) {
+      return reply.code(409).send({
+        success: false,
+        message: deployBlockMessage,
       });
     }
 

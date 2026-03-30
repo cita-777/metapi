@@ -333,6 +333,63 @@ describe('ProxyLogs server-driven page', () => {
     }
   });
 
+  it('paginates debug traces in groups of five instead of rendering the whole trace list at once', async () => {
+    apiMock.getProxyDebugTraces.mockResolvedValue({
+      items: Array.from({ length: 7 }, (_, index) => ({
+        id: 701 + index,
+        createdAt: `2026-03-28 18:0${index}:00`,
+        requestedModel: `gpt-4o-mini-${index + 1}`,
+        downstreamPath: '/v1/responses',
+        finalStatus: index % 2 === 0 ? 'failed' : 'success',
+        finalUpstreamPath: '/responses',
+        clientKind: 'codex',
+        sessionId: `sess-debug-${index + 1}`,
+      })),
+    });
+
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('显示第 1 - 5 条，共 7 条');
+      expect(collectText(root.root)).toContain('sess-debug-1');
+      expect(collectText(root.root)).not.toContain('sess-debug-6');
+
+      const detailButtons = root.root.findAll((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '查看详情'
+      ));
+      expect(detailButtons).toHaveLength(5);
+
+      const nextPageButton = root.root.find((node) => (
+        node.type === 'button'
+        && node.props['aria-label'] === '调试追踪下一页'
+      ));
+
+      await act(async () => {
+        nextPageButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('显示第 6 - 7 条，共 7 条');
+      expect(collectText(root.root)).toContain('sess-debug-6');
+      expect(collectText(root.root)).not.toContain('sess-debug-1');
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('opens debug trace detail on demand instead of preloading the first trace inline', async () => {
     let root!: WebTestRenderer;
 
@@ -528,6 +585,21 @@ describe('ProxyLogs server-driven page', () => {
         viewDetailButton.props.onClick();
       });
       await flushMicrotasks();
+
+      expect(collectText(root.root)).not.toContain('Bearer demo');
+
+      const expandHeadersButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && node.props['aria-label'] === '展开原始下游请求头'
+      ));
+
+      await act(async () => {
+        expandHeadersButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('Bearer demo');
 
       const copyButton = root.root.find((node) => (
         node.type === 'button'
