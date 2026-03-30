@@ -390,6 +390,74 @@ describe('ProxyLogs server-driven page', () => {
     }
   });
 
+  it('allows collapsing and expanding the debug trace panel to reduce page footprint', async () => {
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const toggleButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && node.props['data-debug-trace-panel-toggle'] === true
+      ));
+      const panelBody = root.root.find((node) => (
+        node.type === 'div'
+        && node.props['data-debug-trace-panel-body'] === true
+      ));
+
+      expect(toggleButton.props['aria-expanded']).toBe(true);
+      expect(String(panelBody.props.className || '')).toContain('is-open');
+
+      await act(async () => {
+        toggleButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const collapsedToggleButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && node.props['data-debug-trace-panel-toggle'] === true
+      ));
+      const collapsedPanelBody = root.root.find((node) => (
+        node.type === 'div'
+        && node.props['data-debug-trace-panel-body'] === true
+      ));
+
+      expect(collapsedToggleButton.props['aria-expanded']).toBe(false);
+      expect(String(collapsedPanelBody.props.className || '')).not.toContain('is-open');
+
+      await act(async () => {
+        collapsedToggleButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const expandedToggleButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && node.props['data-debug-trace-panel-toggle'] === true
+      ));
+      const expandedPanelBody = root.root.find((node) => (
+        node.type === 'div'
+        && node.props['data-debug-trace-panel-body'] === true
+      ));
+
+      expect(expandedToggleButton.props['aria-expanded']).toBe(true);
+      expect(String(expandedPanelBody.props.className || '')).toContain('is-open');
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('opens debug trace detail on demand instead of preloading the first trace inline', async () => {
     let root!: WebTestRenderer;
 
