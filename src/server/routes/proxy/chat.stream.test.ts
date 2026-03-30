@@ -2007,6 +2007,51 @@ describe('chat proxy stream behavior', () => {
     expect(response.body).toContain('"text":"The user asked \\"whoru\\" which is a common internet slang and shorthand for who are you."');
   });
 
+  it('preserves legitimate repeated short deltas when /v1/responses is converted from /v1/messages stream', async () => {
+    fetchModelPricingCatalogMock.mockResolvedValue({
+      models: [
+        {
+          modelName: 'upstream-gpt',
+          supportedEndpointTypes: ['/v1/messages'],
+        },
+      ],
+      groupRatio: {},
+    });
+
+    const encoder = new TextEncoder();
+    const upstreamBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('event: message_start\ndata: {"type":"message_start","message":{"id":"msg_repeat_short_1","model":"upstream-gpt"}}\n\n'));
+        controller.enqueue(encoder.encode('event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"ha"}}\n\n'));
+        controller.enqueue(encoder.encode('event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"ha"}}\n\n'));
+        controller.enqueue(encoder.encode('event: message_stop\ndata: {"type":"message_stop"}\n\n'));
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      },
+    });
+
+    fetchMock.mockResolvedValue(new Response(upstreamBody, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'claude-sonnet-4-6',
+        stream: true,
+        input: 'laugh',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const deltaMatches = response.body.match(/event: response\.output_text\.delta/g) || [];
+    expect(deltaMatches.length).toBe(2);
+    expect(response.body).toContain('"delta":"ha"');
+    expect(response.body).toContain('"text":"haha"');
+  });
+
   it('preserves function_call/function_call_output when /v1/responses falls back to /v1/chat/completions', async () => {
     fetchModelPricingCatalogMock.mockResolvedValue({
       models: [
