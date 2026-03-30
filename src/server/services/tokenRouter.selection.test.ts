@@ -995,7 +995,11 @@ describe('TokenRouter selection scoring', () => {
     config.proxySessionChannelConcurrencyLimit = 1;
     config.proxySessionChannelQueueWaitMs = 5_000;
 
-    const route = await createRoute('gpt-5.2');
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.2',
+      routingStrategy: 'stable_first',
+      enabled: true,
+    }).returning().get();
     const sessionExtraConfig = JSON.stringify({ credentialMode: 'session' });
 
     const siteBusy = await createSite('runtime-load-busy');
