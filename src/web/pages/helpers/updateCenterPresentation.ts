@@ -257,6 +257,26 @@ export function buildUpdateReminder(input: {
   githubRelease: UpdateVersionCandidateLike | null | undefined;
   dockerHubTag: UpdateVersionCandidateLike | null | undefined;
 }): UpdateReminder {
+  const hasGitHubCandidate = Boolean(normalizeString(
+    input.githubRelease?.displayVersion
+      || input.githubRelease?.normalizedVersion
+      || input.githubRelease?.tagName,
+  ));
+  const hasDockerCandidate = Boolean(normalizeString(
+    input.dockerHubTag?.displayVersion
+      || input.dockerHubTag?.normalizedVersion
+      || input.dockerHubTag?.tagName
+      || input.dockerHubTag?.digest,
+  ));
+  if (!hasGitHubCandidate && !hasDockerCandidate) {
+    return {
+      label: '无法检查更新',
+      badgeClassName: 'badge badge-muted',
+      detail: '暂未获取到可比较的版本信息。',
+      highlight: false,
+    };
+  }
+
   const githubState = describeGitHubDeployState({
     enabled: true,
     helperHealthy: true,

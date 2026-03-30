@@ -10,6 +10,7 @@ import {
   describeGitHubDeployState,
 } from '../helpers/updateCenterPresentation.js';
 import UpdateCenterHistoryModal from './UpdateCenterHistoryModal.js';
+import UpdateCenterHistoryEntryCard from './UpdateCenterHistoryEntryCard.js';
 
 type UpdateCenterStatus = {
   currentVersion?: string;
@@ -776,56 +777,20 @@ export default function UpdateCenterSection() {
           <div style={{ display: 'grid', gap: 10 }}>
             {historyPreview.map((entry) => {
               const revision = String(entry?.revision || '').trim();
-              const isCurrentRevision = revision && revision === currentRevision;
               return (
-                <div
+                <UpdateCenterHistoryEntryCard
                   key={revision || 'unknown-revision'}
-                  style={{
-                    border: '1px solid var(--color-border-light)',
-                    borderRadius: 'var(--radius-sm)',
-                    padding: 10,
-                    display: 'grid',
-                    gap: 5,
-                    background: isCurrentRevision
-                      ? 'color-mix(in srgb, var(--color-primary) 6%, var(--color-bg-card))'
-                      : 'var(--color-bg-card)',
+                  entry={entry}
+                  currentRevision={currentRevision}
+                  helperHealthy={helperHealthy}
+                  deploying={deploying}
+                  compact
+                  formatTaskTime={formatTaskTime}
+                  formatImageTarget={formatImageTarget}
+                  onRollback={(nextRevision) => {
+                    void runRollback(nextRevision);
                   }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>
-                      revision {revision || '-'}
-                    </div>
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      {entry?.status ? (
-                        <span className="badge badge-muted">{entry.status}</span>
-                      ) : null}
-                      {isCurrentRevision ? (
-                        <span className="badge badge-info">当前运行</span>
-                      ) : null}
-                    </div>
-                  </div>
-                  <div style={{ ...summaryValueStyle, fontFamily: 'var(--font-mono)', fontSize: 13 }}>
-                    {formatImageTarget(entry?.imageTag, entry?.imageDigest) || '未记录镜像信息'}
-                  </div>
-                  {entry?.description ? (
-                    <div style={fieldHintStyle}>{entry.description}</div>
-                  ) : null}
-                  <div style={fieldHintStyle}>更新时间：{formatTaskTime(entry?.updatedAt)}</div>
-                  <div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (isCurrentRevision) return;
-                        void runRollback(revision);
-                      }}
-                      disabled={!helperHealthy || deploying || isCurrentRevision || !revision}
-                      className="btn btn-ghost"
-                      style={{ border: '1px solid var(--color-border)' }}
-                    >
-                      回退到 revision {revision}
-                    </button>
-                  </div>
-                </div>
+                />
               );
             })}
           </div>

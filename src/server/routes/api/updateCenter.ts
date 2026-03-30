@@ -12,10 +12,13 @@ import {
   fetchLatestDockerHubTag,
   fetchLatestStableGitHubRelease,
   getCurrentRuntimeVersion,
-  parseStableSemVer,
   type UpdateCenterVersionCandidate,
   type UpdateCenterVersionSource,
 } from '../../services/updateCenterVersionService.js';
+import {
+  getUpdateCenterDeployBlockMessage,
+  normalizeUpdateCenterTargetDigest,
+} from '../../services/updateCenterDeployGuardService.js';
 import {
   getDefaultUpdateCenterConfig,
   loadUpdateCenterConfig,
@@ -73,44 +76,6 @@ function getDeployTasks() {
 function summarizeHelperError(error: unknown) {
   if (error instanceof Error && error.message) return error.message;
   return String(error || 'unknown helper error');
-}
-
-function normalizeDigest(value: string | null | undefined) {
-  const digest = String(value || '').trim();
-  return /^sha256:[a-f0-9]{64}$/i.test(digest) ? digest.toLowerCase() : '';
-}
-
-function isSameTargetVersion(currentVersion: string, targetTag: string) {
-  const current = parseStableSemVer(currentVersion);
-  const target = parseStableSemVer(targetTag);
-  return !!current && !!target && current.normalized === target.normalized;
-}
-
-async function getDeployBlockMessage(input: {
-  config: UpdateCenterConfig;
-  targetTag: string;
-  targetDigest: string | null;
-}): Promise<string | null> {
-  if (isSameTargetVersion(getCurrentRuntimeVersion(), input.targetTag)) {
-    return 'target version is already running';
-  }
-
-  const normalizedTargetDigest = normalizeDigest(input.targetDigest);
-  if (!normalizedTargetDigest) {
-    return null;
-  }
-
-  try {
-    const helperStatus = await getUpdateCenterHelperStatus(input.config, getUpdateCenterHelperToken());
-    const currentDigest = normalizeDigest(helperStatus?.imageDigest);
-    if (currentDigest && currentDigest === normalizedTargetDigest) {
-      return 'target image is already running';
-    }
-  } catch {
-    return null;
-  }
-
-  return null;
 }
 
 async function settleOptional<T>(enabled: boolean, loader: () => Promise<T>): Promise<{
@@ -207,6 +172,7 @@ export async function updateCenterRoutes(app: FastifyInstance) {
         message: summarizeHelperError(error),
       });
     }
+    const helperToken = getUpdateCenterHelperToken();
 
     const source = request.body?.source === 'docker-hub-tag'
       ? 'docker-hub-tag'
@@ -214,7 +180,7 @@ export async function updateCenterRoutes(app: FastifyInstance) {
         ? 'github-release'
         : config.defaultDeploySource;
     const targetTag = String(request.body?.targetTag || request.body?.targetVersion || '').trim();
-    const targetDigest = String(request.body?.targetDigest || '').trim() || null;
+    const targetDigest = normalizeUpdateCenterTargetDigest(request.body?.targetDigest);
     if (!targetTag) {
       return reply.code(400).send({
         success: false,
@@ -222,8 +188,9 @@ export async function updateCenterRoutes(app: FastifyInstance) {
       });
     }
 
-    const deployBlockMessage = await getDeployBlockMessage({
+    const deployBlockMessage = await getUpdateCenterDeployBlockMessage({
       config,
+      helperToken,
       targetTag,
       targetDigest,
     });
@@ -251,7 +218,7 @@ export async function updateCenterRoutes(app: FastifyInstance) {
         const result = await streamUpdateCenterDeploy(
           {
             config,
-            helperToken: getUpdateCenterHelperToken(),
+            helperToken,
             source,
             targetTag,
             targetDigest,
