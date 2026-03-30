@@ -46,14 +46,13 @@ export async function searchRoutes(app: FastifyInstance) {
     const perCategory = Math.min(Math.ceil(limit / 6), 10);
 
     // Search sites
-    const sites = (await db.select().from(schema.sites)
-      .where(like(schema.sites.name, q))
-      .limit(perCategory).all())
-      .concat(
-        await db.select().from(schema.sites)
-          .where(like(schema.sites.url, q))
-          .limit(perCategory).all()
-      );
+    const sites = await db.select().from(schema.sites)
+      .where(or(
+        like(schema.sites.name, q),
+        like(schema.sites.url, q),
+        like(schema.sites.platform, q),
+      ))
+      .limit(perCategory).all();
     // Deduplicate by id
     const uniqueSites = [...new Map(sites.map(s => [s.id, s])).values()].slice(0, perCategory);
 
@@ -63,6 +62,7 @@ export async function searchRoutes(app: FastifyInstance) {
       .where(or(
         like(schema.accounts.username, q),
         like(schema.sites.name, q),
+        like(schema.sites.platform, q),
       ))
       .limit(perCategory).all();
     const apiKeyLabelMatches = matchesApiKeyDisplayLabel(query);
@@ -91,6 +91,7 @@ export async function searchRoutes(app: FastifyInstance) {
         like(schema.accountTokens.tokenGroup, q),
         like(schema.accounts.username, q),
         like(schema.sites.name, q),
+        like(schema.sites.platform, q),
       ))
       .orderBy(desc(schema.accountTokens.updatedAt))
       .limit(perCategory)

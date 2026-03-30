@@ -138,6 +138,34 @@ describe('search routes', () => {
     });
   });
 
+  it('returns site matches for platform keywords in global search', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Direct Workspace',
+      url: 'https://workspace.example.com',
+      platform: 'codex',
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/search',
+      payload: {
+        query: 'codex',
+        limit: 20,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      sites: [
+        expect.objectContaining({
+          id: site.id,
+          name: 'Direct Workspace',
+          url: 'https://workspace.example.com',
+        }),
+      ],
+    });
+  });
+
   it('includes oauth direct-account model availability in model search results', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'codex site',
