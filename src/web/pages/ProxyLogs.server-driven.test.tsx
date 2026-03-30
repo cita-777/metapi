@@ -97,11 +97,28 @@ function buildListResponse(overrides?: Partial<{
 describe('ProxyLogs server-driven page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    const localStorageState = new Map<string, string>();
     Object.defineProperty(globalThis, 'navigator', {
       value: {
         clipboard: {
           writeText: vi.fn().mockResolvedValue(undefined),
         },
+      },
+      configurable: true,
+      writable: true,
+    });
+    Object.defineProperty(globalThis, 'localStorage', {
+      value: {
+        getItem: vi.fn((key: string) => (localStorageState.has(key) ? localStorageState.get(key)! : null)),
+        setItem: vi.fn((key: string, value: string) => {
+          localStorageState.set(String(key), String(value));
+        }),
+        removeItem: vi.fn((key: string) => {
+          localStorageState.delete(String(key));
+        }),
+        clear: vi.fn(() => {
+          localStorageState.clear();
+        }),
       },
       configurable: true,
       writable: true,
@@ -453,6 +470,67 @@ describe('ProxyLogs server-driven page', () => {
 
       expect(expandedToggleButton.props['aria-expanded']).toBe(true);
       expect(String(expandedPanelBody.props.className || '')).toContain('is-open');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('remembers the collapsed debug trace panel state across remounts', async () => {
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const toggleButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && node.props['data-debug-trace-panel-toggle'] === true
+      ));
+
+      await act(async () => {
+        toggleButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(globalThis.localStorage.setItem).toHaveBeenCalledWith('metapi.proxyLogs.debugTracePanelExpanded', 'false');
+
+      await act(async () => {
+        root.unmount();
+      });
+
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const restoredToggleButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && node.props['data-debug-trace-panel-toggle'] === true
+      ));
+      const restoredPanelBody = root.root.find((node) => (
+        node.type === 'div'
+        && node.props['data-debug-trace-panel-body'] === true
+      ));
+
+      expect(globalThis.localStorage.getItem).toHaveBeenCalledWith('metapi.proxyLogs.debugTracePanelExpanded');
+      expect(restoredToggleButton.props['aria-expanded']).toBe(false);
+      expect(String(restoredPanelBody.props.className || '')).not.toContain('is-open');
     } finally {
       root?.unmount();
     }

@@ -75,6 +75,7 @@ const PAGE_SIZES = [20, 50, 100];
 const DEFAULT_PAGE_SIZE = 50;
 const TRACE_TABLE_LIMIT = 20;
 const DEBUG_TRACE_PAGE_SIZE = 5;
+const PROXY_LOGS_DEBUG_TRACE_PANEL_STORAGE_KEY = 'metapi.proxyLogs.debugTracePanelExpanded';
 const PROXY_LOG_CLIENT_FAMILY_LABELS: Record<string, string> = {
   codex: 'Codex',
   claude_code: 'Claude Code',
@@ -596,6 +597,24 @@ function CompactSummaryMetric({
   );
 }
 
+function readStoredDebugTracePanelExpanded(): boolean {
+  try {
+    const stored = globalThis.localStorage?.getItem(PROXY_LOGS_DEBUG_TRACE_PANEL_STORAGE_KEY);
+    if (stored == null) return true;
+    return stored !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+function persistDebugTracePanelExpanded(expanded: boolean) {
+  try {
+    globalThis.localStorage?.setItem(PROXY_LOGS_DEBUG_TRACE_PANEL_STORAGE_KEY, expanded ? 'true' : 'false');
+  } catch {
+    // Ignore storage write failures and keep UI responsive.
+  }
+}
+
 export default function ProxyLogs() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -622,7 +641,7 @@ export default function ProxyLogs() {
   const [showDebugSettingsModal, setShowDebugSettingsModal] = useState(false);
   const [debugPanelLoading, setDebugPanelLoading] = useState(false);
   const [debugPanelSaving, setDebugPanelSaving] = useState(false);
-  const [debugTracePanelExpanded, setDebugTracePanelExpanded] = useState(true);
+  const [debugTracePanelExpanded, setDebugTracePanelExpanded] = useState(() => readStoredDebugTracePanelExpanded());
   const [debugSettings, setDebugSettings] = useState<ProxyDebugSettingsState>(DEFAULT_PROXY_DEBUG_SETTINGS);
   const [debugDraftSettings, setDebugDraftSettings] = useState<ProxyDebugSettingsState>(DEFAULT_PROXY_DEBUG_SETTINGS);
   const [debugTraces, setDebugTraces] = useState<ProxyDebugTraceListItem[]>([]);
@@ -985,6 +1004,10 @@ export default function ProxyLogs() {
     }, DEBUG_REFRESH_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [debugSettings.proxyDebugTraceEnabled, loadDebugTraceList]);
+
+  useEffect(() => {
+    persistDebugTracePanelExpanded(debugTracePanelExpanded);
+  }, [debugTracePanelExpanded]);
 
   const persistDebugSettings = useCallback(async (
     nextSettings: ProxyDebugSettingsState,
