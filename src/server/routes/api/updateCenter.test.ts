@@ -200,6 +200,15 @@ describe('update center routes', () => {
           },
         ],
       },
+      runtime: {
+        lastCheckedAt: null,
+        lastCheckError: null,
+        lastResolvedSource: null,
+        lastResolvedDisplayVersion: null,
+        lastResolvedCandidateKey: null,
+        lastNotifiedCandidateKey: null,
+        lastNotifiedAt: null,
+      },
     });
   });
 

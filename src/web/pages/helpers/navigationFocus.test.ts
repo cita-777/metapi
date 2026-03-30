@@ -76,6 +76,12 @@ describe('navigationFocus helpers', () => {
       type: 'proxy',
     })).toBe('/routes');
 
+    expect(buildEventNavigationPath({
+      relatedType: 'update_center',
+      relatedId: null,
+      type: 'status',
+    })).toBe('/settings');
+
     expect(buildEventNavigationPath({ type: 'proxy' })).toBe('/logs');
     expect(buildEventNavigationPath({ type: 'checkin' })).toBe('/checkin');
     expect(buildEventNavigationPath({ type: 'site_notice' })).toBe('/site-announcements');
