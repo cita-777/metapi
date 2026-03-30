@@ -1,6 +1,10 @@
 import { clearAuthSession, getAuthToken } from './authSession.js';
 
-const nodeBuffer = globalThis.Buffer;
+type BufferLike = {
+  from(data: ArrayBuffer): { toString(encoding: 'base64'): string };
+};
+
+const nodeBuffer = (globalThis as typeof globalThis & { Buffer?: BufferLike }).Buffer;
 
 type RequestOptions = RequestInit & {
   timeoutMs?: number;
