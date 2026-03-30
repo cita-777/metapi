@@ -329,6 +329,68 @@ export type SystemProxyTestResponse = {
   latencyMs: number;
 };
 
+export type RuntimeRoutingWeightsPayload = {
+  baseWeightFactor?: number;
+  valueScoreFactor?: number;
+  costWeight?: number;
+  balanceWeight?: number;
+  usageWeight?: number;
+};
+
+export type RuntimeSettingsPayload = {
+  proxyToken?: string;
+  systemProxyUrl?: string;
+  codexUpstreamWebsocketEnabled?: boolean;
+  disableCrossProtocolFallback?: boolean;
+  proxySessionChannelConcurrencyLimit?: number;
+  proxySessionChannelQueueWaitMs?: number;
+  proxyDebugTraceEnabled?: boolean;
+  proxyDebugCaptureHeaders?: boolean;
+  proxyDebugCaptureBodies?: boolean;
+  proxyDebugCaptureStreamChunks?: boolean;
+  proxyDebugTargetSessionId?: string;
+  proxyDebugTargetClientKind?: string;
+  proxyDebugTargetModel?: string;
+  proxyDebugRetentionHours?: number;
+  proxyDebugMaxBodyBytes?: number;
+  checkinCron?: string;
+  checkinScheduleMode?: 'cron' | 'interval';
+  checkinIntervalHours?: number;
+  balanceRefreshCron?: string;
+  logCleanupCron?: string;
+  logCleanupUsageLogsEnabled?: boolean;
+  logCleanupProgramLogsEnabled?: boolean;
+  logCleanupRetentionDays?: number;
+  webhookUrl?: string;
+  barkUrl?: string;
+  webhookEnabled?: boolean;
+  barkEnabled?: boolean;
+  serverChanEnabled?: boolean;
+  serverChanKey?: string;
+  telegramEnabled?: boolean;
+  telegramApiBaseUrl?: string;
+  telegramBotToken?: string;
+  telegramChatId?: string;
+  telegramUseSystemProxy?: boolean;
+  telegramMessageThreadId?: string;
+  smtpEnabled?: boolean;
+  smtpHost?: string;
+  smtpPort?: number;
+  smtpSecure?: boolean;
+  smtpUser?: string;
+  smtpPass?: string;
+  smtpFrom?: string;
+  smtpTo?: string;
+  notifyCooldownSec?: number;
+  adminIpAllowlist?: string[] | string;
+  routingFallbackUnitCost?: number;
+  routingWeights?: RuntimeRoutingWeightsPayload;
+  proxyErrorKeywords?: string[] | string;
+  proxyEmptyContentFailEnabled?: boolean;
+  globalBlockedBrands?: string[];
+  globalAllowedModels?: string[];
+};
+
 export type ProxyLogStatusFilter = 'all' | 'success' | 'failed';
 export type ProxyLogClientConfidence = 'exact' | 'heuristic' | 'unknown' | null;
 
@@ -753,7 +815,7 @@ export const api = {
   }),
   getRuntimeSettings: () => request('/api/settings/runtime'),
   getBrandList: () => request('/api/settings/brand-list'),
-  updateRuntimeSettings: (data: any) => request('/api/settings/runtime', {
+  updateRuntimeSettings: (data: RuntimeSettingsPayload) => request('/api/settings/runtime', {
     method: 'PUT',
     body: JSON.stringify(data),
   }),

@@ -2,6 +2,7 @@ import React, { useDeferredValue, useEffect, useMemo, useRef, useState, useCallb
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   api,
+  type RuntimeSettingsPayload,
   type ProxyDebugTraceDetail,
   type ProxyDebugTraceListItem,
   type ProxyLogBillingDetails,
@@ -490,7 +491,7 @@ function normalizeProxyDebugSettings(value: any): ProxyDebugSettingsState {
   };
 }
 
-function buildProxyDebugSettingsPayload(settings: ProxyDebugSettingsState) {
+function buildProxyDebugSettingsPayload(settings: ProxyDebugSettingsState): RuntimeSettingsPayload {
   return {
     proxyDebugTraceEnabled: settings.proxyDebugTraceEnabled,
     proxyDebugCaptureHeaders: settings.proxyDebugCaptureHeaders,
