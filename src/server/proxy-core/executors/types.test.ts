@@ -74,4 +74,23 @@ describe('getRuntimeResponseReader', () => {
     expect(firstChunk?.done).toBe(false);
     expect(Buffer.from(firstChunk?.value ?? []).toString('utf8')).toBe(payload);
   });
+
+  it('decompresses stacked streaming encodings when zstd is not the outermost layer', async () => {
+    const payload = 'data: {"ok":true,"kind":"stacked"}\n\n';
+    const response = new Response(gzipSync(zstdCompressSync(Buffer.from(payload))), {
+      status: 200,
+      headers: {
+        'content-encoding': 'zstd, gzip',
+        'content-type': 'text/event-stream; charset=utf-8',
+      },
+    });
+
+    const reader = getRuntimeResponseReader(response);
+
+    expect(reader).toBeDefined();
+    const firstChunk = await reader?.read();
+
+    expect(firstChunk?.done).toBe(false);
+    expect(Buffer.from(firstChunk?.value ?? []).toString('utf8')).toBe(payload);
+  });
 });

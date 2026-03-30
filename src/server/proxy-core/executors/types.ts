@@ -76,10 +76,20 @@ export async function performFetch(
 }
 
 function hasZstdContentEncoding(contentEncoding: string | null): boolean {
-  if (!contentEncoding) return false;
+  return getContentEncodings(contentEncoding).some((encoding) => encoding === 'zstd');
+}
+
+function getContentEncodings(contentEncoding: string | null): string[] {
+  if (!contentEncoding) return [];
   return contentEncoding
     .split(',')
-    .some((encoding) => encoding.trim().toLowerCase() === 'zstd');
+    .map((encoding) => encoding.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function getOutermostContentEncoding(contentEncoding: string | null): string | null {
+  const encodings = getContentEncodings(contentEncoding);
+  return encodings.length > 0 ? encodings[encodings.length - 1] : null;
 }
 
 function looksLikeZstdFrame(buffer: Buffer): boolean {
@@ -94,11 +104,7 @@ function decodeRuntimeResponseBuffer(buffer: Buffer, contentEncoding: string | n
   if (!contentEncoding) return buffer;
 
   let decoded = buffer;
-  const encodings = contentEncoding
-    .split(',')
-    .map((encoding) => encoding.trim().toLowerCase())
-    .filter(Boolean)
-    .reverse();
+  const encodings = getContentEncodings(contentEncoding).reverse();
 
   for (const encoding of encodings) {
     if (encoding === 'zstd') {
@@ -129,11 +135,7 @@ function decodeRuntimeResponseStream(
   if (!contentEncoding) return stream;
 
   let decoded = stream;
-  const encodings = contentEncoding
-    .split(',')
-    .map((encoding) => encoding.trim().toLowerCase())
-    .filter(Boolean)
-    .reverse();
+  const encodings = getContentEncodings(contentEncoding).reverse();
 
   for (const encoding of encodings) {
     if (encoding === 'zstd') {
@@ -241,7 +243,8 @@ async function resolveRuntimeResponseReader(
   }
 
   const reconstructedBody = prependReadableStreamChunks(initialChunks, sourceReader);
-  if (!looksLikeZstdFrame(probeBuffer)) {
+  const outermostEncoding = getOutermostContentEncoding(contentEncoding);
+  if (outermostEncoding === 'zstd' && !looksLikeZstdFrame(probeBuffer)) {
     return reconstructedBody.getReader();
   }
 
