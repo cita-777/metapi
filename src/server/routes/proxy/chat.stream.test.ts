@@ -127,6 +127,7 @@ describe('chat proxy stream behavior', () => {
       overrideRaw: [],
       filter: [],
     };
+    (config as any).disableCrossProtocolFallback = false;
     config.proxyEmptyContentFailEnabled = false;
     config.proxyErrorKeywords = [];
   });
@@ -3075,6 +3076,43 @@ describe('chat proxy stream behavior', () => {
 
     const body = response.json();
     expect(body?.choices?.[0]?.message?.content).toContain('ok via responses fallback after 502');
+  });
+
+  it('stops after the first failed protocol when cross protocol fallback is disabled', async () => {
+    (config as any).disableCrossProtocolFallback = true;
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site: { name: 'generic-site', url: 'https://generic.example.com', platform: 'new-api' },
+      account: { id: 33, username: 'demo-user' },
+      tokenName: 'default',
+      tokenValue: 'sk-generic',
+      actualModel: 'claude-haiku-4-5-20251001',
+    });
+
+    fetchMock.mockResolvedValueOnce(new Response(
+      '<!DOCTYPE html><html><head><title>502 Bad Gateway</title></head><body>Cloudflare</body></html>',
+      {
+        status: 502,
+        headers: { 'content-type': 'text/html; charset=UTF-8' },
+      },
+    ));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        model: 'claude-haiku-4-5-20251001',
+        stream: false,
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [firstUrl] = fetchMock.mock.calls[0] as [string, any];
+    expect(firstUrl).toContain('/v1/messages');
+    const body = response.json();
+    expect(body?.error?.message).toContain('/v1/messages');
   });
 
   it('continues to /v1/responses when /v1/messages dispatch is denied for /v1/chat/completions', async () => {

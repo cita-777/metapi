@@ -39,6 +39,7 @@ interface RuntimeSettingsBody {
   proxyToken?: string;
   systemProxyUrl?: string;
   codexUpstreamWebsocketEnabled?: boolean;
+  disableCrossProtocolFallback?: boolean;
   proxySessionChannelConcurrencyLimit?: number;
   proxySessionChannelQueueWaitMs?: number;
   proxyDebugTraceEnabled?: boolean;
@@ -399,6 +400,11 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       config.codexUpstreamWebsocketEnabled = value;
       return;
     }
+    case 'disable_cross_protocol_fallback': {
+      if (typeof value !== 'boolean') return;
+      config.disableCrossProtocolFallback = value;
+      return;
+    }
     case 'proxy_error_keywords': {
       try {
         config.proxyErrorKeywords = parseProxyErrorKeywords(value);
@@ -667,6 +673,7 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     logCleanupProgramLogsEnabled: config.logCleanupProgramLogsEnabled,
     logCleanupRetentionDays: config.logCleanupRetentionDays,
     codexUpstreamWebsocketEnabled: config.codexUpstreamWebsocketEnabled,
+    disableCrossProtocolFallback: config.disableCrossProtocolFallback,
     proxySessionChannelConcurrencyLimit: config.proxySessionChannelConcurrencyLimit,
     proxySessionChannelQueueWaitMs: config.proxySessionChannelQueueWaitMs,
     proxyDebugTraceEnabled: config.proxyDebugTraceEnabled,
@@ -1078,6 +1085,24 @@ export async function settingsRoutes(app: FastifyInstance) {
       }
       config.codexUpstreamWebsocketEnabled = nextValue;
       upsertSetting('codex_upstream_websocket_enabled', config.codexUpstreamWebsocketEnabled);
+    }
+
+    if (body.disableCrossProtocolFallback !== undefined) {
+      let nextValue = false;
+      try {
+        nextValue = parseBooleanFlag(body.disableCrossProtocolFallback, '跨协议回退开关');
+      } catch (err: any) {
+        return reply.code(400).send({
+          success: false,
+          message: err?.message || '跨协议回退开关格式无效',
+        });
+      }
+
+      if (nextValue !== config.disableCrossProtocolFallback) {
+        changedLabels.push('失败时不尝试其他协议');
+      }
+      config.disableCrossProtocolFallback = nextValue;
+      upsertSetting('disable_cross_protocol_fallback', config.disableCrossProtocolFallback);
     }
 
     if (body.proxySessionChannelConcurrencyLimit !== undefined) {
