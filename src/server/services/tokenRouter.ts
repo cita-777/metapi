@@ -1,4 +1,4 @@
-﻿import { eq, inArray } from 'drizzle-orm';
+﻿import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { upsertSetting } from '../db/upsertSetting.js';
 import { config } from '../config.js';
@@ -317,6 +317,28 @@ function resolveShortWindowLimitCooldown(
   }
 
   return new Date(nowMs + SHORT_WINDOW_LIMIT_COOLDOWN_MS).toISOString();
+}
+
+async function loadCredentialScopedChannelIds(
+  channel: typeof schema.routeChannels.$inferSelect,
+  accountId: number,
+): Promise<number[]> {
+  if (typeof channel.tokenId === 'number' && channel.tokenId > 0) {
+    const rows = await db.select({ id: schema.routeChannels.id })
+      .from(schema.routeChannels)
+      .where(eq(schema.routeChannels.tokenId, channel.tokenId))
+      .all();
+    return rows.map((row) => row.id);
+  }
+
+  const rows = await db.select({ id: schema.routeChannels.id })
+    .from(schema.routeChannels)
+    .where(and(
+      eq(schema.routeChannels.accountId, accountId),
+      isNull(schema.routeChannels.tokenId),
+    ))
+    .all();
+  return rows.map((row) => row.id);
 }
 
 function getDecayedSiteRuntimePenalty(state: SiteRuntimeHealthState, nowMs: number): number {
@@ -1767,6 +1789,9 @@ export class TokenRouter {
     const shortWindowLimitCooldownUntil = resolveShortWindowLimitCooldown(account, normalizedContext, nowMs);
     const failCount = shortWindowLimitCooldownUntil ? 0 : ((ch.failCount ?? 0) + 1);
     const routeStrategy = resolveRouteStrategy(route);
+    const affectedChannelIds = shortWindowLimitCooldownUntil
+      ? await loadCredentialScopedChannelIds(ch, account.id)
+      : [channelId];
     let cooldownUntil: string | null = null;
     let consecutiveFailCount = Math.max(0, ch.consecutiveFailCount ?? 0) + 1;
     let cooldownLevel = Math.max(0, ch.cooldownLevel ?? 0);
@@ -1795,15 +1820,17 @@ export class TokenRouter {
       consecutiveFailCount,
       cooldownLevel,
       cooldownUntil,
-    }).where(eq(schema.routeChannels.id, channelId)).run();
+    }).where(inArray(schema.routeChannels.id, affectedChannelIds)).run();
 
-    patchCachedChannel(channelId, (channel) => {
-      channel.failCount = failCount;
-      channel.lastFailAt = nowIso;
-      channel.cooldownUntil = cooldownUntil;
-      channel.consecutiveFailCount = consecutiveFailCount;
-      channel.cooldownLevel = cooldownLevel;
-    });
+    for (const affectedChannelId of affectedChannelIds) {
+      patchCachedChannel(affectedChannelId, (channel) => {
+        channel.failCount = failCount;
+        channel.lastFailAt = nowIso;
+        channel.cooldownUntil = cooldownUntil;
+        channel.consecutiveFailCount = consecutiveFailCount;
+        channel.cooldownLevel = cooldownLevel;
+      });
+    }
 
     recordSiteRuntimeFailure(account.siteId, normalizedContext, nowMs);
   }

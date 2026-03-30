@@ -468,6 +468,80 @@ describe('TokenRouter runtime cache', () => {
     expect(record?.failCount).toBe(1);
   });
 
+  it('applies short-window cooldown to sibling channels that share the same account-level credential', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'shared-credential-site',
+      url: 'https://shared-credential.example.com',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'shared-credential-user',
+      accessToken: 'shared-credential-access-token',
+      status: 'active',
+      oauthProvider: 'codex',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+        },
+      }),
+    }).returning().get();
+
+    const primaryRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.4',
+      routingStrategy: 'weighted',
+      enabled: true,
+    }).returning().get();
+
+    const siblingRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4o-mini',
+      routingStrategy: 'weighted',
+      enabled: true,
+    }).returning().get();
+
+    const primaryChannel = await db.insert(schema.routeChannels).values({
+      routeId: primaryRoute.id,
+      accountId: account.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const siblingChannel = await db.insert(schema.routeChannels).values({
+      routeId: siblingRoute.id,
+      accountId: account.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    const initialSiblingSelection = await router.selectChannel('gpt-4o-mini');
+    expect(initialSiblingSelection?.channel.id).toBe(siblingChannel.id);
+
+    await router.recordFailure(primaryChannel.id, {
+      status: 429,
+      errorText: JSON.stringify({
+        error: {
+          type: 'usage_limit_reached',
+          message: 'The usage limit has been reached',
+        },
+      }),
+      modelName: 'gpt-5.4',
+    });
+
+    const cooledSibling = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.id, siblingChannel.id))
+      .get();
+
+    expect(cooledSibling?.cooldownUntil).toBeTruthy();
+    expect(cooledSibling?.failCount).toBe(0);
+    expect(await router.selectChannel('gpt-4o-mini')).toBeNull();
+  });
+
   it('round robins across all available channels regardless of priority', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'round-robin-site',
