@@ -170,6 +170,7 @@ Deploy Helper 是一个跑在集群里的小服务。它不负责对外提供 Me
 仓库里带了一个最小示例清单：
 
 - `deploy/k3s/metapi-deploy-helper.yaml`
+- `deploy/k3s/chart`
 
 使用前至少要改这些值：
 
@@ -177,12 +178,66 @@ Deploy Helper 是一个跑在集群里的小服务。它不负责对外提供 Me
 - `DEPLOY_HELPER_TOKEN`
 - `image`
 
+如果你准备直接按仓库示例接入，推荐把它们放到这两个路径：
+
+- `/opt/metapi-k3s/metapi-deploy-helper.yaml`
+- `/opt/metapi-k3s/chart`
+
+这里有一个很容易漏掉、但会直接决定更新中心是否真的可靠的约束：
+
+- 后台里的 `Chart Ref`
+- helper Pod 里挂载进去的 chart 路径
+
+这两个值必须指向同一份 chart。
+
+如果你在设置页把 `Chart Ref` 填成 `/opt/metapi-k3s/chart`，但 helper Pod 里根本没有把那份 chart 挂进去，那么更新中心即使能看到版本，也无法稳定把 digest 部署到真正运行中的 Pod。
+
 最小部署命令示例：
 
 ```bash
 kubectl create namespace ai
-kubectl apply -f deploy/k3s/metapi-deploy-helper.yaml
+mkdir -p /opt/metapi-k3s
+cp -R deploy/k3s/chart /opt/metapi-k3s/chart
+cp deploy/k3s/metapi-deploy-helper.yaml /opt/metapi-k3s/metapi-deploy-helper.yaml
+kubectl apply -f /opt/metapi-k3s/metapi-deploy-helper.yaml
 ```
+
+### 1.1 首次接入前一定要做的自检
+
+新用户最容易踩的坑不是 helper 起不来，而是：
+
+- chart 虽然能执行 `helm upgrade`
+- 但它其实没有消费 `image.digest`
+- 同时 `imagePullPolicy` 还停留在 `IfNotPresent`
+
+这样更新中心会显示任务成功、Helm revision 也会增加，但线上真正运行的镜像可能根本没变。
+
+仓库自带的 `deploy/k3s/chart` 已经把这件事处理成默认正确：
+
+- `values.yaml` 里包含 `image.digest`
+- `templates/deployment.yaml` 在有 digest 时会渲染成 `repository@digest`
+- chart 默认 `imagePullPolicy: Always`
+- helper 示例清单也默认 `imagePullPolicy: Always`
+
+你可以在接入前先跑一次自检：
+
+```bash
+helm template metapi /opt/metapi-k3s/chart \
+  --set image.repository=1467078763/metapi \
+  --set image.tag=latest \
+  --set-string image.digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  | grep -n 'image:'
+```
+
+你期望看到的是：
+
+- `image: "1467078763/metapi@sha256:..."`
+
+如果输出仍然是：
+
+- `image: "1467078763/metapi:latest"`
+
+那说明这份 chart 还是 tag 语义，先不要继续配置更新中心。
 
 ### 2. 让主 Metapi 和 helper 用同一个 token
 
@@ -206,7 +261,7 @@ helper 端使用：
 | `Deploy Helper URL` | 主 Metapi 访问 helper 的地址 | `http://metapi-deploy-helper.ai.svc.cluster.local:9850` |
 | `Namespace` | 目标 release 所在命名空间 | `ai` |
 | `Release Name` | Helm release 名 | `metapi` |
-| `Chart Ref` | 你的 Helm chart 引用 | `oci://ghcr.io/cita-777/charts/metapi` |
+| `Chart Ref` | helper Pod 能访问到的 chart 引用 | `/opt/metapi-k3s/chart` |
 | `Image Repository` | 升级时写入 chart 的镜像仓库 | `1467078763/metapi` |
 | `默认部署来源` | 默认从 GitHub 还是 Docker Hub 取版本 | `GitHub Releases` |
 
@@ -232,6 +287,17 @@ helper 端使用：
 6. 如果升级后发现问题，可以直接在“回退历史”里点旧 revision 回滚；只要该 revision 当时记录了 digest，就会跟着一起回到对应镜像
 
 如果实时日志流断开，页面会自动回退到最近任务快照。
+
+### 4.1 新用户最值得先做的一次确认
+
+第一次接入时，不要急着点部署。先确认下面 4 件事同时成立：
+
+1. `Chart Ref` 和 helper 挂载路径指向的是同一份 chart。
+2. 这份 chart 支持 `image.digest`，并且在有 digest 时会渲染成 `repository@digest`。
+3. chart 和 helper 都没有继续使用会掩盖新镜像的 `imagePullPolicy: IfNotPresent`。
+4. 页面里显示的目标 digest，和 helper 最终读到的运行中 digest 能对上。
+
+只要这 4 件事成立，新用户就不会再遇到“页面说部署成功，但线上还是旧镜像”的假成功。
 
 ## 这套能力当前不适合什么场景
 
@@ -267,6 +333,22 @@ About 页里的“更新提醒”更像一个轻量入口：
 - 对齐的 token
 
 缺其中任何一项，都只能看，不能真正部署。
+
+### 为什么页面显示任务成功，但线上镜像还是没变
+
+最常见的根因只有两类：
+
+- 你的 chart 其实没有消费 `image.digest`
+- 你的 Deployment 或 helper 还在使用 `imagePullPolicy: IfNotPresent`
+
+这两种情况叠在一起时，就会出现“Helm revision 往前走了，但实际运行的 imageID 没动”的假成功。
+
+如果你是第一次接入，最稳妥的方式就是直接从仓库自带的：
+
+- `deploy/k3s/chart`
+- `deploy/k3s/metapi-deploy-helper.yaml`
+
+开始，不要自己先抄一份简化版再改。
 
 ### 为什么我只有 Docker Compose，按钮没有意义
 
