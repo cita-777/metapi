@@ -24,6 +24,10 @@ import {
   streamUpdateCenterRollback,
 } from '../../services/updateCenterHelperClient.js';
 import { buildUpdateCenterStatus } from '../../services/updateCenterStatusService.js';
+import {
+  UPDATE_CENTER_DEPLOY_DEDUPE_KEY,
+  UPDATE_CENTER_DEPLOY_TASK_TYPE,
+} from '../../services/updateCenterTaskConstants.js';
 
 type DeployBody = {
   source?: UpdateCenterVersionSource;
@@ -35,9 +39,6 @@ type DeployBody = {
 type RollbackBody = {
   targetRevision?: string;
 };
-
-const UPDATE_CENTER_DEPLOY_TASK_TYPE = 'update-center.deploy';
-const UPDATE_CENTER_DEPLOY_DEDUPE_KEY = 'update-center.deploy';
 
 function getUpdateCenterHelperToken(): string {
   return String(

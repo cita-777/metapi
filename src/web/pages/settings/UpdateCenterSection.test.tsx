@@ -448,6 +448,30 @@ describe('UpdateCenterSection', () => {
     }
   });
 
+  it('parses timezone-less SQL runtime timestamps as UTC before formatting', async () => {
+    const parseSpy = vi.spyOn(Date, 'parse');
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ToastProvider>
+              <UpdateCenterSection />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const parseInputs = parseSpy.mock.calls.map(([value]) => String(value));
+      expect(parseInputs).toContain('2026-03-30T20:30:00Z');
+      expect(parseInputs).not.toContain('2026-03-30 20:30:00');
+    } finally {
+      parseSpy.mockRestore();
+      root?.unmount();
+    }
+  });
+
   it('renders rollback history and triggers rollback tasks for previous revisions', async () => {
     let root!: ReactTestRenderer;
     try {

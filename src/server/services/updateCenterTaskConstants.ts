@@ -1,0 +1,2 @@
+export const UPDATE_CENTER_DEPLOY_TASK_TYPE = 'update-center.deploy';
+export const UPDATE_CENTER_DEPLOY_DEDUPE_KEY = UPDATE_CENTER_DEPLOY_TASK_TYPE;

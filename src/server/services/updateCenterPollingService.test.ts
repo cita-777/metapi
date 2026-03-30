@@ -131,4 +131,34 @@ describe('updateCenterPollingService', () => {
       lastNotifiedCandidateKey: null,
     }));
   });
+
+  it('persists the notified candidate even when the downstream notification send fails', async () => {
+    buildUpdateCenterStatusMock.mockImplementation(async () => ({
+      currentVersion: '1.2.3',
+      githubRelease: {
+        normalizedVersion: '1.3.0',
+        displayVersion: '1.3.0',
+        tagName: 'v1.3.0',
+      },
+      dockerHubTag: null,
+      helper: {
+        imageTag: '1.2.3',
+      },
+      runtime: await loadUpdateCenterRuntimeState(),
+    }));
+    sendNotificationMock.mockRejectedValue(new Error('notification downstream failed'));
+
+    startUpdateCenterPolling(60_000);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(sendNotificationMock).toHaveBeenCalledTimes(1);
+    expect(await db.select().from(schema.events).all()).toHaveLength(1);
+    expect(await loadUpdateCenterRuntimeState()).toEqual(expect.objectContaining({
+      lastCheckError: null,
+      lastResolvedCandidateKey: 'github-release:v1.3.0',
+      lastNotifiedCandidateKey: 'github-release:v1.3.0',
+      lastNotifiedAt: expect.any(String),
+    }));
+  });
 });

@@ -36,7 +36,7 @@ async function runSyncOnce() {
 
   try {
     const status = await buildUpdateCenterStatus();
-    const previousRuntime = await loadUpdateCenterRuntimeState();
+    const previousRuntime = status.runtime || await loadUpdateCenterRuntimeState();
     const candidate = resolveUpdateReminderCandidate({
       currentVersion: status.currentVersion,
       helper: status.helper as { imageTag?: string | null; imageDigest?: string | null } | null,
@@ -64,12 +64,13 @@ async function runSyncOnce() {
           relatedType: 'update_center',
           createdAt: checkedAt,
         }).run();
+        nextRuntime.lastNotifiedCandidateKey = candidate.candidateKey;
+        nextRuntime.lastNotifiedAt = checkedAt;
+        await saveUpdateCenterRuntimeState(nextRuntime);
         await sendNotification(reminderEvent.title, reminderEvent.message, 'info', {
           bypassThrottle: true,
         });
       }
-      nextRuntime.lastNotifiedCandidateKey = candidate.candidateKey;
-      nextRuntime.lastNotifiedAt = checkedAt;
     }
 
     await saveUpdateCenterRuntimeState(nextRuntime);

@@ -52,6 +52,42 @@ describe('updateCenterReminder shared logic', () => {
     }));
   });
 
+  it('treats semver tags with and without a v prefix as the same digest-tracked image target', () => {
+    expect(resolveUpdateReminderCandidate({
+      currentVersion: '1.2.3',
+      helper: {
+        imageTag: 'v1.2.3',
+        imageDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      },
+      githubRelease: null,
+      dockerHubTag: {
+        normalizedVersion: '1.2.3',
+        displayVersion: '1.2.3 @ sha256:bbbbbbbbbbbb',
+        tagName: '1.2.3',
+        digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      },
+    })).toEqual(expect.objectContaining({
+      source: 'docker-hub-tag',
+      kind: 'new-digest',
+      candidateKey: 'docker-hub-tag:1.2.3@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    }));
+  });
+
+  it('does not return an older GitHub candidate when the helper is already ahead of it', () => {
+    expect(resolveUpdateReminderCandidate({
+      currentVersion: '1.2.3',
+      helper: {
+        imageTag: '1.4.0',
+      },
+      githubRelease: {
+        normalizedVersion: '1.3.0',
+        displayVersion: '1.3.0',
+        tagName: 'v1.3.0',
+      },
+      dockerHubTag: null,
+    })).toBeNull();
+  });
+
   it('returns null when the discovered targets do not differ meaningfully from the current runtime', () => {
     expect(resolveUpdateReminderCandidate({
       currentVersion: '1.2.3',

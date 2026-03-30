@@ -13,6 +13,7 @@ import {
   getUpdateCenterHelperStatus,
 } from './updateCenterHelperClient.js';
 import { loadUpdateCenterRuntimeState } from './updateCenterRuntimeStateService.js';
+import { UPDATE_CENTER_DEPLOY_TASK_TYPE } from './updateCenterTaskConstants.js';
 
 function getUpdateCenterHelperToken(): string {
   return String(
@@ -53,7 +54,7 @@ async function settleOptional<T>(enabled: boolean, loader: () => Promise<T>): Pr
 }
 
 function getDeployTasks() {
-  return listBackgroundTasks(50).filter((task) => task.type === 'update-center.deploy');
+  return listBackgroundTasks(50).filter((task) => task.type === UPDATE_CENTER_DEPLOY_TASK_TYPE);
 }
 
 export async function buildUpdateCenterStatus() {
