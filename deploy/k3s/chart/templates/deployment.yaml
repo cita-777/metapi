@@ -1,3 +1,6 @@
+{{- if and .Values.persistence.hostPath (gt (int .Values.replicaCount) 1) -}}
+{{- fail "deploy/k3s/chart uses node-local hostPath storage; keep replicaCount at 1 or switch persistence.hostPath to shared storage before scaling" -}}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -24,6 +27,7 @@ spec:
       annotations:
         metapi/image-tag: {{ .Values.image.tag | quote }}
         metapi/image-digest: {{ .Values.image.digest | quote }}
+        checksum/env-secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum | quote }}
     spec:
       containers:
         - name: metapi

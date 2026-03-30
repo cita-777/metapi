@@ -102,6 +102,7 @@ spec:
           volumeMounts:
             - name: metapi-chart
               mountPath: /opt/metapi-k3s/chart
+              readOnly: true
       volumes:
         - name: metapi-chart
           hostPath:

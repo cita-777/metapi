@@ -196,8 +196,8 @@ Deploy Helper 是一个跑在集群里的小服务。它不负责对外提供 Me
 
 ```bash
 kubectl create namespace ai
-mkdir -p /opt/metapi-k3s
-cp -R deploy/k3s/chart /opt/metapi-k3s/chart
+mkdir -p /opt/metapi-k3s/chart
+cp -R deploy/k3s/chart/. /opt/metapi-k3s/chart/
 cp deploy/k3s/metapi-deploy-helper.yaml /opt/metapi-k3s/metapi-deploy-helper.yaml
 kubectl apply -f /opt/metapi-k3s/metapi-deploy-helper.yaml
 ```
