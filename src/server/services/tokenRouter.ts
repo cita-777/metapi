@@ -71,7 +71,7 @@ type SiteRuntimeHealthState = {
 };
 
 const FAILURE_BACKOFF_BASE_SEC = 15;
-const CODEX_USAGE_LIMIT_FALLBACK_COOLDOWN_MS = 5 * 60 * 1000;
+const SHORT_WINDOW_LIMIT_COOLDOWN_MS = 5 * 60 * 1000;
 const MIN_EFFECTIVE_UNIT_COST = 1e-6;
 const ROUND_ROBIN_FAILURE_THRESHOLD = 3;
 const ROUND_ROBIN_COOLDOWN_LEVELS_SEC = [0, 10 * 60, 60 * 60, 24 * 60 * 60] as const;
@@ -151,6 +151,8 @@ const USAGE_LIMIT_RATE_LIMIT_PATTERNS: RegExp[] = [
   /usage_limit_reached/i,
   /usage\s+limit\s+has\s+been\s+reached/i,
   /quota\s+exceeded/i,
+  /rate\s+limit/i,
+  /\blimit\b/i,
 ];
 
 type SiteRuntimeHealthPersistencePayload = {
@@ -288,16 +290,15 @@ function isTransientSiteRuntimeFailure(context: SiteRuntimeFailureContext = {}):
   return status >= 500 || status === 429 || matchesAnyPattern(SITE_TRANSIENT_FAILURE_PATTERNS, errorText);
 }
 
-function resolveCodexOauthUsageLimitCooldown(
+function resolveShortWindowLimitCooldown(
   account: typeof schema.accounts.$inferSelect,
   context: SiteRuntimeFailureContext = {},
   nowMs = Date.now(),
 ): string | null {
-  const oauth = getOauthInfoFromAccount(account);
-  if (!oauth || oauth.provider !== 'codex') return null;
-
   const status = typeof context.status === 'number' ? context.status : 0;
   const errorText = (context.errorText || '').trim();
+  if (!isUsageLimitRateLimitFailure({ status, errorText })) return null;
+
   const resetHint = parseCodexQuotaResetHint(status, errorText, nowMs);
   if (resetHint) {
     const hintMs = Date.parse(resetHint.resetAt);
@@ -306,16 +307,16 @@ function resolveCodexOauthUsageLimitCooldown(
     }
   }
 
-  const storedResetAt = oauth.quota?.lastLimitResetAt;
-  if (storedResetAt) {
+  const oauth = getOauthInfoFromAccount(account);
+  const storedResetAt = oauth?.quota?.lastLimitResetAt;
+  if (oauth?.provider === 'codex' && storedResetAt) {
     const storedMs = Date.parse(storedResetAt);
     if (Number.isFinite(storedMs) && storedMs > nowMs) {
       return new Date(storedMs).toISOString();
     }
   }
 
-  if (!isUsageLimitRateLimitFailure(context)) return null;
-  return new Date(nowMs + CODEX_USAGE_LIMIT_FALLBACK_COOLDOWN_MS).toISOString();
+  return new Date(nowMs + SHORT_WINDOW_LIMIT_COOLDOWN_MS).toISOString();
 }
 
 function getDecayedSiteRuntimePenalty(state: SiteRuntimeHealthState, nowMs: number): number {
@@ -1763,15 +1764,15 @@ export class TokenRouter {
     const normalizedContext: SiteRuntimeFailureContext = typeof context === 'string'
       ? { modelName: context }
       : (context ?? {});
-    const codexUsageLimitCooldownUntil = resolveCodexOauthUsageLimitCooldown(account, normalizedContext, nowMs);
-    const failCount = codexUsageLimitCooldownUntil ? 0 : ((ch.failCount ?? 0) + 1);
+    const shortWindowLimitCooldownUntil = resolveShortWindowLimitCooldown(account, normalizedContext, nowMs);
+    const failCount = shortWindowLimitCooldownUntil ? 0 : ((ch.failCount ?? 0) + 1);
     const routeStrategy = resolveRouteStrategy(route);
     let cooldownUntil: string | null = null;
     let consecutiveFailCount = Math.max(0, ch.consecutiveFailCount ?? 0) + 1;
     let cooldownLevel = Math.max(0, ch.cooldownLevel ?? 0);
 
-    if (codexUsageLimitCooldownUntil) {
-      cooldownUntil = codexUsageLimitCooldownUntil;
+    if (shortWindowLimitCooldownUntil) {
+      cooldownUntil = shortWindowLimitCooldownUntil;
       consecutiveFailCount = 0;
       cooldownLevel = 0;
     } else if (routeStrategy === 'round_robin') {

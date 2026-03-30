@@ -364,6 +364,110 @@ describe('TokenRouter runtime cache', () => {
     expect(record?.cooldownUntil).toBe(resetAt);
   });
 
+  it('treats non-oauth 429 limit failures as short-window cooldowns', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'limit-site',
+      url: 'https://limit-site.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'limit-user',
+      accessToken: 'limit-access-token',
+      apiToken: 'limit-api-token',
+      status: 'active',
+    }).returning().get();
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4o-mini',
+      routingStrategy: 'weighted',
+      enabled: true,
+    }).returning().get();
+
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    const startedAt = Date.now();
+    await router.recordFailure(channel.id, {
+      status: 429,
+      errorText: JSON.stringify({
+        error: {
+          message: 'rate limit exceeded',
+        },
+      }),
+      modelName: 'gpt-4o-mini',
+    });
+
+    const record = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.id, channel.id))
+      .get();
+    const cooldownMs = Date.parse(String(record?.cooldownUntil || '')) - startedAt;
+
+    expect(cooldownMs).toBeGreaterThanOrEqual(4 * 60 * 1000);
+    expect(cooldownMs).toBeLessThanOrEqual(6 * 60 * 1000);
+    expect(record?.failCount).toBe(0);
+  });
+
+  it('keeps generic 429 backoff when the error is not limit-related', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'generic-429-site',
+      url: 'https://generic-429.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'generic-429-user',
+      accessToken: 'generic-429-access-token',
+      apiToken: 'generic-429-api-token',
+      status: 'active',
+    }).returning().get();
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4o-mini',
+      routingStrategy: 'weighted',
+      enabled: true,
+    }).returning().get();
+
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    const startedAt = Date.now();
+    await router.recordFailure(channel.id, {
+      status: 429,
+      errorText: JSON.stringify({
+        error: {
+          message: 'upstream overloaded',
+        },
+      }),
+      modelName: 'gpt-4o-mini',
+    });
+
+    const record = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.id, channel.id))
+      .get();
+    const cooldownMs = Date.parse(String(record?.cooldownUntil || '')) - startedAt;
+
+    expect(cooldownMs).toBeGreaterThanOrEqual(10_000);
+    expect(cooldownMs).toBeLessThanOrEqual(20_000);
+    expect(record?.failCount).toBe(1);
+  });
+
   it('round robins across all available channels regardless of priority', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'round-robin-site',
