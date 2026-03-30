@@ -35,7 +35,7 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           envFrom:
             - secretRef:
-                name: {{ include "metapi.fullname" . }}-env
+                name: {{ include "metapi.envSecretName" . }}
           ports:
             - name: http
               containerPort: 4000

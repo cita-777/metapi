@@ -40,7 +40,10 @@ describe('k3s deploy assets', () => {
     expect(deploymentTemplate).toMatch(/checksum\/env-secret:/);
     expect(deploymentTemplate).toMatch(/replicaCount at 1 or switch persistence\.hostPath to shared storage before scaling/);
     expect(normalizedServiceTemplate).toContain('{{- if and (or (eq .Values.service.type "NodePort") (eq .Values.service.type "LoadBalancer")) .Values.service.nodePort }}');
-    expect(helpersTemplate).toContain('.Release.Name');
+    expect(helpersTemplate).toContain('define "metapi.envSecretName"');
+    expect(helpersTemplate).toContain('printf "%s-env"');
+    expect(deploymentTemplate).toContain('include "metapi.envSecretName"');
+    expect(readRepoFile('deploy/k3s/chart/templates/secret.yaml')).toContain('include "metapi.envSecretName"');
   });
 
   it('keeps the helper manifest on a pull policy that can pick up fresh latest tags', () => {
