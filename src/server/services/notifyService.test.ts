@@ -306,4 +306,75 @@ describe('notifyService', () => {
     const fetchOptions = fetchMock.mock.calls[0]?.[1] as Record<string, unknown>;
     expect(fetchOptions.dispatcher).toBeUndefined();
   });
+
+  it('sends feishu webhook payload with msg_type text format', async () => {
+    const { config } = await import('../config.js');
+    config.webhookEnabled = true;
+    config.webhookUrl = 'https://open.feishu.cn/open-apis/bot/v2/hook/demo-token';
+    config.smtpEnabled = false;
+
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ code: 0, msg: 'success' }),
+    });
+
+    const { sendNotification } = await import('./notifyService.js');
+    await sendNotification('测试通知', 'feishu message', 'info', { bypassThrottle: true, throwOnFailure: true });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const call = fetchMock.mock.calls[0] as [string, { body?: string }];
+    expect(call[0]).toContain('open.feishu.cn/open-apis/bot/v2/hook/');
+
+    const payload = JSON.parse(call[1]?.body || '{}') as { msg_type?: string; content?: { text?: string } };
+    expect(payload.msg_type).toBe('text');
+    expect(payload.content?.text || '').toContain('[metapi][INFO] 测试通知');
+    expect(payload.content?.text || '').toContain('feishu message');
+  });
+
+  it('fails when feishu webhook returns non-zero code', async () => {
+    const { config } = await import('../config.js');
+    config.webhookEnabled = true;
+    config.webhookUrl = 'https://open.feishu.cn/open-apis/bot/v2/hook/demo-token';
+    config.smtpEnabled = false;
+
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ code: 19001, msg: 'param invalid' }),
+    });
+
+    const { sendNotification } = await import('./notifyService.js');
+    await expect(
+      sendNotification('测试通知', 'message', 'info', {
+        bypassThrottle: true,
+        throwOnFailure: true,
+      }),
+    ).rejects.toThrow(/飞书|19001|param invalid/);
+  });
+
+  it('sends feishu webhook payload for larksuite.com domain', async () => {
+    const { config } = await import('../config.js');
+    config.webhookEnabled = true;
+    config.webhookUrl = 'https://open.larksuite.com/open-apis/bot/v2/hook/demo-token';
+    config.smtpEnabled = false;
+
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ code: 0, msg: 'success' }),
+    });
+
+    const { sendNotification } = await import('./notifyService.js');
+    await sendNotification('测试通知', 'lark message', 'warning', { bypassThrottle: true, throwOnFailure: true });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const call = fetchMock.mock.calls[0] as [string, { body?: string }];
+    expect(call[0]).toContain('open.larksuite.com/open-apis/bot/v2/hook/');
+
+    const payload = JSON.parse(call[1]?.body || '{}') as { msg_type?: string; content?: { text?: string } };
+    expect(payload.msg_type).toBe('text');
+    expect(payload.content?.text || '').toContain('[metapi][WARNING] 测试通知');
+    expect(payload.content?.text || '').toContain('lark message');
+  });
 });

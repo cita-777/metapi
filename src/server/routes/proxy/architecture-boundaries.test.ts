@@ -98,6 +98,12 @@ describe('proxy route architecture boundaries', () => {
     expect(source).not.toContain('shouldInjectDerivedPromptCacheKey');
   });
 
+  it('keeps endpoint runtime snapshot helper out of the route layer', () => {
+    const source = readSource('./upstreamEndpoint.ts');
+    expect(source).not.toContain('function getUpstreamEndpointRuntimeStateSnapshot(');
+    expect(source).not.toContain('export function getUpstreamEndpointRuntimeStateSnapshot(');
+  });
+
   it('keeps gemini runtime closure in transformer-owned helpers', () => {
     const source = readSource('./gemini.ts');
     const surfaceSource = readSource('../../proxy-core/surfaces/geminiSurface.ts');
@@ -179,4 +185,3 @@ describe('proxy route architecture boundaries', () => {
     expect(geminiSource).not.toContain("from '../../transformers/canonical/");
   });
 });
-

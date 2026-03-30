@@ -76,6 +76,7 @@ export default withMermaid(
           items: [
             { text: '上游接入', link: '/upstream-integration' },
             { text: '配置说明', link: '/configuration' },
+            { text: 'K3s 更新中心（高级）', link: '/k3s-update-center' },
             { text: '客户端接入', link: '/client-integration' },
             { text: '运维手册', link: '/operations' },
             { text: '常见问题 FAQ', link: '/faq' },

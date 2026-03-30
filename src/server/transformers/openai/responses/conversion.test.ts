@@ -437,6 +437,67 @@ describe('sanitizeResponsesBodyForProxy', () => {
       },
     ]);
   });
+
+  it('drops blank tool calls before proxying Responses requests while preserving follow-up tool outputs', () => {
+    const result = sanitizeResponsesBodyForProxy(
+      {
+        model: 'gpt-5',
+        input: [
+          {
+            type: 'function_call',
+            call_id: 'call_blank',
+            name: '   ',
+            arguments: '{"city":"Shanghai"}',
+          },
+          {
+            type: 'function_call_output',
+            call_id: 'call_blank',
+            output: '{"temp":22}',
+          },
+          {
+            type: 'message',
+            role: 'assistant',
+            content: [
+              {
+                type: 'output_text',
+                text: 'continue normally',
+              },
+            ],
+          },
+          {
+            type: 'function_call_output',
+            call_id: 'call_missing',
+            output: 'orphaned output',
+          },
+        ],
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result.input).toEqual([
+      {
+        type: 'function_call_output',
+        call_id: 'call_blank',
+        output: '{"temp":22}',
+      },
+      {
+        type: 'message',
+        role: 'assistant',
+        content: [
+          {
+            type: 'output_text',
+            text: 'continue normally',
+          },
+        ],
+      },
+      {
+        type: 'function_call_output',
+        call_id: 'call_missing',
+        output: 'orphaned output',
+      },
+    ]);
+  });
 });
 
 describe('convertOpenAiBodyToResponsesBody', () => {
@@ -763,6 +824,45 @@ describe('convertOpenAiBodyToResponsesBody', () => {
     ]);
   });
 
+  it('drops tool outputs that do not have a matching prior tool call when converting to OpenAI-compatible messages', () => {
+    const result = convertResponsesBodyToOpenAiBody(
+      {
+        model: 'gpt-5',
+        input: [
+          {
+            type: 'function_call_output',
+            call_id: 'call_missing',
+            output: 'orphaned tool result',
+          },
+          {
+            type: 'message',
+            role: 'assistant',
+            content: [
+              {
+                type: 'output_text',
+                text: 'continue normally',
+              },
+            ],
+          },
+        ],
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result.messages).toEqual([
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'text',
+            text: 'continue normally',
+          },
+        ],
+      },
+    ]);
+  });
+
   it('shortens long MCP tool names consistently across tools, tool_choice and assistant tool calls', () => {
     const sharedSuffix = 'server__execute_super_long_nested_tool_name_that_needs_shortening';
     const firstName = `mcp__alpha_workspace__${sharedSuffix}`;
@@ -840,6 +940,63 @@ describe('convertOpenAiBodyToResponsesBody', () => {
       name: toolNames[0],
     });
   });
+
+  it('drops function tools with blank names when converting OpenAI-compatible input into Responses bodies', () => {
+    const result = convertOpenAiBodyToResponsesBody(
+      {
+        model: 'gpt-5',
+        messages: [{ role: 'user', content: 'hello' }],
+        tools: [
+          {
+            type: 'function',
+            function: {
+              name: '   ',
+              parameters: { type: 'object' },
+            },
+          },
+          {
+            type: 'function',
+            function: {
+              name: 'lookup_weather',
+              parameters: { type: 'object' },
+            },
+          },
+        ],
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result.tools).toEqual([
+      {
+        type: 'function',
+        name: 'lookup_weather',
+        parameters: { type: 'object' },
+      },
+    ]);
+  });
+
+  it('drops all-invalid function tools instead of forwarding blank names into Responses bodies', () => {
+    const result = convertOpenAiBodyToResponsesBody(
+      {
+        model: 'gpt-5',
+        messages: [{ role: 'user', content: 'hello' }],
+        tools: [
+          {
+            type: 'function',
+            function: {
+              name: '   ',
+              parameters: { type: 'object' },
+            },
+          },
+        ],
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result.tools).toEqual([]);
+  });
 });
 
 describe('convertResponsesBodyToOpenAiBody', () => {
@@ -881,6 +1038,7 @@ describe('convertResponsesBodyToOpenAiBody', () => {
             file: {
               filename: 'paper.pdf',
               file_data: Buffer.from('%PDF-demo').toString('base64'),
+              mime_type: 'application/pdf',
             },
           },
         ],
@@ -1459,6 +1617,31 @@ describe('convertResponsesBodyToOpenAiBody', () => {
         name: 'lookup_weather',
       },
     });
+  });
+
+  it('drops blank native function tools and tool choices when converting to OpenAI-compatible fallback bodies', () => {
+    const result = convertResponsesBodyToOpenAiBody(
+      {
+        model: 'gpt-5',
+        input: 'hello',
+        tools: [{
+          type: 'function',
+          name: '   ',
+          parameters: {
+            type: 'object',
+          },
+        }],
+        tool_choice: {
+          type: 'tool',
+          name: '   ',
+        },
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result.tools).toEqual([]);
+    expect(result.tool_choice).toBeUndefined();
   });
 
   it('derives Responses reasoning config from chat-style reasoning request fields', () => {

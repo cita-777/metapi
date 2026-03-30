@@ -128,6 +128,9 @@ export default function TokenRoutes() {
   const [editingRouteId, setEditingRouteId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
+  const [batchUpdatingRoutes, setBatchUpdatingRoutes] = useState(false);
+  const [batchSelectMode, setBatchSelectMode] = useState(false);
+  const [selectedRouteIds, setSelectedRouteIds] = useState<Set<number>>(new Set());
 
   const [channelTokenDraft, setChannelTokenDraft] = useState<Record<number, number>>({});
   const [updatingChannel, setUpdatingChannel] = useState<Record<number, boolean>>({});
@@ -751,6 +754,62 @@ export default function TokenRoutes() {
     });
   }, [baseFilteredRoutes, enabledFilter]);
 
+  const selectableRouteIds = useMemo(() => {
+    return new Set(
+      filteredRoutes
+        .filter((route) => route.kind !== 'zero_channel' && route.readOnly !== true && route.isVirtual !== true)
+        .map((route) => route.id),
+    );
+  }, [filteredRoutes]);
+
+  const toggleBatchSelectMode = () => {
+    setBatchSelectMode((prev) => {
+      if (prev) setSelectedRouteIds(new Set());
+      return !prev;
+    });
+  };
+
+  const toggleRouteSelection = (routeId: number) => {
+    setSelectedRouteIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(routeId)) next.delete(routeId);
+      else next.add(routeId);
+      return next;
+    });
+  };
+
+  const selectAllRoutes = () => {
+    setSelectedRouteIds(new Set(selectableRouteIds));
+  };
+
+  const deselectAllRoutes = () => {
+    setSelectedRouteIds(new Set());
+  };
+
+  const handleBatchUpdateRoutes = async (action: 'enable' | 'disable') => {
+    const ids = Array.from(selectedRouteIds).filter((id) => selectableRouteIds.has(id));
+    if (ids.length === 0) {
+      toast.info('请先选择要操作的路由');
+      return;
+    }
+    const actionLabel = action === 'disable' ? '禁用' : '启用';
+    const confirmed = window.confirm(`确认批量${actionLabel} ${ids.length} 条路由？`);
+    if (!confirmed) return;
+
+    setBatchUpdatingRoutes(true);
+    try {
+      await api.batchUpdateRoutes({ ids, action });
+      toast.success(`已批量${actionLabel} ${ids.length} 条路由`);
+      setSelectedRouteIds(new Set());
+      setBatchSelectMode(false);
+      await load();
+    } catch (e: any) {
+      toast.error(e.message || `批量${actionLabel}路由失败`);
+    } finally {
+      setBatchUpdatingRoutes(false);
+    }
+  };
+
   useEffect(() => {
     setVisibleRouteCount(getInitialVisibleCount(filteredRoutes.length, ROUTE_RENDER_CHUNK));
   }, [filteredRoutes.length]);
@@ -1299,6 +1358,14 @@ export default function TokenRoutes() {
           </button>
 
           <button
+            onClick={toggleBatchSelectMode}
+            className={`btn ${batchSelectMode ? 'btn-primary' : 'btn-ghost'}`}
+            style={{ border: '1px solid var(--color-border)', padding: '8px 14px' }}
+          >
+            {batchSelectMode ? tr('退出批量') : tr('批量操作')}
+          </button>
+
+          <button
             type="button"
             aria-pressed={showZeroChannelRoutes}
             onClick={() => {
@@ -1407,6 +1474,43 @@ export default function TokenRoutes() {
       />
 
       {/* Route card grid */}
+      {/* Batch selection floating bar */}
+      {batchSelectMode && (
+        <div style={{
+          position: 'sticky', top: 0, zIndex: 50,
+          background: 'var(--color-bg-card, #fff)',
+          border: '1px solid var(--color-border)',
+          borderRadius: 8, padding: '10px 16px',
+          marginBottom: 12,
+          display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+        }}>
+          <span style={{ fontSize: 13, fontWeight: 500 }}>
+            {tr('已选择')} <b>{selectedRouteIds.size}</b> / {selectableRouteIds.size} {tr('条路由')}
+          </span>
+          <button className="btn btn-ghost" style={{ padding: '4px 12px', fontSize: 12 }} onClick={selectAllRoutes}>{tr('全选')}</button>
+          <button className="btn btn-ghost" style={{ padding: '4px 12px', fontSize: 12 }} onClick={deselectAllRoutes}>{tr('取消全选')}</button>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <button
+              className="btn btn-warning"
+              style={{ padding: '6px 16px', fontSize: 13 }}
+              disabled={selectedRouteIds.size === 0 || batchUpdatingRoutes}
+              onClick={() => handleBatchUpdateRoutes('disable')}
+            >
+              {batchUpdatingRoutes ? <><span className="spinner spinner-sm" /> {tr('处理中...')}</> : tr('批量禁用')}
+            </button>
+            <button
+              className="btn btn-primary"
+              style={{ padding: '6px 16px', fontSize: 13 }}
+              disabled={selectedRouteIds.size === 0 || batchUpdatingRoutes}
+              onClick={() => handleBatchUpdateRoutes('enable')}
+            >
+              {batchUpdatingRoutes ? <><span className="spinner spinner-sm" /> {tr('处理中...')}</> : tr('批量启用')}
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className={isMobile ? 'mobile-card-list' : 'route-card-grid'}>
         {visibleRoutes.map((route) => {
           const isExpanded = expandedRouteIds.includes(route.id);
@@ -1414,16 +1518,37 @@ export default function TokenRoutes() {
           const exactRoute = isRouteExactModel(route);
           const explicitGroupRoute = isExplicitGroupRoute(route);
           const channelManagementDisabled = explicitGroupRoute;
+          const routeTitle = resolveRouteTitle(route);
+
+          const isSelectable = selectableRouteIds.has(route.id);
+          const isSelected = selectedRouteIds.has(route.id);
 
           if (isMobile) {
             return (
               <div key={route.id} style={{ display: 'grid', gap: 8 }}>
                 <MobileCard
-                  title={resolveRouteTitle(route)}
+                  title={routeTitle}
                   headerActions={(
-                    <span className={`badge ${isReadOnlyRoute ? 'badge-muted' : (route.enabled ? 'badge-success' : 'badge-muted')}`} style={{ fontSize: 10 }}>
-                      {isReadOnlyRoute ? tr('未生成') : (route.enabled ? tr('启用') : tr('禁用'))}
-                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {batchSelectMode && isSelectable && (
+                        <label
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: 12 }}
+                        >
+                          <input
+                            data-testid={`route-select-${route.id}`}
+                            aria-label={`选择路由 ${routeTitle}`}
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleRouteSelection(route.id)}
+                            style={{ width: 16, height: 16, cursor: 'pointer', accentColor: 'var(--color-primary, #4f46e5)' }}
+                          />
+                          <span>{tr('选择')}</span>
+                        </label>
+                      )}
+                      <span className={`badge ${isReadOnlyRoute ? 'badge-muted' : (route.enabled ? 'badge-success' : 'badge-muted')}`} style={{ fontSize: 10 }}>
+                        {isReadOnlyRoute ? tr('未生成') : (route.enabled ? tr('启用') : tr('禁用'))}
+                      </span>
+                    </div>
                   )}
                   footerActions={(
                     <>
@@ -1513,7 +1638,7 @@ export default function TokenRoutes() {
             );
           }
 
-          return (
+          const routeCard = (
             <RouteCard
               key={route.id}
               route={route}
@@ -1547,6 +1672,40 @@ export default function TokenRoutes() {
               onToggleSourceGroup={stableToggleSourceGroup}
             />
           );
+
+          if (batchSelectMode && isSelectable) {
+            return (
+              <div key={route.id} style={{ display: 'flex', gap: 0, alignItems: 'stretch', ...(isExpanded ? { gridColumn: '1 / -1' } : {}) }}>
+                <div
+                  onClick={() => toggleRouteSelection(route.id)}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    width: 36, minHeight: '100%', cursor: 'pointer',
+                    borderRadius: '8px 0 0 8px',
+                    background: isSelected ? 'var(--color-primary, #4f46e5)' : 'var(--color-bg-card, #fff)',
+                    border: '1px solid var(--color-border)',
+                    borderRight: 'none',
+                    transition: 'background 0.15s',
+                  }}
+                >
+                  <input
+                    data-testid={`route-select-${route.id}`}
+                    aria-label={`选择路由 ${routeTitle}`}
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => toggleRouteSelection(route.id)}
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ width: 16, height: 16, cursor: 'pointer', accentColor: 'var(--color-primary, #4f46e5)' }}
+                  />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  {routeCard}
+                </div>
+              </div>
+            );
+          }
+
+          return routeCard;
         })}
       </div>
 

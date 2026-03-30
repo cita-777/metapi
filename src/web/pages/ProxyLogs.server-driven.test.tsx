@@ -9,7 +9,11 @@ const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getProxyLogs: vi.fn(),
     getProxyLogDetail: vi.fn(),
+    getProxyDebugTraces: vi.fn(),
+    getProxyDebugTraceDetail: vi.fn(),
+    getRuntimeSettings: vi.fn(),
     getSites: vi.fn(),
+    updateRuntimeSettings: vi.fn(),
   },
 }));
 
@@ -93,10 +97,30 @@ function buildListResponse(overrides?: Partial<{
 describe('ProxyLogs server-driven page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    Object.defineProperty(globalThis, 'navigator', {
+      value: {
+        clipboard: {
+          writeText: vi.fn().mockResolvedValue(undefined),
+        },
+      },
+      configurable: true,
+      writable: true,
+    });
     apiMock.getSites.mockResolvedValue([
       { id: 9, name: 'main-site', status: 'active' },
       { id: 12, name: 'backup-site', status: 'active' },
     ]);
+    apiMock.getRuntimeSettings.mockResolvedValue({
+      proxyDebugTraceEnabled: false,
+      proxyDebugCaptureHeaders: true,
+      proxyDebugCaptureBodies: false,
+      proxyDebugCaptureStreamChunks: false,
+      proxyDebugTargetSessionId: '',
+      proxyDebugTargetClientKind: '',
+      proxyDebugTargetModel: '',
+      proxyDebugRetentionHours: 24,
+      proxyDebugMaxBodyBytes: 262144,
+    });
     apiMock.getProxyLogs.mockResolvedValue(buildListResponse());
     apiMock.getProxyLogDetail.mockResolvedValue({
       id: 101,
@@ -151,6 +175,41 @@ describe('ProxyLogs server-driven page', () => {
         },
       },
     });
+    apiMock.getProxyDebugTraces.mockResolvedValue({
+      items: [
+        {
+          id: 701,
+          createdAt: '2026-03-28 18:00:00',
+          requestedModel: 'gpt-4o',
+          downstreamPath: '/v1/responses',
+          finalStatus: 'failed',
+          finalUpstreamPath: '/responses',
+          clientKind: 'codex',
+          sessionId: 'sess-debug-1',
+        },
+      ],
+    });
+    apiMock.getProxyDebugTraceDetail.mockResolvedValue({
+      trace: {
+        id: 701,
+        requestedModel: 'gpt-4o',
+        sessionId: 'sess-debug-1',
+        requestHeadersJson: '{\n  "authorization": "Bearer demo"\n}',
+      },
+      attempts: [],
+    });
+    apiMock.updateRuntimeSettings.mockResolvedValue({
+      success: true,
+      proxyDebugTraceEnabled: true,
+      proxyDebugCaptureHeaders: true,
+      proxyDebugCaptureBodies: true,
+      proxyDebugCaptureStreamChunks: false,
+      proxyDebugTargetSessionId: 'sess-debug-1',
+      proxyDebugTargetClientKind: 'codex',
+      proxyDebugTargetModel: 'gpt-4o',
+      proxyDebugRetentionHours: 12,
+      proxyDebugMaxBodyBytes: 131072,
+    });
   });
 
   afterEach(() => {
@@ -188,6 +247,372 @@ describe('ProxyLogs server-driven page', () => {
       expect(text).toContain('Codex');
       expect(text).toContain('推测');
       expect(text).toContain('下游 Key: 移动端灰度');
+    } finally {
+      await act(async () => {
+        root?.unmount();
+      });
+    }
+  });
+
+  it('shows proxy debug traces inline and edits settings through the modal', async () => {
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getRuntimeSettings).toHaveBeenCalled();
+      expect(apiMock.getProxyDebugTraces).toHaveBeenCalled();
+      expect(collectText(root.root)).toContain('最近调试追踪');
+      expect(collectText(root.root)).toContain('sess-debug-1');
+
+      const debugSettingsButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '调试设置'
+      ));
+
+      await act(async () => {
+        debugSettingsButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const traceEnabledToggle = root.root.find((node) => (
+        node.type === 'input'
+        && node.props.type === 'checkbox'
+        && node.props['data-debug-setting'] === 'trace-enabled'
+      ));
+      const captureBodiesToggle = root.root.find((node) => (
+        node.type === 'input'
+        && node.props.type === 'checkbox'
+        && node.props['data-debug-setting'] === 'capture-bodies'
+      ));
+      const sessionInput = root.root.find((node) => (
+        node.type === 'input'
+        && node.props['data-debug-setting'] === 'target-session-id'
+      ));
+      const retentionInput = root.root.find((node) => (
+        node.type === 'input'
+        && node.props['data-debug-setting'] === 'retention-hours'
+      ));
+
+      await act(async () => {
+        traceEnabledToggle.props.onChange({ target: { checked: true } });
+        captureBodiesToggle.props.onChange({ target: { checked: true } });
+        sessionInput.props.onChange({ target: { value: 'sess-debug-1' } });
+        retentionInput.props.onChange({ target: { value: '12' } });
+      });
+
+      const saveButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '保存调试设置'
+      ));
+
+      await act(async () => {
+        saveButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.updateRuntimeSettings).toHaveBeenCalledWith(expect.objectContaining({
+        proxyDebugTraceEnabled: true,
+        proxyDebugCaptureBodies: true,
+        proxyDebugTargetSessionId: 'sess-debug-1',
+        proxyDebugRetentionHours: 12,
+      }));
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('paginates debug traces in groups of five instead of rendering the whole trace list at once', async () => {
+    apiMock.getProxyDebugTraces.mockResolvedValue({
+      items: Array.from({ length: 7 }, (_, index) => ({
+        id: 701 + index,
+        createdAt: `2026-03-28 18:0${index}:00`,
+        requestedModel: `gpt-4o-mini-${index + 1}`,
+        downstreamPath: '/v1/responses',
+        finalStatus: index % 2 === 0 ? 'failed' : 'success',
+        finalUpstreamPath: '/responses',
+        clientKind: 'codex',
+        sessionId: `sess-debug-${index + 1}`,
+      })),
+    });
+
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('显示第 1 - 5 条，共 7 条');
+      expect(collectText(root.root)).toContain('sess-debug-1');
+      expect(collectText(root.root)).not.toContain('sess-debug-6');
+
+      const detailButtons = root.root.findAll((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '查看详情'
+      ));
+      expect(detailButtons).toHaveLength(5);
+
+      const nextPageButton = root.root.find((node) => (
+        node.type === 'button'
+        && node.props['aria-label'] === '调试追踪下一页'
+      ));
+
+      await act(async () => {
+        nextPageButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('显示第 6 - 7 条，共 7 条');
+      expect(collectText(root.root)).toContain('sess-debug-6');
+      expect(collectText(root.root)).not.toContain('sess-debug-1');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('opens debug trace detail on demand instead of preloading the first trace inline', async () => {
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getProxyDebugTraceDetail).not.toHaveBeenCalled();
+
+      const viewDetailButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '查看详情'
+      ));
+
+      await act(async () => {
+        viewDetailButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getProxyDebugTraceDetail).toHaveBeenCalledWith(701);
+      expect(collectText(root.root)).toContain('原始下游请求头');
+      expect(collectText(root.root)).toContain('Attempt 记录');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('polls debug traces after tracing is enabled so new results are not hidden behind the settings modal', async () => {
+    vi.useFakeTimers();
+    apiMock.getRuntimeSettings.mockResolvedValue({
+      proxyDebugTraceEnabled: true,
+      proxyDebugCaptureHeaders: true,
+      proxyDebugCaptureBodies: false,
+      proxyDebugCaptureStreamChunks: false,
+      proxyDebugTargetSessionId: '',
+      proxyDebugTargetClientKind: '',
+      proxyDebugTargetModel: '',
+      proxyDebugRetentionHours: 24,
+      proxyDebugMaxBodyBytes: 262144,
+    });
+
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const initialCalls = apiMock.getProxyDebugTraces.mock.calls.length;
+
+      await act(async () => {
+        vi.advanceTimersByTime(2100);
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getProxyDebugTraces.mock.calls.length).toBeGreaterThan(initialCalls);
+    } finally {
+      await act(async () => {
+        root?.unmount();
+      });
+      vi.runOnlyPendingTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps debug trace detail visible during polling refresh instead of flashing back to loading', async () => {
+    vi.useFakeTimers();
+    apiMock.getRuntimeSettings.mockResolvedValue({
+      proxyDebugTraceEnabled: true,
+      proxyDebugCaptureHeaders: true,
+      proxyDebugCaptureBodies: false,
+      proxyDebugCaptureStreamChunks: false,
+      proxyDebugTargetSessionId: '',
+      proxyDebugTargetClientKind: '',
+      proxyDebugTargetModel: '',
+      proxyDebugRetentionHours: 24,
+      proxyDebugMaxBodyBytes: 262144,
+    });
+
+    let resolveDetail!: (value: any) => void;
+    apiMock.getProxyDebugTraceDetail
+      .mockResolvedValueOnce({
+        trace: {
+          id: 701,
+          requestedModel: 'gpt-4o',
+          sessionId: 'sess-debug-1',
+          requestHeadersJson: '{\"before\":true}',
+        },
+        attempts: [],
+      })
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveDetail = resolve;
+      }));
+
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const viewDetailButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '查看详情'
+      ));
+
+      await act(async () => {
+        viewDetailButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('原始下游请求头');
+      expect(collectText(root.root)).not.toContain('加载追踪详情中...');
+
+      await act(async () => {
+        vi.advanceTimersByTime(2100);
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('原始下游请求头');
+      expect(collectText(root.root)).not.toContain('加载追踪详情中...');
+
+      await act(async () => {
+        resolveDetail({
+          trace: {
+            id: 701,
+            requestedModel: 'gpt-4o',
+            sessionId: 'sess-debug-1',
+            requestHeadersJson: '{\"after\":true}',
+          },
+          attempts: [],
+        });
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('原始下游请求头');
+      expect(collectText(root.root)).not.toContain('加载追踪详情中...');
+    } finally {
+      await act(async () => {
+        root?.unmount();
+      });
+      vi.runOnlyPendingTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('copies the saved request headers content from the trace detail modal', async () => {
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const viewDetailButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '查看详情'
+      ));
+
+      await act(async () => {
+        viewDetailButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).not.toContain('Bearer demo');
+
+      const expandHeadersButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && node.props['aria-label'] === '展开原始下游请求头'
+      ));
+
+      await act(async () => {
+        expandHeadersButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('Bearer demo');
+
+      const copyButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && node.props['aria-label'] === '复制原始下游请求头'
+      ));
+
+      await act(async () => {
+        copyButton.props.onClick({ stopPropagation: () => undefined, preventDefault: () => undefined });
+      });
+      await flushMicrotasks();
+
+      expect(globalThis.navigator.clipboard.writeText).toHaveBeenCalledWith('{\n  "authorization": "Bearer demo"\n}');
     } finally {
       root?.unmount();
     }

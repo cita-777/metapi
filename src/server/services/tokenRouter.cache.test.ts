@@ -175,6 +175,373 @@ describe('TokenRouter runtime cache', () => {
     expect(thirdCooldownMs).toBeLessThanOrEqual(35_000);
   });
 
+  it('uses codex oauth reset hints for usage-limit cooldowns', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'codex-oauth-site',
+      url: 'https://codex-oauth.example.com',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'codex-oauth-user',
+      accessToken: 'codex-access-token',
+      status: 'active',
+      oauthProvider: 'codex',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+        },
+      }),
+    }).returning().get();
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.4',
+      routingStrategy: 'weighted',
+      enabled: true,
+    }).returning().get();
+
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    const startedAt = Date.now();
+    await router.recordFailure(channel.id, {
+      status: 429,
+      errorText: JSON.stringify({
+        error: {
+          type: 'usage_limit_reached',
+          resets_in_seconds: 600,
+          message: 'quota exceeded',
+        },
+      }),
+      modelName: 'gpt-5.4',
+    });
+
+    const record = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.id, channel.id))
+      .get();
+    const cooldownMs = Date.parse(String(record?.cooldownUntil || '')) - startedAt;
+
+    expect(cooldownMs).toBeGreaterThanOrEqual(9 * 60 * 1000);
+    expect(cooldownMs).toBeLessThanOrEqual(11 * 60 * 1000);
+  });
+
+  it('falls back to a short cooldown for codex oauth usage-limit failures without reset hints', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'codex-oauth-fallback-site',
+      url: 'https://codex-oauth-fallback.example.com',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'codex-oauth-fallback-user',
+      accessToken: 'codex-fallback-access-token',
+      status: 'active',
+      oauthProvider: 'codex',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+        },
+      }),
+    }).returning().get();
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.4',
+      routingStrategy: 'weighted',
+      enabled: true,
+    }).returning().get();
+
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    const startedAt = Date.now();
+    await router.recordFailure(channel.id, {
+      status: 429,
+      errorText: JSON.stringify({
+        error: {
+          type: 'usage_limit_reached',
+          message: 'The usage limit has been reached',
+        },
+      }),
+      modelName: 'gpt-5.4',
+    });
+
+    const record = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.id, channel.id))
+      .get();
+    const cooldownMs = Date.parse(String(record?.cooldownUntil || '')) - startedAt;
+
+    expect(cooldownMs).toBeGreaterThanOrEqual(4 * 60 * 1000);
+    expect(cooldownMs).toBeLessThanOrEqual(6 * 60 * 1000);
+  });
+
+  it('reuses stored codex oauth reset hints when the latest 429 omits reset timing', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'codex-oauth-stored-reset-site',
+      url: 'https://codex-oauth-stored-reset.example.com',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+
+    const resetAt = new Date(Date.now() + 8 * 60 * 1000).toISOString();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'codex-oauth-stored-reset-user',
+      accessToken: 'codex-stored-reset-access-token',
+      status: 'active',
+      oauthProvider: 'codex',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          quota: {
+            status: 'supported',
+            source: 'reverse_engineered',
+            lastLimitResetAt: resetAt,
+            providerMessage: 'current codex oauth signals do not expose stable 5h/7d remaining values',
+            windows: {
+              fiveHour: {
+                supported: false,
+                message: 'official 5h quota window is not exposed by current codex oauth artifacts',
+              },
+              sevenDay: {
+                supported: false,
+                message: 'official 7d quota window is not exposed by current codex oauth artifacts',
+              },
+            },
+          },
+        },
+      }),
+    }).returning().get();
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.4',
+      routingStrategy: 'weighted',
+      enabled: true,
+    }).returning().get();
+
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    await router.recordFailure(channel.id, {
+      status: 429,
+      errorText: JSON.stringify({
+        error: {
+          type: 'usage_limit_reached',
+          message: 'The usage limit has been reached',
+        },
+      }),
+      modelName: 'gpt-5.4',
+    });
+
+    const record = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.id, channel.id))
+      .get();
+
+    expect(record?.cooldownUntil).toBe(resetAt);
+  });
+
+  it('treats non-oauth 429 limit failures as short-window cooldowns', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'limit-site',
+      url: 'https://limit-site.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'limit-user',
+      accessToken: 'limit-access-token',
+      apiToken: 'limit-api-token',
+      status: 'active',
+    }).returning().get();
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4o-mini',
+      routingStrategy: 'weighted',
+      enabled: true,
+    }).returning().get();
+
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    const startedAt = Date.now();
+    await router.recordFailure(channel.id, {
+      status: 429,
+      errorText: JSON.stringify({
+        error: {
+          message: 'rate limit exceeded',
+        },
+      }),
+      modelName: 'gpt-4o-mini',
+    });
+
+    const record = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.id, channel.id))
+      .get();
+    const cooldownMs = Date.parse(String(record?.cooldownUntil || '')) - startedAt;
+
+    expect(cooldownMs).toBeGreaterThanOrEqual(4 * 60 * 1000);
+    expect(cooldownMs).toBeLessThanOrEqual(6 * 60 * 1000);
+    expect(record?.failCount).toBe(0);
+  });
+
+  it('keeps generic 429 backoff when the error is not limit-related', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'generic-429-site',
+      url: 'https://generic-429.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'generic-429-user',
+      accessToken: 'generic-429-access-token',
+      apiToken: 'generic-429-api-token',
+      status: 'active',
+    }).returning().get();
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4o-mini',
+      routingStrategy: 'weighted',
+      enabled: true,
+    }).returning().get();
+
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    const startedAt = Date.now();
+    await router.recordFailure(channel.id, {
+      status: 429,
+      errorText: JSON.stringify({
+        error: {
+          message: 'upstream overloaded',
+        },
+      }),
+      modelName: 'gpt-4o-mini',
+    });
+
+    const record = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.id, channel.id))
+      .get();
+    const cooldownMs = Date.parse(String(record?.cooldownUntil || '')) - startedAt;
+
+    expect(cooldownMs).toBeGreaterThanOrEqual(10_000);
+    expect(cooldownMs).toBeLessThanOrEqual(20_000);
+    expect(record?.failCount).toBe(1);
+  });
+
+  it('applies short-window cooldown to sibling channels that share the same account-level credential', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'shared-credential-site',
+      url: 'https://shared-credential.example.com',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'shared-credential-user',
+      accessToken: 'shared-credential-access-token',
+      status: 'active',
+      oauthProvider: 'codex',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+        },
+      }),
+    }).returning().get();
+
+    const primaryRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.4',
+      routingStrategy: 'weighted',
+      enabled: true,
+    }).returning().get();
+
+    const siblingRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4o-mini',
+      routingStrategy: 'weighted',
+      enabled: true,
+    }).returning().get();
+
+    const primaryChannel = await db.insert(schema.routeChannels).values({
+      routeId: primaryRoute.id,
+      accountId: account.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const siblingChannel = await db.insert(schema.routeChannels).values({
+      routeId: siblingRoute.id,
+      accountId: account.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    const initialSiblingSelection = await router.selectChannel('gpt-4o-mini');
+    expect(initialSiblingSelection?.channel.id).toBe(siblingChannel.id);
+
+    await router.recordFailure(primaryChannel.id, {
+      status: 429,
+      errorText: JSON.stringify({
+        error: {
+          type: 'usage_limit_reached',
+          message: 'The usage limit has been reached',
+        },
+      }),
+      modelName: 'gpt-5.4',
+    });
+
+    const cooledSibling = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.id, siblingChannel.id))
+      .get();
+
+    expect(cooledSibling?.cooldownUntil).toBeTruthy();
+    expect(cooledSibling?.failCount).toBe(0);
+    expect(await router.selectChannel('gpt-4o-mini')).toBeNull();
+  });
+
   it('round robins across all available channels regardless of priority', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'round-robin-site',

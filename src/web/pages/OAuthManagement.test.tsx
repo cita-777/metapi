@@ -221,6 +221,25 @@ describe('OAuthManagement page', () => {
         await flushMicrotasks();
       });
 
+      const proxyToggle = root!.root.find((node) => (
+        node.type === 'input'
+        && node.props.type === 'checkbox'
+        && node.props['data-oauth-setting'] === 'use-proxy'
+      ));
+
+      await act(async () => {
+        proxyToggle.props.onChange({ target: { checked: true } });
+      });
+
+      const proxyInput = root!.root.find((node) => (
+        node.type === 'input'
+        && node.props['data-oauth-setting'] === 'proxy-url'
+      ));
+
+      await act(async () => {
+        proxyInput.props.onChange({ target: { value: 'http://127.0.0.1:7890' } });
+      });
+
       const startButton = root!.root.find((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
@@ -234,7 +253,10 @@ describe('OAuthManagement page', () => {
         await flushMicrotasks();
       });
 
-      expect(apiMock.startOAuthProvider).toHaveBeenCalledWith('codex', { projectId: undefined });
+      expect(apiMock.startOAuthProvider).toHaveBeenCalledWith('codex', {
+        projectId: undefined,
+        proxyUrl: 'http://127.0.0.1:7890',
+      });
       expect(openMock).toHaveBeenCalledWith(
         'https://auth.openai.com/oauth/authorize?state=oauth-state-123',
         'oauth-codex',
@@ -647,12 +669,324 @@ describe('OAuthManagement page', () => {
       });
 
       expect(promptMock).not.toHaveBeenCalled();
-      expect(apiMock.rebindOAuthConnection).toHaveBeenCalledWith(11);
+      expect(apiMock.rebindOAuthConnection).toHaveBeenCalledWith(11, {});
       expect(openMock).toHaveBeenCalledWith(
         'https://accounts.google.com/o/oauth2/v2/auth?state=gemini-rebind-123',
         'oauth-gemini-cli',
         expect.stringContaining('width=540'),
       );
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('reuses the stored account proxy for rebind when no new override is selected', async () => {
+    apiMock.getOAuthProviders.mockResolvedValue({
+      providers: [
+        {
+          provider: 'gemini-cli',
+          label: 'Gemini CLI',
+          platform: 'gemini-cli',
+          enabled: true,
+          loginType: 'oauth',
+          requiresProjectId: true,
+          supportsDirectAccountRouting: true,
+          supportsCloudValidation: true,
+          supportsNativeProxy: true,
+        },
+      ],
+    });
+    apiMock.getOAuthConnections.mockResolvedValue({
+      items: [
+        {
+          accountId: 11,
+          provider: 'gemini-cli',
+          email: 'gemini@example.com',
+          projectId: 'project-demo',
+          modelCount: 5,
+          modelsPreview: ['gemini-2.5-pro'],
+          status: 'healthy',
+          proxyUrl: 'http://127.0.0.1:7890',
+        },
+      ],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    });
+    apiMock.rebindOAuthConnection.mockResolvedValue({
+      provider: 'gemini-cli',
+      state: 'gemini-rebind-proxy',
+      authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth?state=gemini-rebind-proxy',
+      instructions: {
+        redirectUri: 'http://localhost:8085/oauth2callback',
+        callbackPort: 8085,
+        callbackPath: '/oauth2callback',
+        manualCallbackDelayMs: 15000,
+      },
+    });
+    apiMock.getOAuthSession.mockResolvedValue({
+      provider: 'gemini-cli',
+      state: 'gemini-rebind-proxy',
+      status: 'pending',
+    });
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <MemoryRouter>
+              <OAuthManagement />
+            </MemoryRouter>
+          </ToastProvider>,
+        );
+      });
+      await flushMicrotasks();
+
+      const rebindButton = root!.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).includes('重新授权')
+      ));
+
+      await act(async () => {
+        await rebindButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.rebindOAuthConnection).toHaveBeenCalledWith(11, {
+        proxyUrl: 'http://127.0.0.1:7890',
+      });
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('can clear the stored account proxy during rebind', async () => {
+    apiMock.getOAuthProviders.mockResolvedValue({
+      providers: [
+        {
+          provider: 'gemini-cli',
+          label: 'Gemini CLI',
+          platform: 'gemini-cli',
+          enabled: true,
+          loginType: 'oauth',
+          requiresProjectId: true,
+          supportsDirectAccountRouting: true,
+          supportsCloudValidation: true,
+          supportsNativeProxy: true,
+        },
+      ],
+    });
+    apiMock.getOAuthConnections.mockResolvedValue({
+      items: [
+        {
+          accountId: 11,
+          provider: 'gemini-cli',
+          email: 'gemini@example.com',
+          projectId: 'project-demo',
+          modelCount: 5,
+          modelsPreview: ['gemini-2.5-pro'],
+          status: 'healthy',
+          proxyUrl: 'http://127.0.0.1:7890',
+        },
+      ],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    });
+    apiMock.rebindOAuthConnection.mockResolvedValue({
+      provider: 'gemini-cli',
+      state: 'gemini-rebind-clear',
+      authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth?state=gemini-rebind-clear',
+      instructions: {
+        redirectUri: 'http://localhost:8085/oauth2callback',
+        callbackPort: 8085,
+        callbackPath: '/oauth2callback',
+        manualCallbackDelayMs: 15000,
+      },
+    });
+    apiMock.getOAuthSession.mockResolvedValue({
+      provider: 'gemini-cli',
+      state: 'gemini-rebind-clear',
+      status: 'pending',
+    });
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <MemoryRouter>
+              <OAuthManagement />
+            </MemoryRouter>
+          </ToastProvider>,
+        );
+      });
+      await flushMicrotasks();
+
+      const clearProxyToggle = root!.root.find((node) => (
+        node.type === 'input'
+        && node.props.type === 'checkbox'
+        && node.props['data-oauth-setting'] === 'clear-proxy'
+      ));
+
+      await act(async () => {
+        clearProxyToggle.props.onChange({ target: { checked: true } });
+      });
+
+      const rebindButton = root!.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).includes('重新授权')
+      ));
+
+      await act(async () => {
+        await rebindButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.rebindOAuthConnection).toHaveBeenCalledWith(11, {
+        proxyUrl: null,
+      });
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('resets temporary oauth proxy settings after starting an authorization flow', async () => {
+    apiMock.getOAuthProviders.mockResolvedValue({
+      providers: [
+        {
+          provider: 'codex',
+          label: 'ChatGPT Codex',
+          platform: 'codex',
+          enabled: true,
+          loginType: 'oauth',
+          requiresProjectId: false,
+          supportsDirectAccountRouting: true,
+          supportsCloudValidation: true,
+          supportsNativeProxy: true,
+        },
+        {
+          provider: 'claude',
+          label: 'Claude',
+          platform: 'claude',
+          enabled: true,
+          loginType: 'oauth',
+          requiresProjectId: false,
+          supportsDirectAccountRouting: true,
+          supportsCloudValidation: true,
+          supportsNativeProxy: true,
+        },
+      ],
+    });
+    apiMock.getOAuthConnections.mockResolvedValue({
+      items: [],
+      total: 0,
+      limit: 100,
+      offset: 0,
+    });
+    apiMock.startOAuthProvider
+      .mockResolvedValueOnce({
+        provider: 'codex',
+        state: 'oauth-state-codex',
+        authorizationUrl: 'https://auth.openai.com/oauth/authorize?state=oauth-state-codex',
+        instructions: {
+          redirectUri: 'http://localhost:1455/auth/callback',
+          callbackPort: 1455,
+          callbackPath: '/auth/callback',
+          manualCallbackDelayMs: 15000,
+        },
+      })
+      .mockResolvedValueOnce({
+        provider: 'claude',
+        state: 'oauth-state-claude',
+        authorizationUrl: 'https://console.anthropic.com/oauth/authorize?state=oauth-state-claude',
+        instructions: {
+          redirectUri: 'http://localhost:54545/callback',
+          callbackPort: 54545,
+          callbackPath: '/callback',
+          manualCallbackDelayMs: 15000,
+        },
+      });
+    apiMock.getOAuthSession.mockResolvedValue({
+      provider: 'codex',
+      state: 'oauth-state-codex',
+      status: 'pending',
+    });
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <MemoryRouter>
+              <OAuthManagement />
+            </MemoryRouter>
+          </ToastProvider>,
+        );
+      });
+      await flushMicrotasks();
+
+      const proxyToggle = root.root.find((node) => (
+        node.type === 'input'
+        && node.props.type === 'checkbox'
+        && node.props['data-oauth-setting'] === 'use-proxy'
+      ));
+      const proxyInput = root.root.find((node) => (
+        node.type === 'input'
+        && node.props['data-oauth-setting'] === 'proxy-url'
+      ));
+      const startButtons = root.root.findAll((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && String(node.props.children).startsWith('连接 ')
+      ));
+
+      await act(async () => {
+        proxyToggle.props.onChange({ target: { checked: true } });
+      });
+      await act(async () => {
+        proxyInput.props.onChange({ target: { value: 'http://127.0.0.1:7890' } });
+      });
+      await act(async () => {
+        await startButtons[0].props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.startOAuthProvider).toHaveBeenNthCalledWith(1, 'codex', {
+        projectId: undefined,
+        proxyUrl: 'http://127.0.0.1:7890',
+      });
+
+      const resetProxyToggle = root.root.find((node) => (
+        node.type === 'input'
+        && node.props.type === 'checkbox'
+        && node.props['data-oauth-setting'] === 'use-proxy'
+      ));
+      const resetProxyInput = root.root.find((node) => (
+        node.type === 'input'
+        && node.props['data-oauth-setting'] === 'proxy-url'
+      ));
+
+      expect(resetProxyToggle.props.checked).toBe(false);
+      expect(resetProxyInput.props.value).toBe('');
+
+      const refreshedStartButtons = root.root.findAll((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && String(node.props.children).startsWith('连接 ')
+      ));
+
+      await act(async () => {
+        await refreshedStartButtons[1].props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.startOAuthProvider).toHaveBeenNthCalledWith(2, 'claude', {
+        projectId: undefined,
+      });
     } finally {
       root?.unmount();
     }
@@ -708,6 +1042,7 @@ describe('OAuthManagement page', () => {
             routeChannelCount: 1,
             lastModelSyncAt: '2026-03-17T08:00:00.000Z',
             lastModelSyncError: 'Codex 模型获取失败（HTTP 403: forbidden）',
+            proxyUrl: 'http://oauth-user:secret@127.0.0.1:7890',
           },
         ],
         total: 1,
@@ -740,6 +1075,8 @@ describe('OAuthManagement page', () => {
         expect(text).toContain('2026-04-01T00:00:00.000Z');
         expect(text).toContain('2026-03-17T13:00:00.000Z');
         expect(text).toContain('官方未提供');
+        expect(text).toContain('http://***@127.0.0.1:7890');
+        expect(text).not.toContain('oauth-user:secret');
       });
 
       const deleteButton = root!.root.find((node) => (

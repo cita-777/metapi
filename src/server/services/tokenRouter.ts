@@ -1,4 +1,4 @@
-﻿import { eq, inArray } from 'drizzle-orm';
+﻿import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { upsertSetting } from '../db/upsertSetting.js';
 import { config } from '../config.js';
@@ -11,6 +11,7 @@ import {
 import { type DownstreamRoutingPolicy, EMPTY_DOWNSTREAM_ROUTING_POLICY } from './downstreamPolicyTypes.js';
 import { isUsableAccountToken } from './accountTokenService.js';
 import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
+import { parseCodexQuotaResetHint } from './oauth/quota.js';
 import {
   isExactTokenRouteModelPattern,
   isTokenRouteRegexPattern,
@@ -70,6 +71,7 @@ type SiteRuntimeHealthState = {
 };
 
 const FAILURE_BACKOFF_BASE_SEC = 15;
+const SHORT_WINDOW_LIMIT_COOLDOWN_MS = 5 * 60 * 1000;
 const MIN_EFFECTIVE_UNIT_COST = 1e-6;
 const ROUND_ROBIN_FAILURE_THRESHOLD = 3;
 const ROUND_ROBIN_COOLDOWN_LEVELS_SEC = [0, 10 * 60, 60 * 60, 24 * 60 * 60] as const;
@@ -145,6 +147,14 @@ const SITE_TRANSIENT_FAILURE_PATTERNS: RegExp[] = [
   /econnrefused/i,
 ];
 
+const USAGE_LIMIT_RATE_LIMIT_PATTERNS: RegExp[] = [
+  /usage_limit_reached/i,
+  /usage\s+limit\s+has\s+been\s+reached/i,
+  /quota\s+exceeded/i,
+  /rate\s+limit/i,
+  /\blimit\b/i,
+];
+
 type SiteRuntimeHealthPersistencePayload = {
   version: 1;
   savedAtMs: number;
@@ -203,6 +213,12 @@ function matchesAnyPattern(patterns: RegExp[], input?: string | null): boolean {
   return patterns.some((pattern) => pattern.test(text));
 }
 
+function isUsageLimitRateLimitFailure(context: SiteRuntimeFailureContext = {}): boolean {
+  const status = typeof context.status === 'number' ? context.status : 0;
+  if (status !== 429) return false;
+  return matchesAnyPattern(USAGE_LIMIT_RATE_LIMIT_PATTERNS, context.errorText);
+}
+
 function clampNumber(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
@@ -229,6 +245,10 @@ function readNullableTimestamp(value: unknown): number | null {
 function resolveSiteRuntimeFailurePenalty(context: SiteRuntimeFailureContext = {}): number {
   const status = typeof context.status === 'number' ? context.status : 0;
   const errorText = (context.errorText || '').trim();
+
+  if (isUsageLimitRateLimitFailure({ status, errorText })) {
+    return 0.4;
+  }
 
   if (status >= 500 || matchesAnyPattern(SITE_TRANSIENT_FAILURE_PATTERNS, errorText)) {
     return 2.5;
@@ -264,7 +284,61 @@ function resolveSiteRuntimeFailurePenalty(context: SiteRuntimeFailureContext = {
 function isTransientSiteRuntimeFailure(context: SiteRuntimeFailureContext = {}): boolean {
   const status = typeof context.status === 'number' ? context.status : 0;
   const errorText = (context.errorText || '').trim();
+  if (isUsageLimitRateLimitFailure({ status, errorText })) {
+    return false;
+  }
   return status >= 500 || status === 429 || matchesAnyPattern(SITE_TRANSIENT_FAILURE_PATTERNS, errorText);
+}
+
+function resolveShortWindowLimitCooldown(
+  account: typeof schema.accounts.$inferSelect,
+  context: SiteRuntimeFailureContext = {},
+  nowMs = Date.now(),
+): string | null {
+  const status = typeof context.status === 'number' ? context.status : 0;
+  const errorText = (context.errorText || '').trim();
+  if (!isUsageLimitRateLimitFailure({ status, errorText })) return null;
+
+  const resetHint = parseCodexQuotaResetHint(status, errorText, nowMs);
+  if (resetHint) {
+    const hintMs = Date.parse(resetHint.resetAt);
+    if (Number.isFinite(hintMs) && hintMs > nowMs) {
+      return new Date(hintMs).toISOString();
+    }
+  }
+
+  const oauth = getOauthInfoFromAccount(account);
+  const storedResetAt = oauth?.quota?.lastLimitResetAt;
+  if (oauth?.provider === 'codex' && storedResetAt) {
+    const storedMs = Date.parse(storedResetAt);
+    if (Number.isFinite(storedMs) && storedMs > nowMs) {
+      return new Date(storedMs).toISOString();
+    }
+  }
+
+  return new Date(nowMs + SHORT_WINDOW_LIMIT_COOLDOWN_MS).toISOString();
+}
+
+async function loadCredentialScopedChannelIds(
+  channel: typeof schema.routeChannels.$inferSelect,
+  accountId: number,
+): Promise<number[]> {
+  if (typeof channel.tokenId === 'number' && channel.tokenId > 0) {
+    const rows = await db.select({ id: schema.routeChannels.id })
+      .from(schema.routeChannels)
+      .where(eq(schema.routeChannels.tokenId, channel.tokenId))
+      .all();
+    return rows.map((row) => row.id);
+  }
+
+  const rows = await db.select({ id: schema.routeChannels.id })
+    .from(schema.routeChannels)
+    .where(and(
+      eq(schema.routeChannels.accountId, accountId),
+      isNull(schema.routeChannels.tokenId),
+    ))
+    .all();
+  return rows.map((row) => row.id);
 }
 
 function getDecayedSiteRuntimePenalty(state: SiteRuntimeHealthState, nowMs: number): number {
@@ -1022,21 +1096,26 @@ function isModelAllowedByDownstreamPolicy(requestedModel: string, policy: Downst
   return false;
 }
 
-function resolveMappedModel(requestedModel: string, modelMapping?: string | null): string {
-  if (!modelMapping) return requestedModel;
-
-  let parsed: unknown;
+function parseModelMappingRecord(modelMapping?: string | Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!modelMapping) return null;
+  if (typeof modelMapping === 'object' && !Array.isArray(modelMapping)) {
+    return modelMapping as Record<string, unknown>;
+  }
+  if (typeof modelMapping !== 'string') return null;
   try {
-    parsed = JSON.parse(modelMapping);
+    const parsed = JSON.parse(modelMapping);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    return parsed as Record<string, unknown>;
   } catch {
-    return requestedModel;
+    return null;
   }
+}
 
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return requestedModel;
-  }
+function resolveMappedModel(requestedModel: string, modelMapping?: string | Record<string, unknown> | null): string {
+  const parsed = parseModelMappingRecord(modelMapping);
+  if (!parsed) return requestedModel;
 
-  const entries = Object.entries(parsed as Record<string, unknown>)
+  const entries = Object.entries(parsed)
     .filter(([, value]) => typeof value === 'string' && value.trim().length > 0) as Array<[string, string]>;
 
   const exact = entries.find(([pattern]) => pattern === requestedModel);
@@ -1704,16 +1783,24 @@ export class TokenRouter {
     const route = row.token_routes;
     const nowMs = Date.now();
     const nowIso = new Date(nowMs).toISOString();
-    const failCount = (ch.failCount ?? 0) + 1;
     const normalizedContext: SiteRuntimeFailureContext = typeof context === 'string'
       ? { modelName: context }
       : (context ?? {});
+    const shortWindowLimitCooldownUntil = resolveShortWindowLimitCooldown(account, normalizedContext, nowMs);
+    const failCount = shortWindowLimitCooldownUntil ? 0 : ((ch.failCount ?? 0) + 1);
     const routeStrategy = resolveRouteStrategy(route);
+    const affectedChannelIds = shortWindowLimitCooldownUntil
+      ? await loadCredentialScopedChannelIds(ch, account.id)
+      : [channelId];
     let cooldownUntil: string | null = null;
     let consecutiveFailCount = Math.max(0, ch.consecutiveFailCount ?? 0) + 1;
     let cooldownLevel = Math.max(0, ch.cooldownLevel ?? 0);
 
-    if (routeStrategy === 'round_robin') {
+    if (shortWindowLimitCooldownUntil) {
+      cooldownUntil = shortWindowLimitCooldownUntil;
+      consecutiveFailCount = 0;
+      cooldownLevel = 0;
+    } else if (routeStrategy === 'round_robin') {
       if (consecutiveFailCount >= ROUND_ROBIN_FAILURE_THRESHOLD) {
         cooldownLevel = Math.min(cooldownLevel + 1, ROUND_ROBIN_COOLDOWN_LEVELS_SEC.length - 1);
         const cooldownSec = resolveRoundRobinCooldownSec(cooldownLevel);
@@ -1733,15 +1820,17 @@ export class TokenRouter {
       consecutiveFailCount,
       cooldownLevel,
       cooldownUntil,
-    }).where(eq(schema.routeChannels.id, channelId)).run();
+    }).where(inArray(schema.routeChannels.id, affectedChannelIds)).run();
 
-    patchCachedChannel(channelId, (channel) => {
-      channel.failCount = failCount;
-      channel.lastFailAt = nowIso;
-      channel.cooldownUntil = cooldownUntil;
-      channel.consecutiveFailCount = consecutiveFailCount;
-      channel.cooldownLevel = cooldownLevel;
-    });
+    for (const affectedChannelId of affectedChannelIds) {
+      patchCachedChannel(affectedChannelId, (channel) => {
+        channel.failCount = failCount;
+        channel.lastFailAt = nowIso;
+        channel.cooldownUntil = cooldownUntil;
+        channel.consecutiveFailCount = consecutiveFailCount;
+        channel.cooldownLevel = cooldownLevel;
+      });
+    }
 
     recordSiteRuntimeFailure(account.siteId, normalizedContext, nowMs);
   }
@@ -2254,4 +2343,8 @@ export class TokenRouter {
 }
 
 export const tokenRouter = new TokenRouter();
+
+export const __tokenRouterTestUtils = {
+  resolveMappedModel,
+};
 

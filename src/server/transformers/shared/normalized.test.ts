@@ -3,8 +3,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   fromTransformerMetadataRecord,
+  createStreamTransformContext,
   normalizeStopReason,
   normalizeUpstreamFinalResponse,
+  normalizeUpstreamStreamEvent,
   parseDownstreamChatRequest,
   pullSseEventsWithDone,
   serializeFinalResponse,
@@ -79,6 +81,97 @@ describe('shared normalized helpers', () => {
     });
   });
 
+  it('normalizes custom tool calls from responses payloads through the existing tool-call shape', () => {
+    expect(normalizeUpstreamFinalResponse({
+      object: 'response',
+      id: 'resp_custom_tool_1',
+      model: 'gpt-test',
+      created: 123,
+      output: [
+        {
+          type: 'custom_tool_call',
+          call_id: 'call_custom',
+          name: 'MyTool',
+          input: '{"path":"README.md"}',
+        },
+      ],
+      status: 'completed',
+    }, 'fallback-model')).toEqual({
+      id: 'resp_custom_tool_1',
+      model: 'gpt-test',
+      created: 123,
+      content: '',
+      reasoningContent: '',
+      finishReason: 'tool_calls',
+      toolCalls: [{
+        id: 'call_custom',
+        name: 'MyTool',
+        arguments: '{"path":"README.md"}',
+      }],
+    });
+  });
+
+  it('unwraps terminal response.completed envelopes when normalizing final responses', () => {
+    expect(normalizeUpstreamFinalResponse({
+      type: 'response.completed',
+      response: {
+        id: 'resp_terminal_1',
+        model: 'gpt-test',
+        created_at: 123,
+        status: 'completed',
+        output: [
+          {
+            type: 'message',
+            content: [{ type: 'output_text', text: 'hello' }],
+          },
+          {
+            type: 'custom_tool_call',
+            call_id: 'call_custom_1',
+            name: 'Shell',
+            input: '{"command":"pwd"}',
+          },
+        ],
+      },
+    }, 'fallback-model')).toEqual({
+      id: 'resp_terminal_1',
+      model: 'gpt-test',
+      created: 123,
+      content: 'hello',
+      reasoningContent: '',
+      finishReason: 'tool_calls',
+      toolCalls: [{
+        id: 'call_custom_1',
+        name: 'Shell',
+        arguments: '{"command":"pwd"}',
+      }],
+    });
+  });
+
+  it('unwraps terminal response.incomplete envelopes when normalizing final responses', () => {
+    expect(normalizeUpstreamFinalResponse({
+      type: 'response.incomplete',
+      response: {
+        id: 'resp_terminal_2',
+        model: 'gpt-test',
+        created: 456,
+        output: [
+          {
+            type: 'message',
+            content: [{ type: 'output_text', text: 'partial answer' }],
+          },
+        ],
+      },
+    }, 'fallback-model')).toEqual({
+      id: 'resp_terminal_2',
+      model: 'gpt-test',
+      created: 456,
+      content: 'partial answer',
+      reasoningContent: '',
+      finishReason: 'length',
+      toolCalls: [],
+    });
+  });
+
   it('preserves responses reasoning summaries and encrypted reasoning signatures in final normalization', () => {
     expect(normalizeUpstreamFinalResponse({
       object: 'response',
@@ -134,6 +227,142 @@ describe('shared normalized helpers', () => {
       reasoningSignature: 'enc_1',
       finishReason: 'stop',
       toolCalls: [],
+    });
+  });
+
+  it('treats response.reasoning_summary_text.done as reasoning-only stream output', () => {
+    const context = createStreamTransformContext('gpt-test');
+
+    expect(normalizeUpstreamStreamEvent({
+      type: 'response.reasoning_summary_text.done',
+      item_id: 'rs_1',
+      output_index: 0,
+      summary_index: 0,
+      text: 'plan first',
+    }, context, 'fallback-model')).toEqual({
+      reasoningDelta: 'plan first',
+    });
+  });
+
+  it('normalizes terminal-only responses output_item.done message content into visible stream content', () => {
+    const context = createStreamTransformContext('gpt-test');
+
+    expect(normalizeUpstreamStreamEvent({
+      type: 'response.output_item.done',
+      output_index: 0,
+      item: {
+        id: 'msg_1',
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        content: [{ type: 'output_text', text: 'hello' }],
+      },
+    }, context, 'fallback-model')).toEqual({
+      role: 'assistant',
+      contentDelta: 'hello',
+    });
+  });
+
+  it('normalizes terminal-only responses output_item.done tool metadata into tool deltas', () => {
+    const context = createStreamTransformContext('gpt-test');
+
+    expect(normalizeUpstreamStreamEvent({
+      type: 'response.output_item.done',
+      output_index: 0,
+      item: {
+        id: 'fc_1',
+        type: 'function_call',
+        call_id: 'call_1',
+        name: 'Glob',
+        arguments: '{"pattern":"README*"}',
+        status: 'completed',
+      },
+    }, context, 'fallback-model')).toEqual({
+      toolCallDeltas: [{
+        index: 0,
+        id: 'call_1',
+        name: 'Glob',
+        argumentsDelta: '{"pattern":"README*"}',
+      }],
+    });
+  });
+
+  it('normalizes terminal-only custom tool responses into tool deltas and final tool calls', () => {
+    const context = createStreamTransformContext('gpt-test');
+
+    expect(normalizeUpstreamStreamEvent({
+      type: 'response.output_item.done',
+      output_index: 0,
+      item: {
+        id: 'ct_1',
+        type: 'custom_tool_call',
+        call_id: 'call_custom_1',
+        name: 'MyTool',
+        input: '{"foo":"bar"}',
+        status: 'completed',
+      },
+    }, context, 'fallback-model')).toEqual({
+      toolCallDeltas: [{
+        index: 0,
+        id: 'call_custom_1',
+        name: 'MyTool',
+        argumentsDelta: '{"foo":"bar"}',
+      }],
+    });
+
+    expect(normalizeUpstreamFinalResponse({
+      object: 'response',
+      id: 'resp_custom_tool_1',
+      model: 'gpt-test',
+      created: 321,
+      output: [
+        {
+          id: 'ct_1',
+          type: 'custom_tool_call',
+          call_id: 'call_custom_1',
+          name: 'MyTool',
+          input: '{"foo":"bar"}',
+        },
+      ],
+      status: 'completed',
+    }, 'fallback-model')).toEqual({
+      id: 'resp_custom_tool_1',
+      model: 'gpt-test',
+      created: 321,
+      content: '',
+      reasoningContent: '',
+      finishReason: 'tool_calls',
+      toolCalls: [{
+        id: 'call_custom_1',
+        name: 'MyTool',
+        arguments: '{"foo":"bar"}',
+      }],
+    });
+  });
+
+  it('normalizes terminal-only responses output payloads carried on response.completed', () => {
+    const context = createStreamTransformContext('gpt-test');
+
+    expect(normalizeUpstreamStreamEvent({
+      type: 'response.completed',
+      response: {
+        id: 'resp_done_only',
+        model: 'gpt-test',
+        status: 'completed',
+        output: [
+          {
+            id: 'msg_1',
+            type: 'message',
+            role: 'assistant',
+            status: 'completed',
+            content: [{ type: 'output_text', text: 'hello' }],
+          },
+        ],
+      },
+    }, context, 'fallback-model')).toMatchObject({
+      contentDelta: 'hello',
+      finishReason: 'stop',
+      done: true,
     });
   });
 

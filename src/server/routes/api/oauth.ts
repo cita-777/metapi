@@ -11,6 +11,7 @@ import {
   startOauthRebindFlow,
   submitOauthManualCallback,
 } from '../../services/oauth/service.js';
+import { parseSiteProxyUrlInput } from '../../services/siteProxy.js';
 
 const limitOauthProviderRead = createRateLimitGuard({
   bucket: 'oauth-provider-read',
@@ -110,7 +111,7 @@ export async function oauthRoutes(app: FastifyInstance) {
     providers: listOauthProviders(),
   }));
 
-  app.post<{ Params: { provider: string }; Body: { accountId?: number; projectId?: string } }>(
+  app.post<{ Params: { provider: string }; Body: { accountId?: number; projectId?: string; proxyUrl?: string | null } }>(
     '/api/oauth/providers/:provider/start',
     { preHandler: [limitOauthStart] },
     async (request, reply) => {
@@ -124,12 +125,17 @@ export async function oauthRoutes(app: FastifyInstance) {
       if (request.body?.projectId !== undefined && projectId === null) {
         return reply.code(400).send({ message: 'invalid project id' });
       }
+      const normalizedProxyUrl = parseSiteProxyUrlInput(request.body?.proxyUrl);
+      if (normalizedProxyUrl.present && !normalizedProxyUrl.valid) {
+        return reply.code(400).send({ message: 'invalid proxy url' });
+      }
 
       try {
         return await startOauthProviderFlow({
           provider: request.params.provider,
           rebindAccountId: rebindAccountId ?? undefined,
           projectId: projectId ?? undefined,
+          proxyUrl: normalizedProxyUrl.present ? normalizedProxyUrl.proxyUrl : undefined,
           requestOrigin: resolveRequestOrigin(request),
         });
       } catch (error: any) {
@@ -203,7 +209,7 @@ export async function oauthRoutes(app: FastifyInstance) {
     },
   );
 
-  app.post<{ Params: { accountId: string } }>(
+  app.post<{ Params: { accountId: string }; Body?: { proxyUrl?: string | null } }>(
     '/api/oauth/connections/:accountId/rebind',
     { preHandler: [limitOauthConnectionMutate] },
     async (request, reply) => {
@@ -211,8 +217,18 @@ export async function oauthRoutes(app: FastifyInstance) {
       if (accountId === null) {
         return reply.code(400).send({ message: 'invalid account id' });
       }
+      const normalizedProxyUrl = parseSiteProxyUrlInput(request.body?.proxyUrl);
+      if (normalizedProxyUrl.present && !normalizedProxyUrl.valid) {
+        return reply.code(400).send({ message: 'invalid proxy url' });
+      }
       try {
-        return await startOauthRebindFlow(accountId, resolveRequestOrigin(request));
+        return await startOauthRebindFlow(
+          accountId,
+          {
+            requestOrigin: resolveRequestOrigin(request),
+            proxyUrl: normalizedProxyUrl.present ? normalizedProxyUrl.proxyUrl : undefined,
+          },
+        );
       } catch (error: any) {
         return reply.code(404).send({ message: error?.message || 'oauth account not found' });
       }

@@ -1,7 +1,6 @@
 import { fetch } from 'undici';
 import { schema } from '../db/index.js';
-import { getProxyUrlFromExtraConfig } from './accountExtraConfig.js';
-import { withExplicitProxyRequestInit, withSiteRecordProxyRequestInit } from './siteProxy.js';
+import { withSiteRecordProxyRequestInit } from './siteProxy.js';
 import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { CLAUDE_DEFAULT_ANTHROPIC_VERSION } from './oauth/claudeProvider.js';
 import {
@@ -175,6 +174,7 @@ export async function discoverClaudeModelsFromCloud(input: {
 }
 
 export async function validateGeminiCliOauthConnection(input: {
+  site: PlatformDiscoverySite;
   account: PlatformDiscoveryAccount;
 }): Promise<void> {
   const accessToken = (input.account.accessToken || '').trim();
@@ -188,7 +188,7 @@ export async function validateGeminiCliOauthConnection(input: {
   }
   const response = await fetch(
     `https://serviceusage.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(GEMINI_CLI_REQUIRED_SERVICE)}`,
-    withExplicitProxyRequestInit(getProxyUrlFromExtraConfig(input.account.extraConfig), {
+    withSiteRecordProxyRequestInit(input.site, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -196,7 +196,7 @@ export async function validateGeminiCliOauthConnection(input: {
         'User-Agent': GEMINI_CLI_USER_AGENT,
         'X-Goog-Api-Client': GEMINI_CLI_GOOGLE_API_CLIENT,
       },
-    }, true),
+    }),
   );
   if (!response.ok) {
     const text = await response.text().catch(() => '');

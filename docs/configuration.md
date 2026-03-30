@@ -32,6 +32,49 @@
 | `SYSTEM_PROXY_URL` | 系统代理 URL（留空表示不使用） | 空 |
 | `ACCOUNT_CREDENTIAL_SECRET` | 账号凭证加密密钥（用于加密存储的上游账号密码） | 默认使用 `AUTH_TOKEN` |
 
+## 更新中心与 Deploy Helper
+
+如果你现在只是一个普通 Docker / Docker Compose 部署，没有 K3s / Kubernetes、没有 Helm release、也没有 Deploy Helper，那么这一节可以先跳过。
+
+这一节只写给已经准备使用“K3s 更新中心”的用户。除了设置页里的运行时字段，还需要补齐主服务和 helper 的环境变量。
+
+如果你是老用户，正在从 Docker Compose 迁到 K3s / Helm，这一节可以提前看，先把迁移后的环境变量和组件关系理解清楚。
+
+### 主 Metapi 服务
+
+| 变量名 | 说明 | 默认值 |
+|--------|------|--------|
+| `DEPLOY_HELPER_TOKEN` | 主服务访问 Deploy Helper 的 Bearer Token | 空 |
+| `UPDATE_CENTER_HELPER_TOKEN` | `DEPLOY_HELPER_TOKEN` 的兼容别名，二选一即可 | 空 |
+
+> [!IMPORTANT]
+> 主 Metapi 和 Deploy Helper 必须使用同一个 token，否则更新中心可以显示页面但无法完成 helper 状态查询或部署。
+
+### Deploy Helper 服务
+
+| 变量名 | 说明 | 默认值 |
+|--------|------|--------|
+| `DEPLOY_HELPER_HOST` | helper 监听地址 | `0.0.0.0` |
+| `DEPLOY_HELPER_PORT` | helper 监听端口 | `9850` |
+| `DEPLOY_HELPER_TOKEN` | helper Bearer Token，必须和主服务一致 | 空 |
+
+### 设置页里的持久化字段
+
+更新中心页面本身还会把下面这些字段持久化到运行数据库：
+
+- `helperBaseUrl`
+- `namespace`
+- `releaseName`
+- `chartRef`
+- `imageRepository`
+- `githubReleasesEnabled`
+- `dockerHubTagsEnabled`
+- `defaultDeploySource`
+
+完整接入步骤见：
+
+- [K3s 更新中心](./k3s-update-center.md)
+
 ## 数据库配置
 
 | 变量名 | 说明 | 默认值 |

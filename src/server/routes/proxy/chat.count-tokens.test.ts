@@ -14,6 +14,11 @@ const resolveProxyUsageWithSelfLogFallbackMock = vi.fn(async ({ usage }: any) =>
   estimatedCostFromQuota: 0,
   recoveredFromSelfLog: false,
 }));
+const startSurfaceProxyDebugTraceMock = vi.fn();
+const safeUpdateSurfaceProxyDebugSelectionMock = vi.fn();
+const safeUpdateSurfaceProxyDebugCandidatesMock = vi.fn();
+const safeInsertSurfaceProxyDebugAttemptMock = vi.fn();
+const safeFinalizeSurfaceProxyDebugTraceMock = vi.fn();
 const dbInsertMock = vi.fn((_arg?: any) => ({
   values: () => ({
     run: () => undefined,
@@ -60,6 +65,19 @@ vi.mock('../../services/proxyUsageFallbackService.js', () => ({
   resolveProxyUsageWithSelfLogFallback: (arg: any) => resolveProxyUsageWithSelfLogFallbackMock(arg),
 }));
 
+vi.mock('../../services/proxyDebugTraceRuntime.js', () => ({
+  startSurfaceProxyDebugTrace: (...args: unknown[]) => startSurfaceProxyDebugTraceMock(...args),
+  safeUpdateSurfaceProxyDebugSelection: (...args: unknown[]) => safeUpdateSurfaceProxyDebugSelectionMock(...args),
+  safeUpdateSurfaceProxyDebugCandidates: (...args: unknown[]) => safeUpdateSurfaceProxyDebugCandidatesMock(...args),
+  safeInsertSurfaceProxyDebugAttempt: (...args: unknown[]) => safeInsertSurfaceProxyDebugAttemptMock(...args),
+  safeFinalizeSurfaceProxyDebugTrace: (...args: unknown[]) => safeFinalizeSurfaceProxyDebugTraceMock(...args),
+  safeUpdateSurfaceProxyDebugAttempt: vi.fn(),
+  reserveSurfaceProxyDebugAttemptBase: () => 0,
+  buildSurfaceProxyDebugResponseHeaders: () => ({}),
+  captureSurfaceProxyDebugSuccessResponseBody: async () => null,
+  parseSurfaceProxyDebugTextPayload: (raw: string) => raw,
+}));
+
 vi.mock('../../services/oauth/quota.js', () => ({
   recordOauthQuotaResetHint: async () => undefined,
 }));
@@ -95,7 +113,27 @@ describe('claude count_tokens proxy route', () => {
     reportProxyAllFailedMock.mockReset();
     reportTokenExpiredMock.mockReset();
     resolveProxyUsageWithSelfLogFallbackMock.mockClear();
+    startSurfaceProxyDebugTraceMock.mockReset();
+    safeUpdateSurfaceProxyDebugSelectionMock.mockReset();
+    safeUpdateSurfaceProxyDebugCandidatesMock.mockReset();
+    safeInsertSurfaceProxyDebugAttemptMock.mockReset();
+    safeFinalizeSurfaceProxyDebugTraceMock.mockReset();
     dbInsertMock.mockClear();
+
+    startSurfaceProxyDebugTraceMock.mockResolvedValue({
+      traceId: 701,
+      options: {
+        enabled: true,
+        captureHeaders: true,
+        captureBodies: true,
+        captureStreamChunks: false,
+        targetSessionId: '',
+        targetClientKind: '',
+        targetModel: '',
+        retentionHours: 24,
+        maxBodyBytes: 262144,
+      },
+    });
 
     selectChannelMock.mockReturnValue({
       channel: { id: 11, routeId: 22 },
@@ -146,6 +184,18 @@ describe('claude count_tokens proxy route', () => {
     expect(options.headers['anthropic-version']).toBe('2023-06-01');
     expect(options.headers['anthropic-beta']).toContain('claude-code-20250219');
     expect(options.headers['Accept-Encoding']).toBe('gzip, deflate, br, zstd');
+    expect(startSurfaceProxyDebugTraceMock).toHaveBeenCalledWith(expect.objectContaining({
+      downstreamPath: '/v1/messages/count_tokens',
+      requestedModel: 'claude-opus-4-6',
+    }));
+    expect(safeInsertSurfaceProxyDebugAttemptMock).toHaveBeenCalled();
+    expect(safeFinalizeSurfaceProxyDebugTraceMock).toHaveBeenCalledWith(
+      expect.objectContaining({ traceId: 701 }),
+      expect.objectContaining({
+        finalStatus: 'success',
+        finalUpstreamPath: '/v1/messages/count_tokens?beta=true',
+      }),
+    );
 
     const forwardedBody = JSON.parse(String(options.body));
     expect(forwardedBody.model).toBe('claude-opus-4-6');

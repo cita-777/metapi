@@ -20,6 +20,7 @@ import { monitorRoutes } from './routes/api/monitor.js';
 import { downstreamApiKeysRoutes } from './routes/api/downstreamApiKeys.js';
 import { oauthRoutes } from './routes/api/oauth.js';
 import { siteAnnouncementsRoutes } from './routes/api/siteAnnouncements.js';
+import { updateCenterRoutes } from './routes/api/updateCenter.js';
 import { proxyRoutes } from './routes/proxy/router.js';
 import { startScheduler } from './services/checkinScheduler.js';
 import * as routeRefreshWorkflow from './services/routeRefreshWorkflow.js';
@@ -30,6 +31,7 @@ import { repairStoredCreatedAtValues } from './services/storedTimestampRepairSer
 import { migrateSiteApiKeysToAccounts } from './services/siteApiKeyMigrationService.js';
 import { ensureDefaultSitesSeeded } from './services/defaultSiteSeedService.js';
 import { ensureOauthIdentityBackfill } from './services/oauth/oauthIdentityBackfill.js';
+import { ensureOauthProviderSitesExist } from './services/oauth/oauthSiteRegistry.js';
 import { startOAuthLoopbackCallbackServers, stopOAuthLoopbackCallbackServers } from './services/oauth/localCallbackServer.js';
 import { startSiteAnnouncementPolling } from './services/siteAnnouncementPollingService.js';
 import { reloadBackupWebdavScheduler } from './services/backupService.js';
@@ -137,6 +139,11 @@ function applyRuntimeSettings(settingsMap: Map<string, string>) {
   const systemProxyUrl = parseSettingFromMap<string>(settingsMap, 'system_proxy_url');
   if (typeof systemProxyUrl === 'string') config.systemProxyUrl = systemProxyUrl;
 
+  const codexUpstreamWebsocketEnabled = parseSettingFromMap<boolean>(settingsMap, 'codex_upstream_websocket_enabled');
+  if (typeof codexUpstreamWebsocketEnabled === 'boolean') {
+    config.codexUpstreamWebsocketEnabled = codexUpstreamWebsocketEnabled;
+  }
+
   const proxyErrorKeywords = parseSettingFromMap<string[] | string>(settingsMap, 'proxy_error_keywords');
   if (proxyErrorKeywords !== undefined) {
     config.proxyErrorKeywords = toStringList(proxyErrorKeywords);
@@ -201,6 +208,69 @@ function applyRuntimeSettings(settingsMap: Map<string, string>) {
   const logCleanupRetentionDays = parseSettingFromMap<number>(settingsMap, 'log_cleanup_retention_days');
   if (typeof logCleanupRetentionDays === 'number' && Number.isFinite(logCleanupRetentionDays) && logCleanupRetentionDays >= 1) {
     config.logCleanupRetentionDays = normalizeLogCleanupRetentionDays(logCleanupRetentionDays);
+  }
+
+  const proxySessionChannelConcurrencyLimit = parseSettingFromMap<number>(settingsMap, 'proxy_session_channel_concurrency_limit');
+  if (
+    typeof proxySessionChannelConcurrencyLimit === 'number'
+    && Number.isFinite(proxySessionChannelConcurrencyLimit)
+    && proxySessionChannelConcurrencyLimit >= 0
+  ) {
+    config.proxySessionChannelConcurrencyLimit = Math.trunc(proxySessionChannelConcurrencyLimit);
+  }
+
+  const proxySessionChannelQueueWaitMs = parseSettingFromMap<number>(settingsMap, 'proxy_session_channel_queue_wait_ms');
+  if (
+    typeof proxySessionChannelQueueWaitMs === 'number'
+    && Number.isFinite(proxySessionChannelQueueWaitMs)
+    && proxySessionChannelQueueWaitMs >= 0
+  ) {
+    config.proxySessionChannelQueueWaitMs = Math.trunc(proxySessionChannelQueueWaitMs);
+  }
+
+  const proxyDebugTraceEnabled = parseSettingFromMap<boolean>(settingsMap, 'proxy_debug_trace_enabled');
+  if (typeof proxyDebugTraceEnabled === 'boolean') {
+    config.proxyDebugTraceEnabled = proxyDebugTraceEnabled;
+  }
+
+  const proxyDebugCaptureHeaders = parseSettingFromMap<boolean>(settingsMap, 'proxy_debug_capture_headers');
+  if (typeof proxyDebugCaptureHeaders === 'boolean') {
+    config.proxyDebugCaptureHeaders = proxyDebugCaptureHeaders;
+  }
+
+  const proxyDebugCaptureBodies = parseSettingFromMap<boolean>(settingsMap, 'proxy_debug_capture_bodies');
+  if (typeof proxyDebugCaptureBodies === 'boolean') {
+    config.proxyDebugCaptureBodies = proxyDebugCaptureBodies;
+  }
+
+  const proxyDebugCaptureStreamChunks = parseSettingFromMap<boolean>(settingsMap, 'proxy_debug_capture_stream_chunks');
+  if (typeof proxyDebugCaptureStreamChunks === 'boolean') {
+    config.proxyDebugCaptureStreamChunks = proxyDebugCaptureStreamChunks;
+  }
+
+  const proxyDebugTargetSessionId = parseSettingFromMap<string>(settingsMap, 'proxy_debug_target_session_id');
+  if (typeof proxyDebugTargetSessionId === 'string') {
+    config.proxyDebugTargetSessionId = proxyDebugTargetSessionId.trim();
+  }
+
+  const proxyDebugTargetClientKind = parseSettingFromMap<string>(settingsMap, 'proxy_debug_target_client_kind');
+  if (typeof proxyDebugTargetClientKind === 'string') {
+    config.proxyDebugTargetClientKind = proxyDebugTargetClientKind.trim();
+  }
+
+  const proxyDebugTargetModel = parseSettingFromMap<string>(settingsMap, 'proxy_debug_target_model');
+  if (typeof proxyDebugTargetModel === 'string') {
+    config.proxyDebugTargetModel = proxyDebugTargetModel.trim();
+  }
+
+  const proxyDebugRetentionHours = parseSettingFromMap<number>(settingsMap, 'proxy_debug_retention_hours');
+  if (typeof proxyDebugRetentionHours === 'number' && Number.isFinite(proxyDebugRetentionHours) && proxyDebugRetentionHours >= 1) {
+    config.proxyDebugRetentionHours = Math.trunc(proxyDebugRetentionHours);
+  }
+
+  const proxyDebugMaxBodyBytes = parseSettingFromMap<number>(settingsMap, 'proxy_debug_max_body_bytes');
+  if (typeof proxyDebugMaxBodyBytes === 'number' && Number.isFinite(proxyDebugMaxBodyBytes) && proxyDebugMaxBodyBytes >= 1024) {
+    config.proxyDebugMaxBodyBytes = Math.trunc(proxyDebugMaxBodyBytes);
   }
 
   const routingWeights = parseSettingFromMap<Partial<typeof config.routingWeights>>(settingsMap, 'routing_weights');
@@ -346,6 +416,8 @@ try {
   console.warn(`Failed to load runtime settings overrides: ${(error as Error)?.message || 'unknown error'}`);
 }
 
+await ensureOauthProviderSitesExist();
+
 const app = Fastify(buildFastifyOptions(config));
 
 await app.register(cors);
@@ -368,9 +440,10 @@ await app.register(authRoutes);
 await app.register(settingsRoutes);
 await app.register(accountTokensRoutes);
 await app.register(searchRoutes);
-  await app.register(eventsRoutes);
-  await app.register(siteAnnouncementsRoutes);
-  await app.register(taskRoutes);
+await app.register(eventsRoutes);
+await app.register(siteAnnouncementsRoutes);
+await app.register(updateCenterRoutes);
+await app.register(taskRoutes);
 await app.register(testRoutes);
 await app.register(monitorRoutes);
 await app.register(downstreamApiKeysRoutes);

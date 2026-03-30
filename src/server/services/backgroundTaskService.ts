@@ -4,6 +4,12 @@ import { sendNotification } from './notifyService.js';
 
 export type BackgroundTaskStatus = 'pending' | 'running' | 'succeeded' | 'failed';
 
+export type BackgroundTaskLogEntry = {
+  seq: number;
+  message: string;
+  createdAt: string;
+};
+
 export type BackgroundTask = {
   id: string;
   type: string;
@@ -18,6 +24,7 @@ export type BackgroundTask = {
   startedAt: string | null;
   finishedAt: string | null;
   expiresAtMs: number;
+  logs: BackgroundTaskLogEntry[];
 };
 
 type TaskMessageTemplate = string | ((task: BackgroundTask) => string);
@@ -37,9 +44,12 @@ type BackgroundTaskStartOptions = {
 
 const TASK_TTL_MS = 6 * 60 * 60 * 1000;
 const TASK_CLEANUP_INTERVAL_MS = 60 * 1000;
+const TASK_LOG_LIMIT = 200;
 
 const tasks = new Map<string, BackgroundTask>();
 const dedupeTaskIds = new Map<string, string>();
+const taskLogSeq = new Map<string, number>();
+const taskLogSubscribers = new Map<string, Set<(entry: BackgroundTaskLogEntry) => void>>();
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
 function nowIso() {
@@ -72,13 +82,75 @@ function resolveTaskMessage(template: TaskMessageTemplate | undefined, task: Bac
 }
 
 function setTaskStatus(task: BackgroundTask, patch: Partial<BackgroundTask>) {
+  const currentTask = tasks.get(task.id) || task;
   const next: BackgroundTask = {
-    ...task,
+    ...currentTask,
     ...patch,
     updatedAt: nowIso(),
   };
   tasks.set(task.id, next);
   return next;
+}
+
+function cleanupTaskInternals(taskId: string) {
+  taskLogSeq.delete(taskId);
+  taskLogSubscribers.delete(taskId);
+}
+
+export function appendBackgroundTaskLog(taskId: string, message: string): BackgroundTaskLogEntry | null {
+  const task = tasks.get(taskId);
+  const normalizedMessage = String(message || '').trim();
+  if (!task || !normalizedMessage) return null;
+
+  const nextSeq = (taskLogSeq.get(taskId) || 0) + 1;
+  taskLogSeq.set(taskId, nextSeq);
+
+  const entry: BackgroundTaskLogEntry = {
+    seq: nextSeq,
+    message: normalizedMessage,
+    createdAt: nowIso(),
+  };
+
+  const nextLogs = [...task.logs, entry];
+  const trimmedLogs = nextLogs.length > TASK_LOG_LIMIT
+    ? nextLogs.slice(nextLogs.length - TASK_LOG_LIMIT)
+    : nextLogs;
+
+  tasks.set(taskId, {
+    ...task,
+    logs: trimmedLogs,
+    updatedAt: nowIso(),
+  });
+
+  const subscribers = taskLogSubscribers.get(taskId);
+  if (subscribers) {
+    for (const subscriber of subscribers) {
+      subscriber(entry);
+    }
+  }
+
+  return entry;
+}
+
+export function subscribeToBackgroundTaskLogs(
+  taskId: string,
+  listener: (entry: BackgroundTaskLogEntry) => void,
+): () => void {
+  let subscribers = taskLogSubscribers.get(taskId);
+  if (!subscribers) {
+    subscribers = new Set();
+    taskLogSubscribers.set(taskId, subscribers);
+  }
+  subscribers.add(listener);
+
+  return () => {
+    const current = taskLogSubscribers.get(taskId);
+    if (!current) return;
+    current.delete(listener);
+    if (current.size <= 0) {
+      taskLogSubscribers.delete(taskId);
+    }
+  };
 }
 
 async function appendTaskEvent(level: 'info' | 'warning' | 'error', title: string, message: string, taskId: string) {
@@ -154,6 +226,7 @@ function cleanupExpiredTasks() {
       if (task.dedupeKey && dedupeTaskIds.get(task.dedupeKey) === taskId) {
         dedupeTaskIds.delete(task.dedupeKey);
       }
+      cleanupTaskInternals(taskId);
     }
   }
 }
@@ -196,9 +269,11 @@ export function startBackgroundTask(
     startedAt: null,
     finishedAt: null,
     expiresAtMs: Date.now() + Math.max(60_000, options.keepMs ?? TASK_TTL_MS),
+    logs: [],
   };
 
   tasks.set(task.id, task);
+  taskLogSeq.set(task.id, 0);
   if (dedupeKey) dedupeTaskIds.set(dedupeKey, task.id);
 
   appendTaskEvent('info', `${task.title}已开始`, `${task.title} 已开始执行`, task.id);
@@ -246,6 +321,8 @@ export function summarizeCheckinResults(results: Array<{ result?: any }>): { tot
 export function __resetBackgroundTasksForTests() {
   tasks.clear();
   dedupeTaskIds.clear();
+  taskLogSeq.clear();
+  taskLogSubscribers.clear();
   if (cleanupTimer) {
     clearInterval(cleanupTimer);
     cleanupTimer = null;

@@ -1,4 +1,4 @@
-import { randomUUID, createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import {
   rankConversationFileEndpoints,
   type ConversationFileInputSummary,
@@ -7,6 +7,10 @@ import { resolveProviderProfile } from '../../proxy-core/providers/registry.js';
 import { config } from '../../config.js';
 import { fetchModelPricingCatalog } from '../../services/modelPricingService.js';
 import { applyPayloadRules } from '../../services/payloadRules.js';
+import {
+  applyUpstreamEndpointRuntimePreference,
+  buildEndpointCapabilityProfile,
+} from '../../services/upstreamEndpointRuntimeMemory.js';
 import type { DownstreamFormat } from '../../transformers/shared/normalized.js';
 import {
   convertOpenAiBodyToResponsesBody as convertOpenAiBodyToResponsesBodyViaTransformer,
@@ -44,23 +48,6 @@ export {
 export type UpstreamEndpoint = 'chat' | 'messages' | 'responses';
 export type EndpointPreference = DownstreamFormat | 'responses';
 
-type EndpointCapabilityProfile = {
-  modelKey: string;
-  preferMessagesForClaudeModel: boolean;
-  hasImageInput: boolean;
-  hasAudioInput: boolean;
-  hasNonImageFileInput: boolean;
-  hasRemoteDocumentUrl: boolean;
-  wantsNativeResponsesReasoning: boolean;
-};
-
-type EndpointRuntimeState = {
-  preferredEndpoint: UpstreamEndpoint | null;
-  preferredUpdatedAtMs: number;
-  lastTouchedAtMs: number;
-  blockedUntilMsByEndpoint: Partial<Record<UpstreamEndpoint, number>>;
-};
-
 type ChannelContext = {
   site: {
     id: number;
@@ -75,40 +62,12 @@ type ChannelContext = {
   };
 };
 
-const ENDPOINT_RUNTIME_PREFERRED_TTL_MS = 24 * 60 * 60 * 1000;
-const ENDPOINT_RUNTIME_BLOCK_TTL_MS = 6 * 60 * 60 * 1000;
-const MAX_ENDPOINT_RUNTIME_STATES = 512;
-export const MAX_ENDPOINT_RUNTIME_MODEL_KEY_LENGTH = 64;
-export const MODEL_KEY_HASH_SUFFIX_LENGTH = 8;
-const endpointRuntimeStates = new Map<string, EndpointRuntimeState>();
-
-export function boundEndpointRuntimeModelKey(value: string): string {
-  if (value.length <= MAX_ENDPOINT_RUNTIME_MODEL_KEY_LENGTH) {
-    return value;
-  }
-
-  const prefix = value.slice(0, MAX_ENDPOINT_RUNTIME_MODEL_KEY_LENGTH);
-  const hash = createHash('sha256')
-    .update(value)
-    .digest('hex')
-    .slice(0, MODEL_KEY_HASH_SUFFIX_LENGTH);
-  return `${prefix}-${hash}`;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
 }
 
 function asTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
-}
-
-function normalizeEndpointRuntimeModelKey(...values: Array<unknown>): string {
-  for (const value of values) {
-    const normalized = asTrimmedString(value).toLowerCase();
-    if (normalized) return boundEndpointRuntimeModelKey(normalized);
-  }
-  return boundEndpointRuntimeModelKey('unknown-model');
 }
 
 function resolveRequestedModelForPayloadRules(input: {
@@ -127,12 +86,6 @@ function resolveRequestedModelForPayloadRules(input: {
 
 function normalizePlatformName(platform: unknown): string {
   return asTrimmedString(platform).toLowerCase();
-}
-
-function isClaudeFamilyModel(modelName: string): boolean {
-  const normalized = asTrimmedString(modelName).toLowerCase();
-  if (!normalized) return false;
-  return normalized === 'claude' || normalized.startsWith('claude-') || normalized.includes('claude');
 }
 
 const HOP_BY_HOP_HEADERS = new Set([
@@ -413,7 +366,11 @@ function ensureCodexResponsesStoreFalse(
   body: Record<string, unknown>,
   sitePlatform: string,
 ): Record<string, unknown> {
-  return body;
+  if (sitePlatform !== 'codex') return body;
+  return {
+    ...body,
+    store: false,
+  };
 }
 
 function convertCodexSystemRoleToDeveloper(input: unknown): unknown {
@@ -489,277 +446,6 @@ function normalizeEndpointTypes(value: unknown): UpstreamEndpoint[] {
   }
 
   return Array.from(normalized);
-}
-
-function buildEndpointCapabilityProfile(input?: {
-  modelName?: string;
-  requestedModelHint?: string;
-  requestCapabilities?: {
-    hasNonImageFileInput?: boolean;
-    conversationFileSummary?: ConversationFileInputSummary;
-    wantsNativeResponsesReasoning?: boolean;
-  };
-}): EndpointCapabilityProfile {
-  const conversationFileSummary = input?.requestCapabilities?.conversationFileSummary;
-  return {
-    modelKey: normalizeEndpointRuntimeModelKey(input?.modelName, input?.requestedModelHint),
-    preferMessagesForClaudeModel: (
-      isClaudeFamilyModel(asTrimmedString(input?.modelName))
-      || isClaudeFamilyModel(asTrimmedString(input?.requestedModelHint))
-    ),
-    hasImageInput: conversationFileSummary?.hasImage === true,
-    hasAudioInput: conversationFileSummary?.hasAudio === true,
-    hasNonImageFileInput: (
-      conversationFileSummary?.hasDocument === true
-      || input?.requestCapabilities?.hasNonImageFileInput === true
-    ),
-    hasRemoteDocumentUrl: (
-      conversationFileSummary?.hasRemoteDocumentUrl === true
-    ),
-    wantsNativeResponsesReasoning: input?.requestCapabilities?.wantsNativeResponsesReasoning === true,
-  };
-}
-
-function shouldUseEndpointRuntimeMemory(capabilityProfile: EndpointCapabilityProfile): boolean {
-  // Attachment-capable requests are not protocol-equivalent across chat/messages/responses.
-  // A transient 200 on one endpoint should not bias later multimodal requests onto a lossy path.
-  return (
-    !capabilityProfile.hasImageInput
-    && !capabilityProfile.hasAudioInput
-    && !capabilityProfile.hasNonImageFileInput
-  );
-}
-
-function buildEndpointRuntimeStateKey(input: {
-  siteId: number;
-  downstreamFormat: EndpointPreference;
-  capabilityProfile: EndpointCapabilityProfile;
-}): string {
-  const capabilityProfile = input.capabilityProfile;
-  return [
-    String(input.siteId),
-    input.downstreamFormat,
-    capabilityProfile.modelKey,
-    capabilityProfile.hasNonImageFileInput ? 'files' : 'nofiles',
-    capabilityProfile.hasRemoteDocumentUrl ? 'remoteurl' : 'noremoteurl',
-    capabilityProfile.wantsNativeResponsesReasoning ? 'reasoning' : 'noreasoning',
-  ].join(':');
-}
-
-function getOrCreateEndpointRuntimeState(key: string, nowMs = Date.now()): EndpointRuntimeState {
-  sweepEndpointRuntimeStates(nowMs);
-  const existing = endpointRuntimeStates.get(key);
-  if (existing) {
-    existing.lastTouchedAtMs = nowMs;
-    return existing;
-  }
-
-  const initial: EndpointRuntimeState = {
-    preferredEndpoint: null,
-    preferredUpdatedAtMs: nowMs,
-    lastTouchedAtMs: nowMs,
-    blockedUntilMsByEndpoint: {},
-  };
-  endpointRuntimeStates.set(key, initial);
-  enforceEndpointRuntimeStateLimit();
-  return initial;
-}
-
-function maybeDeleteEndpointRuntimeState(key: string, nowMs = Date.now()): void {
-  const state = endpointRuntimeStates.get(key);
-  if (!state) return;
-
-  const hasActiveBlock = Object.values(state.blockedUntilMsByEndpoint).some((untilMs) => (
-    typeof untilMs === 'number' && untilMs > nowMs
-  ));
-  const preferredFresh = (
-    !!state.preferredEndpoint
-    && (state.preferredUpdatedAtMs + ENDPOINT_RUNTIME_PREFERRED_TTL_MS) > nowMs
-  );
-  if (!hasActiveBlock && !preferredFresh) {
-    endpointRuntimeStates.delete(key);
-  }
-}
-
-function applyEndpointRuntimePreference(
-  candidates: UpstreamEndpoint[],
-  key: string,
-  nowMs = Date.now(),
-): UpstreamEndpoint[] {
-  const state = endpointRuntimeStates.get(key);
-  if (!state || candidates.length <= 1) return candidates;
-  state.lastTouchedAtMs = nowMs;
-
-  const blocked = new Set<UpstreamEndpoint>();
-  for (const endpoint of candidates) {
-    const untilMs = state.blockedUntilMsByEndpoint[endpoint];
-    if (typeof untilMs === 'number' && untilMs > nowMs) {
-      blocked.add(endpoint);
-    }
-  }
-
-  let next = candidates.filter((endpoint) => !blocked.has(endpoint));
-  if (next.length === 0) {
-    next = [...candidates];
-  }
-
-  const preferredFresh = (
-    !!state.preferredEndpoint
-    && (state.preferredUpdatedAtMs + ENDPOINT_RUNTIME_PREFERRED_TTL_MS) > nowMs
-  );
-  if (preferredFresh && state.preferredEndpoint && next.includes(state.preferredEndpoint)) {
-    next = [
-      state.preferredEndpoint,
-      ...next.filter((endpoint) => endpoint !== state.preferredEndpoint),
-    ];
-  }
-
-  maybeDeleteEndpointRuntimeState(key, nowMs);
-  return next;
-}
-
-function sweepEndpointRuntimeStates(nowMs = Date.now()): void {
-  for (const [key, state] of endpointRuntimeStates.entries()) {
-    const hasActiveBlock = Object.values(state.blockedUntilMsByEndpoint).some((untilMs) => (
-      typeof untilMs === 'number' && untilMs > nowMs
-    ));
-    const preferredFresh = (
-      !!state.preferredEndpoint
-      && (state.preferredUpdatedAtMs + ENDPOINT_RUNTIME_PREFERRED_TTL_MS) > nowMs
-    );
-    const recentlyTouched = (state.lastTouchedAtMs + ENDPOINT_RUNTIME_PREFERRED_TTL_MS) > nowMs;
-    if (!hasActiveBlock && !preferredFresh && !recentlyTouched) {
-      endpointRuntimeStates.delete(key);
-    }
-  }
-}
-
-function enforceEndpointRuntimeStateLimit(): void {
-  if (endpointRuntimeStates.size <= MAX_ENDPOINT_RUNTIME_STATES) return;
-
-  const entries = [...endpointRuntimeStates.entries()]
-    .sort((left, right) => left[1].lastTouchedAtMs - right[1].lastTouchedAtMs);
-  const overflowCount = endpointRuntimeStates.size - MAX_ENDPOINT_RUNTIME_STATES;
-  for (const [key] of entries.slice(0, overflowCount)) {
-    endpointRuntimeStates.delete(key);
-  }
-}
-
-function inferSuggestedEndpointFromError(errorText?: string | null): UpstreamEndpoint | null {
-  const text = (errorText || '').toLowerCase();
-  if (!text) return null;
-  if (text.includes('/v1/responses')) return 'responses';
-  if (text.includes('/v1/messages')) return 'messages';
-  if (text.includes('/v1/chat/completions')) return 'chat';
-  return null;
-}
-
-function shouldBlockEndpointByError(status: number, errorText?: string | null): boolean {
-  if (isEndpointDispatchDeniedError(status, errorText)) return true;
-  if (status === 404 || status === 405 || status === 415 || status === 501) return true;
-  if (isUnsupportedMediaTypeError(status, errorText)) return true;
-
-  const text = (errorText || '').toLowerCase();
-  return (
-    text.includes('convert_request_failed')
-    || text.includes('endpoint_not_found')
-    || text.includes('unknown_endpoint')
-    || text.includes('unsupported_endpoint')
-    || text.includes('unsupported_path')
-    || text.includes('not_found_error')
-    || text.includes('unsupported legacy protocol')
-    || text.includes('please use /v1/')
-    || text.includes('does not allow /v1/')
-    || text.includes('unknown endpoint')
-    || text.includes('unsupported endpoint')
-    || text.includes('unsupported path')
-    || text.includes('unrecognized request url')
-    || text.includes('no route matched')
-    || text.includes('does not exist')
-  );
-}
-
-function shouldRememberSuccessfulEndpoint(input: {
-  endpoint: UpstreamEndpoint;
-  downstreamFormat: EndpointPreference;
-}): boolean {
-  if (input.downstreamFormat !== 'responses') return true;
-  return input.endpoint === 'responses';
-}
-
-export function resetUpstreamEndpointRuntimeState(): void {
-  endpointRuntimeStates.clear();
-}
-
-export function recordUpstreamEndpointSuccess(input: {
-  siteId: number;
-  endpoint: UpstreamEndpoint;
-  downstreamFormat: EndpointPreference;
-  modelName?: string;
-  requestedModelHint?: string;
-  requestCapabilities?: {
-    hasNonImageFileInput?: boolean;
-    conversationFileSummary?: ConversationFileInputSummary;
-    wantsNativeResponsesReasoning?: boolean;
-  };
-}): void {
-  const capabilityProfile = buildEndpointCapabilityProfile({
-    modelName: input.modelName,
-    requestedModelHint: input.requestedModelHint,
-    requestCapabilities: input.requestCapabilities,
-  });
-  if (!shouldUseEndpointRuntimeMemory(capabilityProfile)) return;
-  if (!shouldRememberSuccessfulEndpoint(input)) return;
-
-  const nowMs = Date.now();
-  const key = buildEndpointRuntimeStateKey({
-    siteId: input.siteId,
-    downstreamFormat: input.downstreamFormat,
-    capabilityProfile,
-  });
-  const state = getOrCreateEndpointRuntimeState(key, nowMs);
-  state.preferredEndpoint = input.endpoint;
-  state.preferredUpdatedAtMs = nowMs;
-  delete state.blockedUntilMsByEndpoint[input.endpoint];
-}
-
-export function recordUpstreamEndpointFailure(input: {
-  siteId: number;
-  endpoint: UpstreamEndpoint;
-  downstreamFormat: EndpointPreference;
-  status: number;
-  errorText?: string | null;
-  modelName?: string;
-  requestedModelHint?: string;
-  requestCapabilities?: {
-    hasNonImageFileInput?: boolean;
-    conversationFileSummary?: ConversationFileInputSummary;
-    wantsNativeResponsesReasoning?: boolean;
-  };
-}): void {
-  const capabilityProfile = buildEndpointCapabilityProfile({
-    modelName: input.modelName,
-    requestedModelHint: input.requestedModelHint,
-    requestCapabilities: input.requestCapabilities,
-  });
-  if (!shouldUseEndpointRuntimeMemory(capabilityProfile)) return;
-  if (!shouldBlockEndpointByError(input.status, input.errorText)) return;
-
-  const nowMs = Date.now();
-  const key = buildEndpointRuntimeStateKey({
-    siteId: input.siteId,
-    downstreamFormat: input.downstreamFormat,
-    capabilityProfile,
-  });
-  const state = getOrCreateEndpointRuntimeState(key, nowMs);
-  state.blockedUntilMsByEndpoint[input.endpoint] = nowMs + ENDPOINT_RUNTIME_BLOCK_TTL_MS;
-
-  const suggestedEndpoint = inferSuggestedEndpointFromError(input.errorText);
-  if (suggestedEndpoint && suggestedEndpoint !== input.endpoint) {
-    state.preferredEndpoint = suggestedEndpoint;
-    state.preferredUpdatedAtMs = nowMs;
-    delete state.blockedUntilMsByEndpoint[suggestedEndpoint];
-  }
 }
 
 function preferredEndpointOrder(
@@ -844,15 +530,12 @@ export async function resolveUpstreamEndpointCandidates(
   const preferMessagesForClaudeModel = capabilityProfile.preferMessagesForClaudeModel;
   const hasNonImageFileInput = capabilityProfile.hasNonImageFileInput;
   const wantsNativeResponsesReasoning = capabilityProfile.wantsNativeResponsesReasoning;
-  const runtimeStateKey = buildEndpointRuntimeStateKey({
-    siteId: context.site.id,
-    downstreamFormat,
-    capabilityProfile,
-  });
   const applyRuntimePreference = (candidates: UpstreamEndpoint[]) => (
-    shouldUseEndpointRuntimeMemory(capabilityProfile)
-      ? applyEndpointRuntimePreference(candidates, runtimeStateKey)
-      : candidates
+    applyUpstreamEndpointRuntimePreference(candidates, {
+      siteId: context.site.id,
+      downstreamFormat,
+      capabilityProfile,
+    })
   );
   const conversationFileSummary = requestCapabilities?.conversationFileSummary ?? {
     hasImage: false,
@@ -1256,7 +939,10 @@ export function buildUpstreamEndpointRequest(input: {
       ),
       sitePlatform,
     );
-    const configuredResponsesBody = applyConfiguredPayloadRules(body);
+    const configuredResponsesBody = ensureCodexResponsesStoreFalse(
+      applyConfiguredPayloadRules(body),
+      sitePlatform,
+    );
 
     if (sitePlatform === 'codex') {
       if (providerProfile?.id !== 'codex') {

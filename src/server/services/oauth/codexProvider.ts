@@ -1,5 +1,6 @@
 import { fetch } from 'undici';
 import { config } from '../../config.js';
+import { withExplicitProxyRequestInit } from '../siteProxy.js';
 import { createPkceChallenge } from './sessionStore.js';
 import type { OAuthProviderDefinition } from './providers.js';
 
@@ -106,15 +107,18 @@ function parseTokenResponsePayload(payload: unknown): CodexTokenExchangeResult {
   };
 }
 
-async function exchangeCodexToken(form: URLSearchParams): Promise<CodexTokenExchangeResult> {
-  const response = await fetch(CODEX_TOKEN_URL, {
+async function exchangeCodexToken(
+  form: URLSearchParams,
+  proxyUrl?: string | null,
+): Promise<CodexTokenExchangeResult> {
+  const response = await fetch(CODEX_TOKEN_URL, withExplicitProxyRequestInit(proxyUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
       Accept: 'application/json',
     },
     body: form.toString(),
-  });
+  }));
   if (!response.ok) {
     const text = await response.text().catch(() => '');
     throw new Error(text || `codex token exchange failed with status ${response.status}`);
@@ -126,6 +130,7 @@ export async function exchangeCodexAuthorizationCode(input: {
   code: string;
   codeVerifier: string;
   redirectUri: string;
+  proxyUrl?: string | null;
 }): Promise<CodexTokenExchangeResult> {
   return exchangeCodexToken(new URLSearchParams({
     grant_type: 'authorization_code',
@@ -133,16 +138,19 @@ export async function exchangeCodexAuthorizationCode(input: {
     code: input.code,
     redirect_uri: input.redirectUri,
     code_verifier: input.codeVerifier,
-  }));
+  }), input.proxyUrl);
 }
 
-export async function refreshCodexTokens(refreshToken: string): Promise<CodexTokenExchangeResult> {
+export async function refreshCodexTokens(
+  refreshToken: string,
+  proxyUrl?: string | null,
+): Promise<CodexTokenExchangeResult> {
   return exchangeCodexToken(new URLSearchParams({
     client_id: requireCodexClientId(),
     grant_type: 'refresh_token',
     refresh_token: refreshToken,
     scope: 'openid profile email',
-  }));
+  }), proxyUrl);
 }
 
 function getHeaderValue(headers: Record<string, unknown> | undefined, key: string): string | undefined {
@@ -193,11 +201,12 @@ export const codexOauthProvider: OAuthProviderDefinition = {
     redirectUri,
     codeVerifier,
   }),
-  exchangeAuthorizationCode: async ({ code, redirectUri, codeVerifier }) => {
+  exchangeAuthorizationCode: async ({ code, redirectUri, codeVerifier, proxyUrl }) => {
     const exchange = await exchangeCodexAuthorizationCode({
       code,
       redirectUri,
       codeVerifier,
+      proxyUrl,
     });
     return {
       accessToken: exchange.accessToken,
@@ -210,8 +219,8 @@ export const codexOauthProvider: OAuthProviderDefinition = {
       idToken: exchange.idToken,
     };
   },
-  refreshAccessToken: async ({ refreshToken }) => {
-    const refreshed = await refreshCodexTokens(refreshToken);
+  refreshAccessToken: async ({ refreshToken, proxyUrl }) => {
+    const refreshed = await refreshCodexTokens(refreshToken, proxyUrl);
     return {
       accessToken: refreshed.accessToken,
       refreshToken: refreshed.refreshToken,

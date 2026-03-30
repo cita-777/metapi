@@ -6,9 +6,21 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const fetchMock = vi.fn();
+const undiciAgentCtorMock = vi.fn();
+const undiciProxyAgentCtorMock = vi.fn();
 
 vi.mock('undici', () => ({
   fetch: (...args: unknown[]) => fetchMock(...args),
+  Agent: class MockUndiciAgent {
+    constructor(...args: unknown[]) {
+      undiciAgentCtorMock(...args);
+    }
+  },
+  ProxyAgent: class MockUndiciProxyAgent {
+    constructor(...args: unknown[]) {
+      undiciProxyAgentCtorMock(...args);
+    }
+  },
 }));
 
 type DbModule = typeof import('../../db/index.js');
@@ -51,13 +63,18 @@ describe('oauth routes', { timeout: 15_000 }, () => {
 
   beforeEach(async () => {
     fetchMock.mockReset();
+    undiciAgentCtorMock.mockReset();
+    undiciProxyAgentCtorMock.mockReset();
     await db.delete(schema.routeChannels).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
+    await db.delete(schema.settings).run();
     await db.delete(schema.sites).run();
+    const { invalidateSiteProxyCache } = await import('../../services/siteProxy.js');
+    invalidateSiteProxyCache();
   });
 
   afterAll(async () => {
@@ -365,6 +382,9 @@ describe('oauth routes', { timeout: 15_000 }, () => {
         host: 'metapi.example',
         'x-forwarded-proto': 'https',
       },
+      payload: {
+        proxyUrl: 'http://127.0.0.1:7890',
+      },
     });
     const startBody = startResponse.json() as { state: string };
 
@@ -380,6 +400,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     expect(String(fetchMock.mock.calls[0]?.[1]?.body || '')).toContain(
       'redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback',
     );
+    expect(fetchMock.mock.calls[0]?.[1]?.dispatcher).toBeDefined();
 
     const sessionResponse = await app.inject({
       method: 'GET',
@@ -418,6 +439,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     });
     expect(JSON.parse(accounts[0]?.extraConfig || '{}')).toMatchObject({
       credentialMode: 'session',
+      proxyUrl: 'http://127.0.0.1:7890',
       oauth: {
         email: 'codex-user@example.com',
         planType: 'plus',
@@ -432,6 +454,251 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const models = await db.select().from(schema.modelAvailability).all();
     const modelNames = models.map((row) => row.modelName);
     expect(modelNames.sort()).toEqual(['gpt-5', 'gpt-5.2-codex', 'gpt-5.4']);
+  });
+
+  it('uses the stored account proxy when refreshing a codex oauth access token', async () => {
+    const oauthService = await import('../../services/oauth/service.js');
+    const refreshJwt = buildJwt({
+      email: 'codex-refreshed@example.com',
+      'https://api.openai.com/auth': {
+        chatgpt_account_id: 'chatgpt-account-refresh',
+        chatgpt_plan_type: 'team',
+      },
+    });
+    const site = await db.insert(schema.sites).values({
+      name: 'ChatGPT Codex OAuth',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+    const existing = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'codex-existing@example.com',
+      accessToken: 'oauth-access-token-old',
+      apiToken: null,
+      checkinEnabled: false,
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-account-refresh',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        proxyUrl: 'http://127.0.0.1:7890',
+        oauth: {
+          email: 'codex-existing@example.com',
+          refreshToken: 'oauth-refresh-token-old',
+          idToken: refreshJwt,
+        },
+      }),
+    }).returning().get();
+
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        access_token: 'oauth-access-token-new',
+        refresh_token: 'oauth-refresh-token-new',
+        id_token: refreshJwt,
+        expires_in: 3600,
+        token_type: 'Bearer',
+      }),
+      text: async () => JSON.stringify({ ok: true }),
+    });
+
+    const refreshed = await oauthService.refreshOauthAccessToken(existing.id);
+
+    expect(refreshed.accessToken).toBe('oauth-access-token-new');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[1]?.dispatcher).toBeDefined();
+
+    const updated = await db.select().from(schema.accounts).where(eq(schema.accounts.id, existing.id)).get();
+    expect(updated?.accessToken).toBe('oauth-access-token-new');
+    expect(JSON.parse(updated?.extraConfig || '{}')).toMatchObject({
+      proxyUrl: 'http://127.0.0.1:7890',
+      oauth: {
+        refreshToken: 'oauth-refresh-token-new',
+      },
+    });
+  });
+
+  it('includes dispatcher for codex token exchange when oauth site enables the system proxy', async () => {
+    const jwt = buildJwt({
+      email: 'codex-proxy@example.com',
+      'https://api.openai.com/auth': {
+        chatgpt_account_id: 'chatgpt-account-proxy',
+        chatgpt_plan_type: 'plus',
+      },
+    });
+    await db.insert(schema.settings).values({
+      key: 'system_proxy_url',
+      value: JSON.stringify('http://127.0.0.1:7890'),
+    }).run();
+    await db.insert(schema.sites).values({
+      name: 'ChatGPT Codex OAuth',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+      useSystemProxy: true,
+    }).run();
+
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          access_token: 'oauth-access-token',
+          refresh_token: 'oauth-refresh-token',
+          id_token: jwt,
+          expires_in: 3600,
+          token_type: 'Bearer',
+        }),
+        text: async () => JSON.stringify({ ok: true }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          models: [{ id: 'gpt-5.4' }],
+        }),
+        text: async () => JSON.stringify({ ok: true }),
+      });
+
+    const startResponse = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/providers/codex/start',
+      headers: {
+        host: 'metapi.example',
+        'x-forwarded-proto': 'https',
+      },
+    });
+    expect(startResponse.statusCode).toBe(200);
+    const startBody = startResponse.json() as { state: string };
+
+    const callbackResponse = await app.inject({
+      method: 'POST',
+      url: `/api/oauth/sessions/${encodeURIComponent(startBody.state)}/manual-callback`,
+      payload: {
+        callbackUrl: `http://localhost:1455/auth/callback?state=${encodeURIComponent(startBody.state)}&code=oauth-code-proxy`,
+      },
+    });
+    expect(callbackResponse.statusCode).toBe(200);
+    const codexTokenCall = fetchMock.mock.calls.find((call) => String(call[0] || '') === 'https://auth.openai.com/oauth/token');
+    const codexTokenFetchInit = codexTokenCall?.[1] as Record<string, unknown> | undefined;
+    expect(codexTokenFetchInit).toEqual(expect.objectContaining({
+      dispatcher: expect.anything(),
+    }));
+  });
+
+  it('falls back to the site proxy during rebind exchange when clearing an account proxy override', async () => {
+    const originalJwt = buildJwt({
+      email: 'codex-clear@example.com',
+      'https://api.openai.com/auth': {
+        chatgpt_account_id: 'chatgpt-account-clear-existing',
+        chatgpt_plan_type: 'plus',
+      },
+    });
+    const reboundJwt = buildJwt({
+      email: 'codex-clear@example.com',
+      'https://api.openai.com/auth': {
+        chatgpt_account_id: 'chatgpt-account-clear-rebound',
+        chatgpt_plan_type: 'team',
+      },
+    });
+    await db.insert(schema.settings).values({
+      key: 'system_proxy_url',
+      value: JSON.stringify('http://127.0.0.1:7890'),
+    }).run();
+    const site = await db.insert(schema.sites).values({
+      name: 'ChatGPT Codex OAuth',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+      useSystemProxy: true,
+    }).returning().get();
+    const existing = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'codex-clear@example.com',
+      accessToken: 'stable-access-token',
+      apiToken: null,
+      checkinEnabled: false,
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-account-clear-existing',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        proxyUrl: 'http://127.0.0.1:9999',
+        oauth: {
+          provider: 'codex',
+          accountId: 'chatgpt-account-clear-existing',
+          accountKey: 'chatgpt-account-clear-existing',
+          email: 'codex-clear@example.com',
+          planType: 'plus',
+          refreshToken: 'stable-refresh-token',
+          idToken: originalJwt,
+        },
+      }),
+    }).returning().get();
+
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          access_token: 'rebound-access-token',
+          refresh_token: 'rebound-refresh-token',
+          id_token: reboundJwt,
+          expires_in: 3600,
+          token_type: 'Bearer',
+        }),
+        text: async () => JSON.stringify({ ok: true }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          models: [{ id: 'gpt-5.4' }],
+        }),
+        text: async () => JSON.stringify({ ok: true }),
+      });
+
+    const startResponse = await app.inject({
+      method: 'POST',
+      url: `/api/oauth/connections/${existing.id}/rebind`,
+      headers: {
+        host: 'metapi.example',
+        'x-forwarded-proto': 'https',
+      },
+      payload: {
+        proxyUrl: null,
+      },
+    });
+    expect(startResponse.statusCode).toBe(200);
+    const startBody = startResponse.json() as { state: string };
+
+    const callbackResponse = await app.inject({
+      method: 'POST',
+      url: `/api/oauth/sessions/${encodeURIComponent(startBody.state)}/manual-callback`,
+      payload: {
+        callbackUrl: `http://localhost:1455/auth/callback?state=${encodeURIComponent(startBody.state)}&code=oauth-code-clear-proxy`,
+      },
+    });
+    expect(callbackResponse.statusCode).toBe(200);
+
+    const codexTokenCall = fetchMock.mock.calls.find((call) => String(call[0] || '') === 'https://auth.openai.com/oauth/token');
+    const codexTokenFetchInit = codexTokenCall?.[1] as Record<string, unknown> | undefined;
+    expect(codexTokenFetchInit).toEqual(expect.objectContaining({
+      dispatcher: expect.anything(),
+    }));
+
+    const stored = await db.select().from(schema.accounts).where(eq(schema.accounts.id, existing.id)).get();
+    expect(stored?.accessToken).toBe('rebound-access-token');
+    expect(stored?.oauthAccountKey).toBe('chatgpt-account-clear-rebound');
+    expect(JSON.parse(stored?.extraConfig || '{}')).toMatchObject({
+      proxyUrl: null,
+      oauth: {
+        refreshToken: 'rebound-refresh-token',
+        idToken: reboundJwt,
+      },
+    });
   });
 
   it('marks oauth session as error and avoids creating a connection when manual codex callback model discovery fails', async () => {

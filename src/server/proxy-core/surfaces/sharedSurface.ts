@@ -18,6 +18,7 @@ import { buildUpstreamUrl } from '../../routes/proxy/upstreamUrl.js';
 import { recordOauthQuotaResetHint } from '../../services/oauth/quota.js';
 import { refreshOauthAccessTokenSingleflight } from '../../services/oauth/refreshSingleflight.js';
 import { proxyChannelCoordinator } from '../../services/proxyChannelCoordinator.js';
+import { readRuntimeResponseText } from '../executors/types.js';
 
 type SelectedChannel = Awaited<ReturnType<typeof tokenRouter.selectChannel>>;
 type SurfaceWarningScope = 'chat' | 'responses';
@@ -160,6 +161,11 @@ export function buildSurfaceStickySessionKey(input: {
   });
 }
 
+export function getSurfaceStickyPreferredChannelId(stickySessionKey?: string | null): number | null {
+  if (!stickySessionKey) return null;
+  return proxyChannelCoordinator.getStickyChannelId(stickySessionKey) ?? null;
+}
+
 export function bindSurfaceStickyChannel(input: {
   stickySessionKey?: string | null;
   selected: {
@@ -187,13 +193,17 @@ export function clearSurfaceStickyChannel(input: {
 }
 
 export async function acquireSurfaceChannelLease(input: {
+  stickySessionKey?: string | null;
   selected: {
     channel: { id: number };
     account?: { extraConfig?: string | null } | null;
   };
 }) {
   return await proxyChannelCoordinator.acquireChannelLease({
-    channelId: input.selected.channel.id,
+    // Only session-addressable requests should consume the guarded per-channel
+    // lease pool. Requests without a stable downstream session key should keep
+    // the pre-sticky-session parallel behavior instead of contending globally.
+    channelId: input.stickySessionKey ? input.selected.channel.id : 0,
     accountExtraConfig: input.selected.account?.extraConfig,
   });
 }
@@ -329,7 +339,8 @@ export async function trySurfaceOauthRefreshRecovery<TRequest extends BuiltEndpo
     input.ctx.request = refreshedRequest;
     input.ctx.response = refreshedResponse;
     if (input.captureFailureBody !== false) {
-      input.ctx.rawErrText = await refreshedResponse.text().catch(() => 'unknown error');
+      const failureBody = await readRuntimeResponseText(refreshedResponse).catch(() => '');
+      input.ctx.rawErrText = failureBody.trim() || 'unknown error';
     }
   } catch {
     return null;

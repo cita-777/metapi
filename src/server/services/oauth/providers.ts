@@ -71,6 +71,7 @@ export interface OAuthProviderDefinition {
     redirectUri: string;
     codeVerifier: string;
     projectId?: string;
+    proxyUrl?: string | null;
   }): Promise<OAuthProviderExchangeResult>;
   refreshAccessToken(input: {
     refreshToken: string;
@@ -78,6 +79,7 @@ export interface OAuthProviderDefinition {
       projectId?: string;
       providerData?: Record<string, unknown>;
     };
+    proxyUrl?: string | null;
   }): Promise<OAuthProviderRefreshResult>;
   buildProxyHeaders?(input: OAuthProviderProxyHeaderInput): Record<string, string>;
 }

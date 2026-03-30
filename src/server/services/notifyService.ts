@@ -104,6 +104,30 @@ function buildWeComText(
   return `${raw.slice(0, maxLength)}\n...(truncated)`;
 }
 
+function isFeishuBotWebhook(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return (
+      (parsed.hostname === 'open.feishu.cn' || parsed.hostname === 'open.larksuite.com')
+      && parsed.pathname.includes('/open-apis/bot/v2/hook/')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function buildFeishuText(
+  title: string,
+  message: string,
+  level: 'info' | 'warning' | 'error',
+  timeFootnote: string,
+): string {
+  const maxLength = 3900;
+  const raw = `[metapi][${level.toUpperCase()}] ${title}\n\n${message}\n\n${timeFootnote}`;
+  if (raw.length <= maxLength) return raw;
+  return `${raw.slice(0, maxLength)}\n...(truncated)`;
+}
+
 export async function sendNotification(
   title: string,
   message: string,
@@ -142,26 +166,36 @@ export async function sendNotification(
         channel: 'webhook',
         run: async () => {
           const isWeComWebhook = isWeComBotWebhook(config.webhookUrl);
+          const isFeishuWebhook = isFeishuBotWebhook(config.webhookUrl);
+          let body: string;
+          if (isWeComWebhook) {
+            body = JSON.stringify({
+              msgtype: 'text',
+              text: {
+                content: buildWeComText(title, resolvedMessage, level, timeFootnote),
+              },
+            });
+          } else if (isFeishuWebhook) {
+            body = JSON.stringify({
+              msg_type: 'text',
+              content: {
+                text: buildFeishuText(title, resolvedMessage, level, timeFootnote),
+              },
+            });
+          } else {
+            body = JSON.stringify({
+              title,
+              message: resolvedMessage,
+              level,
+              timestamp: now.toISOString(),
+              localTime: formatLocalDateTime(now),
+              timeZone: getResolvedTimeZone(),
+            });
+          }
           const response = await fetch(config.webhookUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(
-              isWeComWebhook
-                ? {
-                  msgtype: 'text',
-                  text: {
-                    content: buildWeComText(title, resolvedMessage, level, timeFootnote),
-                  },
-                }
-                : {
-                  title,
-                  message: resolvedMessage,
-                  level,
-                  timestamp: now.toISOString(),
-                  localTime: formatLocalDateTime(now),
-                  timeZone: getResolvedTimeZone(),
-                },
-            ),
+            body,
           });
           if (!response.ok) {
             throw new Error(`Webhook 响应状态 ${response.status}`);
@@ -175,6 +209,17 @@ export async function sendNotification(
             }
             if (typeof payload?.errcode === 'number' && payload.errcode !== 0) {
               throw new Error(`企业微信 Webhook 返回错误 ${payload.errcode}: ${payload.errmsg || 'unknown error'}`);
+            }
+          }
+          if (isFeishuWebhook) {
+            let payload: { code?: number; msg?: string } | null = null;
+            try {
+              payload = await response.json() as { code?: number; msg?: string };
+            } catch {
+              throw new Error('飞书 Webhook 返回了无效 JSON');
+            }
+            if (typeof payload?.code === 'number' && payload.code !== 0) {
+              throw new Error(`飞书 Webhook 返回错误 ${payload.code}: ${payload.msg || 'unknown error'}`);
             }
           }
         },

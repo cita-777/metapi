@@ -14,6 +14,10 @@ import {
   parseProxyLogBillingDetails,
   withProxyLogSelectFields,
 } from '../../services/proxyLogStore.js';
+import {
+  getProxyDebugTraceDetail,
+  listProxyDebugTraces,
+} from '../../services/proxyDebugTraceStore.js';
 import { parseProxyLogMessageMeta } from '../proxy/logPathMeta.js';
 import { requiresManagedAccountTokens } from '../../services/accountExtraConfig.js';
 import { ACCOUNT_TOKEN_VALUE_STATUS_READY } from '../../services/accountTokenService.js';
@@ -818,6 +822,26 @@ export async function statsRoutes(app: FastifyInstance) {
     }
 
     return mapProxyLogRow(row, { includeBillingDetails: true });
+  });
+
+  app.get<{ Querystring: { limit?: string } }>('/api/stats/proxy-debug/traces', async (request) => {
+    const limit = normalizeProxyLogPageSize(request.query.limit);
+    const items = await listProxyDebugTraces({ limit });
+    return { items };
+  });
+
+  app.get<{ Params: { id: string } }>('/api/stats/proxy-debug/traces/:id', async (request, reply) => {
+    const id = Number.parseInt(request.params.id, 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      return reply.code(400).send({ message: 'proxy debug trace id is invalid' });
+    }
+
+    const detail = await getProxyDebugTraceDetail(id);
+    if (!detail) {
+      return reply.code(404).send({ message: 'proxy debug trace not found' });
+    }
+
+    return detail;
   });
 
   // Models marketplace - refresh upstream models and aggregate.

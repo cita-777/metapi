@@ -29,9 +29,9 @@ function isTerminalEvent(payload: Record<string, unknown>): boolean {
     || type === 'error';
 }
 
-function isFailureTerminalEvent(payload: Record<string, unknown>): boolean {
+function isRuntimeErrorEvent(payload: Record<string, unknown>): boolean {
   const type = asTrimmedString(payload.type);
-  return type === 'response.failed' || type === 'response.incomplete' || type === 'error';
+  return type === 'error';
 }
 
 function asFiniteNumber(value: unknown): number | undefined {
@@ -262,7 +262,7 @@ async function sendSessionRequest(
         events.push(parsed);
         if (!isTerminalEvent(parsed)) return;
         if (settled) return;
-        if (isFailureTerminalEvent(parsed)) {
+        if (isRuntimeErrorEvent(parsed)) {
           settled = true;
           cleanup();
           clearSessionSocket(session, socket);

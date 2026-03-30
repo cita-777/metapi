@@ -50,7 +50,6 @@ jobs:
 
   test-core:
     name: Test Core
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -74,7 +73,6 @@ jobs:
 
   build-web:
     name: Build Web
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -96,7 +94,6 @@ jobs:
 
   build-server:
     name: Build Server
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -118,7 +115,6 @@ jobs:
 
   build-desktop:
     name: Build Desktop
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -140,7 +136,6 @@ jobs:
 
   typecheck:
     name: Typecheck
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -160,9 +155,29 @@ jobs:
       - name: Run typecheck
         run: npm run typecheck
 
+  repo-drift:
+    name: Repo Drift Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Run repo drift check
+        run: npm run repo:drift-check
+
   schema-sqlite:
     name: Schema Check (SQLite)
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -187,7 +202,6 @@ jobs:
 
   schema-mysql:
     name: Schema Check (MySQL)
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -231,7 +245,6 @@ jobs:
 
   schema-postgres:
     name: Schema Check (Postgres)
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -299,7 +312,6 @@ jobs:
 
   audit:
     name: Audit Production Dependencies
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Keep PR audit informational so build/test/schema remain the merge gate.

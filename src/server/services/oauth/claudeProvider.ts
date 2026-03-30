@@ -1,5 +1,6 @@
 import { fetch } from 'undici';
 import { config } from '../../config.js';
+import { withExplicitProxyRequestInit } from '../siteProxy.js';
 import { createPkceChallenge } from './sessionStore.js';
 import type { OAuthProviderDefinition } from './providers.js';
 
@@ -77,15 +78,18 @@ function parseClaudeTokenPayload(payload: unknown) {
   };
 }
 
-async function postClaudeToken(body: Record<string, unknown>) {
-  const response = await fetch(CLAUDE_TOKEN_URL, {
+async function postClaudeToken(
+  body: Record<string, unknown>,
+  proxyUrl?: string | null,
+) {
+  const response = await fetch(CLAUDE_TOKEN_URL, withExplicitProxyRequestInit(proxyUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json',
     },
     body: JSON.stringify(body),
-  });
+  }));
   if (!response.ok) {
     const text = await response.text().catch(() => '');
     throw new Error(text || `claude token exchange failed with status ${response.status}`);
@@ -129,7 +133,7 @@ export const claudeOauthProvider: OAuthProviderDefinition = {
     });
     return `${CLAUDE_AUTH_URL}?${params.toString()}`;
   },
-  exchangeAuthorizationCode: async ({ code, state, redirectUri, codeVerifier }) => {
+  exchangeAuthorizationCode: async ({ code, state, redirectUri, codeVerifier, proxyUrl }) => {
     return postClaudeToken({
       code,
       state,
@@ -137,14 +141,14 @@ export const claudeOauthProvider: OAuthProviderDefinition = {
       client_id: requireClaudeClientId(),
       redirect_uri: redirectUri,
       code_verifier: codeVerifier,
-    });
+    }, proxyUrl);
   },
-  refreshAccessToken: async ({ refreshToken }) => {
+  refreshAccessToken: async ({ refreshToken, proxyUrl }) => {
     return postClaudeToken({
       client_id: requireClaudeClientId(),
       grant_type: 'refresh_token',
       refresh_token: refreshToken,
-    });
+    }, proxyUrl);
   },
   buildProxyHeaders: () => ({
     'anthropic-version': CLAUDE_DEFAULT_ANTHROPIC_VERSION,

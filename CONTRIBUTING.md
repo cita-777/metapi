@@ -153,10 +153,12 @@ metapi/
    - Documentation changes: `npm run docs:build` / 文档更改：`npm run docs:build`
    - Code changes: `npm test && npm run build` / 代码更改：`npm test && npm run build`
    - Database changes: `npm run smoke:db` / 数据库更改：`npm run smoke:db`
+   - Architecture / repo drift changes: `npm run repo:drift-check` / 架构与仓库漂移检查：`npm run repo:drift-check`
 
 5. **Follow code style** / **遵循代码风格**
    - Use TypeScript for type safety / 使用 TypeScript 确保类型安全
    - Follow existing code patterns / 遵循现有代码模式
+   - Follow repo-level engineering rules in `AGENTS.md` / 遵循仓库根目录 `AGENTS.md` 中的工程规则
    - Keep functions small and focused / 保持函数小而专注
 
 ### Commit Messages / 提交信息

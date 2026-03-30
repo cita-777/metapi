@@ -2,7 +2,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetUpstreamEndpointRuntimeState } from './upstreamEndpoint.js';
+import { resetUpstreamEndpointRuntimeState } from '../../services/upstreamEndpointRuntimeMemory.js';
 
 const fetchMock = vi.fn();
 const fetchModelPricingCatalogMock = vi.fn();
@@ -25,6 +25,11 @@ const dbInsertValuesMock = vi.fn((_values?: unknown) => ({
 const dbInsertMock = vi.fn((_table?: unknown) => ({
   values: (values: unknown) => dbInsertValuesMock(values),
 }));
+const startSurfaceProxyDebugTraceMock = vi.fn();
+const safeUpdateSurfaceProxyDebugSelectionMock = vi.fn();
+const safeUpdateSurfaceProxyDebugCandidatesMock = vi.fn();
+const safeInsertSurfaceProxyDebugAttemptMock = vi.fn();
+const safeFinalizeSurfaceProxyDebugTraceMock = vi.fn();
 
 function createDbSelectChain() {
   return {
@@ -107,6 +112,19 @@ vi.mock('../../db/index.js', () => ({
   },
 }));
 
+vi.mock('../../services/proxyDebugTraceRuntime.js', () => ({
+  startSurfaceProxyDebugTrace: (...args: unknown[]) => startSurfaceProxyDebugTraceMock(...args),
+  safeUpdateSurfaceProxyDebugSelection: (...args: unknown[]) => safeUpdateSurfaceProxyDebugSelectionMock(...args),
+  safeUpdateSurfaceProxyDebugCandidates: (...args: unknown[]) => safeUpdateSurfaceProxyDebugCandidatesMock(...args),
+  safeInsertSurfaceProxyDebugAttempt: (...args: unknown[]) => safeInsertSurfaceProxyDebugAttemptMock(...args),
+  safeFinalizeSurfaceProxyDebugTrace: (...args: unknown[]) => safeFinalizeSurfaceProxyDebugTraceMock(...args),
+  safeUpdateSurfaceProxyDebugAttempt: vi.fn(),
+  reserveSurfaceProxyDebugAttemptBase: () => 0,
+  buildSurfaceProxyDebugResponseHeaders: () => ({}),
+  captureSurfaceProxyDebugSuccessResponseBody: async () => null,
+  parseSurfaceProxyDebugTextPayload: (raw: string) => raw,
+}));
+
 function parseSsePayloads(body: string): Array<Record<string, unknown>> {
   return body
     .replace(/\r\n/g, '\n')
@@ -173,6 +191,26 @@ describe('gemini native proxy routes', () => {
     dbInsertValuesMock.mockClear();
     dbSelectAllMock.mockReset();
     dbSelectGetMock.mockReset();
+    startSurfaceProxyDebugTraceMock.mockReset();
+    safeUpdateSurfaceProxyDebugSelectionMock.mockReset();
+    safeUpdateSurfaceProxyDebugCandidatesMock.mockReset();
+    safeInsertSurfaceProxyDebugAttemptMock.mockReset();
+    safeFinalizeSurfaceProxyDebugTraceMock.mockReset();
+
+    startSurfaceProxyDebugTraceMock.mockResolvedValue({
+      traceId: 801,
+      options: {
+        enabled: true,
+        captureHeaders: true,
+        captureBodies: true,
+        captureStreamChunks: false,
+        targetSessionId: '',
+        targetClientKind: '',
+        targetModel: '',
+        retentionHours: 24,
+        maxBodyBytes: 262144,
+      },
+    });
 
     authorizeDownstreamTokenMock.mockResolvedValue({
       ok: true,
@@ -746,6 +784,25 @@ describe('gemini native proxy routes', () => {
       Authorization: 'Bearer openai-access-token',
       'Content-Type': 'application/json',
     });
+    expect(startSurfaceProxyDebugTraceMock).toHaveBeenCalledWith(expect.objectContaining({
+      downstreamPath: '/v1beta/models/gemini-2.5-flash:generateContent',
+      requestedModel: 'gemini-2.5-flash',
+    }));
+    expect(safeUpdateSurfaceProxyDebugSelectionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ traceId: 801 }),
+      expect.objectContaining({
+        selectedChannelId: 41,
+        selectedSitePlatform: 'openai',
+      }),
+    );
+    expect(safeInsertSurfaceProxyDebugAttemptMock).toHaveBeenCalled();
+    expect(safeFinalizeSurfaceProxyDebugTraceMock).toHaveBeenCalledWith(
+      expect.objectContaining({ traceId: 801 }),
+      expect.objectContaining({
+        finalStatus: 'success',
+        finalUpstreamPath: '/v1/chat/completions',
+      }),
+    );
     expect(JSON.parse(String(requestInit.body))).toEqual({
       model: 'gpt-4.1',
       stream: false,

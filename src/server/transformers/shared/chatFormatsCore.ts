@@ -23,6 +23,11 @@ export type StreamTransformContext = {
   roleSent: boolean;
   doneSent: boolean;
   toolCalls: Record<number, { id?: string; name?: string; arguments?: string }>;
+  responsesToolCallIndexByOutputIndex: Record<number, number>;
+  responsesToolCallIndexById: Record<string, number>;
+  nextResponsesToolCallIndex: number;
+  responsesTextByIndex: Record<number, string>;
+  responsesReasoningByIndex: Record<number, string>;
   thinkTagParser: ThinkTagParserState;
 };
 
@@ -103,6 +108,24 @@ function ensureIntegerTimestamp(value: unknown, fallback: number): number {
 
 function joinNonEmpty(parts: string[]): string {
   return parts.map((item) => item.trim()).filter((item) => item.length > 0).join('\n\n');
+}
+
+function joinIndexedResponsesText(partsByIndex: Record<number, string>): string {
+  const indexedParts = Object.entries(partsByIndex)
+    .map(([rawIndex, text]) => ({
+      index: Number(rawIndex),
+      text,
+    }))
+    .filter((entry) => Number.isFinite(entry.index) && entry.index >= 0 && typeof entry.text === 'string' && entry.text.length > 0)
+    .sort((left, right) => left.index - right.index)
+    .map((entry) => entry.text);
+
+  if (indexedParts.length > 0) {
+    return indexedParts.join('\n\n');
+  }
+
+  const snapshot = partsByIndex[-1];
+  return typeof snapshot === 'string' ? snapshot : '';
 }
 
 function textFromPart(part: unknown): string {
@@ -256,6 +279,11 @@ export function createStreamTransformContext(modelName: string): StreamTransform
     roleSent: false,
     doneSent: false,
     toolCalls: {},
+    responsesToolCallIndexByOutputIndex: {},
+    responsesToolCallIndexById: {},
+    nextResponsesToolCallIndex: 0,
+    responsesTextByIndex: {},
+    responsesReasoningByIndex: {},
     thinkTagParser: createThinkTagParserState(),
   };
 }
@@ -465,6 +493,30 @@ function parseResponsesReasoning(payload: Record<string, unknown>): {
   };
 }
 
+function unwrapTerminalResponsesEnvelope(
+  payload: Record<string, unknown>,
+): Record<string, unknown> | null {
+  const type = asTrimmedString(payload.type).toLowerCase();
+  if (
+    type !== 'response.completed'
+    && type !== 'response.failed'
+    && type !== 'response.incomplete'
+  ) {
+    return null;
+  }
+  if (!isRecord(payload.response)) return null;
+
+  const responsePayload = payload.response as Record<string, unknown>;
+  if (isNonEmptyString(responsePayload.status)) {
+    return responsePayload;
+  }
+
+  return {
+    ...responsePayload,
+    status: type.slice('response.'.length),
+  };
+}
+
 function stringifyUnknownValue(value: unknown): string {
   if (typeof value === 'string') return value;
   if (value === undefined || value === null) return '';
@@ -558,7 +610,7 @@ function collectToolCallsFromResponsesPayload(payload: Record<string, unknown>):
   for (let index = 0; index < output.length; index += 1) {
     const item = output[index];
     if (!isRecord(item)) continue;
-    if (item.type !== 'function_call') continue;
+    if (item.type !== 'function_call' && item.type !== 'custom_tool_call') continue;
 
     const id = (
       typeof item.call_id === 'string' && item.call_id.trim().length > 0
@@ -569,7 +621,9 @@ function collectToolCallsFromResponsesPayload(payload: Record<string, unknown>):
     const argumentsText = (
       typeof item.arguments === 'string'
         ? item.arguments
-        : stringifyUnknownValue(item.arguments)
+        : (typeof item.input === 'string'
+          ? item.input
+          : stringifyUnknownValue(item.arguments ?? item.input))
     );
     toolCalls.push({
       id,
@@ -579,6 +633,198 @@ function collectToolCallsFromResponsesPayload(payload: Record<string, unknown>):
   }
 
   return toolCalls;
+}
+
+function collectIndexedToolCallsFromResponsesPayload(
+  payload: Record<string, unknown>,
+): Array<{ id: string; name: string; arguments: string; outputIndex: number }> {
+  const output = Array.isArray(payload.output) ? payload.output : [];
+  const toolCalls: Array<{ id: string; name: string; arguments: string; outputIndex: number }> = [];
+
+  for (let index = 0; index < output.length; index += 1) {
+    const item = output[index];
+    if (!isRecord(item)) continue;
+    if (item.type !== 'function_call' && item.type !== 'custom_tool_call') continue;
+
+    const id = (
+      typeof item.call_id === 'string' && item.call_id.trim().length > 0
+        ? item.call_id.trim()
+        : (typeof item.id === 'string' && item.id.trim().length > 0 ? item.id.trim() : `call_${index}`)
+    );
+    const name = typeof item.name === 'string' ? item.name.trim() : '';
+    const argumentsText = (
+      typeof item.arguments === 'string'
+        ? item.arguments
+        : (typeof item.input === 'string'
+          ? item.input
+          : stringifyUnknownValue(item.arguments ?? item.input))
+    );
+    toolCalls.push({
+      id,
+      name,
+      arguments: argumentsText,
+      outputIndex: index,
+    });
+  }
+
+  return toolCalls;
+}
+
+function computeNovelResponsesDelta(existingText: string, incomingText: string): string {
+  if (!incomingText) return '';
+  if (!existingText) return incomingText;
+  if (incomingText.startsWith(existingText)) return incomingText.slice(existingText.length);
+  if (existingText.endsWith(incomingText)) return '';
+
+  const maxOverlap = Math.min(existingText.length, incomingText.length);
+  for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
+    if (existingText.endsWith(incomingText.slice(0, overlap))) {
+      return incomingText.slice(overlap);
+    }
+  }
+
+  return incomingText;
+}
+
+function extractResponsesOutputIndex(payload: Record<string, unknown>): number {
+  return (
+    typeof payload.output_index === 'number' && Number.isFinite(payload.output_index)
+      ? Math.max(0, Math.trunc(payload.output_index))
+      : 0
+  );
+}
+
+function extractResponsesItemText(item: Record<string, unknown>): string {
+  const itemType = asTrimmedString(item.type).toLowerCase();
+  if (itemType === 'message') {
+    return extractTextAndReasoning(item.content ?? item).content;
+  }
+  if (itemType === 'reasoning') {
+    const parsed = extractTextAndReasoning(item.summary ?? item.content ?? item);
+    return joinNonEmpty([parsed.content, parsed.reasoning]);
+  }
+  return '';
+}
+
+function rememberResponsesToolCallIndex(
+  context: StreamTransformContext,
+  canonicalIndex: number,
+  input: {
+    outputIndex?: number;
+    itemId?: unknown;
+    callId?: unknown;
+  },
+): void {
+  if (typeof input.outputIndex === 'number' && Number.isFinite(input.outputIndex)) {
+    context.responsesToolCallIndexByOutputIndex[Math.max(0, Math.trunc(input.outputIndex))] = canonicalIndex;
+  }
+  const itemId = asTrimmedString(input.itemId);
+  if (itemId) {
+    context.responsesToolCallIndexById[`item:${itemId}`] = canonicalIndex;
+  }
+  const callId = asTrimmedString(input.callId);
+  if (callId) {
+    context.responsesToolCallIndexById[`call:${callId}`] = canonicalIndex;
+  }
+}
+
+function resolveResponsesToolCallIndex(
+  context: StreamTransformContext,
+  input: {
+    outputIndex?: number;
+    itemId?: unknown;
+    callId?: unknown;
+  },
+): number {
+  const normalizedOutputIndex = (
+    typeof input.outputIndex === 'number' && Number.isFinite(input.outputIndex)
+      ? Math.max(0, Math.trunc(input.outputIndex))
+      : undefined
+  );
+  if (
+    normalizedOutputIndex !== undefined
+    && context.responsesToolCallIndexByOutputIndex[normalizedOutputIndex] !== undefined
+  ) {
+    const canonicalIndex = context.responsesToolCallIndexByOutputIndex[normalizedOutputIndex]!;
+    rememberResponsesToolCallIndex(context, canonicalIndex, {
+      outputIndex: normalizedOutputIndex,
+      itemId: input.itemId,
+      callId: input.callId,
+    });
+    return canonicalIndex;
+  }
+
+  const itemId = asTrimmedString(input.itemId);
+  if (itemId && context.responsesToolCallIndexById[`item:${itemId}`] !== undefined) {
+    const canonicalIndex = context.responsesToolCallIndexById[`item:${itemId}`]!;
+    rememberResponsesToolCallIndex(context, canonicalIndex, {
+      outputIndex: normalizedOutputIndex,
+      itemId,
+      callId: input.callId,
+    });
+    return canonicalIndex;
+  }
+
+  const callId = asTrimmedString(input.callId);
+  if (callId && context.responsesToolCallIndexById[`call:${callId}`] !== undefined) {
+    const canonicalIndex = context.responsesToolCallIndexById[`call:${callId}`]!;
+    rememberResponsesToolCallIndex(context, canonicalIndex, {
+      outputIndex: normalizedOutputIndex,
+      itemId: input.itemId,
+      callId,
+    });
+    return canonicalIndex;
+  }
+
+  const canonicalIndex = context.nextResponsesToolCallIndex;
+  context.nextResponsesToolCallIndex += 1;
+  rememberResponsesToolCallIndex(context, canonicalIndex, {
+    outputIndex: normalizedOutputIndex,
+    itemId: input.itemId,
+    callId: input.callId,
+  });
+  return canonicalIndex;
+}
+
+function buildResponsesToolCallDeltaFromItem(
+  item: Record<string, unknown>,
+  outputIndex: number,
+  context: StreamTransformContext,
+): NormalizedStreamEvent | null {
+  const itemType = asTrimmedString(item.type).toLowerCase();
+  if (itemType !== 'function_call' && itemType !== 'custom_tool_call') return null;
+
+  const toolCallId = (
+    isNonEmptyString(item.call_id) ? item.call_id
+      : (isNonEmptyString(item.id) ? item.id : undefined)
+  );
+  const toolName = isNonEmptyString(item.name) ? item.name : undefined;
+  const rawArguments = itemType === 'custom_tool_call'
+    ? (typeof item.input === 'string' ? item.input : stringifyUnknownValue(item.input))
+    : (typeof item.arguments === 'string' ? item.arguments : stringifyUnknownValue(item.arguments));
+  const canonicalIndex = resolveResponsesToolCallIndex(context, {
+    outputIndex,
+    itemId: item.id,
+    callId: item.call_id,
+  });
+  const existingArguments = context.toolCalls[canonicalIndex]?.arguments || '';
+  const argumentsDelta = computeNovelResponsesDelta(existingArguments, rawArguments);
+  const knownTool = context.toolCalls[canonicalIndex] || {};
+  const shouldBackfillId = !!toolCallId && !knownTool.id;
+  const shouldBackfillName = !!toolName && !knownTool.name;
+
+  if (!argumentsDelta && !shouldBackfillId && !shouldBackfillName) {
+    return null;
+  }
+
+  return {
+    toolCallDeltas: [{
+      index: canonicalIndex,
+      id: toolCallId,
+      name: toolName,
+      argumentsDelta: argumentsDelta || undefined,
+    }],
+  };
 }
 
 function formatAnthropicBase64DataUrl(mimeType: string, data: string): string {
@@ -1067,6 +1313,13 @@ export function normalizeUpstreamFinalResponse(
   const now = Math.floor(Date.now() / 1000);
   const fallbackId = `chatcmpl-meta-${Date.now()}`;
 
+  if (isRecord(payload)) {
+    const terminalResponsesPayload = unwrapTerminalResponsesEnvelope(payload);
+    if (terminalResponsesPayload) {
+      return normalizeUpstreamFinalResponse(terminalResponsesPayload, fallbackModel, fallbackText);
+    }
+  }
+
   if (isRecord(payload) && Array.isArray(payload.choices)) {
     const choice = payload.choices[0] ?? {};
     const content = extractAssistantContent(choice) || extractAssistantContent(payload);
@@ -1238,19 +1491,39 @@ export function normalizeUpstreamStreamEvent(
 
   const type = typeof payload.type === 'string' ? payload.type : '';
   if (type.startsWith('response.output_text')) {
-    const parsed = extractStreamingTextAndReasoning(payload.delta, context.thinkTagParser);
+    const outputIndex = extractResponsesOutputIndex(payload);
+    const rawText = typeof payload.delta === 'string'
+      ? payload.delta
+      : (typeof (payload as any).text === 'string' ? (payload as any).text : '');
+    const parsed = extractStreamingTextAndReasoning(rawText, context.thinkTagParser);
+    const nextContent = type === 'response.output_text.done'
+      ? (parsed.content || context.responsesTextByIndex[outputIndex] || '')
+      : `${context.responsesTextByIndex[outputIndex] || ''}${parsed.content || ''}`;
+    const novelContent = type === 'response.output_text.done'
+      ? computeNovelResponsesDelta(context.responsesTextByIndex[outputIndex] || '', parsed.content || '')
+      : (parsed.content || '');
+    if (nextContent) context.responsesTextByIndex[outputIndex] = nextContent;
     return {
-      contentDelta: parsed.content || undefined,
+      contentDelta: novelContent || undefined,
       reasoningDelta: parsed.reasoning || undefined,
     };
   }
 
-  if (type === 'response.reasoning_summary_text.delta') {
-    const deltaText = typeof payload.delta === 'string'
-      ? payload.delta
-      : extractTextAndReasoning(payload.delta).content;
+  if (type === 'response.reasoning_summary_text.delta' || type === 'response.reasoning_summary_text.done') {
+    const outputIndex = extractResponsesOutputIndex(payload);
+    const deltaText = type === 'response.reasoning_summary_text.done'
+      ? (typeof (payload as any).text === 'string' ? (payload as any).text : extractTextAndReasoning(payload.text).content)
+      : (typeof payload.delta === 'string' ? payload.delta : extractTextAndReasoning(payload.delta).content);
+    const previousReasoning = context.responsesReasoningByIndex[outputIndex] || '';
+    const novelDelta = computeNovelResponsesDelta(previousReasoning, deltaText);
+    const nextReasoning = type === 'response.reasoning_summary_text.done'
+      ? (deltaText || previousReasoning)
+      : `${previousReasoning}${novelDelta}`;
+    if (nextReasoning) {
+      context.responsesReasoningByIndex[outputIndex] = nextReasoning;
+    }
     return {
-      reasoningDelta: deltaText || undefined,
+      reasoningDelta: novelDelta || undefined,
     };
   }
 
@@ -1267,40 +1540,44 @@ export function normalizeUpstreamStreamEvent(
     };
   }
 
-  if (type === 'response.output_item.added' && isRecord((payload as any).item)) {
+  if ((type === 'response.output_item.added' || type === 'response.output_item.done') && isRecord((payload as any).item)) {
+    const outputIndex = extractResponsesOutputIndex(payload as Record<string, unknown>);
     const item = (payload as any).item as Record<string, unknown>;
     if (item.type === 'reasoning' && isNonEmptyString(item.encrypted_content)) {
+      const reasoningText = extractResponsesItemText(item);
+      const novelReasoning = computeNovelResponsesDelta(context.responsesReasoningByIndex[outputIndex] || '', reasoningText);
+      if (reasoningText) {
+        context.responsesReasoningByIndex[outputIndex] = reasoningText;
+      }
       return {
         reasoningSignature: item.encrypted_content,
+        reasoningDelta: novelReasoning || undefined,
       };
     }
-    if (item.type === 'function_call') {
-      const outputIndex = (
-        typeof (payload as any).output_index === 'number' && Number.isFinite((payload as any).output_index)
-          ? Math.max(0, Math.trunc((payload as any).output_index))
-          : 0
-      );
-      const toolCallId = (
-        isNonEmptyString(item.call_id) ? item.call_id
-          : (isNonEmptyString(item.id) ? item.id : undefined)
-      );
-      const toolName = isNonEmptyString(item.name) ? item.name : undefined;
+    const toolCallEvent = buildResponsesToolCallDeltaFromItem(item, outputIndex, context);
+    if (toolCallEvent) {
+      return toolCallEvent;
+    }
+    if (item.type === 'message') {
+      const fullText = extractResponsesItemText(item);
+      const novelDelta = computeNovelResponsesDelta(context.responsesTextByIndex[outputIndex] || '', fullText);
+      if (fullText) {
+        context.responsesTextByIndex[outputIndex] = fullText;
+      }
       return {
-        toolCallDeltas: [{
-          index: outputIndex,
-          id: toolCallId,
-          name: toolName,
-        }],
+        role: item.role === 'assistant' ? 'assistant' : undefined,
+        contentDelta: novelDelta || undefined,
       };
     }
   }
 
   if (type === 'response.function_call_arguments.delta' || type === 'response.function_call_arguments.done') {
-    const outputIndex = (
-      typeof (payload as any).output_index === 'number' && Number.isFinite((payload as any).output_index)
-        ? Math.max(0, Math.trunc((payload as any).output_index))
-        : 0
-    );
+    const outputIndex = extractResponsesOutputIndex(payload as Record<string, unknown>);
+    const canonicalIndex = resolveResponsesToolCallIndex(context, {
+      outputIndex,
+      itemId: (payload as any).item_id,
+      callId: (payload as any).call_id,
+    });
     const toolCallId = (
       isNonEmptyString((payload as any).call_id) ? (payload as any).call_id
         : (isNonEmptyString((payload as any).item_id) ? (payload as any).item_id : undefined)
@@ -1317,7 +1594,7 @@ export function normalizeUpstreamStreamEvent(
     );
     let argumentsDelta = rawArguments;
     if (type === 'response.function_call_arguments.done' && typeof rawArguments === 'string') {
-      const existingArguments = context.toolCalls[outputIndex]?.arguments || '';
+      const existingArguments = context.toolCalls[canonicalIndex]?.arguments || '';
       if (existingArguments && rawArguments.startsWith(existingArguments)) {
         const missingSuffix = rawArguments.slice(existingArguments.length);
         argumentsDelta = missingSuffix.length > 0 ? missingSuffix : undefined;
@@ -1326,7 +1603,7 @@ export function normalizeUpstreamStreamEvent(
       }
     }
 
-    const knownTool = context.toolCalls[outputIndex] || {};
+    const knownTool = context.toolCalls[canonicalIndex] || {};
     const shouldBackfillId = !!toolCallId && !knownTool.id;
     const shouldBackfillName = !!toolName && !knownTool.name;
     if (argumentsDelta === undefined && !shouldBackfillId && !shouldBackfillName) {
@@ -1335,10 +1612,50 @@ export function normalizeUpstreamStreamEvent(
 
     return {
       toolCallDeltas: [{
-        index: outputIndex,
+        index: canonicalIndex,
         id: toolCallId,
         name: toolName,
         argumentsDelta,
+      }],
+    };
+  }
+
+  if (type === 'response.custom_tool_call_input.delta' || type === 'response.custom_tool_call_input.done') {
+    const outputIndex = extractResponsesOutputIndex(payload as Record<string, unknown>);
+    const canonicalIndex = resolveResponsesToolCallIndex(context, {
+      outputIndex,
+      itemId: (payload as any).item_id,
+      callId: (payload as any).call_id,
+    });
+    const toolCallId = (
+      isNonEmptyString((payload as any).call_id) ? (payload as any).call_id
+        : (isNonEmptyString((payload as any).item_id) ? (payload as any).item_id : undefined)
+    );
+    const toolName = isNonEmptyString((payload as any).name) ? (payload as any).name : undefined;
+    const rawArguments = (
+      type === 'response.custom_tool_call_input.done'
+        ? (typeof (payload as any).input === 'string' ? (payload as any).input : stringifyUnknownValue((payload as any).input))
+        : (
+          typeof payload.delta === 'string'
+            ? payload.delta
+            : stringifyUnknownValue((payload as any).input)
+        )
+    );
+    const existingArguments = context.toolCalls[canonicalIndex]?.arguments || '';
+    const argumentsDelta = computeNovelResponsesDelta(existingArguments, rawArguments);
+    const knownTool = context.toolCalls[canonicalIndex] || {};
+    const shouldBackfillId = !!toolCallId && !knownTool.id;
+    const shouldBackfillName = !!toolName && !knownTool.name;
+    if (!argumentsDelta && !shouldBackfillId && !shouldBackfillName) {
+      return {};
+    }
+
+    return {
+      toolCallDeltas: [{
+        index: canonicalIndex,
+        id: toolCallId,
+        name: toolName,
+        argumentsDelta: argumentsDelta || undefined,
       }],
     };
   }
@@ -1347,8 +1664,53 @@ export function normalizeUpstreamStreamEvent(
     const responsePayload = (payload as any).response as Record<string, unknown>;
     if (isNonEmptyString(responsePayload.id)) context.id = responsePayload.id;
     if (isNonEmptyString(responsePayload.model)) context.model = responsePayload.model;
+    const content = parseResponsesOutputText(responsePayload);
+    const contentDelta = computeNovelResponsesDelta(joinIndexedResponsesText(context.responsesTextByIndex), content);
+    if (content) {
+      context.responsesTextByIndex = { ...context.responsesTextByIndex, [-1]: content } as Record<number, string>;
+    }
+    const responsesReasoning = parseResponsesReasoning(responsePayload);
+    const reasoningDelta = computeNovelResponsesDelta(
+      joinIndexedResponsesText(context.responsesReasoningByIndex),
+      responsesReasoning.reasoningContent,
+    );
+    if (responsesReasoning.reasoningContent) {
+      context.responsesReasoningByIndex = {
+        ...context.responsesReasoningByIndex,
+        [-1]: responsesReasoning.reasoningContent,
+      } as Record<number, string>;
+    }
+    const toolCalls = collectIndexedToolCallsFromResponsesPayload(responsePayload);
+    const toolCallDeltas = toolCalls
+      .map((toolCall) => {
+        const canonicalIndex = resolveResponsesToolCallIndex(context, {
+          outputIndex: toolCall.outputIndex,
+          callId: toolCall.id,
+        });
+        const knownTool = context.toolCalls[canonicalIndex] || {};
+        const argumentsDelta = computeNovelResponsesDelta(knownTool.arguments || '', toolCall.arguments);
+        const shouldBackfillId = !!toolCall.id && !knownTool.id;
+        const shouldBackfillName = !!toolCall.name && !knownTool.name;
+        if (!argumentsDelta && !shouldBackfillId && !shouldBackfillName) {
+          return null;
+        }
+        return {
+          index: canonicalIndex,
+          id: toolCall.id,
+          name: toolCall.name,
+          argumentsDelta: argumentsDelta || undefined,
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => !!item);
     return {
-      finishReason: normalizeStopReason(responsePayload.status) || 'stop',
+      ...(contentDelta || reasoningDelta ? { role: 'assistant' as const } : {}),
+      ...(contentDelta ? { contentDelta } : {}),
+      ...(reasoningDelta ? { reasoningDelta } : {}),
+      ...(responsesReasoning.reasoningSignature ? { reasoningSignature: responsesReasoning.reasoningSignature } : {}),
+      ...(toolCallDeltas.length > 0 ? { toolCallDeltas } : {}),
+      finishReason: toolCallDeltas.length > 0
+        ? 'tool_calls'
+        : (normalizeStopReason(responsePayload.status) || 'stop'),
       done: true,
     };
   }

@@ -1,4 +1,5 @@
 import { fetch } from 'undici';
+import { withExplicitProxyRequestInit } from '../siteProxy.js';
 import type { OAuthProviderDefinition } from './providers.js';
 
 export const ANTIGRAVITY_OAUTH_PROVIDER = 'antigravity';
@@ -110,10 +111,11 @@ async function callAntigravityInternalApi<T>(
   accessToken: string,
   method: 'loadCodeAssist' | 'onboardUser',
   body: Record<string, unknown>,
+  proxyUrl?: string | null,
 ): Promise<T | undefined> {
   const response = await fetch(
     `${ANTIGRAVITY_UPSTREAM_BASE_URL}/${ANTIGRAVITY_INTERNAL_API_VERSION}:${method}`,
-    {
+    withExplicitProxyRequestInit(proxyUrl, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -124,21 +126,24 @@ async function callAntigravityInternalApi<T>(
         'Client-Metadata': ANTIGRAVITY_CLIENT_METADATA,
       },
       body: JSON.stringify(body),
-    },
+    }),
   );
   if (!response.ok) return undefined;
   return response.json() as Promise<T>;
 }
 
-async function postAntigravityToken(body: URLSearchParams) {
-  const response = await fetch(ANTIGRAVITY_TOKEN_URL, {
+async function postAntigravityToken(
+  body: URLSearchParams,
+  proxyUrl?: string | null,
+) {
+  const response = await fetch(ANTIGRAVITY_TOKEN_URL, withExplicitProxyRequestInit(proxyUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
       Accept: 'application/json',
     },
     body: body.toString(),
-  });
+  }));
   if (!response.ok) {
     const text = await response.text().catch(() => '');
     throw new Error(text || `antigravity token exchange failed with status ${response.status}`);
@@ -159,24 +164,31 @@ async function postAntigravityToken(body: URLSearchParams) {
   };
 }
 
-async function fetchAntigravityUserEmail(accessToken: string): Promise<string | undefined> {
-  const response = await fetch(ANTIGRAVITY_USERINFO_URL, {
+async function fetchAntigravityUserEmail(
+  accessToken: string,
+  proxyUrl?: string | null,
+): Promise<string | undefined> {
+  const response = await fetch(ANTIGRAVITY_USERINFO_URL, withExplicitProxyRequestInit(proxyUrl, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
       Accept: 'application/json',
     },
-  });
+  }));
   if (!response.ok) return undefined;
   const payload = await response.json() as { email?: unknown };
   return asTrimmedString(payload.email);
 }
 
-async function fetchAntigravityProjectId(accessToken: string): Promise<string | undefined> {
+async function fetchAntigravityProjectId(
+  accessToken: string,
+  proxyUrl?: string | null,
+): Promise<string | undefined> {
   const metadata = buildAntigravityMetadata();
   const payload = await callAntigravityInternalApi<AntigravityLoadCodeAssistPayload>(
     accessToken,
     'loadCodeAssist',
     { metadata },
+    proxyUrl,
   );
   if (!payload) return undefined;
 
@@ -194,6 +206,7 @@ async function fetchAntigravityProjectId(accessToken: string): Promise<string | 
         tierId,
         metadata,
       },
+      proxyUrl,
     );
     if (!onboardPayload) return undefined;
     if (onboardPayload.done === true) {
@@ -224,7 +237,7 @@ export const antigravityOauthProvider: OAuthProviderDefinition = {
     requiresProjectId: false,
     supportsDirectAccountRouting: true,
     supportsCloudValidation: true,
-    supportsNativeProxy: false,
+    supportsNativeProxy: true,
   },
   site: {
     name: 'Google Antigravity OAuth',
@@ -249,16 +262,16 @@ export const antigravityOauthProvider: OAuthProviderDefinition = {
     });
     return `${ANTIGRAVITY_AUTH_URL}?${params.toString()}`;
   },
-  exchangeAuthorizationCode: async ({ code, redirectUri }) => {
+  exchangeAuthorizationCode: async ({ code, redirectUri, proxyUrl }) => {
     const token = await postAntigravityToken(new URLSearchParams({
       code,
       client_id: ANTIGRAVITY_CLIENT_ID,
       client_secret: ANTIGRAVITY_CLIENT_SECRET,
       redirect_uri: redirectUri,
       grant_type: 'authorization_code',
-    }));
-    const email = await fetchAntigravityUserEmail(token.accessToken);
-    const projectId = await fetchAntigravityProjectId(token.accessToken);
+    }), proxyUrl);
+    const email = await fetchAntigravityUserEmail(token.accessToken, proxyUrl);
+    const projectId = await fetchAntigravityProjectId(token.accessToken, proxyUrl);
     return {
       ...token,
       email,
@@ -267,20 +280,20 @@ export const antigravityOauthProvider: OAuthProviderDefinition = {
       projectId,
     };
   },
-  refreshAccessToken: async ({ refreshToken, oauth }) => {
+  refreshAccessToken: async ({ refreshToken, oauth, proxyUrl }) => {
     const token = await postAntigravityToken(new URLSearchParams({
       client_id: ANTIGRAVITY_CLIENT_ID,
       client_secret: ANTIGRAVITY_CLIENT_SECRET,
       grant_type: 'refresh_token',
       refresh_token: refreshToken,
-    }));
-    const email = await fetchAntigravityUserEmail(token.accessToken);
+    }), proxyUrl);
+    const email = await fetchAntigravityUserEmail(token.accessToken, proxyUrl);
     return {
       ...token,
       email,
       accountKey: email,
       accountId: email,
-      projectId: oauth?.projectId ?? await fetchAntigravityProjectId(token.accessToken),
+      projectId: oauth?.projectId ?? await fetchAntigravityProjectId(token.accessToken, proxyUrl),
     };
   },
   buildProxyHeaders: () => ({

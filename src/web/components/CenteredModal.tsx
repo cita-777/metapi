@@ -28,18 +28,22 @@ export default function CenteredModal({
   showCloseButton = true,
 }: CenteredModalProps) {
   const presence = useAnimatedVisibility(open, 220);
+  const canUsePortal = typeof document !== 'undefined'
+    && !!document.body
+    && typeof document.body.appendChild === 'function'
+    && typeof document.body.removeChild === 'function';
 
   useEffect(() => {
-    if (!open || typeof document === 'undefined') return;
+    if (!open || !canUsePortal) return;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [open]);
+  }, [canUsePortal, open]);
 
   useEffect(() => {
-    if (!open || !closeOnEscape || typeof document === 'undefined') return;
+    if (!open || !closeOnEscape || !canUsePortal) return;
     const handleKeydown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
     };
@@ -47,7 +51,7 @@ export default function CenteredModal({
     return () => {
       document.removeEventListener('keydown', handleKeydown);
     };
-  }, [closeOnEscape, open, onClose]);
+  }, [canUsePortal, closeOnEscape, open, onClose]);
 
   if (!presence.shouldRender) return null;
 
@@ -82,5 +86,5 @@ export default function CenteredModal({
     </div>
   );
 
-  return typeof document !== 'undefined' ? createPortal(modal, document.body) : modal;
+  return canUsePortal ? createPortal(modal, document.body) : modal;
 }

@@ -18,6 +18,7 @@ describe('accountExtraConfig', () => {
   it('reads platformUserId from extra config when present', () => {
     expect(getPlatformUserIdFromExtraConfig(JSON.stringify({ platformUserId: 11494 }))).toBe(11494);
     expect(getPlatformUserIdFromExtraConfig(JSON.stringify({ platformUserId: '7659' }))).toBe(7659);
+    expect(getPlatformUserIdFromExtraConfig({ platformUserId: 2233 })).toBe(2233);
   });
 
   it('guesses platformUserId from username suffix digits', () => {
@@ -45,6 +46,27 @@ describe('accountExtraConfig', () => {
     expect(parsed.foo).toBe('bar');
     expect(parsed.autoRelogin?.username).toBe('demo');
     expect(parsed.platformUserId).toBe(7659);
+  });
+
+  it('merges object extra config without dropping existing keys', () => {
+    const merged = mergeAccountExtraConfig(
+      {
+        foo: 'bar',
+        credentialMode: 'session',
+        autoRelogin: { username: 'demo', passwordCipher: 'cipher' },
+      },
+      { platformUserId: 9001 },
+    );
+
+    expect(JSON.parse(merged)).toEqual(expect.objectContaining({
+      foo: 'bar',
+      credentialMode: 'session',
+      platformUserId: 9001,
+      autoRelogin: expect.objectContaining({
+        username: 'demo',
+        passwordCipher: 'cipher',
+      }),
+    }));
   });
 
   it('parses credential mode from extra config', () => {

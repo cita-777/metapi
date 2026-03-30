@@ -1,10 +1,16 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, create } from 'react-test-renderer';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import CenteredModal from './CenteredModal.js';
 
 describe('CenteredModal component', () => {
+  const originalDocument = globalThis.document;
+
+  afterEach(() => {
+    globalThis.document = originalDocument;
+  });
+
   it('does not close on backdrop click by default and exposes an explicit close button', async () => {
     const onClose = vi.fn();
     let root!: WebTestRenderer;
@@ -48,5 +54,29 @@ describe('CenteredModal component', () => {
     expect(source).toContain('modal-content');
     expect(source).toContain('useAnimatedVisibility');
     expect(source).toContain('createPortal');
+  });
+
+  it('renders safely without touching document.body or listeners when no usable body exists', async () => {
+    globalThis.document = {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    } as unknown as Document;
+
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <CenteredModal open onClose={() => {}} title="测试弹框" closeOnEscape>
+            <div>content</div>
+          </CenteredModal>,
+        );
+      });
+
+      expect(root.toJSON()).toBeTruthy();
+      expect(globalThis.document.addEventListener).not.toHaveBeenCalled();
+    } finally {
+      root?.unmount();
+    }
   });
 });

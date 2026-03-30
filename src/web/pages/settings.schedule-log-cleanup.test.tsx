@@ -168,9 +168,14 @@ describe('Settings log cleanup schedule', () => {
         && typeof node.props.onClick === 'function'
         && collectText(node).trim() === '测试一次签到'
       ));
+      const scheduleCard = root.root.find((node) => (
+        node.type === 'div'
+        && String(node.props.className || '').includes('card')
+        && collectText(node).includes('定时任务')
+      ));
 
-      expect(root.root.findAllByType('select')).toHaveLength(0);
-      expect(root.root.findAllByType(ModernSelect).length).toBeGreaterThanOrEqual(3);
+      expect(scheduleCard.findAllByType('select')).toHaveLength(0);
+      expect(scheduleCard.findAllByType(ModernSelect).length).toBeGreaterThanOrEqual(2);
       expect(String(triggerButton.props.className || '')).toContain('btn-ghost');
     } finally {
       root?.unmount();

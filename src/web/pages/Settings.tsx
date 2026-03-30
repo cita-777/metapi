@@ -9,6 +9,7 @@ import ModernSelect from '../components/ModernSelect.js';
 import DownstreamApiKeyModal from './settings/DownstreamApiKeyModal.js';
 import FactoryResetModal from './settings/FactoryResetModal.js';
 import RouteSelectorModal from './settings/RouteSelectorModal.js';
+import UpdateCenterSection from './settings/UpdateCenterSection.js';
 import {
   applyRoutingProfilePreset,
   resolveRoutingProfilePreset,
@@ -49,6 +50,9 @@ type RuntimeSettings = {
   logCleanupUsageLogsEnabled: boolean;
   logCleanupProgramLogsEnabled: boolean;
   logCleanupRetentionDays: number;
+  codexUpstreamWebsocketEnabled: boolean;
+  proxySessionChannelConcurrencyLimit: number;
+  proxySessionChannelQueueWaitMs: number;
   routingFallbackUnitCost: number;
   routingWeights: RoutingWeights;
   systemProxyUrl: string;
@@ -190,6 +194,9 @@ export default function Settings() {
     logCleanupUsageLogsEnabled: false,
     logCleanupProgramLogsEnabled: false,
     logCleanupRetentionDays: 30,
+    codexUpstreamWebsocketEnabled: false,
+    proxySessionChannelConcurrencyLimit: 2,
+    proxySessionChannelQueueWaitMs: 1500,
     routingFallbackUnitCost: 1,
     routingWeights: defaultWeights,
     systemProxyUrl: '',
@@ -204,6 +211,7 @@ export default function Settings() {
   const [testingCheckin, setTestingCheckin] = useState(false);
   const [savingToken, setSavingToken] = useState(false);
   const [savingSystemProxy, setSavingSystemProxy] = useState(false);
+  const [savingProxyTransport, setSavingProxyTransport] = useState(false);
   const [testingSystemProxy, setTestingSystemProxy] = useState(false);
   const [systemProxyTestState, setSystemProxyTestState] = useState<SystemProxyTestState>(null);
   const [savingProxyFailureRules, setSavingProxyFailureRules] = useState(false);
@@ -412,6 +420,13 @@ export default function Settings() {
         logCleanupRetentionDays: Number(runtimeInfo.logCleanupRetentionDays) >= 1
           ? Math.trunc(Number(runtimeInfo.logCleanupRetentionDays))
           : 30,
+        codexUpstreamWebsocketEnabled: !!runtimeInfo.codexUpstreamWebsocketEnabled,
+        proxySessionChannelConcurrencyLimit: Number(runtimeInfo.proxySessionChannelConcurrencyLimit) >= 0
+          ? Math.trunc(Number(runtimeInfo.proxySessionChannelConcurrencyLimit))
+          : 2,
+        proxySessionChannelQueueWaitMs: Number(runtimeInfo.proxySessionChannelQueueWaitMs) >= 0
+          ? Math.trunc(Number(runtimeInfo.proxySessionChannelQueueWaitMs))
+          : 1500,
         routingFallbackUnitCost: Number(runtimeInfo.routingFallbackUnitCost) > 0
           ? Number(runtimeInfo.routingFallbackUnitCost)
           : 1,
@@ -566,6 +581,34 @@ export default function Settings() {
       toast.error(err?.message || '保存失败');
     } finally {
       setSavingSystemProxy(false);
+    }
+  };
+
+  const saveProxyTransportSettings = async () => {
+    setSavingProxyTransport(true);
+    try {
+      const res = await api.updateRuntimeSettings({
+        codexUpstreamWebsocketEnabled: runtime.codexUpstreamWebsocketEnabled,
+        proxySessionChannelConcurrencyLimit: runtime.proxySessionChannelConcurrencyLimit,
+        proxySessionChannelQueueWaitMs: runtime.proxySessionChannelQueueWaitMs,
+      });
+      setRuntime((prev) => ({
+        ...prev,
+        codexUpstreamWebsocketEnabled: typeof res?.codexUpstreamWebsocketEnabled === 'boolean'
+          ? res.codexUpstreamWebsocketEnabled
+          : prev.codexUpstreamWebsocketEnabled,
+        proxySessionChannelConcurrencyLimit: Number(res?.proxySessionChannelConcurrencyLimit) >= 0
+          ? Math.trunc(Number(res.proxySessionChannelConcurrencyLimit))
+          : prev.proxySessionChannelConcurrencyLimit,
+        proxySessionChannelQueueWaitMs: Number(res?.proxySessionChannelQueueWaitMs) >= 0
+          ? Math.trunc(Number(res.proxySessionChannelQueueWaitMs))
+          : prev.proxySessionChannelQueueWaitMs,
+      }));
+      toast.success('传输与会话并发设置已保存');
+    } catch (err: any) {
+      toast.error(err?.message || '保存失败');
+    } finally {
+      setSavingProxyTransport(false);
     }
   };
 
@@ -1221,6 +1264,72 @@ export default function Settings() {
         </div>
 
         <div className="card animate-slide-up stagger-4" style={{ padding: 20 }}>
+          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>Codex 上游传输与会话并发</div>
+          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12, lineHeight: 1.7 }}>
+            默认采用 HTTP 优先。只有这里开启后，metapi 才会在 Codex 请求上尝试把上游升级为 WebSocket。
+            下游 Codex 客户端也必须同时启用 `/v1/responses` websocket，单开这里不会生效。
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12, lineHeight: 1.7 }}>
+            从旧版本升级时，原先账号 `extraConfig.websockets` 的行为不再单独生效；现在统一以这里的全局设置和下游客户端是否开启为准。
+          </div>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 14 }}>
+            <input
+              type="checkbox"
+              checked={runtime.codexUpstreamWebsocketEnabled}
+              onChange={(e) => setRuntime((prev) => ({ ...prev, codexUpstreamWebsocketEnabled: e.target.checked }))}
+            />
+            允许 metapi 到 Codex 上游使用 WebSocket
+          </label>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12, marginBottom: 10 }}>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>会话通道并发上限</div>
+              <input
+                type="number"
+                min={0}
+                value={runtime.proxySessionChannelConcurrencyLimit}
+                onChange={(e) => {
+                  const nextValue = Number(e.target.value);
+                  setRuntime((prev) => ({
+                    ...prev,
+                    proxySessionChannelConcurrencyLimit: Number.isFinite(nextValue) && nextValue >= 0
+                      ? Math.trunc(nextValue)
+                      : prev.proxySessionChannelConcurrencyLimit,
+                  }));
+                }}
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>排队等待时间（毫秒）</div>
+              <input
+                type="number"
+                min={0}
+                step={100}
+                value={runtime.proxySessionChannelQueueWaitMs}
+                onChange={(e) => {
+                  const nextValue = Number(e.target.value);
+                  setRuntime((prev) => ({
+                    ...prev,
+                    proxySessionChannelQueueWaitMs: Number.isFinite(nextValue) && nextValue >= 0
+                      ? Math.trunc(nextValue)
+                      : prev.proxySessionChannelQueueWaitMs,
+                  }));
+                }}
+                style={inputStyle}
+              />
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12, lineHeight: 1.7 }}>
+            这组 lease 只作用于能识别稳定 `session_id` 的会话型请求；没有稳定会话标识的普通请求不会进入这个池。
+          </div>
+          <div>
+            <button onClick={saveProxyTransportSettings} disabled={savingProxyTransport} className="btn btn-primary">
+              {savingProxyTransport ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存传输与并发'}
+            </button>
+          </div>
+        </div>
+
+        <div className="card animate-slide-up stagger-4" style={{ padding: 20 }}>
           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>下游访问令牌（PROXY_TOKEN）</div>
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
             用于下游站点或客户端访问本服务代理接口。前缀 sk- 固定不可修改，只需填写后缀。
@@ -1650,6 +1759,8 @@ export default function Settings() {
             </div>
           )}
         </div>
+
+        <UpdateCenterSection />
 
         <div className="card animate-slide-up stagger-6" style={{ padding: 20 }}>
           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>维护工具</div>

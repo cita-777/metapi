@@ -1,5 +1,6 @@
 import { fetch } from 'undici';
 import { config } from '../../config.js';
+import { withExplicitProxyRequestInit } from '../siteProxy.js';
 import type { OAuthProviderDefinition } from './providers.js';
 
 export const GEMINI_CLI_OAUTH_PROVIDER = 'gemini-cli';
@@ -147,15 +148,18 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function postGeminiToken(body: URLSearchParams) {
-  const response = await fetch(GEMINI_CLI_TOKEN_URL, {
+async function postGeminiToken(
+  body: URLSearchParams,
+  proxyUrl?: string | null,
+) {
+  const response = await fetch(GEMINI_CLI_TOKEN_URL, withExplicitProxyRequestInit(proxyUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
       Accept: 'application/json',
     },
     body: body.toString(),
-  });
+  }));
   if (!response.ok) {
     const text = await response.text().catch(() => '');
     throw new Error(text || `gemini token exchange failed with status ${response.status}`);
@@ -176,13 +180,16 @@ async function postGeminiToken(body: URLSearchParams) {
   };
 }
 
-async function fetchGeminiUserEmail(accessToken: string): Promise<string | undefined> {
-  const response = await fetch(GEMINI_CLI_USERINFO_URL, {
+async function fetchGeminiUserEmail(
+  accessToken: string,
+  proxyUrl?: string | null,
+): Promise<string | undefined> {
+  const response = await fetch(GEMINI_CLI_USERINFO_URL, withExplicitProxyRequestInit(proxyUrl, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
       Accept: 'application/json',
     },
-  });
+  }));
   if (!response.ok) return undefined;
   const payload = await response.json() as { email?: unknown };
   return asTrimmedString(payload.email);
@@ -192,10 +199,11 @@ async function callGeminiCliInternalApi<T>(
   accessToken: string,
   method: 'loadCodeAssist' | 'onboardUser',
   body: Record<string, unknown>,
+  proxyUrl?: string | null,
 ): Promise<T> {
   const response = await fetch(
     `${GEMINI_CLI_UPSTREAM_BASE_URL}/${GEMINI_CLI_INTERNAL_API_VERSION}:${method}`,
-    {
+    withExplicitProxyRequestInit(proxyUrl, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -205,7 +213,7 @@ async function callGeminiCliInternalApi<T>(
         'X-Goog-Api-Client': GEMINI_CLI_GOOGLE_API_CLIENT,
       },
       body: JSON.stringify(body),
-    },
+    }),
   );
   if (!response.ok) {
     const text = await response.text().catch(() => '');
@@ -214,13 +222,13 @@ async function callGeminiCliInternalApi<T>(
   return response.json() as Promise<T>;
 }
 
-async function fetchGcpProjects(accessToken: string): Promise<string[]> {
-  const response = await fetch(GEMINI_CLI_PROJECTS_URL, {
+async function fetchGcpProjects(accessToken: string, proxyUrl?: string | null): Promise<string[]> {
+  const response = await fetch(GEMINI_CLI_PROJECTS_URL, withExplicitProxyRequestInit(proxyUrl, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
       Accept: 'application/json',
     },
-  });
+  }));
   if (!response.ok) {
     const text = await response.text().catch(() => '');
     throw new Error(text || `project list request failed with status ${response.status}`);
@@ -231,17 +239,21 @@ async function fetchGcpProjects(accessToken: string): Promise<string[]> {
     .filter((projectId): projectId is string => !!projectId);
 }
 
-async function checkCloudAIAPIEnabled(accessToken: string, projectId: string): Promise<void> {
+async function checkCloudAIAPIEnabled(
+  accessToken: string,
+  projectId: string,
+  proxyUrl?: string | null,
+): Promise<void> {
   const checkResponse = await fetch(
     `${GEMINI_CLI_SERVICE_USAGE_URL}/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(GEMINI_CLI_REQUIRED_SERVICE)}`,
-    {
+    withExplicitProxyRequestInit(proxyUrl, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
         Accept: 'application/json',
         'User-Agent': GEMINI_CLI_USER_AGENT,
         'X-Goog-Api-Client': GEMINI_CLI_GOOGLE_API_CLIENT,
       },
-    },
+    }),
   );
   if (checkResponse.ok) {
     const payload = await checkResponse.json() as { state?: unknown };
@@ -253,7 +265,7 @@ async function checkCloudAIAPIEnabled(accessToken: string, projectId: string): P
 
   const response = await fetch(
     `${GEMINI_CLI_SERVICE_USAGE_URL}/projects/${encodeURIComponent(projectId)}/services/${encodeURIComponent(GEMINI_CLI_REQUIRED_SERVICE)}:enable`,
-    {
+    withExplicitProxyRequestInit(proxyUrl, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -263,7 +275,7 @@ async function checkCloudAIAPIEnabled(accessToken: string, projectId: string): P
         'X-Goog-Api-Client': GEMINI_CLI_GOOGLE_API_CLIENT,
       },
       body: '{}',
-    },
+    }),
   );
   const text = await response.text().catch(() => '');
   if (response.ok) {
@@ -278,6 +290,7 @@ async function checkCloudAIAPIEnabled(accessToken: string, projectId: string): P
 async function performGeminiCliSetup(
   accessToken: string,
   requestedProjectId: string,
+  proxyUrl?: string | null,
 ): Promise<string> {
   const trimmedRequest = requestedProjectId.trim();
   const explicitProject = !!trimmedRequest;
@@ -291,6 +304,7 @@ async function performGeminiCliSetup(
         cloudaicompanionProject: trimmedRequest,
       }
       : { metadata },
+    proxyUrl,
   );
 
   const tierId = extractGeminiDefaultTierId(loadResponse);
@@ -305,6 +319,7 @@ async function performGeminiCliSetup(
           tierId,
           metadata,
         },
+        proxyUrl,
       );
       if (onboardResponse.done === true) {
         const response = (
@@ -337,6 +352,7 @@ async function performGeminiCliSetup(
         metadata,
         cloudaicompanionProject: projectId,
       },
+      proxyUrl,
     );
     if (onboardResponse.done === true) {
       const response = (
@@ -372,18 +388,19 @@ async function performGeminiCliSetup(
 async function ensureGeminiProjectAndOnboard(
   accessToken: string,
   requestedProjectId?: string,
+  proxyUrl?: string | null,
 ): Promise<string> {
   const explicitProject = asTrimmedString(requestedProjectId);
   if (explicitProject) {
-    return performGeminiCliSetup(accessToken, explicitProject);
+    return performGeminiCliSetup(accessToken, explicitProject, proxyUrl);
   }
 
-  const projects = await fetchGcpProjects(accessToken);
+  const projects = await fetchGcpProjects(accessToken, proxyUrl);
   const firstProject = projects[0];
   if (!firstProject) {
     throw new Error('no Google Cloud projects available for this account');
   }
-  return performGeminiCliSetup(accessToken, firstProject);
+  return performGeminiCliSetup(accessToken, firstProject, proxyUrl);
 }
 
 export const geminiCliOauthProvider: OAuthProviderDefinition = {
@@ -422,7 +439,7 @@ export const geminiCliOauthProvider: OAuthProviderDefinition = {
     });
     return `${GEMINI_CLI_AUTH_URL}?${params.toString()}`;
   },
-  exchangeAuthorizationCode: async ({ code, redirectUri, projectId }) => {
+  exchangeAuthorizationCode: async ({ code, redirectUri, projectId, proxyUrl }) => {
     const oauthConfig = requireGeminiCliOAuthConfig();
     const token = await postGeminiToken(new URLSearchParams({
       code,
@@ -430,10 +447,10 @@ export const geminiCliOauthProvider: OAuthProviderDefinition = {
       client_secret: oauthConfig.clientSecret,
       redirect_uri: redirectUri,
       grant_type: 'authorization_code',
-    }));
-    const resolvedProjectId = await ensureGeminiProjectAndOnboard(token.accessToken, projectId);
-    await checkCloudAIAPIEnabled(token.accessToken, resolvedProjectId);
-    const email = await fetchGeminiUserEmail(token.accessToken);
+    }), proxyUrl);
+    const resolvedProjectId = await ensureGeminiProjectAndOnboard(token.accessToken, projectId, proxyUrl);
+    await checkCloudAIAPIEnabled(token.accessToken, resolvedProjectId, proxyUrl);
+    const email = await fetchGeminiUserEmail(token.accessToken, proxyUrl);
     return {
       ...token,
       email,
@@ -442,19 +459,19 @@ export const geminiCliOauthProvider: OAuthProviderDefinition = {
       projectId: resolvedProjectId,
     };
   },
-  refreshAccessToken: async ({ refreshToken, oauth }) => {
+  refreshAccessToken: async ({ refreshToken, oauth, proxyUrl }) => {
     const oauthConfig = requireGeminiCliOAuthConfig();
     const token = await postGeminiToken(new URLSearchParams({
       client_id: oauthConfig.clientId,
       client_secret: oauthConfig.clientSecret,
       grant_type: 'refresh_token',
       refresh_token: refreshToken,
-    }));
+    }), proxyUrl);
     const nextProjectId = oauth?.projectId
       ? oauth.projectId
-      : await ensureGeminiProjectAndOnboard(token.accessToken);
-    await checkCloudAIAPIEnabled(token.accessToken, nextProjectId);
-    const email = await fetchGeminiUserEmail(token.accessToken);
+      : await ensureGeminiProjectAndOnboard(token.accessToken, undefined, proxyUrl);
+    await checkCloudAIAPIEnabled(token.accessToken, nextProjectId, proxyUrl);
+    const email = await fetchGeminiUserEmail(token.accessToken, proxyUrl);
     return {
       ...token,
       email,
