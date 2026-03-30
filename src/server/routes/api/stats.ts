@@ -5,6 +5,10 @@ import { refreshModelsForAccount } from '../../services/modelService.js';
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { buildModelAnalysis } from '../../services/modelAnalysisService.js';
 import { fallbackTokenCost, fetchModelPricingCatalog } from '../../services/modelPricingService.js';
+import {
+  executeModelAvailabilityProbe,
+  queueModelAvailabilityProbeTask,
+} from '../../services/modelAvailabilityProbeService.js';
 import { getUpstreamModelDescriptionsCached } from '../../services/upstreamModelDescriptionService.js';
 import { getRunningTaskByDedupeKey, startBackgroundTask } from '../../services/backgroundTaskService.js';
 import { parseCheckinRewardAmount } from '../../services/checkinRewardParser.js';
@@ -1413,6 +1417,48 @@ export async function statsRoutes(app: FastifyInstance) {
     const refresh = await refreshModelsForAccount(accountId);
     const rebuild = await routeRefreshWorkflow.rebuildRoutesOnly();
     return { success: true, refresh, rebuild };
+  });
+
+  app.post<{ Body?: { accountId?: number; wait?: boolean } }>('/api/models/probe', async (request, reply) => {
+    const rawAccountId = request.body?.accountId as unknown;
+    const hasAccountId = rawAccountId !== undefined && rawAccountId !== null && String(rawAccountId).trim() !== '';
+    const accountId = hasAccountId ? Number.parseInt(String(rawAccountId), 10) : undefined;
+    const wait = request.body?.wait === true;
+
+    if (hasAccountId && (!Number.isFinite(accountId) || (accountId as number) <= 0)) {
+      return reply.code(400).send({ success: false, message: '账号 ID 无效' });
+    }
+
+    if (wait) {
+      const result = await executeModelAvailabilityProbe({
+        accountId,
+        rebuildRoutes: true,
+      });
+      if (accountId && result.summary.totalAccounts === 0) {
+        return reply.code(404).send({ success: false, message: '账号不存在' });
+      }
+      return {
+        success: true,
+        ...result,
+      };
+    }
+
+    const taskTitle = accountId ? `探测模型可用性 #${accountId}` : '探测全部模型可用性';
+    const { task, reused } = queueModelAvailabilityProbeTask({
+      accountId,
+      title: taskTitle,
+    });
+
+    return reply.code(202).send({
+      success: true,
+      queued: true,
+      reused,
+      jobId: task.id,
+      status: task.status,
+      message: reused
+        ? '模型可用性探测任务进行中，请稍后查看任务列表'
+        : '已开始模型可用性探测，请稍后查看任务列表',
+    });
   });
 
   // Site distribution – per-site aggregate data

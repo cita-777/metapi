@@ -7,6 +7,7 @@ import { eq } from 'drizzle-orm';
 type DbModule = typeof import('../db/index.js');
 type TokenRouterModule = typeof import('./tokenRouter.js');
 type ConfigModule = typeof import('../config.js');
+type ProxyChannelCoordinatorModule = typeof import('./proxyChannelCoordinator.js');
 
 const mockedCatalogRoutingCost = vi.fn<(
   input: { siteId: number; accountId: number; modelName: string }
@@ -28,10 +29,14 @@ describe('TokenRouter selection scoring', () => {
   let resetSiteRuntimeHealthState: TokenRouterModule['resetSiteRuntimeHealthState'];
   let flushSiteRuntimeHealthPersistence: TokenRouterModule['flushSiteRuntimeHealthPersistence'];
   let config: ConfigModule['config'];
+  let proxyChannelCoordinator: ProxyChannelCoordinatorModule['proxyChannelCoordinator'];
+  let resetProxyChannelCoordinatorState: ProxyChannelCoordinatorModule['resetProxyChannelCoordinatorState'];
   let dataDir = '';
   let idSeed = 0;
   let originalRoutingWeights: typeof config.routingWeights;
   let originalRoutingFallbackUnitCost: number;
+  let originalProxySessionChannelConcurrencyLimit: number;
+  let originalProxySessionChannelQueueWaitMs: number;
 
   const nextId = () => {
     idSeed += 1;
@@ -46,6 +51,7 @@ describe('TokenRouter selection scoring', () => {
     const dbModule = await import('../db/index.js');
     const tokenRouterModule = await import('./tokenRouter.js');
     const configModule = await import('../config.js');
+    const coordinatorModule = await import('./proxyChannelCoordinator.js');
     db = dbModule.db;
     schema = dbModule.schema;
     TokenRouter = tokenRouterModule.TokenRouter;
@@ -53,14 +59,20 @@ describe('TokenRouter selection scoring', () => {
     resetSiteRuntimeHealthState = tokenRouterModule.resetSiteRuntimeHealthState;
     flushSiteRuntimeHealthPersistence = tokenRouterModule.flushSiteRuntimeHealthPersistence;
     config = configModule.config;
+    proxyChannelCoordinator = coordinatorModule.proxyChannelCoordinator;
+    resetProxyChannelCoordinatorState = coordinatorModule.resetProxyChannelCoordinatorState;
     originalRoutingWeights = { ...config.routingWeights };
     originalRoutingFallbackUnitCost = config.routingFallbackUnitCost;
+    originalProxySessionChannelConcurrencyLimit = config.proxySessionChannelConcurrencyLimit;
+    originalProxySessionChannelQueueWaitMs = config.proxySessionChannelQueueWaitMs;
   });
 
   beforeEach(async () => {
     idSeed = 0;
     mockedCatalogRoutingCost.mockReset();
     mockedCatalogRoutingCost.mockReturnValue(null);
+    config.proxySessionChannelConcurrencyLimit = originalProxySessionChannelConcurrencyLimit;
+    config.proxySessionChannelQueueWaitMs = originalProxySessionChannelQueueWaitMs;
     await db.delete(schema.routeChannels).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.settings).run();
@@ -69,13 +81,17 @@ describe('TokenRouter selection scoring', () => {
     await db.delete(schema.sites).run();
     invalidateTokenRouterCache();
     resetSiteRuntimeHealthState();
+    resetProxyChannelCoordinatorState();
   });
 
   afterAll(() => {
     config.routingWeights = { ...originalRoutingWeights };
     config.routingFallbackUnitCost = originalRoutingFallbackUnitCost;
+    config.proxySessionChannelConcurrencyLimit = originalProxySessionChannelConcurrencyLimit;
+    config.proxySessionChannelQueueWaitMs = originalProxySessionChannelQueueWaitMs;
     invalidateTokenRouterCache();
     resetSiteRuntimeHealthState();
+    resetProxyChannelCoordinatorState();
     delete process.env.DATA_DIR;
   });
 
@@ -96,7 +112,7 @@ describe('TokenRouter selection scoring', () => {
     }).returning().get();
   }
 
-  async function createAccount(siteId: number, usernamePrefix: string) {
+  async function createAccount(siteId: number, usernamePrefix: string, options: { extraConfig?: string | null } = {}) {
     const id = nextId();
     return await db.insert(schema.accounts).values({
       siteId,
@@ -104,6 +120,7 @@ describe('TokenRouter selection scoring', () => {
       accessToken: `access-${id}`,
       apiToken: `sk-${id}`,
       status: 'active',
+      extraConfig: options.extraConfig ?? null,
     }).returning().get();
   }
 
@@ -126,7 +143,11 @@ describe('TokenRouter selection scoring', () => {
       usageWeight: 0,
     };
 
-    const route = await createRoute('gpt-5.2');
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.2',
+      routingStrategy: 'stable_first',
+      enabled: true,
+    }).returning().get();
     const site = await createSite('sticky-site');
     const account = await createAccount(site.id, 'sticky-user');
     const tokenA = await createToken(account.id, 'sticky-a');
@@ -910,5 +931,131 @@ describe('TokenRouter selection scoring', () => {
     expect(preview?.channel.id).toBe(channelB.id);
     expect(decision.summary.join(' ')).toContain('稳定优先');
     expect(decision.selectedChannelId).toBe(channelB.id);
+  });
+
+  it('stable_first rotates across sites that remain inside the stable pool', async () => {
+    config.routingWeights = {
+      baseWeightFactor: 1,
+      valueScoreFactor: 0,
+      costWeight: 0,
+      balanceWeight: 0,
+      usageWeight: 0,
+    };
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.4',
+      routingStrategy: 'stable_first',
+      enabled: true,
+    }).returning().get();
+
+    const siteA = await createSite('stable-pool-a');
+    const accountA = await createAccount(siteA.id, 'stable-pool-user-a');
+    const tokenA = await createToken(accountA.id, 'stable-pool-token-a');
+    const channelA = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountA.id,
+      tokenId: tokenA.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const siteB = await createSite('stable-pool-b');
+    const accountB = await createAccount(siteB.id, 'stable-pool-user-b');
+    const tokenB = await createToken(accountB.id, 'stable-pool-token-b');
+    const channelB = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountB.id,
+      tokenId: tokenB.id,
+      priority: 0,
+      weight: 9,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    const first = await router.selectChannel('gpt-5.4');
+    const second = await router.selectChannel('gpt-5.4');
+    const third = await router.selectChannel('gpt-5.4');
+    const decision = await router.explainSelection('gpt-5.4');
+
+    expect(first?.channel.id).toBe(channelA.id);
+    expect(second?.channel.id).toBe(channelB.id);
+    expect(third?.channel.id).toBe(channelA.id);
+    expect(decision.summary.join(' ')).toContain('稳定池站点 2');
+  });
+
+  it('penalizes saturated session-scoped channels using runtime load snapshots', async () => {
+    config.routingWeights = {
+      baseWeightFactor: 1,
+      valueScoreFactor: 0,
+      costWeight: 0,
+      balanceWeight: 0,
+      usageWeight: 0,
+    };
+    config.proxySessionChannelConcurrencyLimit = 1;
+    config.proxySessionChannelQueueWaitMs = 5_000;
+
+    const route = await createRoute('gpt-5.2');
+    const sessionExtraConfig = JSON.stringify({ credentialMode: 'session' });
+
+    const siteBusy = await createSite('runtime-load-busy');
+    const accountBusy = await createAccount(siteBusy.id, 'runtime-load-user-busy', {
+      extraConfig: sessionExtraConfig,
+    });
+    const tokenBusy = await createToken(accountBusy.id, 'runtime-load-token-busy');
+    const channelBusy = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountBusy.id,
+      tokenId: tokenBusy.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const siteFree = await createSite('runtime-load-free');
+    const accountFree = await createAccount(siteFree.id, 'runtime-load-user-free', {
+      extraConfig: sessionExtraConfig,
+    });
+    const tokenFree = await createToken(accountFree.id, 'runtime-load-token-free');
+    const channelFree = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountFree.id,
+      tokenId: tokenFree.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const activeLease = await proxyChannelCoordinator.acquireChannelLease({
+      channelId: channelBusy.id,
+      accountExtraConfig: accountBusy.extraConfig,
+    });
+    expect(activeLease.status).toBe('acquired');
+    if (activeLease.status !== 'acquired') return;
+
+    const queuedLeasePromise = proxyChannelCoordinator.acquireChannelLease({
+      channelId: channelBusy.id,
+      accountExtraConfig: accountBusy.extraConfig,
+    });
+    await Promise.resolve();
+
+    const router = new TokenRouter();
+    const preview = await router.previewSelectedChannel('gpt-5.2');
+    const decision = await router.explainSelection('gpt-5.2');
+    const busyCandidate = decision.candidates.find((candidate) => candidate.channelId === channelBusy.id);
+    const freeCandidate = decision.candidates.find((candidate) => candidate.channelId === channelFree.id);
+
+    expect(preview?.channel.id).toBe(channelFree.id);
+    expect(busyCandidate?.reason || '').toContain('会话负载=');
+    expect(busyCandidate?.reason || '').toContain('活跃=1/1');
+    expect(busyCandidate?.reason || '').toContain('等待=1');
+    expect((busyCandidate?.probability || 0)).toBeLessThan((freeCandidate?.probability || 0));
+
+    activeLease.lease.release();
+    const queuedLease = await queuedLeasePromise;
+    expect(queuedLease.status).toBe('acquired');
+    if (queuedLease.status === 'acquired') {
+      queuedLease.lease.release();
+    }
   });
 });

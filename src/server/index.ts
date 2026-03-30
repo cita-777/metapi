@@ -34,6 +34,14 @@ import { ensureOauthIdentityBackfill } from './services/oauth/oauthIdentityBackf
 import { ensureOauthProviderSitesExist } from './services/oauth/oauthSiteRegistry.js';
 import { startOAuthLoopbackCallbackServers, stopOAuthLoopbackCallbackServers } from './services/oauth/localCallbackServer.js';
 import { startSiteAnnouncementPolling } from './services/siteAnnouncementPollingService.js';
+import {
+  startModelAvailabilityProbeScheduler,
+  stopModelAvailabilityProbeScheduler,
+} from './services/modelAvailabilityProbeService.js';
+import {
+  startChannelRecoveryProbeScheduler,
+  stopChannelRecoveryProbeScheduler,
+} from './services/channelRecoveryProbeService.js';
 import { reloadBackupWebdavScheduler } from './services/backupService.js';
 import { ensureRuntimeDatabaseReady } from './runtimeDatabaseBootstrap.js';
 import { isPublicApiRoute, registerDesktopRoutes } from './desktop.js';
@@ -483,6 +491,8 @@ if (existsSync(webDir)) {
 await startScheduler();
 await reloadBackupWebdavScheduler();
 startSiteAnnouncementPolling();
+startModelAvailabilityProbeScheduler();
+startChannelRecoveryProbeScheduler();
 try {
   await startOAuthLoopbackCallbackServers();
 } catch (error) {
@@ -493,6 +503,8 @@ startProxyFileRetentionService();
 app.addHook('onClose', async () => {
   stopProxyFileRetentionService();
   stopProxyLogRetentionService();
+  stopModelAvailabilityProbeScheduler();
+  stopChannelRecoveryProbeScheduler();
   await stopOAuthLoopbackCallbackServers();
 });
 

@@ -3,6 +3,7 @@ import { db, schema } from '../db/index.js';
 import { upsertSetting } from '../db/upsertSetting.js';
 import { config } from '../config.js';
 import { getCachedModelRoutingReferenceCost, refreshModelPricingCatalog } from './modelPricingService.js';
+import { proxyChannelCoordinator, type ProxyChannelLoadSnapshot } from './proxyChannelCoordinator.js';
 import { RETRYABLE_TIMEOUT_PATTERNS } from './proxyRetryPolicy.js';
 import {
   normalizeRouteRoutingStrategy,
@@ -75,6 +76,7 @@ const SHORT_WINDOW_LIMIT_COOLDOWN_MS = 5 * 60 * 1000;
 const MIN_EFFECTIVE_UNIT_COST = 1e-6;
 const ROUND_ROBIN_FAILURE_THRESHOLD = 3;
 const ROUND_ROBIN_COOLDOWN_LEVELS_SEC = [0, 10 * 60, 60 * 60, 24 * 60 * 60] as const;
+const STABLE_FIRST_SITE_SCORE_RATIO = 0.92;
 const SITE_RUNTIME_HEALTH_DECAY_HALF_LIFE_MS = 10 * 60 * 1000;
 const SITE_RUNTIME_MIN_MULTIPLIER = 0.08;
 const SITE_RUNTIME_LATENCY_BASELINE_MS = 2_500;
@@ -172,6 +174,11 @@ type SiteRuntimeHealthDetails = {
 };
 
 type WeightedSelectionMode = 'weighted' | 'stable_first';
+type WeightedSelectionResult = {
+  selected: RouteChannelCandidate | null;
+  details: Array<{ candidate: RouteChannelCandidate; probability: number; reason: string }>;
+  stableSiteCount: number;
+};
 
 const siteRuntimeHealthStates = new Map<number, SiteRuntimeHealthState>();
 const siteModelRuntimeHealthStates = new Map<number, Map<string, SiteRuntimeHealthState>>();
@@ -221,6 +228,11 @@ function isUsageLimitRateLimitFailure(context: SiteRuntimeFailureContext = {}): 
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function isContributionCloseToBest(value: number, bestValue: number, ratio = STABLE_FIRST_SITE_SCORE_RATIO): boolean {
+  if (bestValue <= 0) return true;
+  return value >= (bestValue * ratio);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1166,6 +1178,25 @@ function compareNullableTimeAsc(left?: string | null, right?: string | null): nu
   return leftMs - rightMs;
 }
 
+function resolveChannelRuntimeLoadMultiplier(snapshot: ProxyChannelLoadSnapshot): number {
+  if (!snapshot.sessionScoped || snapshot.concurrencyLimit <= 0) return 1;
+
+  const activeRatio = clampNumber(snapshot.activeLeaseCount / Math.max(1, snapshot.concurrencyLimit), 0, 1.5);
+  const waitingRatio = clampNumber(snapshot.waitingCount / Math.max(1, snapshot.concurrencyLimit), 0, 3);
+  const activePenalty = activeRatio * 0.28;
+  const waitingPenalty = waitingRatio * 0.32;
+  const saturationPenalty = snapshot.saturated ? 0.12 : 0;
+  return clampNumber(1 - activePenalty - waitingPenalty - saturationPenalty, 0.18, 1);
+}
+
+function formatChannelRuntimeLoad(snapshot: ProxyChannelLoadSnapshot): string {
+  if (!snapshot.sessionScoped || snapshot.concurrencyLimit <= 0) {
+    return '未限流';
+  }
+  const multiplier = resolveChannelRuntimeLoadMultiplier(snapshot);
+  return `${multiplier.toFixed(2)}（活跃=${snapshot.activeLeaseCount}/${snapshot.concurrencyLimit}，等待=${snapshot.waitingCount}）`;
+}
+
 function resolveEffectiveUnitCost(candidate: RouteChannelCandidate, modelName: string): CostSignal {
   const successCount = Math.max(0, candidate.channel.successCount ?? 0);
   const totalCost = Math.max(0, candidate.channel.totalCost ?? 0);
@@ -1629,6 +1660,9 @@ export class TokenRouter {
       selected = weighted.selected;
       selectedPriority = priority;
       const layerSummaryParts = [`优先级 P${priority}：可用 ${rawLayer.length}`];
+      if (routeStrategy === 'stable_first' && weighted.stableSiteCount > 1) {
+        layerSummaryParts.push(`稳定池站点 ${weighted.stableSiteCount}，按站点轮询`);
+      }
       if (breakerFiltered.avoided.length > 0) {
         const breakerSummaryLabel = breakerFiltered.avoided.some((item) => item.reason.includes('模型熔断'))
           ? '运行时熔断避让'
@@ -1761,6 +1795,41 @@ export class TokenRouter {
       channel.consecutiveFailCount = 0;
       channel.cooldownLevel = 0;
     });
+
+    recordSiteRuntimeSuccess(account.siteId, latencyMs, modelName);
+  }
+
+  async recordProbeSuccess(channelId: number, latencyMs: number, modelName?: string | null) {
+    await ensureSiteRuntimeHealthStateLoaded();
+    const row = await db.select()
+      .from(schema.routeChannels)
+      .innerJoin(schema.accounts, eq(schema.routeChannels.accountId, schema.accounts.id))
+      .where(eq(schema.routeChannels.id, channelId))
+      .get();
+    if (!row) return;
+
+    const ch = row.route_channels;
+    const account = row.accounts;
+    const needsChannelReset = !!ch.cooldownUntil
+      || !!ch.lastFailAt
+      || (ch.consecutiveFailCount ?? 0) > 0
+      || (ch.cooldownLevel ?? 0) > 0;
+
+    if (needsChannelReset) {
+      await db.update(schema.routeChannels).set({
+        cooldownUntil: null,
+        lastFailAt: null,
+        consecutiveFailCount: 0,
+        cooldownLevel: 0,
+      }).where(eq(schema.routeChannels.id, channelId)).run();
+
+      patchCachedChannel(channelId, (channel) => {
+        channel.cooldownUntil = null;
+        channel.lastFailAt = null;
+        channel.consecutiveFailCount = 0;
+        channel.cooldownLevel = 0;
+      });
+    }
 
     recordSiteRuntimeSuccess(account.siteId, latencyMs, modelName);
   }
@@ -2152,6 +2221,31 @@ export class TokenRouter {
     return (left.channel.id ?? 0) - (right.channel.id ?? 0);
   }
 
+  private calculateStableFirstLeaderScore(
+    candidate: RouteChannelCandidate,
+    contribution: number,
+    oldestSelectedAtMs: number | null,
+    newestSelectedAtMs: number | null,
+  ): number {
+    const selectedAtMs = parseIsoTimeMs(candidate.channel.lastSelectedAt || candidate.channel.lastUsedAt);
+    let freshnessMultiplier = 1;
+    if (selectedAtMs == null) {
+      freshnessMultiplier = 1.15;
+    } else if (
+      oldestSelectedAtMs != null
+      && newestSelectedAtMs != null
+      && newestSelectedAtMs > oldestSelectedAtMs
+    ) {
+      const freshnessRatio = clampNumber(
+        (newestSelectedAtMs - selectedAtMs) / (newestSelectedAtMs - oldestSelectedAtMs),
+        0,
+        1,
+      );
+      freshnessMultiplier = 0.85 + (freshnessRatio * 0.3);
+    }
+    return contribution * freshnessMultiplier;
+  }
+
   private async recordChannelSelection(channelId: number): Promise<void> {
     const nowIso = new Date().toISOString();
     await db.update(schema.routeChannels).set({
@@ -2187,11 +2281,12 @@ export class TokenRouter {
     downstreamPolicy: DownstreamRoutingPolicy,
     nowMs = Date.now(),
     selectionMode: WeightedSelectionMode = 'weighted',
-  ) {
+  ): WeightedSelectionResult {
     if (candidates.length === 0) {
       return {
         selected: null as RouteChannelCandidate | null,
         details: [] as Array<{ candidate: RouteChannelCandidate; probability: number; reason: string }>,
+        stableSiteCount: 0,
       };
     }
 
@@ -2203,6 +2298,7 @@ export class TokenRouter {
           probability: 1,
           reason: selectionMode === 'stable_first' ? '稳定优先（唯一可用候选）' : '唯一可用候选',
         }],
+        stableSiteCount: 1,
       };
     }
 
@@ -2213,6 +2309,12 @@ export class TokenRouter {
     const effectiveCosts = candidates.map((candidate) => resolveEffectiveUnitCost(candidate, resolveModelName(candidate)));
     const runtimeHealthDetails = candidates.map((candidate) => (
       getSiteRuntimeHealthDetails(candidate.site.id, resolveModelName(candidate), nowMs)
+    ));
+    const channelLoadSnapshots = candidates.map((candidate) => (
+      proxyChannelCoordinator.getChannelLoadSnapshot({
+        channelId: candidate.channel.id,
+        accountExtraConfig: candidate.account.extraConfig,
+      })
     ));
 
     const valueScores = candidates.map((c, i) => {
@@ -2260,6 +2362,7 @@ export class TokenRouter {
 
       contribution *= runtimeHealthDetails[i]?.combinedMultiplier ?? 1;
       contribution *= siteHistoricalHealthMetrics.get(candidate.site.id)?.multiplier ?? 1;
+      contribution *= resolveChannelRuntimeLoadMultiplier(channelLoadSnapshots[i]);
 
       // If upstream price is unknown and we are using fallback unit cost,
       // apply an explicit penalty so raising fallback cost meaningfully lowers probability.
@@ -2283,6 +2386,10 @@ export class TokenRouter {
     rankedIndices.forEach((candidateIndex, rank) => {
       rankByIndex.set(candidateIndex, rank + 1);
     });
+    const stableSiteLeaderIndices = selectionMode === 'stable_first'
+      ? this.getStableFirstSiteLeaderIndices(candidates, contributions, rankedIndices)
+      : [];
+    const stableSiteIds = new Set(stableSiteLeaderIndices.map((index) => candidates[index]?.site.id).filter((siteId) => typeof siteId === 'number'));
     const details = candidates.map((candidate, i) => {
       const probability = totalContribution > 0 ? contributions[i] / totalContribution : 0;
       const weight = candidate.channel.weight ?? 10;
@@ -2310,18 +2417,23 @@ export class TokenRouter {
       const historicalLatencyText = siteHistoricalHealth?.avgLatencyMs == null
         ? '—'
         : `${siteHistoricalHealth.avgLatencyMs}ms`;
+      const channelRuntimeLoad = channelLoadSnapshots[i];
       const runtimeHealthText = siteRuntimeDetail.modelKey
         ? `${siteRuntimeDetail.combinedMultiplier.toFixed(2)}（站点=${siteRuntimeDetail.globalMultiplier.toFixed(2)}，模型=${siteRuntimeDetail.modelMultiplier.toFixed(2)}）`
         : `${siteRuntimeDetail.globalMultiplier.toFixed(2)}`;
+      const runtimeLoadText = formatChannelRuntimeLoad(channelRuntimeLoad);
       const reasonPrefix = selectionMode === 'stable_first'
         ? `稳定优先（综合评分第 ${rankByIndex.get(i) ?? 1} / ${candidates.length}`
         : '按权重随机';
+      const stablePoolText = selectionMode === 'stable_first'
+        ? `，稳定池站点=${stableSiteIds.size}${stableSiteIds.has(candidate.site.id) ? '（在池中）' : '（池外）'}`
+        : '';
       return {
         candidate,
         probability,
         reason: selectionMode === 'stable_first'
-          ? `${reasonPrefix}，W=${weight}，成本=${costSourceText}:${(cost?.unitCost || 1).toFixed(6)}，站点权重=${siteGlobalWeight.toFixed(2)}x下游倍率=${normalizedDownstreamSiteMultiplier.toFixed(2)}=${combinedSiteWeight.toFixed(2)}，运行时健康=${runtimeHealthText}，历史健康=${siteHistoricalMultiplier.toFixed(2)}（成功率=${historicalSuccessRateText}，均延迟=${historicalLatencyText}，样本=${siteHistoricalHealth?.totalCalls ?? 0}），同站点通道=${siteChannels}，评分占比≈${(probability * 100).toFixed(1)}%）`
-          : `按权重随机（W=${weight}，成本=${costSourceText}:${(cost?.unitCost || 1).toFixed(6)}，站点权重=${siteGlobalWeight.toFixed(2)}x下游倍率=${normalizedDownstreamSiteMultiplier.toFixed(2)}=${combinedSiteWeight.toFixed(2)}，运行时健康=${runtimeHealthText}，历史健康=${siteHistoricalMultiplier.toFixed(2)}（成功率=${historicalSuccessRateText}，均延迟=${historicalLatencyText}，样本=${siteHistoricalHealth?.totalCalls ?? 0}），同站点通道=${siteChannels}，概率≈${(probability * 100).toFixed(1)}%）`,
+          ? `${reasonPrefix}，W=${weight}，成本=${costSourceText}:${(cost?.unitCost || 1).toFixed(6)}，站点权重=${siteGlobalWeight.toFixed(2)}x下游倍率=${normalizedDownstreamSiteMultiplier.toFixed(2)}=${combinedSiteWeight.toFixed(2)}，运行时健康=${runtimeHealthText}，会话负载=${runtimeLoadText}，历史健康=${siteHistoricalMultiplier.toFixed(2)}（成功率=${historicalSuccessRateText}，均延迟=${historicalLatencyText}，样本=${siteHistoricalHealth?.totalCalls ?? 0}），同站点通道=${siteChannels}${stablePoolText}，评分占比≈${(probability * 100).toFixed(1)}%）`
+          : `按权重随机（W=${weight}，成本=${costSourceText}:${(cost?.unitCost || 1).toFixed(6)}，站点权重=${siteGlobalWeight.toFixed(2)}x下游倍率=${normalizedDownstreamSiteMultiplier.toFixed(2)}=${combinedSiteWeight.toFixed(2)}，运行时健康=${runtimeHealthText}，会话负载=${runtimeLoadText}，历史健康=${siteHistoricalMultiplier.toFixed(2)}（成功率=${historicalSuccessRateText}，均延迟=${historicalLatencyText}，样本=${siteHistoricalHealth?.totalCalls ?? 0}），同站点通道=${siteChannels}，概率≈${(probability * 100).toFixed(1)}%）`,
       };
     });
 
@@ -2336,9 +2448,87 @@ export class TokenRouter {
           break;
         }
       }
+    } else {
+      selected = this.selectStableFirstCandidate(candidates, contributions, rankedIndices) ?? selected;
     }
 
-    return { selected, details };
+    return {
+      selected,
+      details,
+      stableSiteCount: stableSiteIds.size,
+    };
+  }
+
+  private getStableFirstSiteLeaderIndices(
+    candidates: RouteChannelCandidate[],
+    contributions: number[],
+    rankedIndices: number[],
+  ): number[] {
+    if (rankedIndices.length <= 1) return rankedIndices;
+
+    const siteLeaderIndices: number[] = [];
+    const seenSiteIds = new Set<number>();
+    for (const index of rankedIndices) {
+      const siteId = candidates[index]?.site.id;
+      if (!Number.isFinite(siteId) || seenSiteIds.has(siteId)) continue;
+      seenSiteIds.add(siteId);
+      siteLeaderIndices.push(index);
+    }
+
+    if (siteLeaderIndices.length <= 1) return siteLeaderIndices;
+
+    const bestContribution = contributions[siteLeaderIndices[0] ?? rankedIndices[0] ?? 0] ?? 0;
+    const stableSiteLeaderIndices = siteLeaderIndices.filter((index) => (
+      isContributionCloseToBest(contributions[index] ?? 0, bestContribution)
+    ));
+
+    return stableSiteLeaderIndices.length > 0 ? stableSiteLeaderIndices : siteLeaderIndices;
+  }
+
+  private selectStableFirstCandidate(
+    candidates: RouteChannelCandidate[],
+    contributions: number[],
+    rankedIndices: number[],
+  ): RouteChannelCandidate | null {
+    const stableSiteLeaderIndices = this.getStableFirstSiteLeaderIndices(candidates, contributions, rankedIndices);
+    if (stableSiteLeaderIndices.length <= 0) return candidates[rankedIndices[0] ?? 0] ?? null;
+
+    const selectedAtValues = stableSiteLeaderIndices
+      .map((index) => parseIsoTimeMs(candidates[index]?.channel.lastSelectedAt || candidates[index]?.channel.lastUsedAt))
+      .filter((value): value is number => value != null);
+    const oldestSelectedAtMs = selectedAtValues.length > 0 ? Math.min(...selectedAtValues) : null;
+    const newestSelectedAtMs = selectedAtValues.length > 0 ? Math.max(...selectedAtValues) : null;
+
+    const selectedSiteLeader = [...stableSiteLeaderIndices].sort((leftIndex, rightIndex) => {
+      const rightScore = this.calculateStableFirstLeaderScore(
+        candidates[rightIndex],
+        contributions[rightIndex] ?? 0,
+        oldestSelectedAtMs,
+        newestSelectedAtMs,
+      );
+      const leftScore = this.calculateStableFirstLeaderScore(
+        candidates[leftIndex],
+        contributions[leftIndex] ?? 0,
+        oldestSelectedAtMs,
+        newestSelectedAtMs,
+      );
+      const scoreDiff = rightScore - leftScore;
+      if (Math.abs(scoreDiff) > 1e-9) {
+        return scoreDiff > 0 ? 1 : -1;
+      }
+      const selectionOrder = this.compareStableFirstCandidates(candidates[leftIndex], candidates[rightIndex]);
+      if (selectionOrder !== 0) return selectionOrder;
+      const contributionDiff = (contributions[rightIndex] ?? 0) - (contributions[leftIndex] ?? 0);
+      if (Math.abs(contributionDiff) > 1e-9) {
+        return contributionDiff > 0 ? 1 : -1;
+      }
+      return leftIndex - rightIndex;
+    })[0];
+    if (selectedSiteLeader == null) return candidates[rankedIndices[0] ?? 0] ?? null;
+
+    const selectedSiteId = candidates[selectedSiteLeader]?.site.id;
+    const topSiteCandidateIndex = rankedIndices.find((index) => candidates[index]?.site.id === selectedSiteId);
+    return topSiteCandidateIndex == null ? (candidates[selectedSiteLeader] ?? null) : (candidates[topSiteCandidateIndex] ?? null);
   }
 }
 
