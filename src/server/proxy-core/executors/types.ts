@@ -9,6 +9,7 @@ import {
   zstdDecompressSync,
 } from 'node:zlib';
 import { Readable } from 'node:stream';
+import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
 import {
   Response,
   fetch,
@@ -190,10 +191,10 @@ export function getRuntimeResponseReader(
   }
 
   const decoded = decodeRuntimeResponseStream(
-    Readable.fromWeb(body as globalThis.ReadableStream<any>),
+    Readable.fromWeb(body as unknown as NodeReadableStream<any>),
     contentEncoding,
   );
-  return (Readable.toWeb(decoded) as ReadableStream<Uint8Array>).getReader();
+  return (Readable.toWeb(decoded) as unknown as globalThis.ReadableStream<Uint8Array>).getReader();
 }
 
 export async function materializeErrorResponse(
