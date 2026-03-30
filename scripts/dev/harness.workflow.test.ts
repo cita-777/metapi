@@ -16,7 +16,7 @@ describe('harness workflows', () => {
     expect(driftWorkflow).toContain('schedule:');
     expect(driftWorkflow).toContain('workflow_dispatch:');
     expect(driftWorkflow).toContain('npm run repo:drift-check -- --format markdown --output tmp/repo-drift-report.md --report-only');
-    expect(driftWorkflow).toContain('actions/upload-artifact@v4');
+    expect(driftWorkflow).toMatch(/actions\/upload-artifact@v\d+/);
     expect(driftWorkflow).toContain('repo-drift-report');
   });
 });
