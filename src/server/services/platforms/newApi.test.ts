@@ -4,6 +4,7 @@ import { AddressInfo } from 'node:net';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { NewApiAdapter } from './newApi.js';
+import { AnyRouterAdapter } from './anyrouter.js';
 
 interface RequestSnapshot {
   method: string;
@@ -25,6 +26,7 @@ const SHIELD_LOGIN_COOKIE = 'challenge-seed';
 const COOKIE_ONLY_LOGIN_USERNAME = 'cookie-only-user';
 const COOKIE_ONLY_LOGIN_PASSWORD = 'cookie-only-pass';
 const COOKIE_ONLY_LOGIN_SESSION = 'cookie-only-session';
+const OPENAI_MODELS_SHIELDED_TOKEN = 'openai-models-shielded-token';
 const COOKIE_SHIELDED_TOKEN = Buffer.from(
   `1771864970|${Buffer.from('username=linuxdo_131936').toString('base64')}|sig`,
 ).toString('base64');
@@ -67,6 +69,34 @@ describe('NewApiAdapter', () => {
       });
 
       if (req.url === '/v1/models') {
+        if (typeof req.headers.authorization === 'string' && req.headers.authorization === `Bearer ${OPENAI_MODELS_SHIELDED_TOKEN}`) {
+          const cookieHeader = typeof req.headers.cookie === 'string' ? req.headers.cookie : '';
+          if (!cookieHeader.includes(`acw_sc__v2=${ANYROUTER_CHALLENGE_ACW}`)) {
+            res.writeHead(200, {
+              'Content-Type': 'text/html; charset=utf-8',
+              'Set-Cookie': `cdn_sec_tc=${SHIELD_LOGIN_COOKIE}; Path=/; HttpOnly`,
+            });
+            res.end(ANYROUTER_CHALLENGE_HTML);
+            return;
+          }
+          if (
+            !cookieHeader.includes(`cdn_sec_tc=${SHIELD_LOGIN_COOKIE}`)
+            || !cookieHeader.includes(`session=${OPENAI_MODELS_SHIELDED_TOKEN}`)
+          ) {
+            res.writeHead(401, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: { message: 'missing shield cookie context' } }));
+            return;
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            data: [
+              { id: 'claude-sonnet-4-5-20250929' },
+              { id: 'claude-opus-4-6' },
+            ],
+          }));
+          return;
+        }
+
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: { message: 'invalid token' } }));
         return;
@@ -423,6 +453,29 @@ describe('NewApiAdapter', () => {
     expect(requests.some((r) => r.url === '/v1/models')).toBe(true);
     expect(
       requests.some((r) => r.url === '/api/user/models' && r.headers['new-api-user'] === '11494'),
+    ).toBe(true);
+  });
+
+  it('reuses shield cookie retry when anyrouter /v1/models returns challenge html', async () => {
+    const adapter = new AnyRouterAdapter();
+    const models = await adapter.getModels(baseUrl, OPENAI_MODELS_SHIELDED_TOKEN);
+
+    expect(models).toEqual(['claude-sonnet-4-5-20250929', 'claude-opus-4-6']);
+    expect(
+      requests.some(
+        (r) =>
+          r.url === '/v1/models'
+          && typeof r.headers.cookie === 'string'
+          && r.headers.cookie.includes(`session=${OPENAI_MODELS_SHIELDED_TOKEN}`),
+      ),
+    ).toBe(true);
+    expect(
+      requests.some(
+        (r) =>
+          r.url === '/v1/models'
+          && typeof r.headers.cookie === 'string'
+          && r.headers.cookie.includes(`acw_sc__v2=${ANYROUTER_CHALLENGE_ACW}`),
+      ),
     ).toBe(true);
   });
 
