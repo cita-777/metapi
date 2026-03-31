@@ -24,11 +24,14 @@ async function flushMicrotasks() {
   });
 }
 
-async function renderAccounts(initialEntry: string) {
-  apiMock.getAccounts.mockResolvedValue([]);
-  apiMock.getSites.mockResolvedValue([
+async function renderAccounts(
+  initialEntry: string,
+  sites: Array<{ id: number; name: string; url?: string; platform: string; status: string }> = [
     { id: 10, name: 'Demo Site', platform: 'new-api', status: 'active' },
-  ]);
+  ],
+) {
+  apiMock.getAccounts.mockResolvedValue([]);
+  apiMock.getSites.mockResolvedValue(sites);
   apiMock.getAccountTokens.mockResolvedValue([]);
 
   let root!: WebTestRenderer;
@@ -76,6 +79,41 @@ describe('Accounts create intent handling', () => {
 
       const selects = root.root.findAllByType(ModernSelect);
       expect(selects[1]?.props.value).toBe('10');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('uses searchable site selectors for manual connection creation', async () => {
+    const root = await renderAccounts('/accounts', [
+      { id: 10, name: 'Demo Site', url: 'https://demo.example.com', platform: 'new-api', status: 'active' },
+      { id: 11, name: 'Codex Workspace', url: 'https://workspace.example.com', platform: 'codex', status: 'active' },
+    ]);
+    try {
+      const addButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && typeof node.props.className === 'string'
+        && node.props.className.includes('btn btn-primary')
+      ));
+
+      await act(async () => {
+        addButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const selects = root.root.findAllByType(ModernSelect);
+      expect(selects[1]?.props.searchable).toBe(true);
+      expect(selects[1]?.props.searchPlaceholder).toBe('筛选站点（名称 / 平台 / URL）');
+      expect(selects[1]?.props.options).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            value: '11',
+            label: 'Codex Workspace (codex)',
+            description: 'https://workspace.example.com',
+          }),
+        ]),
+      );
     } finally {
       root?.unmount();
     }

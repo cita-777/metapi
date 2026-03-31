@@ -1,6 +1,7 @@
 ﻿import { FastifyInstance } from 'fastify';
 import { db, schema } from '../../db/index.js';
 import { and, desc, eq, gte, lt, sql } from 'drizzle-orm';
+import { config } from '../../config.js';
 import { refreshModelsForAccount } from '../../services/modelService.js';
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { buildModelAnalysis } from '../../services/modelAnalysisService.js';
@@ -1169,6 +1170,11 @@ export async function statsRoutes(app: FastifyInstance) {
       return name;
     };
 
+    // Load global allowed models whitelist
+    const globalAllowedModels = new Set(
+      config.globalAllowedModels.map((m) => m.toLowerCase().trim()).filter(Boolean),
+    );
+
     const rows = await db.select().from(schema.tokenModelAvailability)
       .innerJoin(schema.accountTokens, eq(schema.tokenModelAvailability.tokenId, schema.accountTokens.id))
       .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
@@ -1399,10 +1405,41 @@ export async function statsRoutes(app: FastifyInstance) {
       }
     }
 
+    // Apply model whitelist filter if configured
+    const filteredResult: typeof result = {};
+    const filteredModelsWithoutToken: typeof modelsWithoutToken = {};
+    const filteredModelsMissingTokenGroups: typeof modelsMissingTokenGroups = {};
+
+    if (globalAllowedModels.size > 0) {
+      // Filter result
+      for (const [modelName, candidates] of Object.entries(result)) {
+        if (globalAllowedModels.has(modelName.toLowerCase().trim())) {
+          filteredResult[modelName] = candidates;
+        }
+      }
+      // Filter modelsWithoutToken
+      for (const [modelName, accounts] of Object.entries(modelsWithoutToken)) {
+        if (globalAllowedModels.has(modelName.toLowerCase().trim())) {
+          filteredModelsWithoutToken[modelName] = accounts;
+        }
+      }
+      // Filter modelsMissingTokenGroups
+      for (const [modelName, accounts] of Object.entries(modelsMissingTokenGroups)) {
+        if (globalAllowedModels.has(modelName.toLowerCase().trim())) {
+          filteredModelsMissingTokenGroups[modelName] = accounts;
+        }
+      }
+    } else {
+      // No whitelist configured, return all models (backward compatible)
+      Object.assign(filteredResult, result);
+      Object.assign(filteredModelsWithoutToken, modelsWithoutToken);
+      Object.assign(filteredModelsMissingTokenGroups, modelsMissingTokenGroups);
+    }
+
     return {
-      models: result,
-      modelsWithoutToken,
-      modelsMissingTokenGroups,
+      models: filteredResult,
+      modelsWithoutToken: filteredModelsWithoutToken,
+      modelsMissingTokenGroups: filteredModelsMissingTokenGroups,
       endpointTypesByModel,
     };
   });

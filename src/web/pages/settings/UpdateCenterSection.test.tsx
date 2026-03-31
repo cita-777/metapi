@@ -109,6 +109,15 @@ describe('UpdateCenterSection', () => {
           },
         ],
       },
+      runtime: {
+        lastCheckedAt: '2026-03-30 20:30:00',
+        lastCheckError: null,
+        lastResolvedSource: 'github-release',
+        lastResolvedDisplayVersion: '1.3.0',
+        lastResolvedCandidateKey: 'github-release:v1.3.0',
+        lastNotifiedCandidateKey: 'github-release:v1.3.0',
+        lastNotifiedAt: '2026-03-30 20:31:00',
+      },
       runningTask: null,
       lastFinishedTask: null,
     });
@@ -254,6 +263,8 @@ describe('UpdateCenterSection', () => {
       const text = collectText(root.root);
       expect(text).toContain('latest @ sha256:efb2ee655386');
       expect(text).toContain('发现新版本');
+      expect(text).toContain('后台检查');
+      expect(text).toContain('1.3.0');
       expect(text).toContain('Running helm upgrade');
       expect(text).toContain('Waiting for rollout');
       expect(text).toContain('任务状态 · 已完成');
@@ -433,6 +444,30 @@ describe('UpdateCenterSection', () => {
       expect(dockerDeployButton.props.disabled).toBe(true);
       expect(collectText(root.root)).toContain('当前已运行该镜像');
     } finally {
+      root?.unmount();
+    }
+  });
+
+  it('parses timezone-less SQL runtime timestamps as UTC before formatting', async () => {
+    const parseSpy = vi.spyOn(Date, 'parse');
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ToastProvider>
+              <UpdateCenterSection />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const parseInputs = parseSpy.mock.calls.map(([value]) => String(value));
+      expect(parseInputs).toContain('2026-03-30T20:30:00Z');
+      expect(parseInputs).not.toContain('2026-03-30 20:30:00');
+    } finally {
+      parseSpy.mockRestore();
       root?.unmount();
     }
   });

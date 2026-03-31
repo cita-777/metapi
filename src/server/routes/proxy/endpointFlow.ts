@@ -65,6 +65,7 @@ export function withUpstreamPath(path: string, message: string): string {
 type ExecuteEndpointFlowInput = {
   siteUrl: string;
   proxyUrl?: string | null;
+  disableCrossProtocolFallback?: boolean;
   endpointCandidates: UpstreamEndpoint[];
   buildRequest: (endpoint: UpstreamEndpoint, endpointIndex: number) => BuiltEndpointRequest;
   dispatchRequest?: (
@@ -189,6 +190,12 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
     }, 'onAttemptFailure');
 
     const isLastEndpoint = endpointIndex >= endpointCount - 1;
+    if (input.disableCrossProtocolFallback && !isLastEndpoint) {
+      finalStatus = response.status;
+      finalErrText = errText;
+      finalRawErrText = rawErrText;
+      break;
+    }
     const shouldDowngrade = !isLastEndpoint && !!input.shouldDowngrade?.(baseContext);
     if (shouldDowngrade) {
       await runEndpointFlowHook(input.onDowngrade, {

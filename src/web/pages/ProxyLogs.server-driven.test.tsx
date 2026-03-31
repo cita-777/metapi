@@ -97,11 +97,28 @@ function buildListResponse(overrides?: Partial<{
 describe('ProxyLogs server-driven page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    const localStorageState = new Map<string, string>();
     Object.defineProperty(globalThis, 'navigator', {
       value: {
         clipboard: {
           writeText: vi.fn().mockResolvedValue(undefined),
         },
+      },
+      configurable: true,
+      writable: true,
+    });
+    Object.defineProperty(globalThis, 'localStorage', {
+      value: {
+        getItem: vi.fn((key: string) => (localStorageState.has(key) ? localStorageState.get(key)! : null)),
+        setItem: vi.fn((key: string, value: string) => {
+          localStorageState.set(String(key), String(value));
+        }),
+        removeItem: vi.fn((key: string) => {
+          localStorageState.delete(String(key));
+        }),
+        clear: vi.fn(() => {
+          localStorageState.clear();
+        }),
       },
       configurable: true,
       writable: true,
@@ -385,6 +402,135 @@ describe('ProxyLogs server-driven page', () => {
       expect(collectText(root.root)).toContain('显示第 6 - 7 条，共 7 条');
       expect(collectText(root.root)).toContain('sess-debug-6');
       expect(collectText(root.root)).not.toContain('sess-debug-1');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('allows collapsing and expanding the debug trace panel to reduce page footprint', async () => {
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const toggleButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && node.props['data-debug-trace-panel-toggle'] === true
+      ));
+      const panelBody = root.root.find((node) => (
+        node.type === 'div'
+        && node.props['data-debug-trace-panel-body'] === true
+      ));
+
+      expect(toggleButton.props['aria-expanded']).toBe(true);
+      expect(String(panelBody.props.className || '')).toContain('is-open');
+
+      await act(async () => {
+        toggleButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const collapsedToggleButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && node.props['data-debug-trace-panel-toggle'] === true
+      ));
+      const collapsedPanelBody = root.root.find((node) => (
+        node.type === 'div'
+        && node.props['data-debug-trace-panel-body'] === true
+      ));
+
+      expect(collapsedToggleButton.props['aria-expanded']).toBe(false);
+      expect(String(collapsedPanelBody.props.className || '')).not.toContain('is-open');
+
+      await act(async () => {
+        collapsedToggleButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const expandedToggleButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && node.props['data-debug-trace-panel-toggle'] === true
+      ));
+      const expandedPanelBody = root.root.find((node) => (
+        node.type === 'div'
+        && node.props['data-debug-trace-panel-body'] === true
+      ));
+
+      expect(expandedToggleButton.props['aria-expanded']).toBe(true);
+      expect(String(expandedPanelBody.props.className || '')).toContain('is-open');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('remembers the collapsed debug trace panel state across remounts', async () => {
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const toggleButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && node.props['data-debug-trace-panel-toggle'] === true
+      ));
+
+      await act(async () => {
+        toggleButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(globalThis.localStorage.setItem).toHaveBeenCalledWith('metapi.proxyLogs.debugTracePanelExpanded', 'false');
+
+      await act(async () => {
+        root.unmount();
+      });
+
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const restoredToggleButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && node.props['data-debug-trace-panel-toggle'] === true
+      ));
+      const restoredPanelBody = root.root.find((node) => (
+        node.type === 'div'
+        && node.props['data-debug-trace-panel-body'] === true
+      ));
+
+      expect(globalThis.localStorage.getItem).toHaveBeenCalledWith('metapi.proxyLogs.debugTracePanelExpanded');
+      expect(restoredToggleButton.props['aria-expanded']).toBe(false);
+      expect(String(restoredPanelBody.props.className || '')).not.toContain('is-open');
     } finally {
       root?.unmount();
     }

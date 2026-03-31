@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { TextDecoder } from 'node:util';
 import { fetch } from 'undici';
 import { and, eq } from 'drizzle-orm';
+import { config } from '../../config.js';
 import { db, schema } from '../../db/index.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { parseProxyUsage } from '../../services/proxyUsageParser.js';
@@ -38,7 +39,7 @@ import { dispatchRuntimeRequest } from '../../routes/proxy/runtimeExecutor.js';
 import { detectDownstreamClientContext, type DownstreamClientContext } from '../../routes/proxy/downstreamClientContext.js';
 import { insertProxyLog } from '../../services/proxyLogStore.js';
 import { summarizeConversationFileInputsInOpenAiBody } from '../capabilities/conversationFileCapabilities.js';
-import { readRuntimeResponseText } from '../executors/types.js';
+import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
 import { canRetryProxyChannel, getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 import {
   buildSurfaceProxyDebugResponseHeaders,
@@ -756,7 +757,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           }
 
           if (geminiGenerateContentTransformer.stream.isSseContentType(contentType)) {
-            const upstreamReader = upstream.body?.getReader();
+            const upstreamReader = getRuntimeResponseReader(upstream);
             const reader = isInternalGemini && !isGeminiCliDownstream && upstreamReader
               ? createGeminiCliStreamReader(upstreamReader)
               : upstreamReader;
@@ -1169,6 +1170,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
         const debugAttemptBase = reserveSurfaceProxyDebugAttemptBase(debugTrace, endpointCandidates.length);
         const endpointResult = await executeEndpointFlow({
           siteUrl: selected.site.url,
+          disableCrossProtocolFallback: config.disableCrossProtocolFallback,
           endpointCandidates,
           buildRequest: (endpoint) => buildEndpointRequest(endpoint),
           dispatchRequest,

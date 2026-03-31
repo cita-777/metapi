@@ -65,6 +65,7 @@ describe('settings and auth events', () => {
     (config as any).proxyDebugRetentionHours = 24;
     (config as any).proxyDebugMaxBodyBytes = 262144;
     config.routingFallbackUnitCost = 1;
+    (config as any).disableCrossProtocolFallback = false;
     (config as any).telegramEnabled = false;
     (config as any).telegramApiBaseUrl = 'https://api.telegram.org';
     (config as any).telegramBotToken = '';
@@ -429,6 +430,33 @@ describe('settings and auth events', () => {
     expect(getResponse.statusCode).toBe(200);
     const runtime = getResponse.json() as { routingFallbackUnitCost?: number };
     expect(runtime.routingFallbackUnitCost).toBe(0.25);
+  });
+
+  it('persists and returns disable cross protocol fallback from runtime settings', async () => {
+    const updateResponse = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      payload: {
+        disableCrossProtocolFallback: true,
+      },
+    });
+
+    expect(updateResponse.statusCode).toBe(200);
+    const updated = updateResponse.json() as { disableCrossProtocolFallback?: boolean };
+    expect(updated.disableCrossProtocolFallback).toBe(true);
+    expect((config as any).disableCrossProtocolFallback).toBe(true);
+
+    const saved = await db.select().from(schema.settings).where(eq(schema.settings.key, 'disable_cross_protocol_fallback')).get();
+    expect(saved?.value).toBe(JSON.stringify(true));
+
+    const getResponse = await app.inject({
+      method: 'GET',
+      url: '/api/settings/runtime',
+    });
+
+    expect(getResponse.statusCode).toBe(200);
+    const runtime = getResponse.json() as { disableCrossProtocolFallback?: boolean };
+    expect(runtime.disableCrossProtocolFallback).toBe(true);
   });
 
   it('persists and returns system proxy url from runtime settings', async () => {

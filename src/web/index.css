@@ -3573,6 +3573,39 @@ textarea {
   pointer-events: auto;
 }
 
+.modern-select-search-shell {
+  position: sticky;
+  top: -6px;
+  z-index: 1;
+  padding: 0 0 6px;
+  margin: -6px -6px 6px;
+  background: var(--color-bg-card);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+}
+
+.modern-select-search-input {
+  width: calc(100% - 12px);
+  margin: 6px;
+  min-height: 34px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text-primary);
+  padding: 0 10px;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.modern-select-search-input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.modern-select-search-input::placeholder {
+  color: var(--color-text-muted);
+}
+
 .modern-select-option {
   width: 100%;
   border: none;

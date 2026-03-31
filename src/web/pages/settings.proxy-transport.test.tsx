@@ -13,6 +13,7 @@ const { apiMock } = vi.hoisted(() => ({
     getRuntimeDatabaseConfig: vi.fn(),
     getBrandList: vi.fn(),
     updateRuntimeSettings: vi.fn(),
+    getModelTokenCandidates: vi.fn(),
   },
 }));
 
@@ -76,6 +77,7 @@ describe('Settings proxy transport', () => {
       proxySessionChannelConcurrencyLimit: 6,
       proxySessionChannelQueueWaitMs: 4200,
     });
+    apiMock.getModelTokenCandidates.mockResolvedValue({ models: {} });
   });
 
   afterEach(() => {

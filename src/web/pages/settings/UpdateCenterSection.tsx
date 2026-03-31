@@ -65,6 +65,15 @@ type UpdateCenterStatus = {
     status?: string;
     finishedAt?: string | null;
   } | null;
+  runtime?: {
+    lastCheckedAt?: string | null;
+    lastCheckError?: string | null;
+    lastResolvedSource?: 'github-release' | 'docker-hub-tag' | null;
+    lastResolvedDisplayVersion?: string | null;
+    lastResolvedCandidateKey?: string | null;
+    lastNotifiedCandidateKey?: string | null;
+    lastNotifiedAt?: string | null;
+  } | null;
 };
 
 const DEFAULT_CONFIG: NonNullable<UpdateCenterStatus['config']> = {
@@ -137,7 +146,10 @@ const fieldHintStyle: CSSProperties = {
 
 function formatTaskTime(value?: string | null) {
   if (!value) return '暂无完成记录';
-  const timestamp = Date.parse(value);
+  const normalizedValue = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)
+    ? `${value.replace(' ', 'T')}Z`
+    : value;
+  const timestamp = Date.parse(normalizedValue);
   if (!Number.isFinite(timestamp)) return value;
   return new Date(timestamp).toLocaleString('zh-CN', {
     month: '2-digit',
@@ -402,6 +414,7 @@ export default function UpdateCenterSection() {
   const helperHistory = Array.isArray(status?.helper?.history) ? status.helper.history : [];
   const historyPreview = helperHistory.slice(0, 2);
   const currentRevision = String(status?.helper?.revision || '').trim();
+  const runtimeStatus = status?.runtime || null;
 
   if (loading) {
     return (
@@ -475,6 +488,19 @@ export default function UpdateCenterSection() {
               : formatTaskTime(status?.lastFinishedTask?.finishedAt)}
           </div>
         </div>
+        <div style={sectionPanelStyle}>
+          <div style={summaryLabelStyle}>后台检查</div>
+          <div style={summaryValueStyle}>
+            {runtimeStatus?.lastCheckedAt ? formatTaskTime(runtimeStatus.lastCheckedAt) : '尚无检查记录'}
+          </div>
+          <div style={fieldHintStyle}>
+            {runtimeStatus?.lastCheckError
+              ? `最近错误：${runtimeStatus.lastCheckError}`
+              : runtimeStatus?.lastResolvedDisplayVersion
+                ? `最近发现：${runtimeStatus.lastResolvedDisplayVersion}`
+                : '后台会定时检查新版本，并在首次发现时提醒一次。'}
+          </div>
+        </div>
       </div>
 
       <div
@@ -494,7 +520,7 @@ export default function UpdateCenterSection() {
           />
           <span style={{ display: 'grid', gap: 4 }}>
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>启用更新中心</span>
-            <span style={fieldHintStyle}>允许系统检查版本，并在配置齐全时触发 K3s 部署。</span>
+            <span style={fieldHintStyle}>允许通过本页触发 K3s 部署。后台版本提醒会按已启用来源持续检查。</span>
           </span>
         </label>
         <label style={{ ...sectionPanelStyle, display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer' }}>

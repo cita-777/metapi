@@ -47,7 +47,33 @@ spec:
         - name: helper
           image: 1467078763/metapi:latest
           imagePullPolicy: Always
-          command: ["npm", "run", "start:deploy-helper"]
+          command: ["/bin/sh", "-lc"]
+          args:
+            - |
+              TOKEN="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
+              NAMESPACE="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+              cat >/tmp/kubeconfig <<EOF
+              apiVersion: v1
+              kind: Config
+              clusters:
+              - name: in-cluster
+                cluster:
+                  certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+                  server: https://kubernetes.default.svc
+              contexts:
+              - name: in-cluster
+                context:
+                  cluster: in-cluster
+                  namespace: ${NAMESPACE}
+                  user: helper
+              current-context: in-cluster
+              users:
+              - name: helper
+                user:
+                  token: ${TOKEN}
+              EOF
+              export KUBECONFIG=/tmp/kubeconfig
+              exec npm run start:deploy-helper
           ports:
             - containerPort: 9850
               name: http
@@ -73,6 +99,15 @@ spec:
               port: http
             initialDelaySeconds: 15
             periodSeconds: 20
+          volumeMounts:
+            - name: metapi-chart
+              mountPath: /opt/metapi-k3s/chart
+              readOnly: true
+      volumes:
+        - name: metapi-chart
+          hostPath:
+            path: /opt/metapi-k3s/chart
+            type: Directory
 ---
 apiVersion: v1
 kind: Service

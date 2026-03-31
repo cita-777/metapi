@@ -956,10 +956,23 @@ export async function rebuildTokenRoutesFromAvailability() {
   // Load global brand filter
   const blockedBrandRules = getBlockedBrandRules(config.globalBlockedBrands);
 
+  // Load global allowed models whitelist
+  const globalAllowedModels = new Set(
+    config.globalAllowedModels.map((m) => m.toLowerCase().trim()).filter(Boolean),
+  );
+
+  function isModelAllowedByWhitelist(modelName: string): boolean {
+    // If whitelist is empty, allow all models (backward compatible)
+    if (globalAllowedModels.size === 0) return true;
+    // Check if model is in whitelist (case-insensitive)
+    return globalAllowedModels.has(modelName.toLowerCase().trim());
+  }
+
   const modelCandidates = new Map<string, Map<string, { accountId: number; tokenId: number | null }>>();
   const addModelCandidate = (modelNameRaw: string | null | undefined, accountId: number, tokenId: number | null, siteId: number) => {
     const modelName = (modelNameRaw || '').trim();
     if (!modelName) return;
+    if (!isModelAllowedByWhitelist(modelName)) return;
     if (isModelDisabledForSite(siteId, modelName)) return;
     if (blockedBrandRules.length > 0 && isModelBlockedByBrand(modelName, blockedBrandRules)) return;
     if (!modelCandidates.has(modelName)) modelCandidates.set(modelName, new Map());

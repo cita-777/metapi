@@ -98,6 +98,9 @@ export function buildEventNavigationPath(event: {
   if (relatedType === 'site_announcement' && relatedId) {
     return buildAnnouncementFocusPath(relatedId);
   }
+  if (relatedType === 'update_center') {
+    return '/settings';
+  }
   if (relatedType === 'route') {
     return '/routes';
   }

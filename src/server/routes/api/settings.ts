@@ -39,6 +39,7 @@ interface RuntimeSettingsBody {
   proxyToken?: string;
   systemProxyUrl?: string;
   codexUpstreamWebsocketEnabled?: boolean;
+  disableCrossProtocolFallback?: boolean;
   proxySessionChannelConcurrencyLimit?: number;
   proxySessionChannelQueueWaitMs?: number;
   proxyDebugTraceEnabled?: boolean;
@@ -85,6 +86,7 @@ interface RuntimeSettingsBody {
   proxyErrorKeywords?: string[] | string;
   proxyEmptyContentFailEnabled?: boolean;
   globalBlockedBrands?: string[];
+  globalAllowedModels?: string[];
 }
 
 interface DatabaseMigrationBody {
@@ -398,6 +400,11 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       config.codexUpstreamWebsocketEnabled = value;
       return;
     }
+    case 'disable_cross_protocol_fallback': {
+      if (typeof value !== 'boolean') return;
+      config.disableCrossProtocolFallback = value;
+      return;
+    }
     case 'proxy_error_keywords': {
       try {
         config.proxyErrorKeywords = parseProxyErrorKeywords(value);
@@ -494,6 +501,29 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
               {
                 type: 'maintenance',
                 title: '品牌屏蔽变更后重建路由',
+                dedupeKey: 'refresh-models-and-rebuild-routes',
+              },
+              async () => routeRefreshWorkflow.refreshModelsAndRebuildRoutes(),
+            );
+          }
+        }
+      } catch {
+        return;
+      }
+      return;
+    }
+    case 'global_allowed_models': {
+      try {
+        const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+        if (Array.isArray(parsed)) {
+          const nextModels = parsed.filter((m): m is string => typeof m === 'string').map((m) => m.trim()).filter(Boolean);
+          const prev = JSON.stringify(config.globalAllowedModels);
+          config.globalAllowedModels = nextModels;
+          if (prev !== JSON.stringify(nextModels)) {
+            startBackgroundTask(
+              {
+                type: 'maintenance',
+                title: '模型白名单变更后重建路由',
                 dedupeKey: 'refresh-models-and-rebuild-routes',
               },
               async () => routeRefreshWorkflow.refreshModelsAndRebuildRoutes(),
@@ -643,6 +673,7 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     logCleanupProgramLogsEnabled: config.logCleanupProgramLogsEnabled,
     logCleanupRetentionDays: config.logCleanupRetentionDays,
     codexUpstreamWebsocketEnabled: config.codexUpstreamWebsocketEnabled,
+    disableCrossProtocolFallback: config.disableCrossProtocolFallback,
     proxySessionChannelConcurrencyLimit: config.proxySessionChannelConcurrencyLimit,
     proxySessionChannelQueueWaitMs: config.proxySessionChannelQueueWaitMs,
     proxyDebugTraceEnabled: config.proxyDebugTraceEnabled,
@@ -685,6 +716,7 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     proxyEmptyContentFailEnabled: config.proxyEmptyContentFailEnabled,
     proxyTokenMasked: maskSecret(config.proxyToken),
     globalBlockedBrands: config.globalBlockedBrands,
+    globalAllowedModels: config.globalAllowedModels,
   };
 }
 
@@ -1055,6 +1087,24 @@ export async function settingsRoutes(app: FastifyInstance) {
       upsertSetting('codex_upstream_websocket_enabled', config.codexUpstreamWebsocketEnabled);
     }
 
+    if (body.disableCrossProtocolFallback !== undefined) {
+      let nextValue = false;
+      try {
+        nextValue = parseBooleanFlag(body.disableCrossProtocolFallback, '跨协议回退开关');
+      } catch (err: any) {
+        return reply.code(400).send({
+          success: false,
+          message: err?.message || '跨协议回退开关格式无效',
+        });
+      }
+
+      if (nextValue !== config.disableCrossProtocolFallback) {
+        changedLabels.push('失败时不尝试其他协议');
+      }
+      config.disableCrossProtocolFallback = nextValue;
+      upsertSetting('disable_cross_protocol_fallback', config.disableCrossProtocolFallback);
+    }
+
     if (body.proxySessionChannelConcurrencyLimit !== undefined) {
       const limit = Number(body.proxySessionChannelConcurrencyLimit);
       if (!Number.isFinite(limit) || limit < 0) {
@@ -1256,6 +1306,31 @@ export async function settingsRoutes(app: FastifyInstance) {
           {
             type: 'maintenance',
             title: '品牌屏蔽变更后重建路由',
+            dedupeKey: 'refresh-models-and-rebuild-routes',
+          },
+          async () => routeRefreshWorkflow.refreshModelsAndRebuildRoutes(),
+        );
+      }
+    }
+
+    if (body.globalAllowedModels !== undefined) {
+      if (!Array.isArray(body.globalAllowedModels)) {
+        return reply.code(400).send({ error: 'globalAllowedModels must be an array of strings' });
+      }
+      const nextModels = body.globalAllowedModels.filter((m): m is string => typeof m === 'string').map((m) => m.trim()).filter(Boolean);
+      const uniqueModels = Array.from(new Set(nextModels));
+      const prev = JSON.stringify(config.globalAllowedModels);
+      const next = JSON.stringify(uniqueModels);
+      if (prev !== next) {
+        changedLabels.push('全局模型白名单');
+      }
+      config.globalAllowedModels = uniqueModels;
+      upsertSetting('global_allowed_models', JSON.stringify(uniqueModels));
+      if (prev !== next) {
+        startBackgroundTask(
+          {
+            type: 'maintenance',
+            title: '模型白名单变更后重建路由',
             dedupeKey: 'refresh-models-and-rebuild-routes',
           },
           async () => routeRefreshWorkflow.refreshModelsAndRebuildRoutes(),

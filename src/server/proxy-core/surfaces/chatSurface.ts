@@ -1,5 +1,6 @@
 import { TextDecoder } from 'node:util';
 import type { FastifyRequest, FastifyReply } from 'fastify';
+import { config } from '../../config.js';
 import { tokenRouter } from '../../services/tokenRouter.js';
 import { reportProxyAllFailed } from '../../services/alertService.js';
 import { mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParser.js';
@@ -43,7 +44,7 @@ import {
   unwrapGeminiCliPayload,
 } from '../../routes/proxy/geminiCliCompat.js';
 import { summarizeConversationFileInputsInOpenAiBody } from '../capabilities/conversationFileCapabilities.js';
-import { readRuntimeResponseText } from '../executors/types.js';
+import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
 import { detectDownstreamClientContext } from '../../routes/proxy/downstreamClientContext.js';
 import { canRetryProxyChannel, getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 import {
@@ -383,6 +384,7 @@ export async function handleChatSurfaceRequest(
       const debugAttemptBase = reserveSurfaceProxyDebugAttemptBase(debugTrace, endpointCandidates.length);
       const endpointResult = await executeEndpointFlow({
           siteUrl: selected.site.url,
+          disableCrossProtocolFallback: config.disableCrossProtocolFallback,
           endpointCandidates,
           buildRequest: (endpoint) => buildEndpointRequest(endpoint),
           dispatchRequest,
@@ -663,7 +665,7 @@ export async function handleChatSurfaceRequest(
           });
         } else {
           startSseResponse();
-          const upstreamReader = upstream.body?.getReader();
+          const upstreamReader = getRuntimeResponseReader(upstream);
           const baseReader = String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli' && upstreamReader
             ? createGeminiCliStreamReader(upstreamReader)
             : upstreamReader;

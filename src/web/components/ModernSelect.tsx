@@ -20,6 +20,8 @@ type ModernSelectProps = {
   menuMaxHeight?: number;
   className?: string;
   size?: 'md' | 'sm';
+  searchable?: boolean;
+  searchPlaceholder?: string;
 };
 
 export default function ModernSelect({
@@ -32,8 +34,11 @@ export default function ModernSelect({
   menuMaxHeight = 280,
   className = '',
   size = 'md',
+  searchable = false,
+  searchPlaceholder = 'Search...',
 }: ModernSelectProps) {
   const [open, setOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
 
   const selected = useMemo(
@@ -41,8 +46,26 @@ export default function ModernSelect({
     [options, value],
   );
 
+  const visibleOptions = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!searchable || !query) return options;
+
+    return options.filter((item) => {
+      const haystack = [
+        item.label,
+        item.description,
+        item.value,
+      ]
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [options, searchQuery, searchable]);
+
   useEffect(() => {
     if (!open) return;
+    if (typeof document === 'undefined') return;
 
     const handleOutsideClick = (event: MouseEvent) => {
       if (!rootRef.current) return;
@@ -66,6 +89,12 @@ export default function ModernSelect({
   useEffect(() => {
     if (disabled) setOpen(false);
   }, [disabled]);
+
+  useEffect(() => {
+    if (!open && searchQuery) {
+      setSearchQuery('');
+    }
+  }, [open, searchQuery]);
 
   const renderOptionIcon = (item: ModernSelectOption) => {
     if (item.iconNode) {
@@ -117,10 +146,22 @@ export default function ModernSelect({
       </button>
 
       <div className="modern-select-panel" style={{ maxHeight: menuMaxHeight }}>
-        {options.length === 0 ? (
+        {searchable && (
+          <div className="modern-select-search-shell">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder={searchPlaceholder}
+              className="modern-select-search-input"
+            />
+          </div>
+        )}
+
+        {visibleOptions.length === 0 ? (
           <div className="modern-select-empty">{emptyLabel}</div>
         ) : (
-          options.map((item) => {
+          visibleOptions.map((item) => {
             const active = item.value === value;
             return (
               <button

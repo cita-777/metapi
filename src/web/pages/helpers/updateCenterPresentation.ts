@@ -1,14 +1,10 @@
-export type UpdateVersionCandidateLike = {
-  normalizedVersion?: string | null;
-  displayVersion?: string | null;
-  tagName?: string | null;
-  digest?: string | null;
-};
-
-export type UpdateHelperRuntimeLike = {
-  imageTag?: string | null;
-  imageDigest?: string | null;
-};
+import {
+  compareStableVersions,
+  isSameImageTarget,
+  resolveUpdateReminderCandidate,
+  type UpdateHelperRuntimeLike,
+  type UpdateVersionCandidateLike,
+} from '../../../shared/updateCenterReminder.js';
 
 export type UpdateDeployState = {
   kind: 'disabled' | 'missing' | 'helper-unhealthy' | 'same-version' | 'same-image' | 'new-version' | 'new-digest' | 'available';
@@ -26,8 +22,6 @@ export type UpdateReminder = {
   highlight: boolean;
 };
 
-const STABLE_SEMVER_PATTERN = /^v?(\d+)\.(\d+)\.(\d+)(?:\+[\w.-]+)?$/i;
-
 function normalizeString(value?: string | null): string {
   return String(value || '').trim();
 }
@@ -35,53 +29,6 @@ function normalizeString(value?: string | null): string {
 function normalizeDigest(value?: string | null): string {
   const digest = normalizeString(value);
   return /^sha256:[a-f0-9]{64}$/i.test(digest) ? digest.toLowerCase() : '';
-}
-
-export function normalizeStableVersion(value?: string | null): string {
-  const raw = normalizeString(value);
-  if (!raw) return '';
-  const match = raw.match(STABLE_SEMVER_PATTERN);
-  if (!match) return '';
-  return [
-    Number.parseInt(match[1], 10),
-    Number.parseInt(match[2], 10),
-    Number.parseInt(match[3], 10),
-  ].join('.');
-}
-
-export function compareStableVersions(left?: string | null, right?: string | null): number | null {
-  const normalizedLeft = normalizeStableVersion(left);
-  const normalizedRight = normalizeStableVersion(right);
-  if (!normalizedLeft || !normalizedRight) return null;
-
-  const leftParts = normalizedLeft.split('.').map((item) => Number.parseInt(item, 10));
-  const rightParts = normalizedRight.split('.').map((item) => Number.parseInt(item, 10));
-  for (let index = 0; index < 3; index += 1) {
-    if (leftParts[index] === rightParts[index]) continue;
-    return leftParts[index] < rightParts[index] ? -1 : 1;
-  }
-  return 0;
-}
-
-export function isSameImageTarget(
-  current: UpdateHelperRuntimeLike | null | undefined,
-  target: { tag?: string | null; digest?: string | null },
-): boolean {
-  const currentDigest = normalizeDigest(current?.imageDigest);
-  const targetDigest = normalizeDigest(target.digest);
-  if (currentDigest && targetDigest) {
-    return currentDigest === targetDigest;
-  }
-
-  const currentTag = normalizeString(current?.imageTag);
-  const targetTag = normalizeString(target.tag);
-  if (!currentTag || !targetTag || currentTag !== targetTag) {
-    return false;
-  }
-
-  const currentVersion = normalizeStableVersion(currentTag);
-  const targetVersion = normalizeStableVersion(targetTag);
-  return !!currentVersion && currentVersion === targetVersion;
 }
 
 export function describeGitHubDeployState(input: {
@@ -127,14 +74,17 @@ export function describeGitHubDeployState(input: {
     };
   }
 
-  const versionCompare = compareStableVersions(input.currentVersion, candidateVersion || candidateTag);
-  const helperVersionCompare = compareStableVersions(input.helperImageTag, candidateTag);
-  if (versionCompare === 0 || helperVersionCompare === 0) {
+  const candidateTargetVersion = candidateVersion || candidateTag;
+  const versionCompare = compareStableVersions(input.currentVersion, candidateTargetVersion);
+  const helperVersionCompare = compareStableVersions(input.helperImageTag, candidateTargetVersion);
+  if (versionCompare === 0 || helperVersionCompare === 0 || helperVersionCompare === 1) {
     return {
       kind: 'same-version',
       badgeClassName: 'badge badge-muted',
       badgeLabel: '当前运行',
-      reason: '当前已运行该版本，无需重复部署。',
+      reason: helperVersionCompare === 1
+        ? 'Deploy Helper 已指向更高版本，无需回退到较旧的 GitHub 稳定版。'
+        : '当前已运行该版本，无需重复部署。',
       canDeploy: false,
       highlight: false,
     };
@@ -216,8 +166,21 @@ export function describeDockerDeployState(input: {
     };
   }
 
-  const versionCompare = compareStableVersions(input.currentVersion, candidateVersion || candidateTag);
-  if (versionCompare === -1) {
+  const candidateTargetVersion = candidateVersion || candidateTag;
+  const helperVersionCompare = compareStableVersions(input.helper?.imageTag, candidateTargetVersion);
+  if (helperVersionCompare === 1) {
+    return {
+      kind: 'same-version',
+      badgeClassName: 'badge badge-muted',
+      badgeLabel: '当前运行',
+      reason: 'Deploy Helper 已指向更高版本，无需回退到较旧镜像。',
+      canDeploy: false,
+      highlight: false,
+    };
+  }
+
+  const versionCompare = compareStableVersions(input.currentVersion, candidateTargetVersion);
+  if (versionCompare === -1 && (helperVersionCompare == null || helperVersionCompare === -1)) {
     return {
       kind: 'new-version',
       badgeClassName: 'badge badge-success',
@@ -228,9 +191,18 @@ export function describeDockerDeployState(input: {
     };
   }
 
-  const helperTag = normalizeString(input.helper?.imageTag);
   const helperDigest = normalizeDigest(input.helper?.imageDigest);
-  if (candidateDigest && helperTag && helperTag === candidateTag && helperDigest && helperDigest !== candidateDigest) {
+  const hasSameStableTag = isSameImageTarget(
+    {
+      imageTag: input.helper?.imageTag,
+      imageDigest: null,
+    },
+    {
+      tag: candidateTag,
+      digest: null,
+    },
+  );
+  if (candidateDigest && helperDigest && hasSameStableTag && helperDigest !== candidateDigest) {
     return {
       kind: 'new-digest',
       badgeClassName: 'badge badge-success',
@@ -277,37 +249,22 @@ export function buildUpdateReminder(input: {
     };
   }
 
-  const githubState = describeGitHubDeployState({
-    enabled: true,
-    helperHealthy: true,
-    currentVersion: input.currentVersion,
-    helperImageTag: input.helper?.imageTag,
-    candidate: input.githubRelease,
-  });
-  if (githubState.kind === 'new-version') {
-    return {
-      label: '发现新版本',
-      badgeClassName: githubState.badgeClassName,
-      detail: `GitHub 稳定版 ${normalizeString(input.githubRelease?.displayVersion || input.githubRelease?.normalizedVersion)} 已可部署。`,
-      highlight: true,
-    };
-  }
-
-  const dockerState = describeDockerDeployState({
-    enabled: true,
-    helperHealthy: true,
+  const candidate = resolveUpdateReminderCandidate({
     currentVersion: input.currentVersion,
     helper: input.helper,
-    candidate: input.dockerHubTag,
+    githubRelease: input.githubRelease,
+    dockerHubTag: input.dockerHubTag,
   });
-  if (dockerState.kind === 'new-version' || dockerState.kind === 'new-digest') {
+  if (candidate) {
     return {
-      label: dockerState.badgeLabel,
-      badgeClassName: dockerState.badgeClassName,
-      detail: dockerState.kind === 'new-digest'
+      label: candidate.kind === 'new-digest' ? '发现新 digest' : '发现新版本',
+      badgeClassName: 'badge badge-success',
+      detail: candidate.kind === 'new-digest'
         ? 'Docker Hub 的 alias tag 已指向新 digest，可按需部署。'
-        : `Docker Hub ${normalizeString(input.dockerHubTag?.displayVersion || input.dockerHubTag?.normalizedVersion)} 已可部署。`,
-      highlight: dockerState.highlight,
+        : candidate.source === 'github-release'
+          ? `GitHub 稳定版 ${normalizeString(input.githubRelease?.displayVersion || input.githubRelease?.normalizedVersion)} 已可部署。`
+          : `Docker Hub ${normalizeString(input.dockerHubTag?.displayVersion || input.dockerHubTag?.normalizedVersion)} 已可部署。`,
+      highlight: true,
     };
   }
 

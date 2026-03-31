@@ -1,4 +1,6 @@
 # syntax=docker/dockerfile:1.7
+# Keep the Docker base on Node 22 because the official Node 24/25 slim images
+# no longer publish linux/arm/v7 manifests, which breaks our armv7 Docker jobs.
 FROM node:22-bookworm-slim AS builder
 
 WORKDIR /app

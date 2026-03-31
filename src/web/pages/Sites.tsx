@@ -11,6 +11,7 @@ import { MobileCard, MobileField } from '../components/MobileCard.js';
 import ResponsiveFormGrid from '../components/ResponsiveFormGrid.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import DeleteConfirmModal from '../components/DeleteConfirmModal.js';
+import SiteCreatedModal from '../components/SiteCreatedModal.js';
 import { formatDateTimeLocal } from './helpers/checkinLogTime.js';
 import { clearFocusParams, readFocusSiteId } from './helpers/navigationFocus.js';
 import { tr } from '../i18n.js';
@@ -206,6 +207,11 @@ export default function Sites() {
   const [pinningSiteId, setPinningSiteId] = useState<number | null>(null);
   const [selectedSiteIds, setSelectedSiteIds] = useState<number[]>([]);
   const [expandedSiteIds, setExpandedSiteIds] = useState<number[]>([]);
+  const [createdSiteForChoice, setCreatedSiteForChoice] = useState<{
+    id: number;
+    name: string;
+    platform?: string | null;
+  } | null>(null);
   const isMobile = useIsMobile();
   const [showMobileTools, setShowMobileTools] = useState(false);
   const [batchActionLoading, setBatchActionLoading] = useState(false);
@@ -460,23 +466,15 @@ export default function Sites() {
         toast.success(`站点 "${payload.name}" 已添加`);
         const createdSiteId = Number(created?.id) || 0;
         if (createdSiteId > 0) {
+          // 所有平台都弹出选择Modal，让用户决定下一步
           const createdPlatform = typeof created?.platform === 'string' && created.platform.trim()
             ? created.platform.trim()
             : payload.platform;
-          const params = new URLSearchParams({
-            create: '1',
-            siteId: String(createdSiteId),
+          setCreatedSiteForChoice({
+            id: createdSiteId,
+            name: payload.name,
+            platform: createdPlatform,
           });
-          if (String(createdPlatform || '').trim().toLowerCase() === 'codex') {
-            params.set('provider', 'codex');
-            navigate(`/oauth?${params.toString()}`);
-            return;
-          }
-          const initialSegment = resolveInitialConnectionSegment(createdPlatform);
-          if (initialSegment === 'apikey') {
-            params.set('segment', 'apikey');
-          }
-          navigate(`/accounts?${params.toString()}`);
         }
       } else {
         await api.updateSite(action.id, action.payload);
@@ -517,6 +515,37 @@ export default function Sites() {
         customHeaders: nextHeaders.length > 0 ? nextHeaders : [emptySiteCustomHeader()],
       };
     });
+  };
+
+  const handleSiteCreatedChoice = (choice: 'session' | 'apikey' | 'later') => {
+    if (!createdSiteForChoice) return;
+
+    const siteId = createdSiteForChoice.id;
+    const platform = createdSiteForChoice.platform?.toLowerCase().trim();
+    const params = new URLSearchParams({
+      create: '1',
+      siteId: String(siteId),
+    });
+
+    if (choice === 'session') {
+      // codex平台使用OAuth流程
+      if (platform === 'codex') {
+        params.set('provider', 'codex');
+        navigate(`/oauth?${params.toString()}`);
+      } else {
+        // 其他平台跳转到账号创建页面（session模式）
+        navigate(`/accounts?${params.toString()}`);
+      }
+    } else if (choice === 'apikey') {
+      // 跳转到账号创建页面（apikey模式）
+      params.set('segment', 'apikey');
+      navigate(`/accounts?${params.toString()}`);
+    }
+    // choice === 'later': 不跳转，留在当前页面
+
+    setCreatedSiteForChoice(null);
+    closeEditor();
+    load();
   };
 
   const handleDetect = async () => {
@@ -799,6 +828,19 @@ export default function Sites() {
           ? <>确定要删除站点 <strong>{deleteConfirm.siteName || `#${deleteConfirm.siteId}`}</strong> 吗？</>
           : <>确定要删除选中的 <strong>{deleteConfirm?.count || 0}</strong> 个站点吗？</>}
       />
+
+      {createdSiteForChoice && (
+        <SiteCreatedModal
+          siteName={createdSiteForChoice.name}
+          platform={createdSiteForChoice.platform}
+          onChoice={handleSiteCreatedChoice}
+          onClose={() => {
+            setCreatedSiteForChoice(null);
+            closeEditor();
+            load();
+          }}
+        />
+      )}
 
       {activeEditor && (
         <CenteredModal

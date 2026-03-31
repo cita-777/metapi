@@ -127,6 +127,7 @@ describe('chat proxy stream behavior', () => {
       overrideRaw: [],
       filter: [],
     };
+    (config as any).disableCrossProtocolFallback = false;
     config.proxyEmptyContentFailEnabled = false;
     config.proxyErrorKeywords = [];
   });
@@ -239,6 +240,38 @@ describe('chat proxy stream behavior', () => {
     expect(response.headers['content-type']).toContain('text/event-stream');
     expect(response.body).toContain('"chat.completion.chunk"');
     expect(response.body).toContain('你好，来自 zstd 流式回退');
+    expect(response.body).not.toContain('(�/�');
+    expect(response.body).toContain('data: [DONE]');
+  });
+
+  it('decodes zstd-compressed native SSE chat streams before converting downstream chunks', async () => {
+    fetchMock.mockResolvedValue(new Response(zstdCompressSync(Buffer.from([
+      'data: {"id":"chatcmpl-zstd-native","model":"upstream-gpt","choices":[{"delta":{"role":"assistant"},"finish_reason":null}]}\n\n',
+      'data: {"id":"chatcmpl-zstd-native","model":"upstream-gpt","choices":[{"delta":{"content":"你好，来自 zstd 原生 SSE"},"finish_reason":null}]}\n\n',
+      'data: {"id":"chatcmpl-zstd-native","model":"upstream-gpt","choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+      'data: [DONE]\n\n',
+    ].join(''))), {
+      status: 200,
+      headers: {
+        'content-encoding': 'zstd',
+        'content-type': 'text/event-stream; charset=utf-8',
+      },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        model: 'gpt-4o-mini',
+        stream: true,
+        messages: [{ role: 'user', content: 'hi' }],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/event-stream');
+    expect(response.body).toContain('"chat.completion.chunk"');
+    expect(response.body).toContain('你好，来自 zstd 原生 SSE');
     expect(response.body).not.toContain('(�/�');
     expect(response.body).toContain('data: [DONE]');
   });
@@ -2006,6 +2039,51 @@ describe('chat proxy stream behavior', () => {
     expect(response.body).toContain('"text":"The user asked \\"whoru\\" which is a common internet slang and shorthand for who are you."');
   });
 
+  it('preserves legitimate repeated short deltas when /v1/responses is converted from /v1/messages stream', async () => {
+    fetchModelPricingCatalogMock.mockResolvedValue({
+      models: [
+        {
+          modelName: 'upstream-gpt',
+          supportedEndpointTypes: ['/v1/messages'],
+        },
+      ],
+      groupRatio: {},
+    });
+
+    const encoder = new TextEncoder();
+    const upstreamBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('event: message_start\ndata: {"type":"message_start","message":{"id":"msg_repeat_short_1","model":"upstream-gpt"}}\n\n'));
+        controller.enqueue(encoder.encode('event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"ha"}}\n\n'));
+        controller.enqueue(encoder.encode('event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"ha"}}\n\n'));
+        controller.enqueue(encoder.encode('event: message_stop\ndata: {"type":"message_stop"}\n\n'));
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      },
+    });
+
+    fetchMock.mockResolvedValue(new Response(upstreamBody, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'claude-sonnet-4-6',
+        stream: true,
+        input: 'laugh',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const deltaMatches = response.body.match(/event: response\.output_text\.delta/g) || [];
+    expect(deltaMatches.length).toBe(2);
+    expect(response.body).toContain('"delta":"ha"');
+    expect(response.body).toContain('"text":"haha"');
+  });
+
   it('preserves function_call/function_call_output when /v1/responses falls back to /v1/chat/completions', async () => {
     fetchModelPricingCatalogMock.mockResolvedValue({
       models: [
@@ -3075,6 +3153,43 @@ describe('chat proxy stream behavior', () => {
 
     const body = response.json();
     expect(body?.choices?.[0]?.message?.content).toContain('ok via responses fallback after 502');
+  });
+
+  it('stops after the first failed protocol when cross protocol fallback is disabled', async () => {
+    (config as any).disableCrossProtocolFallback = true;
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site: { name: 'generic-site', url: 'https://generic.example.com', platform: 'new-api' },
+      account: { id: 33, username: 'demo-user' },
+      tokenName: 'default',
+      tokenValue: 'sk-generic',
+      actualModel: 'claude-haiku-4-5-20251001',
+    });
+
+    fetchMock.mockResolvedValueOnce(new Response(
+      '<!DOCTYPE html><html><head><title>502 Bad Gateway</title></head><body>Cloudflare</body></html>',
+      {
+        status: 502,
+        headers: { 'content-type': 'text/html; charset=UTF-8' },
+      },
+    ));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        model: 'claude-haiku-4-5-20251001',
+        stream: false,
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [firstUrl] = fetchMock.mock.calls[0] as [string, any];
+    expect(firstUrl).toContain('/v1/messages');
+    const body = response.json();
+    expect(body?.error?.message).toContain('/v1/messages');
   });
 
   it('continues to /v1/responses when /v1/messages dispatch is denied for /v1/chat/completions', async () => {

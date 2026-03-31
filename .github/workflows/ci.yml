@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  NODE_VERSION: 22
+  NODE_VERSION: 25
 
 jobs:
   changes:

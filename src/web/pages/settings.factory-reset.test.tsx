@@ -13,6 +13,7 @@ const { apiMock } = vi.hoisted(() => ({
     getRuntimeDatabaseConfig: vi.fn(),
     getBrandList: vi.fn(),
     factoryReset: vi.fn(),
+    getModelTokenCandidates: vi.fn(),
   },
 }));
 
@@ -85,6 +86,7 @@ describe('Settings factory reset', () => {
       restartRequired: false,
     });
     apiMock.factoryReset.mockResolvedValue({ success: true });
+    apiMock.getModelTokenCandidates.mockResolvedValue({ models: {} });
 
     storage = createStorage({
       auth_token: 'before-reset-token',

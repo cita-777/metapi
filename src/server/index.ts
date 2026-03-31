@@ -33,7 +33,7 @@ import { ensureDefaultSitesSeeded } from './services/defaultSiteSeedService.js';
 import { ensureOauthIdentityBackfill } from './services/oauth/oauthIdentityBackfill.js';
 import { ensureOauthProviderSitesExist } from './services/oauth/oauthSiteRegistry.js';
 import { startOAuthLoopbackCallbackServers, stopOAuthLoopbackCallbackServers } from './services/oauth/localCallbackServer.js';
-import { startSiteAnnouncementPolling } from './services/siteAnnouncementPollingService.js';
+import { startSiteAnnouncementPolling, stopSiteAnnouncementPolling } from './services/siteAnnouncementPollingService.js';
 import {
   startModelAvailabilityProbeScheduler,
   stopModelAvailabilityProbeScheduler,
@@ -42,6 +42,7 @@ import {
   startChannelRecoveryProbeScheduler,
   stopChannelRecoveryProbeScheduler,
 } from './services/channelRecoveryProbeService.js';
+import { startUpdateCenterPolling, stopUpdateCenterPolling } from './services/updateCenterPollingService.js';
 import { reloadBackupWebdavScheduler } from './services/backupService.js';
 import { ensureRuntimeDatabaseReady } from './runtimeDatabaseBootstrap.js';
 import { isPublicApiRoute, registerDesktopRoutes } from './desktop.js';
@@ -493,6 +494,7 @@ await reloadBackupWebdavScheduler();
 startSiteAnnouncementPolling();
 startModelAvailabilityProbeScheduler();
 startChannelRecoveryProbeScheduler();
+startUpdateCenterPolling();
 try {
   await startOAuthLoopbackCallbackServers();
 } catch (error) {
@@ -501,6 +503,8 @@ try {
 setLegacyProxyLogRetentionFallbackEnabled(!config.logCleanupConfigured);
 startProxyFileRetentionService();
 app.addHook('onClose', async () => {
+  stopSiteAnnouncementPolling();
+  stopUpdateCenterPolling();
   stopProxyFileRetentionService();
   stopProxyLogRetentionService();
   stopModelAvailabilityProbeScheduler();

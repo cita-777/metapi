@@ -43,6 +43,8 @@ const ACCOUNT_SEGMENTS: Array<{
     { value: 'tokens', label: '账号令牌管理', tooltip: '从账号同步或手动维护，供路由实际调用', tooltipSide: 'bottom', tooltipAlign: 'end' },
   ];
 
+const SITE_SELECT_SEARCH_PLACEHOLDER = '筛选站点（名称 / 平台 / URL）';
+
 function createLoginForm() {
   return { siteId: 0, username: '', password: '' };
 }
@@ -171,6 +173,17 @@ export default function Accounts() {
   const selectedTokenSite = useMemo(
     () => sites.find((item) => item.id === tokenForm.siteId) || null,
     [sites, tokenForm.siteId],
+  );
+  const siteSelectOptions = useMemo(
+    () => [
+      { value: '0', label: '选择站点' },
+      ...sites.map((site: any) => ({
+        value: String(site.id),
+        label: `${site.name} (${site.platform})`,
+        description: site.url || undefined,
+      })),
+    ],
+    [sites],
   );
   const isSub2ApiSelected = (selectedTokenSite?.platform || '').toLowerCase() === 'sub2api';
   const activeAddCredentialMode = activeSegment === 'apikey' ? 'apikey' : 'session';
@@ -1176,14 +1189,10 @@ export default function Accounts() {
                         setTokenForm((f) => ({ ...f, siteId: nextSiteId }));
                         setVerifyResult(null);
                       }}
-                      options={[
-                        { value: '0', label: '选择站点' },
-                        ...sites.map((s: any) => ({
-                          value: String(s.id),
-                          label: `${s.name} (${s.platform})`,
-                        })),
-                      ]}
+                      options={siteSelectOptions}
                       placeholder="选择站点"
+                      searchable
+                      searchPlaceholder={SITE_SELECT_SEARCH_PLACEHOLDER}
                     />
                     <input
                       placeholder="连接名称（可选）"
@@ -1303,14 +1312,10 @@ export default function Accounts() {
                         const nextSiteId = Number.parseInt(nextValue, 10) || 0;
                         setLoginForm((f) => ({ ...f, siteId: nextSiteId }));
                       }}
-                      options={[
-                        { value: '0', label: '选择站点' },
-                        ...sites.map((s: any) => ({
-                          value: String(s.id),
-                          label: `${s.name} (${s.platform})`,
-                        })),
-                      ]}
+                      options={siteSelectOptions}
                       placeholder="选择站点"
+                      searchable
+                      searchPlaceholder={SITE_SELECT_SEARCH_PLACEHOLDER}
                     />
                     <input placeholder="用户名" value={loginForm.username} onChange={(e) => setLoginForm((f) => ({ ...f, username: e.target.value }))} style={inputStyle} />
                     <input type="password" placeholder="密码" value={loginForm.password} onChange={(e) => setLoginForm((f) => ({ ...f, password: e.target.value }))} onKeyDown={(e) => e.key === 'Enter' && handleLoginAdd()} style={inputStyle} />
@@ -1332,14 +1337,10 @@ export default function Accounts() {
                     setTokenForm((f) => ({ ...f, siteId: nextSiteId, credentialMode: 'apikey' }));
                     setVerifyResult(null);
                   }}
-                  options={[
-                    { value: '0', label: '选择站点' },
-                    ...sites.map((s: any) => ({
-                      value: String(s.id),
-                      label: `${s.name} (${s.platform})`,
-                    })),
-                  ]}
+                  options={siteSelectOptions}
                   placeholder="选择站点"
+                  searchable
+                  searchPlaceholder={SITE_SELECT_SEARCH_PLACEHOLDER}
                 />
                 <input
                   placeholder="连接名称（可选）"

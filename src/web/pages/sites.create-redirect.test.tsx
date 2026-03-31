@@ -38,7 +38,7 @@ function LocationProbe() {
   return <div>{`${location.pathname}${location.search}`}</div>;
 }
 
-async function createSiteAndCollectLocation(createdSite: { id: number; platform?: string | null }) {
+async function createSiteAndClickModalChoice(createdSite: { id: number; name: string; platform?: string | null }, choice: 'session' | 'apikey' | 'later') {
   apiMock.getSites.mockResolvedValue([]);
   apiMock.addSite.mockResolvedValue(createdSite);
 
@@ -96,6 +96,27 @@ async function createSiteAndCollectLocation(createdSite: { id: number; platform?
     });
     await flushMicrotasks();
 
+    // Find the modal dialog and click the appropriate button
+    const modalDialog = root.root.find((node) => node.type === 'dialog');
+    const modalButtons = modalDialog.findAll((node) => node.type === 'button');
+
+    // Find the button based on choice
+    let targetButton;
+    if (choice === 'session') {
+      targetButton = modalButtons.find((btn) => collectText(btn).includes('添加账号（用户名密码登录）'));
+    } else if (choice === 'apikey') {
+      targetButton = modalButtons.find((btn) => collectText(btn).includes('添加 API Key'));
+    } else {
+      targetButton = modalButtons.find((btn) => collectText(btn).includes('稍后配置'));
+    }
+
+    if (targetButton) {
+      await act(async () => {
+        targetButton.props.onClick();
+      });
+      await flushMicrotasks();
+    }
+
     return JSON.stringify(root.toJSON());
   } finally {
     root?.unmount();
@@ -111,15 +132,15 @@ describe('Sites create redirect', () => {
     vi.clearAllMocks();
   });
 
-  it('redirects a session-capable site to the session connection create flow', async () => {
-    const rendered = await createSiteAndCollectLocation({ id: 21, platform: 'new-api' });
+  it('shows modal after creating a site and navigates to session account when user chooses it', async () => {
+    const rendered = await createSiteAndClickModalChoice({ id: 21, name: 'Demo Site', platform: 'new-api' }, 'session');
 
     expect(rendered).toContain('/accounts?create=1&siteId=21');
     expect(rendered).not.toContain('segment=apikey');
   });
 
-  it('redirects an official API-key-only site to the apikey connection create flow', async () => {
-    const rendered = await createSiteAndCollectLocation({ id: 22, platform: 'openai' });
+  it('shows modal after creating a site and navigates to API key when user chooses it', async () => {
+    const rendered = await createSiteAndClickModalChoice({ id: 22, name: 'Demo Site', platform: 'openai' }, 'apikey');
 
     expect(rendered).toContain('/accounts?');
     expect(rendered).toContain('segment=apikey');
@@ -127,12 +148,84 @@ describe('Sites create redirect', () => {
     expect(rendered).toContain('siteId=22');
   });
 
-  it('redirects a codex site to oauth management instead of legacy account import', async () => {
-    const rendered = await createSiteAndCollectLocation({ id: 23, platform: 'codex' });
+  it('shows modal after creating a codex site and allows choosing later', async () => {
+    const rendered = await createSiteAndClickModalChoice({ id: 23, name: 'Demo Site', platform: 'codex' }, 'later');
+
+    // User chose "later", so should stay on sites page (no navigation to accounts or oauth)
+    expect(rendered).not.toContain('/oauth?');
+    expect(rendered).not.toContain('/accounts?');
+  });
+
+  it('shows modal after creating a codex site and navigates to OAuth when user chooses session', async () => {
+    const rendered = await createSiteAndClickModalChoice({ id: 24, name: 'Demo Site', platform: 'codex' }, 'session');
 
     expect(rendered).toContain('/oauth?');
     expect(rendered).toContain('provider=codex');
     expect(rendered).toContain('create=1');
-    expect(rendered).toContain('siteId=23');
+    expect(rendered).toContain('siteId=24');
+  });
+
+  it('shows modal with all three choices after creating a site', async () => {
+    apiMock.getSites.mockResolvedValue([]);
+    apiMock.addSite.mockResolvedValue({ id: 24, name: 'Demo Site', platform: 'new-api' });
+
+    let root!: WebTestRenderer;
+    await act(async () => {
+      root = create(
+        <ToastProvider>
+          <MemoryRouter initialEntries={['/sites']}>
+            <Routes>
+              <Route path="/sites" element={<Sites />} />
+            </Routes>
+          </MemoryRouter>
+        </ToastProvider>,
+      );
+    });
+    await flushMicrotasks();
+
+    // Click add button
+    const addButton = root.root.find((node) => (
+      node.type === 'button'
+      && node.props.className?.includes('btn btn-primary')
+      && JSON.stringify(node.props.children).includes('添加站点')
+    ));
+    await act(async () => {
+      addButton.props.onClick();
+    });
+    await flushMicrotasks();
+
+    // Fill form
+    const nameInput = root.root.find((node) => node.type === 'input' && node.props.placeholder === '站点名称');
+    const urlInput = root.root.find((node) => (
+      node.type === 'input'
+      && node.props.placeholder === '站点 URL (例如 https://api.example.com)'
+    ));
+    const selects = root.root.findAllByType(ModernSelect);
+    const platformSelect = selects.at(-1);
+    const saveButton = root.root.find((node) => (
+      node.type === 'button'
+      && typeof node.props.onClick === 'function'
+      && collectText(node).includes('保存站点')
+    ));
+
+    await act(async () => {
+      nameInput.props.onChange({ target: { value: 'Demo Site' } });
+      urlInput.props.onChange({ target: { value: 'https://demo.example.com' } });
+      platformSelect?.props.onChange('new-api');
+    });
+
+    await act(async () => {
+      await saveButton.props.onClick();
+    });
+    await flushMicrotasks();
+
+    // Check modal appears with all three buttons
+    const rendered = JSON.stringify(root.toJSON());
+    expect(rendered).toContain('站点创建成功');
+    expect(rendered).toContain('添加账号（用户名密码登录）');
+    expect(rendered).toContain('添加 API Key');
+    expect(rendered).toContain('稍后配置');
+
+    root.unmount();
   });
 });

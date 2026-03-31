@@ -656,13 +656,21 @@ function mergeImageGenerationFields(
 }
 
 function computeNovelDelta(existingText: string, incomingDelta: string): string {
+  const replayWindowMinLength = 24;
   if (!incomingDelta) return '';
   if (!existingText) return incomingDelta;
-  if (existingText.endsWith(incomingDelta)) return '';
+  if (existingText.endsWith(incomingDelta)) {
+    return incomingDelta.length >= replayWindowMinLength ? '' : incomingDelta;
+  }
   if (incomingDelta.startsWith(existingText)) {
     return incomingDelta.slice(existingText.length);
   }
-  if (existingText.includes(incomingDelta)) return '';
+  if (
+    incomingDelta.length >= replayWindowMinLength
+    && existingText.includes(incomingDelta)
+  ) {
+    return '';
+  }
 
   const maxOverlap = Math.min(existingText.length, incomingDelta.length);
   for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {

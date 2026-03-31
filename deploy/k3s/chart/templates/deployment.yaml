@@ -1,0 +1,59 @@
+{{- if and .Values.persistence.hostPath (gt (int .Values.replicaCount) 1) -}}
+{{- fail "deploy/k3s/chart uses node-local hostPath storage; keep replicaCount at 1 or switch persistence.hostPath to shared storage before scaling" -}}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "metapi.fullname" . }}
+  labels:
+    {{- include "metapi.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: {{ .Values.deployment.strategy.maxSurge }}
+      maxUnavailable: {{ .Values.deployment.strategy.maxUnavailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "metapi.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "metapi.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+      annotations:
+        metapi/image-tag: {{ .Values.image.tag | quote }}
+        metapi/image-digest: {{ .Values.image.digest | quote }}
+        checksum/env-secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum | quote }}
+    spec:
+      containers:
+        - name: metapi
+          image: "{{ .Values.image.repository }}{{ if .Values.image.digest }}@{{ .Values.image.digest }}{{ else }}:{{ .Values.image.tag }}{{ end }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          envFrom:
+            - secretRef:
+                name: {{ include "metapi.envSecretName" . }}
+          ports:
+            - name: http
+              containerPort: 4000
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          volumeMounts:
+            - name: metapi-data
+              mountPath: /app/data
+      volumes:
+        - name: metapi-data
+          hostPath:
+            path: {{ .Values.persistence.hostPath }}
+            type: DirectoryOrCreate

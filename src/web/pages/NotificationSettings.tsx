@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { api } from '../api.js';
+import { api, type RuntimeSettingsPayload } from '../api.js';
 import { useToast } from '../components/Toast.js';
 import { tr } from '../i18n.js';
 
@@ -112,7 +112,7 @@ export default function NotificationSettings() {
     const saveNotify = async () => {
         setSavingNotify(true);
         try {
-            const payload: any = {
+            const payload: RuntimeSettingsPayload = {
                 webhookUrl: runtime.webhookUrl,
                 barkUrl: runtime.barkUrl,
                 webhookEnabled: runtime.webhookEnabled,

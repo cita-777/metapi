@@ -15,6 +15,7 @@ const { apiMock } = vi.hoisted(() => ({
     getBrandList: vi.fn(),
     updateRuntimeSettings: vi.fn(),
     triggerCheckinAll: vi.fn(),
+    getModelTokenCandidates: vi.fn(),
   },
 }));
 
@@ -70,6 +71,7 @@ describe('Settings log cleanup schedule', () => {
       restartRequired: false,
     });
     apiMock.updateRuntimeSettings.mockResolvedValue({ success: true });
+    apiMock.getModelTokenCandidates.mockResolvedValue({ models: {} });
   });
 
   afterEach(() => {

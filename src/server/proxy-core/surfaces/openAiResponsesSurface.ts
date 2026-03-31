@@ -1,5 +1,6 @@
 import { TextDecoder } from 'node:util';
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { config } from '../../config.js';
 import { reportProxyAllFailed } from '../../services/alertService.js';
 import { mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParser.js';
 import { openAiResponsesTransformer } from '../../transformers/openai/responses/index.js';
@@ -36,7 +37,7 @@ import {
   unwrapGeminiCliPayload,
 } from '../../routes/proxy/geminiCliCompat.js';
 import { isCodexResponsesSurface } from '../cliProfiles/codexProfile.js';
-import { readRuntimeResponseText } from '../executors/types.js';
+import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
 import { runCodexHttpSessionTask } from '../runtime/codexHttpSessionQueue.js';
 import {
   summarizeConversationFileInputsInOpenAiBody,
@@ -501,6 +502,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
         const debugAttemptBase = reserveSurfaceProxyDebugAttemptBase(debugTrace, endpointCandidates.length);
         const endpointResult = await executeEndpointFlow({
           siteUrl: selected.site.url,
+          disableCrossProtocolFallback: config.disableCrossProtocolFallback,
           endpointCandidates,
           buildRequest: (endpoint) => buildEndpointRequest(endpoint),
           dispatchRequest,
@@ -872,7 +874,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
             replayReader = createSingleChunkStreamReader(rawText);
           }
 
-          const upstreamReader = replayReader ?? upstream.body?.getReader();
+          const upstreamReader = replayReader ?? getRuntimeResponseReader(upstream);
           const baseReader = String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli' && upstreamReader
             ? createGeminiCliStreamReader(upstreamReader)
             : upstreamReader;
