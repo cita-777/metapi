@@ -56,6 +56,30 @@ export function buildPriorityBucketEditorItems(channels: RouteChannel[]): Priori
   return items;
 }
 
+export function splitPriorityBucketAfterChannel(
+  channels: RouteChannel[],
+  channelId: number,
+): RouteChannel[] {
+  const normalized = normalizeChannels(channels || []);
+  if (normalized.length <= 1) return normalized;
+
+  const items = buildPriorityBucketEditorItems(normalized);
+  const channelIndex = items.findIndex((item) => item.kind === 'channel' && item.id === channelId);
+  if (channelIndex < 0) return normalized;
+
+  const nextItem = items[channelIndex + 1];
+  if (!nextItem || nextItem.kind === 'separator') {
+    return normalized;
+  }
+
+  const next = [...items];
+  next.splice(channelIndex + 1, 0, {
+    id: `${PRIORITY_BUCKET_SEPARATOR_PREFIX}split:${channelId}`,
+    kind: 'separator',
+  });
+  return denseRenormalizeChannels(next);
+}
+
 function moveItem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
   const next = [...items];
   const [item] = next.splice(fromIndex, 1);

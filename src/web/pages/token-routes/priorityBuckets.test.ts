@@ -4,6 +4,7 @@ import {
   applyPriorityBucketDrag,
   buildPriorityBuckets,
   createPriorityBucketSeparatorId,
+  splitPriorityBucketAfterChannel,
 } from './priorityBuckets.js';
 
 function buildChannel(id: number, priority: number): RouteChannel {
@@ -81,6 +82,23 @@ describe('priority bucket helpers', () => {
       { id: 3, priority: 0 },
       { id: 4, priority: 1 },
       { id: 5, priority: 1 },
+    ]);
+  });
+
+  it('can split a single shared-priority bucket into a new next bucket', () => {
+    const reordered = splitPriorityBucketAfterChannel(
+      [
+        buildChannel(1, 0),
+        buildChannel(2, 0),
+        buildChannel(3, 0),
+      ],
+      1,
+    );
+
+    expect(reordered.map((channel) => ({ id: channel.id, priority: channel.priority }))).toEqual([
+      { id: 1, priority: 0 },
+      { id: 2, priority: 1 },
+      { id: 3, priority: 1 },
     ]);
   });
 });

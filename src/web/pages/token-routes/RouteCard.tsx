@@ -71,6 +71,7 @@ type RouteCardProps = {
   onDeleteChannel: (channelId: number, routeId: number) => void;
   onToggleChannelEnabled: (channelId: number, routeId: number, enabled: boolean) => void;
   onChannelDragEnd: (routeId: number, event: DragEndEvent) => void;
+  onSplitPriorityBucket: (routeId: number, channelId: number) => void;
   // Missing token hints
   missingTokenSiteItems: MissingTokenRouteSiteActionItem[];
   missingTokenGroupItems: MissingTokenGroupRouteSiteActionItem[];
@@ -120,6 +121,7 @@ function RouteCardInner({
   onDeleteChannel,
   onToggleChannelEnabled,
   onChannelDragEnd,
+  onSplitPriorityBucket,
   missingTokenSiteItems,
   missingTokenGroupItems,
   onCreateTokenForMissing,
@@ -508,30 +510,54 @@ function RouteCardInner({
                         ) : null}
                       </div>
 
-                      {bucket.channels.map((channel) => {
+                      {bucket.channels.map((channel, channelIndex) => {
                         const tokenOptions = candidateView.tokenOptionsByAccountId[channel.accountId] || [];
                         const activeTokenId = channelTokenDraft[channel.id] ?? channel.tokenId ?? 0;
                         return (
-                          <SortableChannelRow
-                            key={channel.id}
-                            channel={channel}
-                            displayPriority={bucketIndex}
-                            decisionCandidate={decisionMap.get(channel.id)}
-                            isExactRoute={exactRoute}
-                            loadingDecision={loadingDecision}
-                            isSavingPriority={savingPriority}
-                            readOnly={readOnlyRoute}
-                            channelManagementDisabled={channelManagementDisabled}
-                            mobile={compact}
-                            tokenOptions={tokenOptions}
-                            activeTokenId={activeTokenId}
-                            isUpdatingToken={!!updatingChannel[channel.id]}
-                            onTokenDraftChange={onTokenDraftChange}
-                            onSaveToken={() => onSaveToken(route.id, channel.id, channel.accountId)}
-                            onDeleteChannel={() => onDeleteChannel(channel.id, route.id)}
-                            onToggleEnabled={(enabled) => onToggleChannelEnabled(channel.id, route.id, enabled)}
-                            onSiteBlockModel={channelManagementDisabled ? undefined : () => onSiteBlockModel(channel.id, route.id)}
-                          />
+                          <div key={channel.id} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            <SortableChannelRow
+                              channel={channel}
+                              displayPriority={bucketIndex}
+                              decisionCandidate={decisionMap.get(channel.id)}
+                              isExactRoute={exactRoute}
+                              loadingDecision={loadingDecision}
+                              isSavingPriority={savingPriority}
+                              readOnly={readOnlyRoute}
+                              channelManagementDisabled={channelManagementDisabled}
+                              mobile={compact}
+                              tokenOptions={tokenOptions}
+                              activeTokenId={activeTokenId}
+                              isUpdatingToken={!!updatingChannel[channel.id]}
+                              onTokenDraftChange={onTokenDraftChange}
+                              onSaveToken={() => onSaveToken(route.id, channel.id, channel.accountId)}
+                              onDeleteChannel={() => onDeleteChannel(channel.id, route.id)}
+                              onToggleEnabled={(enabled) => onToggleChannelEnabled(channel.id, route.id, enabled)}
+                              onSiteBlockModel={channelManagementDisabled ? undefined : () => onSiteBlockModel(channel.id, route.id)}
+                            />
+                            {!readOnlyRoute && channelIndex < bucket.channels.length - 1 ? (
+                              <button
+                                type="button"
+                                className="btn btn-ghost"
+                                onClick={() => onSplitPriorityBucket(route.id, channel.id)}
+                                disabled={savingPriority}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: 8,
+                                  border: '1px dashed var(--color-border)',
+                                  borderRadius: 999,
+                                  background: 'transparent',
+                                  color: 'var(--color-text-muted)',
+                                  padding: '2px 10px',
+                                  fontSize: 11,
+                                  alignSelf: 'center',
+                                }}
+                              >
+                                {`拆分为 P${bucketIndex + 1}`}
+                              </button>
+                            ) : null}
+                          </div>
                         );
                       })}
 
