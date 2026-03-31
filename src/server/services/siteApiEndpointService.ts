@@ -46,7 +46,7 @@ export interface RecordedSiteApiEndpointFailure extends SiteApiEndpointFailureDi
   cooldownUntil: string | null;
 }
 
-function normalizeBaseUrl(raw: string): string {
+export function normalizeSiteApiEndpointBaseUrl(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return '';
   try {
@@ -127,7 +127,7 @@ export async function selectSiteApiEndpointTarget(
       kind: 'site-fallback',
       siteId: site.id,
       endpointId: null,
-      baseUrl: normalizeBaseUrl(site.url),
+      baseUrl: normalizeSiteApiEndpointBaseUrl(site.url),
       configuredEndpointCount: 0,
       endpoint: null,
     };
@@ -150,7 +150,7 @@ export async function selectSiteApiEndpointTarget(
     kind: 'endpoint',
     siteId: site.id,
     endpointId: selected.id,
-    baseUrl: normalizeBaseUrl(selected.url),
+    baseUrl: normalizeSiteApiEndpointBaseUrl(selected.url),
     configuredEndpointCount: endpoints.length,
     endpoint: selected,
   };
