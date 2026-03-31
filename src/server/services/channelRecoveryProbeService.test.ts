@@ -24,10 +24,12 @@ describe('channelRecoveryProbeService', () => {
   let resetProxyChannelCoordinatorState: CoordinatorModule['resetProxyChannelCoordinatorState'];
   let config: ConfigModule['config'];
   let dataDir = '';
+  let originalDataDir: string | undefined;
   let originalConcurrencyLimit = 0;
 
   beforeAll(async () => {
     dataDir = mkdtempSync(join(tmpdir(), 'metapi-channel-recovery-probe-'));
+    originalDataDir = process.env.DATA_DIR;
     process.env.DATA_DIR = dataDir;
 
     await import('../db/migrate.js');
@@ -69,7 +71,11 @@ describe('channelRecoveryProbeService', () => {
     config.proxySessionChannelConcurrencyLimit = originalConcurrencyLimit;
     resetChannelRecoveryProbeState();
     resetProxyChannelCoordinatorState();
-    delete process.env.DATA_DIR;
+    if (originalDataDir === undefined) {
+      delete process.env.DATA_DIR;
+    } else {
+      process.env.DATA_DIR = originalDataDir;
+    }
   });
 
   it('clears cooldown markers when a background probe succeeds', async () => {

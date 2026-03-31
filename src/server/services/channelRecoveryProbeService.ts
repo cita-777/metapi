@@ -20,8 +20,9 @@ type RecoveryProbeCandidate = {
 
 const CHANNEL_RECOVERY_SWEEP_INTERVAL_MS = 30_000;
 const CHANNEL_RECOVERY_PROBE_TIMEOUT_MS = 12_000;
-const CHANNEL_RECOVERY_PROBE_CONCURRENCY = 2;
-const CHANNEL_RECOVERY_MAX_BATCH = 8;
+// Keep recovery probes conservative so they do not look like bulk health checks to upstream providers.
+const CHANNEL_RECOVERY_PROBE_CONCURRENCY = 1;
+const CHANNEL_RECOVERY_MAX_BATCH = 4;
 const CHANNEL_RECOVERY_COOLDOWN_RECHECK_MS = 30_000;
 const CHANNEL_RECOVERY_ACTIVE_RECHECK_MS = 5 * 60_000;
 

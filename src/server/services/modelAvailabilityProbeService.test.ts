@@ -9,6 +9,7 @@ const buildUpstreamEndpointRequestMock = vi.fn();
 const dispatchRuntimeRequestMock = vi.fn();
 const resolveChannelProxyUrlMock = vi.fn();
 const withSiteRecordProxyRequestInitMock = vi.fn();
+const rebuildRoutesOnlyMock = vi.fn();
 
 vi.mock('../routes/proxy/upstreamEndpoint.js', () => ({
   resolveUpstreamEndpointCandidates: (...args: unknown[]) => resolveUpstreamEndpointCandidatesMock(...args),
@@ -24,6 +25,10 @@ vi.mock('./siteProxy.js', () => ({
   withSiteRecordProxyRequestInit: (...args: unknown[]) => withSiteRecordProxyRequestInitMock(...args),
 }));
 
+vi.mock('./routeRefreshWorkflow.js', () => ({
+  rebuildRoutesOnly: (...args: unknown[]) => rebuildRoutesOnlyMock(...args),
+}));
+
 type DbModule = typeof import('../db/index.js');
 type ProbeModule = typeof import('./modelAvailabilityProbeService.js');
 
@@ -32,9 +37,11 @@ describe('modelAvailabilityProbeService', () => {
   let schema: DbModule['schema'];
   let executeModelAvailabilityProbe: ProbeModule['executeModelAvailabilityProbe'];
   let dataDir = '';
+  let originalDataDir: string | undefined;
 
   beforeAll(async () => {
     dataDir = mkdtempSync(join(tmpdir(), 'metapi-model-probe-'));
+    originalDataDir = process.env.DATA_DIR;
     process.env.DATA_DIR = dataDir;
 
     await import('../db/migrate.js');
@@ -52,6 +59,8 @@ describe('modelAvailabilityProbeService', () => {
     dispatchRuntimeRequestMock.mockReset();
     resolveChannelProxyUrlMock.mockReset();
     withSiteRecordProxyRequestInitMock.mockReset();
+    rebuildRoutesOnlyMock.mockReset();
+    rebuildRoutesOnlyMock.mockResolvedValue(undefined);
 
     resolveUpstreamEndpointCandidatesMock.mockResolvedValue(['chat']);
     buildUpstreamEndpointRequestMock.mockImplementation((input: { modelName?: string; endpoint?: string }) => ({
@@ -114,7 +123,11 @@ describe('modelAvailabilityProbeService', () => {
   });
 
   afterAll(() => {
-    delete process.env.DATA_DIR;
+    if (originalDataDir === undefined) {
+      delete process.env.DATA_DIR;
+    } else {
+      process.env.DATA_DIR = originalDataDir;
+    }
   });
 
   it('marks supported rows true and unsupported rows false after probing', async () => {
@@ -320,5 +333,72 @@ describe('modelAvailabilityProbeService', () => {
     expect(accountRows).toHaveLength(1);
     expect(accountRows[0]?.available).toBe(true);
     expect(accountRows[0]?.checkedAt).toBe(checkedAt);
+  });
+
+  it('does not rebuild routes when probe only refreshes checkedAt and latency', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'stable-site',
+      url: 'https://stable.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'stable-user',
+      accessToken: '',
+      apiToken: 'sk-stable',
+      status: 'active',
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'gpt-stable',
+      available: true,
+      checkedAt: '2026-03-20T00:00:00.000Z',
+      latencyMs: 123,
+    }).run();
+
+    const result = await executeModelAvailabilityProbe({
+      accountId: account.id,
+      rebuildRoutes: true,
+    });
+
+    expect(result.summary.updatedRows).toBe(1);
+    expect(result.summary.rebuiltRoutes).toBe(false);
+    expect(rebuildRoutesOnlyMock).not.toHaveBeenCalled();
+  });
+
+  it('rebuilds routes when probe flips availability state', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'changed-site',
+      url: 'https://changed.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'changed-user',
+      accessToken: '',
+      apiToken: 'sk-changed',
+      status: 'active',
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'gpt-changed',
+      available: false,
+      checkedAt: '2026-03-20T00:00:00.000Z',
+    }).run();
+
+    const result = await executeModelAvailabilityProbe({
+      accountId: account.id,
+      rebuildRoutes: true,
+    });
+
+    expect(result.summary.updatedRows).toBe(1);
+    expect(result.summary.rebuiltRoutes).toBe(true);
+    expect(rebuildRoutesOnlyMock).toHaveBeenCalledTimes(1);
   });
 });

@@ -11,6 +11,12 @@ const RESPONSES_TOOL_OUTPUT_TYPES = new Set([
   'custom_tool_call_output',
 ]);
 
+const RESPONSES_TERMINAL_STATUSES = new Set([
+  'completed',
+  'failed',
+  'incomplete',
+]);
+
 function collectResponsesErrorFragments(value: unknown): string[] {
   if (!value) return [];
   if (typeof value === 'string') return [value];
@@ -117,14 +123,17 @@ export function extractResponsesTerminalResponseId(payload: unknown): string | n
 
   const object = asTrimmedString(payload.object).toLowerCase();
   const status = asTrimmedString(payload.status).toLowerCase();
-  if (object === 'response' || status === 'completed' || status === 'failed' || status === 'incomplete') {
+  if (
+    (object === 'response' && RESPONSES_TERMINAL_STATUSES.has(status))
+    || RESPONSES_TERMINAL_STATUSES.has(status)
+  ) {
     const responseId = asTrimmedString(payload.id);
     return responseId || null;
   }
 
   if (isRecord(payload.response)) {
     const nestedStatus = asTrimmedString(payload.response.status).toLowerCase();
-    if (nestedStatus === 'completed' || nestedStatus === 'failed' || nestedStatus === 'incomplete') {
+    if (RESPONSES_TERMINAL_STATUSES.has(nestedStatus)) {
       const responseId = asTrimmedString(payload.response.id);
       return responseId || null;
     }

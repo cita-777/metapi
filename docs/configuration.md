@@ -137,7 +137,7 @@ Metapi 的路由引擎按多因子加权选择最优通道。
 | `MODEL_AVAILABILITY_PROBE_ENABLED` | 启用后台模型可用性探测 | `true` | `true` / `false` |
 | `MODEL_AVAILABILITY_PROBE_INTERVAL_MS` | 后台定时探测间隔（毫秒） | `1800000` | >= 60000 |
 | `MODEL_AVAILABILITY_PROBE_TIMEOUT_MS` | 单次探测超时（毫秒） | `15000` | >= 3000 |
-| `MODEL_AVAILABILITY_PROBE_CONCURRENCY` | 单账号模型探测并发数 | `4` | 1 ~ 16 |
+| `MODEL_AVAILABILITY_PROBE_CONCURRENCY` | 单账号模型探测并发数，默认串行避免对上游形成批量测活 | `1` | 1 ~ 16 |
 
 说明：
 

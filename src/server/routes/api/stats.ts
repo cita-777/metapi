@@ -7,11 +7,16 @@ import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { buildModelAnalysis } from '../../services/modelAnalysisService.js';
 import { fallbackTokenCost, fetchModelPricingCatalog } from '../../services/modelPricingService.js';
 import {
-  executeModelAvailabilityProbe,
+  buildModelAvailabilityProbeTaskDedupeKey,
   queueModelAvailabilityProbeTask,
+  type ModelAvailabilityProbeExecutionResult,
 } from '../../services/modelAvailabilityProbeService.js';
 import { getUpstreamModelDescriptionsCached } from '../../services/upstreamModelDescriptionService.js';
-import { getRunningTaskByDedupeKey, startBackgroundTask } from '../../services/backgroundTaskService.js';
+import {
+  getBackgroundTask,
+  getRunningTaskByDedupeKey,
+  startBackgroundTask,
+} from '../../services/backgroundTaskService.js';
 import { parseCheckinRewardAmount } from '../../services/checkinRewardParser.js';
 import { estimateRewardWithTodayIncomeFallback } from '../../services/todayIncomeRewardService.js';
 import {
@@ -41,6 +46,24 @@ function parseBooleanFlag(raw?: string): boolean {
   if (!raw) return false;
   const normalized = raw.trim().toLowerCase();
   return normalized === '1' || normalized === 'true' || normalized === 'yes';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+async function waitForBackgroundTaskCompletion(taskId: string) {
+  while (true) {
+    const task = getBackgroundTask(taskId);
+    if (!task) return null;
+    if (task.status !== 'pending' && task.status !== 'running') {
+      return task;
+    }
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 25);
+      timer.unref?.();
+    });
+  }
 }
 
 const MODELS_MARKETPLACE_BASE_TTL_MS = 15_000;
@@ -1457,25 +1480,66 @@ export async function statsRoutes(app: FastifyInstance) {
   });
 
   app.post<{ Body?: { accountId?: number; wait?: boolean } }>('/api/models/probe', async (request, reply) => {
-    const rawAccountId = request.body?.accountId as unknown;
-    const hasAccountId = rawAccountId !== undefined && rawAccountId !== null && String(rawAccountId).trim() !== '';
-    const accountId = hasAccountId ? Number.parseInt(String(rawAccountId), 10) : undefined;
-    const wait = request.body?.wait === true;
+    const requestBody = request.body;
+    if (requestBody !== undefined && !isRecord(requestBody)) {
+      return reply.code(400).send({ success: false, message: '请求体必须是对象' });
+    }
 
-    if (hasAccountId && (!Number.isFinite(accountId) || (accountId as number) <= 0)) {
+    const rawAccountId = requestBody?.accountId as unknown;
+    const normalizedAccountId = rawAccountId === undefined || rawAccountId === null
+      ? ''
+      : String(rawAccountId).trim();
+    const hasAccountId = normalizedAccountId !== '';
+    const accountId = hasAccountId && /^[1-9]\d*$/.test(normalizedAccountId)
+      ? Number(normalizedAccountId)
+      : undefined;
+    const wait = requestBody?.wait === true;
+
+    if (hasAccountId && accountId === undefined) {
       return reply.code(400).send({ success: false, message: '账号 ID 无效' });
     }
 
     if (wait) {
-      const result = await executeModelAvailabilityProbe({
-        accountId,
-        rebuildRoutes: true,
-      });
+      const taskTitle = accountId ? `探测模型可用性 #${accountId}` : '探测全部模型可用性';
+      const dedupeKey = buildModelAvailabilityProbeTaskDedupeKey(accountId);
+      const runningTask = getRunningTaskByDedupeKey(dedupeKey);
+      const { task, reused } = runningTask
+        ? { task: runningTask, reused: true }
+        : queueModelAvailabilityProbeTask({
+          accountId,
+          title: taskTitle,
+        });
+      const completedTask = await waitForBackgroundTaskCompletion(task.id);
+      if (!completedTask) {
+        return reply.code(500).send({ success: false, message: '模型可用性探测任务不存在或已过期' });
+      }
+      if (completedTask.status === 'failed') {
+        return reply.code(500).send({
+          success: false,
+          reused,
+          jobId: completedTask.id,
+          status: completedTask.status,
+          message: completedTask.error || '模型可用性探测失败',
+        });
+      }
+      const result = completedTask.result as ModelAvailabilityProbeExecutionResult | null;
+      if (!result) {
+        return reply.code(500).send({
+          success: false,
+          reused,
+          jobId: completedTask.id,
+          status: completedTask.status,
+          message: '模型可用性探测结果为空',
+        });
+      }
       if (accountId && result.summary.totalAccounts === 0) {
         return reply.code(404).send({ success: false, message: '账号不存在' });
       }
       return {
         success: true,
+        reused,
+        jobId: completedTask.id,
+        status: completedTask.status,
         ...result,
       };
     }

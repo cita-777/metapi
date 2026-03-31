@@ -12,6 +12,7 @@ type ProbeAccountTarget = {
   kind: 'account';
   rowId: number;
   modelName: string;
+  lastKnownAvailable: boolean;
   account: typeof schema.accounts.$inferSelect;
   site: typeof schema.sites.$inferSelect;
 };
@@ -22,6 +23,7 @@ type ProbeTokenTarget = {
   tokenId: number;
   modelName: string;
   tokenValue: string;
+  lastKnownAvailable: boolean;
   account: typeof schema.accounts.$inferSelect;
   site: typeof schema.sites.$inferSelect;
 };
@@ -96,10 +98,19 @@ async function probeSingleTarget(target: ProbeTarget): Promise<{
   });
 }
 
-async function updateProbeRow(target: ProbeTarget, status: ProbeStatus, latencyMs: number | null): Promise<void> {
-  if (status === 'inconclusive' || status === 'skipped') return;
+async function updateProbeRow(target: ProbeTarget, status: ProbeStatus, latencyMs: number | null): Promise<{
+  touched: boolean;
+  availabilityChanged: boolean;
+}> {
+  if (status === 'inconclusive' || status === 'skipped') {
+    return {
+      touched: false,
+      availabilityChanged: false,
+    };
+  }
+  const nextAvailable = status === 'supported';
   const patch = {
-    available: status === 'supported',
+    available: nextAvailable,
     latencyMs,
     checkedAt: new Date().toISOString(),
   };
@@ -109,13 +120,20 @@ async function updateProbeRow(target: ProbeTarget, status: ProbeStatus, latencyM
       .set(patch)
       .where(eq(schema.modelAvailability.id, target.rowId))
       .run();
-    return;
+    return {
+      touched: true,
+      availabilityChanged: target.lastKnownAvailable !== nextAvailable,
+    };
   }
 
   await db.update(schema.tokenModelAvailability)
     .set(patch)
     .where(eq(schema.tokenModelAvailability.id, target.rowId))
     .run();
+  return {
+    touched: true,
+    availabilityChanged: target.lastKnownAvailable !== nextAvailable,
+  };
 }
 
 async function loadProbeTargetsForAccount(accountId: number): Promise<ProbeTarget[]> {
@@ -140,6 +158,7 @@ async function loadProbeTargetsForAccount(accountId: number): Promise<ProbeTarge
       kind: 'account',
       rowId: row.id,
       modelName: row.modelName,
+      lastKnownAvailable: !!row.available,
       account: accountRow.accounts,
       site: accountRow.sites,
     });
@@ -165,6 +184,7 @@ async function loadProbeTargetsForAccount(accountId: number): Promise<ProbeTarge
       tokenId: row.account_tokens.id,
       modelName: row.token_model_availability.modelName,
       tokenValue,
+      lastKnownAvailable: !!row.token_model_availability.available,
       account: accountRow.accounts,
       site: accountRow.sites,
     });
@@ -244,15 +264,12 @@ export async function executeModelAvailabilityProbe(input: {
       async (target) => {
         try {
           const probe = await probeSingleTarget(target);
-          let updated = false;
-          if (probe.status === 'supported' || probe.status === 'unsupported') {
-            await updateProbeRow(target, probe.status, probe.latencyMs);
-            updated = true;
-          }
+          const update = await updateProbeRow(target, probe.status, probe.latencyMs);
           return {
             target,
             probe,
-            updated,
+            touched: update.touched,
+            availabilityChanged: update.availabilityChanged,
             failed: false,
           };
         } catch (error) {
@@ -264,7 +281,8 @@ export async function executeModelAvailabilityProbe(input: {
               latencyMs: null,
               reason: error instanceof Error ? error.message : 'probe failed',
             },
-            updated: false,
+            touched: false,
+            availabilityChanged: false,
             failed: true,
           };
         }
@@ -276,8 +294,10 @@ export async function executeModelAvailabilityProbe(input: {
       if (outcome.probe.status === 'unsupported') unsupported += 1;
       if (outcome.probe.status === 'inconclusive') inconclusive += 1;
       if (outcome.probe.status === 'skipped') skipped += 1;
-      if (outcome.updated) {
+      if (outcome.touched) {
         updatedRows += 1;
+      }
+      if (outcome.availabilityChanged) {
         shouldRebuildRoutes = true;
       }
       if (outcome.failed) {
@@ -310,6 +330,15 @@ export async function executeModelAvailabilityProbe(input: {
   return summarizeProbeResults(results, rebuiltRoutes);
 }
 
+export function buildModelAvailabilityProbeTaskDedupeKey(accountId?: number | null): string {
+  const normalizedAccountId = Number.isFinite(accountId as number) && Number(accountId) > 0
+    ? Math.trunc(Number(accountId))
+    : null;
+  return normalizedAccountId
+    ? `model-availability-probe-${normalizedAccountId}`
+    : 'model-availability-probe-all';
+}
+
 export function queueModelAvailabilityProbeTask(input: {
   accountId?: number;
   title?: string;
@@ -318,9 +347,7 @@ export function queueModelAvailabilityProbeTask(input: {
   const title = input.title || (accountId
     ? `探测模型可用性 #${accountId}`
     : '探测模型可用性');
-  const dedupeKey = accountId
-    ? `model-availability-probe-${accountId}`
-    : 'model-availability-probe-all';
+  const dedupeKey = buildModelAvailabilityProbeTaskDedupeKey(accountId);
 
   return startBackgroundTask(
     {

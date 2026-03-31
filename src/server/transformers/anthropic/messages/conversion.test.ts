@@ -62,6 +62,30 @@ describe('sanitizeAnthropicMessagesBody', () => {
     ]);
   });
 
+  it('normalizes primitive content arrays into text blocks and drops unsupported entries', () => {
+    const result = sanitizeAnthropicMessagesBody({
+      model: 'claude-opus-4-6',
+      messages: [
+        {
+          role: 'user',
+          content: ['hello', true, 42, null, { type: 'text', text: 'done' }],
+        },
+      ],
+    });
+
+    expect(result.messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'hello' },
+          { type: 'text', text: 'true' },
+          { type: 'text', text: '42' },
+          { type: 'text', text: 'done', cache_control: { type: 'ephemeral' } },
+        ],
+      },
+    ]);
+  });
+
   it('drops output_config.effort unless thinking stays adaptive', () => {
     const enabled = sanitizeAnthropicMessagesBody({
       model: 'claude-opus-4-6',

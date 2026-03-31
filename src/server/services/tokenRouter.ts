@@ -1929,6 +1929,7 @@ export class TokenRouter {
 
     const ch = row.route_channels;
     const account = row.accounts;
+    const affectedChannelIds = await loadCredentialScopedChannelIds(ch, account.id);
     const needsChannelReset = !!ch.cooldownUntil
       || !!ch.lastFailAt
       || (ch.consecutiveFailCount ?? 0) > 0
@@ -1940,14 +1941,53 @@ export class TokenRouter {
         lastFailAt: null,
         consecutiveFailCount: 0,
         cooldownLevel: 0,
-      }).where(eq(schema.routeChannels.id, channelId)).run();
+      }).where(inArray(schema.routeChannels.id, affectedChannelIds)).run();
 
-      patchCachedChannel(channelId, (channel) => {
-        channel.cooldownUntil = null;
-        channel.lastFailAt = null;
-        channel.consecutiveFailCount = 0;
-        channel.cooldownLevel = 0;
-      });
+      for (const affectedChannelId of affectedChannelIds) {
+        patchCachedChannel(affectedChannelId, (channel) => {
+          channel.cooldownUntil = null;
+          channel.lastFailAt = null;
+          channel.consecutiveFailCount = 0;
+          channel.cooldownLevel = 0;
+        });
+      }
+    } else if (affectedChannelIds.length > 1) {
+      const scopedRows = await db.select({
+        id: schema.routeChannels.id,
+        cooldownUntil: schema.routeChannels.cooldownUntil,
+        lastFailAt: schema.routeChannels.lastFailAt,
+        consecutiveFailCount: schema.routeChannels.consecutiveFailCount,
+        cooldownLevel: schema.routeChannels.cooldownLevel,
+      })
+        .from(schema.routeChannels)
+        .where(inArray(schema.routeChannels.id, affectedChannelIds))
+        .all();
+      const siblingIdsToReset = scopedRows
+        .filter((candidate) => candidate.id !== channelId && (
+          !!candidate.cooldownUntil
+          || !!candidate.lastFailAt
+          || (candidate.consecutiveFailCount ?? 0) > 0
+          || (candidate.cooldownLevel ?? 0) > 0
+        ))
+        .map((candidate) => candidate.id);
+
+      if (siblingIdsToReset.length > 0) {
+        await db.update(schema.routeChannels).set({
+          cooldownUntil: null,
+          lastFailAt: null,
+          consecutiveFailCount: 0,
+          cooldownLevel: 0,
+        }).where(inArray(schema.routeChannels.id, siblingIdsToReset)).run();
+
+        for (const siblingId of siblingIdsToReset) {
+          patchCachedChannel(siblingId, (channel) => {
+            channel.cooldownUntil = null;
+            channel.lastFailAt = null;
+            channel.consecutiveFailCount = 0;
+            channel.cooldownLevel = 0;
+          });
+        }
+      }
     }
 
     recordSiteRuntimeSuccess(account.siteId, latencyMs, modelName);

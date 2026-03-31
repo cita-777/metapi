@@ -431,7 +431,16 @@ function sanitizeAnthropicMessage(message: Record<string, unknown>): Record<stri
 
   if (Array.isArray(rawContent)) {
     const content = rawContent
-      .map((item) => (isRecord(item) ? sanitizeAnthropicContentBlock(item) : item))
+      .map((item) => {
+        if (isRecord(item)) return sanitizeAnthropicContentBlock(item);
+        if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean') {
+          return {
+            type: 'text',
+            text: String(item),
+          };
+        }
+        return null;
+      })
       .filter((item) => item !== null);
     if (content.length <= 0) return null;
     next.content = content;

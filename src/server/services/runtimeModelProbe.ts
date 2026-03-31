@@ -87,6 +87,14 @@ async function withTimeout<T>(fn: () => Promise<T>, timeoutMs: number, timeoutMe
   }
 }
 
+function resolveRemainingTimeoutMs(deadlineAtMs: number, timeoutLabel: string): number {
+  const remainingMs = deadlineAtMs - Date.now();
+  if (remainingMs <= 0) {
+    throw new Error(timeoutLabel);
+  }
+  return remainingMs;
+}
+
 export async function probeRuntimeModel(input: {
   site: typeof schema.sites.$inferSelect;
   account: typeof schema.accounts.$inferSelect;
@@ -116,89 +124,105 @@ export async function probeRuntimeModel(input: {
     };
   }
 
-  const endpointCandidates = await withTimeout(
-    () => resolveUpstreamEndpointCandidates(
-      {
-        site: input.site,
-        account: input.account,
-      },
-      input.modelName,
-      'openai',
-      input.modelName,
-    ),
-    input.timeoutMs,
-    `runtime model probe candidate resolution timeout (${Math.round(input.timeoutMs / 1000)}s)`,
-  );
-  if (endpointCandidates.length <= 0) {
-    return {
-      status: 'inconclusive',
-      latencyMs: null,
-      reason: 'no compatible probe endpoint candidates',
-    };
-  }
-
-  const providerHeaders = buildOauthProviderHeaders({
-    account: input.account,
-    downstreamHeaders: {},
-  });
-  const openaiBody = buildProbeBody(input.modelName);
-  const channelProxyUrl = resolveChannelProxyUrl(input.site, input.account.extraConfig);
-  const buildRequest = (endpoint: UpstreamEndpoint): BuiltEndpointRequest => {
-    const request = buildUpstreamEndpointRequest({
-      endpoint,
-      modelName: input.modelName,
-      stream: false,
-      tokenValue,
-      oauthProvider: oauth?.provider,
-      oauthProjectId: oauth?.projectId,
-      sitePlatform: input.site.platform,
-      siteUrl: input.site.url,
-      openaiBody,
-      downstreamFormat: 'openai',
-      downstreamHeaders: {},
-      providerHeaders,
-    });
-    return {
-      endpoint,
-      path: request.path,
-      headers: request.headers,
-      body: request.body as Record<string, unknown>,
-      runtime: request.runtime,
-    };
-  };
-  const dispatchRequest = async (
-    request: BuiltEndpointRequest,
-    targetUrl: string,
-  ) => (
-    dispatchRuntimeRequest({
-      siteUrl: input.site.url,
-      targetUrl,
-      request,
-      buildInit: (_requestUrl, requestForFetch) => withSiteRecordProxyRequestInit(
-        input.site,
-        {
-          method: 'POST',
-          headers: requestForFetch.headers,
-          body: JSON.stringify(requestForFetch.body),
-        },
-        channelProxyUrl,
-      ),
-    })
-  );
-
   const startedAt = Date.now();
+  const deadlineAtMs = startedAt + Math.max(1, input.timeoutMs);
   try {
-    const result = await withTimeout(
-      () => executeEndpointFlow({
+    const endpointCandidates = await withTimeout(
+      () => resolveUpstreamEndpointCandidates(
+        {
+          site: input.site,
+          account: input.account,
+        },
+        input.modelName,
+        'openai',
+        input.modelName,
+      ),
+      resolveRemainingTimeoutMs(
+        deadlineAtMs,
+        `runtime model probe candidate resolution timeout (${Math.round(input.timeoutMs / 1000)}s)`,
+      ),
+      `runtime model probe candidate resolution timeout (${Math.round(input.timeoutMs / 1000)}s)`,
+    );
+    if (endpointCandidates.length <= 0) {
+      return {
+        status: 'inconclusive',
+        latencyMs: Date.now() - startedAt,
+        reason: 'no compatible probe endpoint candidates',
+      };
+    }
+
+    const providerHeaders = buildOauthProviderHeaders({
+      account: input.account,
+      downstreamHeaders: {},
+    });
+    const openaiBody = buildProbeBody(input.modelName);
+    const channelProxyUrl = resolveChannelProxyUrl(input.site, input.account.extraConfig);
+    const abortController = new AbortController();
+    const remainingExecutionTimeoutMs = resolveRemainingTimeoutMs(
+      deadlineAtMs,
+      `runtime model probe timeout (${Math.round(input.timeoutMs / 1000)}s)`,
+    );
+    const abortTimer = setTimeout(() => {
+      abortController.abort(new Error(`runtime model probe timeout (${Math.round(input.timeoutMs / 1000)}s)`));
+    }, remainingExecutionTimeoutMs);
+    abortTimer.unref?.();
+
+    const buildRequest = (endpoint: UpstreamEndpoint): BuiltEndpointRequest => {
+      const request = buildUpstreamEndpointRequest({
+        endpoint,
+        modelName: input.modelName,
+        stream: false,
+        tokenValue,
+        oauthProvider: oauth?.provider,
+        oauthProjectId: oauth?.projectId,
+        sitePlatform: input.site.platform,
+        siteUrl: input.site.url,
+        openaiBody,
+        downstreamFormat: 'openai',
+        downstreamHeaders: {},
+        providerHeaders,
+      });
+      return {
+        endpoint,
+        path: request.path,
+        headers: request.headers,
+        body: request.body as Record<string, unknown>,
+        runtime: request.runtime,
+      };
+    };
+    const dispatchRequest = async (
+      request: BuiltEndpointRequest,
+      targetUrl: string,
+    ) => (
+      dispatchRuntimeRequest({
+        siteUrl: input.site.url,
+        targetUrl,
+        request,
+        buildInit: (_requestUrl, requestForFetch) => withSiteRecordProxyRequestInit(
+          input.site,
+          {
+            method: 'POST',
+            headers: requestForFetch.headers,
+            body: JSON.stringify(requestForFetch.body),
+            signal: abortController.signal,
+          },
+          channelProxyUrl,
+        ),
+      })
+    );
+
+    let result: Awaited<ReturnType<typeof executeEndpointFlow>>;
+    try {
+      result = await executeEndpointFlow({
         siteUrl: input.site.url,
         proxyUrl: channelProxyUrl,
         endpointCandidates,
         buildRequest,
         dispatchRequest,
-      }),
-      input.timeoutMs,
-      `runtime model probe timeout (${Math.round(input.timeoutMs / 1000)}s)`,
-    );
+      });
+    } finally {
+      clearTimeout(abortTimer);
+    }
     const latencyMs = Date.now() - startedAt;
 
     if (result.ok) {

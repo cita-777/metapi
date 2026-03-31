@@ -115,5 +115,11 @@ describe('responses continuation helpers', () => {
         status: 'in_progress',
       },
     })).toBeNull();
+
+    expect(extractResponsesTerminalResponseId({
+      id: 'resp_in_progress',
+      object: 'response',
+      status: 'in_progress',
+    })).toBeNull();
   });
 });
