@@ -1,11 +1,11 @@
-import { parseProxyLogMetadata } from '../../../shared/proxyLogMeta.js';
+import { parseProxyLogMetadata, type ParsedProxyLogMetadata } from '../../../shared/proxyLogMeta.js';
 
 type ProxyLogPathMeta = {
   clientFamily: string | null;
   sessionId: string | null;
   downstreamPath: string | null;
   upstreamPath: string | null;
-  usageSource: string | null;
+  usageSource: ParsedProxyLogMetadata['usageSource'];
   errorMessage: string;
 };
 

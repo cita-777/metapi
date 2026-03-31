@@ -491,9 +491,9 @@ export function createSurfaceFailureToolkit(input: {
     latencyMs: number;
     errorMessage: string | null;
     retryCount: number;
-    promptTokens?: number;
-    completionTokens?: number;
-    totalTokens?: number;
+    promptTokens?: number | null;
+    completionTokens?: number | null;
+    totalTokens?: number | null;
     estimatedCost?: number;
     billingDetails?: unknown;
     upstreamPath?: string | null;
@@ -602,9 +602,9 @@ export function createSurfaceFailureToolkit(input: {
       failure: { status: number; reason: string };
       latencyMs: number;
       retryCount: number;
-      promptTokens?: number;
-      completionTokens?: number;
-      totalTokens?: number;
+      promptTokens?: number | null;
+      completionTokens?: number | null;
+      totalTokens?: number | null;
       upstreamPath?: string | null;
     }): Promise<SurfaceFailureOutcome> {
       await tokenRouter.recordFailure(args.selected.channel.id, {
@@ -697,9 +697,9 @@ export function createSurfaceFailureToolkit(input: {
       errorMessage: string | null;
       latencyMs: number;
       retryCount: number;
-      promptTokens?: number;
-      completionTokens?: number;
-      totalTokens?: number;
+      promptTokens?: number | null;
+      completionTokens?: number | null;
+      totalTokens?: number | null;
       upstreamPath?: string | null;
       httpStatus?: number;
       runtimeFailureStatus?: number | null;

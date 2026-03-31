@@ -1,4 +1,8 @@
-import { parseProxyLogMetadata, type ParsedProxyLogMetadata } from '../../../shared/proxyLogMeta.js';
+import {
+  parseProxyLogMetadata,
+  type ParsedProxyLogMetadata,
+  type ProxyLogUsageSource,
+} from '../../../shared/proxyLogMeta.js';
 
 type ComposeProxyLogMessageArgs = {
   clientKind?: string | null;
@@ -6,7 +10,7 @@ type ComposeProxyLogMessageArgs = {
   traceHint?: string | null;
   downstreamPath?: string | null;
   upstreamPath?: string | null;
-  usageSource?: string | null;
+  usageSource?: ProxyLogUsageSource;
   errorMessage?: string | null;
 };
 
