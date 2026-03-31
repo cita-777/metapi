@@ -61,6 +61,27 @@ describe('updateCenterPresentation', () => {
     expect(state.canDeploy).toBe(true);
   });
 
+  it('treats alias tags like latest as a new digest deploy target when the digest changes', () => {
+    const state = describeDockerDeployState({
+      enabled: true,
+      helperHealthy: true,
+      currentVersion: '1.2.3',
+      helper: {
+        imageTag: 'latest',
+        imageDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      },
+      candidate: {
+        normalizedVersion: 'latest',
+        tagName: 'latest',
+        digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      },
+    });
+
+    expect(state.kind).toBe('new-digest');
+    expect(state.canDeploy).toBe(true);
+    expect(state.badgeLabel).toBe('发现新 digest');
+  });
+
   it('does not advertise an older GitHub reminder when the helper is already ahead', () => {
     expect(buildUpdateReminder({
       currentVersion: '1.2.3',
