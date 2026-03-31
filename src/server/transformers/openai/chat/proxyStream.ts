@@ -16,11 +16,6 @@ type ChatProxyStreamSessionInput = {
   downstreamFormat: DownstreamFormat;
   modelName: string;
   successfulUpstreamPath: string;
-  getUsage?: () => {
-    promptTokens: number;
-    completionTokens: number;
-    totalTokens: number;
-  };
   onParsedPayload?: (payload: unknown) => void;
   writeLines: (lines: string[]) => void;
   writeRaw: (chunk: string) => void;

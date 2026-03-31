@@ -843,6 +843,10 @@ export async function handleOpenAiResponsesSurfaceRequest(
                   debugTrace?.options.captureStreamChunks ? rawText : collectedPayload,
                   upstreamUsagePresent,
                 );
+                bindSurfaceStickyChannel({
+                  stickySessionKey,
+                  selected,
+                });
                 return;
               } catch {
                 // Fall through to the generic stream session for response.failed/error terminals.

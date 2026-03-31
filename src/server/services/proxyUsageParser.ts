@@ -84,6 +84,20 @@ function hasOwn(record: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(record, key);
 }
 
+function hasExplicitUsageValue(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 && Number.isFinite(Number(trimmed));
+  }
+  if (Array.isArray(value)) {
+    return value.some((entry) => hasExplicitUsageValue(entry));
+  }
+  if (!isRecord(value)) return false;
+  return Object.values(value).some((entry) => hasExplicitUsageValue(entry));
+}
+
 function collectUsageCandidates(payload: unknown): Array<Record<string, unknown>> {
   const candidates: Array<Record<string, unknown>> = [];
   const visited = new Set<object>();
@@ -315,8 +329,8 @@ export function hasProxyUsagePayload(payload: unknown): boolean {
   if (!payload || typeof payload !== 'object') return false;
   const candidates = collectUsageCandidates(payload);
   return candidates.some((candidate) => (
-    USAGE_DIRECT_KEYS.some((key) => hasOwn(candidate, key))
-    || USAGE_DETAIL_KEYS.some((key) => hasOwn(candidate, key))
+    USAGE_DIRECT_KEYS.some((key) => hasOwn(candidate, key) && hasExplicitUsageValue(candidate[key]))
+    || USAGE_DETAIL_KEYS.some((key) => hasOwn(candidate, key) && hasExplicitUsageValue(candidate[key]))
   ));
 }
 

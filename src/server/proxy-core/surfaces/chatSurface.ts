@@ -548,11 +548,6 @@ export async function handleChatSurfaceRequest(
           downstreamFormat,
           modelName,
           successfulUpstreamPath,
-          getUsage: () => ({
-            promptTokens: parsedUsage.promptTokens,
-            completionTokens: parsedUsage.completionTokens,
-            totalTokens: parsedUsage.totalTokens,
-          }),
           onParsedPayload: (payload) => {
             if (payload && typeof payload === 'object') {
               upstreamUsagePresent = upstreamUsagePresent || hasProxyUsagePayload(payload);
