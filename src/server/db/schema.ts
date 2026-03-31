@@ -22,6 +22,24 @@ export const sites = sqliteTable('sites', {
   platformUrlUnique: uniqueIndex('sites_platform_url_unique').on(table.platform, table.url),
 }));
 
+export const siteApiEndpoints = sqliteTable('site_api_endpoints', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  url: text('url').notNull(),
+  enabled: integer('enabled', { mode: 'boolean' }).default(true),
+  sortOrder: integer('sort_order').default(0),
+  cooldownUntil: text('cooldown_until'),
+  lastSelectedAt: text('last_selected_at'),
+  lastFailedAt: text('last_failed_at'),
+  lastFailureReason: text('last_failure_reason'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  siteUrlUnique: uniqueIndex('site_api_endpoints_site_url_unique').on(table.siteId, table.url),
+  siteEnabledSortIdx: index('site_api_endpoints_site_enabled_sort_idx').on(table.siteId, table.enabled, table.sortOrder),
+  siteCooldownIdx: index('site_api_endpoints_site_cooldown_idx').on(table.siteId, table.cooldownUntil),
+}));
+
 export const siteDisabledModels = sqliteTable('site_disabled_models', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
