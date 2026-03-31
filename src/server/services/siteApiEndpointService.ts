@@ -1,0 +1,194 @@
+import { asc, eq } from 'drizzle-orm';
+import { db, schema } from '../db/index.js';
+import { RETRYABLE_TIMEOUT_PATTERNS } from './proxyRetryPolicy.js';
+
+const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
+const NON_RETRYABLE_STATUS_CODES = new Set([400, 401, 403, 404, 422]);
+const NETWORK_FAILURE_PATTERNS = [
+  /network error/i,
+  /fetch failed/i,
+  /socket hang up/i,
+  /econnreset/i,
+  /econnrefused/i,
+  /enotfound/i,
+  /ehostunreach/i,
+  /ecanceled/i,
+  ...RETRYABLE_TIMEOUT_PATTERNS,
+];
+
+export const SITE_API_ENDPOINT_COOLDOWN_MS = 5 * 60 * 1000;
+
+type SiteRow = typeof schema.sites.$inferSelect;
+type SiteApiEndpointRow = typeof schema.siteApiEndpoints.$inferSelect;
+
+export interface SiteApiEndpointTarget {
+  kind: 'site-fallback' | 'endpoint';
+  siteId: number;
+  endpointId: number | null;
+  baseUrl: string;
+  configuredEndpointCount: number;
+  endpoint: SiteApiEndpointRow | null;
+}
+
+export interface SiteApiEndpointFailureInput {
+  status?: number | null;
+  message?: string | null;
+  error?: unknown;
+}
+
+export interface SiteApiEndpointFailureDisposition {
+  retryable: boolean;
+  rotateToNextEndpoint: boolean;
+  failureReason: string;
+}
+
+export interface RecordedSiteApiEndpointFailure extends SiteApiEndpointFailureDisposition {
+  cooldownUntil: string | null;
+}
+
+function normalizeBaseUrl(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  try {
+    const parsed = new URL(trimmed);
+    parsed.search = '';
+    parsed.hash = '';
+    return parsed.toString().replace(/\/+$/, '');
+  } catch {
+    return trimmed.replace(/\/+$/, '');
+  }
+}
+
+function toIsoTimestamp(now?: string | Date): string {
+  if (typeof now === 'string' && now.trim()) return now;
+  if (now instanceof Date) return now.toISOString();
+  return new Date().toISOString();
+}
+
+function compareNullableTimeAsc(left?: string | null, right?: string | null): number {
+  if (!left && !right) return 0;
+  if (!left) return -1;
+  if (!right) return 1;
+  return left.localeCompare(right);
+}
+
+function isEndpointCoolingDown(endpoint: SiteApiEndpointRow, nowIso: string): boolean {
+  return !!endpoint.cooldownUntil && endpoint.cooldownUntil > nowIso;
+}
+
+function extractFailureMessage(input: SiteApiEndpointFailureInput): string {
+  const direct = typeof input.message === 'string' ? input.message.trim() : '';
+  if (direct) return direct;
+  const errorMessage = input.error instanceof Error ? input.error.message.trim() : '';
+  return errorMessage;
+}
+
+function formatFailureReason(status: number | null, message: string): string {
+  if (status && message) return `HTTP ${status}: ${message}`;
+  if (status) return `HTTP ${status}`;
+  return message || 'endpoint failure';
+}
+
+export function classifySiteApiEndpointFailure(
+  input: SiteApiEndpointFailureInput,
+): SiteApiEndpointFailureDisposition {
+  const status = typeof input.status === 'number' ? input.status : null;
+  const message = extractFailureMessage(input);
+  const failureReason = formatFailureReason(status, message);
+
+  if (status !== null) {
+    if (RETRYABLE_STATUS_CODES.has(status)) {
+      return { retryable: true, rotateToNextEndpoint: true, failureReason };
+    }
+    if (NON_RETRYABLE_STATUS_CODES.has(status)) {
+      return { retryable: false, rotateToNextEndpoint: false, failureReason };
+    }
+  }
+
+  if (NETWORK_FAILURE_PATTERNS.some((pattern) => pattern.test(message))) {
+    return { retryable: true, rotateToNextEndpoint: true, failureReason };
+  }
+
+  return { retryable: false, rotateToNextEndpoint: false, failureReason };
+}
+
+export async function selectSiteApiEndpointTarget(
+  site: SiteRow,
+  now?: string | Date,
+): Promise<SiteApiEndpointTarget | null> {
+  const nowIso = toIsoTimestamp(now);
+  const endpoints = await db.select().from(schema.siteApiEndpoints)
+    .where(eq(schema.siteApiEndpoints.siteId, site.id))
+    .orderBy(asc(schema.siteApiEndpoints.sortOrder), asc(schema.siteApiEndpoints.id))
+    .all();
+
+  if (endpoints.length === 0) {
+    return {
+      kind: 'site-fallback',
+      siteId: site.id,
+      endpointId: null,
+      baseUrl: normalizeBaseUrl(site.url),
+      configuredEndpointCount: 0,
+      endpoint: null,
+    };
+  }
+
+  const eligible = endpoints
+    .filter((endpoint) => (endpoint.enabled ?? true) && !isEndpointCoolingDown(endpoint, nowIso))
+    .sort((left, right) => {
+      const selectionOrder = compareNullableTimeAsc(left.lastSelectedAt, right.lastSelectedAt);
+      if (selectionOrder !== 0) return selectionOrder;
+      const sortOrder = (left.sortOrder ?? 0) - (right.sortOrder ?? 0);
+      if (sortOrder !== 0) return sortOrder;
+      return (left.id ?? 0) - (right.id ?? 0);
+    });
+
+  const selected = eligible[0];
+  if (!selected) return null;
+
+  return {
+    kind: 'endpoint',
+    siteId: site.id,
+    endpointId: selected.id,
+    baseUrl: normalizeBaseUrl(selected.url),
+    configuredEndpointCount: endpoints.length,
+    endpoint: selected,
+  };
+}
+
+export async function recordSiteApiEndpointFailure(
+  endpointId: number,
+  input: SiteApiEndpointFailureInput,
+  now?: string | Date,
+): Promise<RecordedSiteApiEndpointFailure> {
+  const nowIso = toIsoTimestamp(now);
+  const disposition = classifySiteApiEndpointFailure(input);
+  const cooldownUntil = disposition.retryable
+    ? new Date(Date.parse(nowIso) + SITE_API_ENDPOINT_COOLDOWN_MS).toISOString()
+    : null;
+
+  await db.update(schema.siteApiEndpoints).set({
+    cooldownUntil,
+    lastFailedAt: nowIso,
+    lastFailureReason: disposition.failureReason,
+    updatedAt: nowIso,
+  }).where(eq(schema.siteApiEndpoints.id, endpointId)).run();
+
+  return {
+    ...disposition,
+    cooldownUntil,
+  };
+}
+
+export async function recordSiteApiEndpointSuccess(
+  endpointId: number,
+  now?: string | Date,
+): Promise<void> {
+  const nowIso = toIsoTimestamp(now);
+  await db.update(schema.siteApiEndpoints).set({
+    cooldownUntil: null,
+    lastSelectedAt: nowIso,
+    lastFailureReason: null,
+    updatedAt: nowIso,
+  }).where(eq(schema.siteApiEndpoints.id, endpointId)).run();
+}
