@@ -155,6 +155,36 @@ describe('PUT /api/channels/batch', () => {
     expect(dbB?.manualOverride).toBe(true);
   });
 
+  it('preserves duplicate priorities in batch updates', async () => {
+    const channelA = await seedChannel({ priority: 9, weight: 17, manualOverride: false });
+    const channelB = await seedChannel({ priority: 8, weight: 23, manualOverride: false });
+
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/channels/batch',
+      payload: {
+        updates: [
+          { id: channelA.id, priority: 0 },
+          { id: channelB.id, priority: 0 },
+        ],
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as {
+      success: boolean;
+      channels: Array<{ id: number; priority: number; weight: number; manualOverride: boolean }>;
+    };
+    expect(body.success).toBe(true);
+    expect(body.channels.find((channel) => channel.id === channelA.id)?.priority).toBe(0);
+    expect(body.channels.find((channel) => channel.id === channelB.id)?.priority).toBe(0);
+
+    const dbA = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, channelA.id)).get();
+    const dbB = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, channelB.id)).get();
+    expect(dbA?.priority).toBe(0);
+    expect(dbB?.priority).toBe(0);
+  });
+
   it('reports the number of routes actually updated in route batch operations', async () => {
     const route = await db.insert(schema.tokenRoutes).values({
       modelPattern: 'gpt-4o-mini',

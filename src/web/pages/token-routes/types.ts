@@ -16,6 +16,7 @@ export type RouteChannelDraft = {
 
 export type RouteChannel = {
   id: number;
+  routeId?: number;
   accountId: number;
   tokenId: number | null;
   sourceModel?: string | null;
@@ -124,11 +125,13 @@ export type MissingTokenGroupRouteSiteActionItem = {
 
 export type SortableChannelRowProps = {
   channel: RouteChannel;
+  displayPriority?: number;
   decisionCandidate?: RouteDecisionCandidate;
   isExactRoute: boolean;
   loadingDecision: boolean;
   isSavingPriority: boolean;
   readOnly?: boolean;
+  channelManagementDisabled?: boolean;
   mobile?: boolean;
   tokenOptions: RouteTokenOption[];
   activeTokenId: number;
