@@ -732,6 +732,7 @@ describe('TokenRouter runtime cache', () => {
       failCount: 57,
     }).returning().get();
 
+    // Weighted routes previously let Fibonacci backoff grow beyond the Date range.
     const router = new TokenRouter();
 
     const startedAt = Date.now();

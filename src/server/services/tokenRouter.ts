@@ -72,6 +72,7 @@ type SiteRuntimeHealthState = {
 
 const FAILURE_BACKOFF_BASE_SEC = 15;
 const SHORT_WINDOW_LIMIT_COOLDOWN_MS = 5 * 60 * 1000;
+// Keep weighted-route backoff within the JavaScript Date range when fail counts grow large.
 const MAX_FAILURE_BACKOFF_SEC = 30 * 24 * 60 * 60;
 const MIN_EFFECTIVE_UNIT_COST = 1e-6;
 const ROUND_ROBIN_FAILURE_THRESHOLD = 3;
@@ -193,6 +194,10 @@ function fibonacciNumber(index: number): number {
   return current;
 }
 
+/**
+ * Weighted-route failures use a Fibonacci backoff, but the resulting cooldown must stay
+ * representable as a JavaScript Date for downstream `toISOString()` calls.
+ */
 function resolveFailureBackoffSec(failCount?: number | null): number {
   const normalizedFailCount = Math.max(1, Math.trunc(failCount ?? 0));
   return Math.min(FAILURE_BACKOFF_BASE_SEC * fibonacciNumber(normalizedFailCount), MAX_FAILURE_BACKOFF_SEC);
