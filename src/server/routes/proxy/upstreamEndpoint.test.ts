@@ -188,6 +188,23 @@ describe('resolveUpstreamEndpointCandidates', () => {
     expect(codexOrder).toEqual(['responses']);
   });
 
+  it('prefers responses for claude continuation follow-ups that carry orphan tool results', async () => {
+    const order = await resolveUpstreamEndpointCandidates(
+      {
+        ...baseContext,
+        site: { ...baseContext.site, platform: 'openai' },
+      },
+      'gpt-5.4',
+      'claude',
+      'claude-opus-4-6',
+      {
+        wantsContinuationAwareResponses: true,
+      },
+    );
+
+    expect(order).toEqual(['responses', 'messages', 'chat']);
+  });
+
   it('prefers document-capable endpoints when downstream content contains non-image files', async () => {
     const order = await resolveUpstreamEndpointCandidates(
       {
@@ -2016,6 +2033,36 @@ describe('buildUpstreamEndpointRequest', () => {
     expect(request.body).toEqual({
       ...claudeOriginalBody,
       model: 'claude-opus-4-6',
+      stream: false,
+    });
+  });
+
+  it('drops responses-style continuation fields before proxying native Claude messages upstream', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'messages',
+      modelName: 'claude-opus-4-6',
+      stream: false,
+      tokenValue: 'sk-test',
+      sitePlatform: 'claude',
+      siteUrl: 'https://example.com',
+      downstreamFormat: 'claude',
+      openaiBody: {
+        model: 'ignored',
+        messages: [{ role: 'user', content: 'ignored' }],
+      },
+      claudeOriginalBody: {
+        model: 'claude-opus-4-6',
+        max_tokens: 256,
+        previous_response_id: 'resp_prev_1',
+        prompt_cache_key: 'cache-key-1',
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+    });
+
+    expect(request.body).toEqual({
+      model: 'claude-opus-4-6',
+      max_tokens: 256,
+      messages: [{ role: 'user', content: 'hello' }],
       stream: false,
     });
   });

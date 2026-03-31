@@ -41,6 +41,7 @@ import { insertProxyLog } from '../../services/proxyLogStore.js';
 import { summarizeConversationFileInputsInOpenAiBody } from '../capabilities/conversationFileCapabilities.js';
 import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
 import { canRetryProxyChannel, getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
+import { shouldAbortSameSiteEndpointFallback } from '../../services/proxyRetryPolicy.js';
 import {
   buildSurfaceProxyDebugResponseHeaders,
   captureSurfaceProxyDebugSuccessResponseBody,
@@ -1175,6 +1176,10 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           buildRequest: (endpoint) => buildEndpointRequest(endpoint),
           dispatchRequest,
           tryRecover: endpointStrategy.tryRecover,
+          shouldAbortRemainingEndpoints: (ctx) => shouldAbortSameSiteEndpointFallback(
+            ctx.response.status,
+            ctx.rawErrText || ctx.errText,
+          ),
           onAttemptFailure: async (ctx) => {
             const memoryWrite = recordUpstreamEndpointFailure({
               ...endpointRuntimeContext,

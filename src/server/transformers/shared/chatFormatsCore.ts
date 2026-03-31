@@ -1234,6 +1234,12 @@ export function convertClaudeRequestToOpenAiBody(body: Record<string, unknown>):
   if (body.tools !== undefined) payload.tools = convertClaudeToolsToOpenAiChat(body.tools);
   if (body.tool_choice !== undefined) payload.tool_choice = convertClaudeToolChoiceToOpenAiChat(body.tool_choice);
 
+  const promptCacheKey = asTrimmedString(body.prompt_cache_key);
+  if (promptCacheKey) payload.prompt_cache_key = promptCacheKey;
+
+  const previousResponseId = asTrimmedString(body.previous_response_id);
+  if (previousResponseId) payload.previous_response_id = previousResponseId;
+
   return { model, stream, messages, payload };
 }
 

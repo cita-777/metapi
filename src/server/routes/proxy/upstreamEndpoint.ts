@@ -215,6 +215,15 @@ function extractClaudeBetasFromBody(body: Record<string, unknown>): {
   };
 }
 
+function stripClaudeMessagesContinuationFields(
+  body: Record<string, unknown>,
+): Record<string, unknown> {
+  const next = { ...body };
+  delete next.previous_response_id;
+  delete next.prompt_cache_key;
+  return next;
+}
+
 function buildAntigravityRuntimeHeaders(input: {
   baseHeaders: Record<string, string>;
   stream: boolean;
@@ -519,6 +528,7 @@ export async function resolveUpstreamEndpointCandidates(
     hasNonImageFileInput?: boolean;
     conversationFileSummary?: ConversationFileInputSummary;
     wantsNativeResponsesReasoning?: boolean;
+    wantsContinuationAwareResponses?: boolean;
   },
 ): Promise<UpstreamEndpoint[]> {
   const sitePlatform = normalizePlatformName(context.site.platform);
@@ -530,6 +540,7 @@ export async function resolveUpstreamEndpointCandidates(
   const preferMessagesForClaudeModel = capabilityProfile.preferMessagesForClaudeModel;
   const hasNonImageFileInput = capabilityProfile.hasNonImageFileInput;
   const wantsNativeResponsesReasoning = capabilityProfile.wantsNativeResponsesReasoning;
+  const wantsContinuationAwareResponses = capabilityProfile.wantsContinuationAwareResponses;
   const applyRuntimePreference = (candidates: UpstreamEndpoint[]) => (
     applyUpstreamEndpointRuntimePreference(candidates, {
       siteId: context.site.id,
@@ -577,9 +588,11 @@ export async function resolveUpstreamEndpointCandidates(
     })()
     : preferred;
   const prioritizedPreferredEndpoints: UpstreamEndpoint[] = (
-    wantsNativeResponsesReasoning
-    && preferMessagesForClaudeModel
-    && preferredWithCapabilities.includes('responses')
+    preferredWithCapabilities.includes('responses')
+    && (
+      wantsContinuationAwareResponses
+      || (wantsNativeResponsesReasoning && preferMessagesForClaudeModel)
+    )
   )
     ? [
       'responses',
@@ -855,7 +868,7 @@ export function buildUpstreamEndpointRequest(input: {
       && input.forceNormalizeClaudeBody !== true
     )
       ? {
-        ...input.claudeOriginalBody,
+        ...stripClaudeMessagesContinuationFields(input.claudeOriginalBody),
         model: input.modelName,
         stream: input.stream,
       }
@@ -866,7 +879,7 @@ export function buildUpstreamEndpointRequest(input: {
       && input.forceNormalizeClaudeBody === true
     )
       ? sanitizeAnthropicMessagesBody({
-        ...input.claudeOriginalBody,
+        ...stripClaudeMessagesContinuationFields(input.claudeOriginalBody),
         model: input.modelName,
         stream: input.stream,
       })

@@ -33,6 +33,7 @@ export type EndpointCapabilityProfile = {
   hasNonImageFileInput: boolean;
   hasRemoteDocumentUrl: boolean;
   wantsNativeResponsesReasoning: boolean;
+  wantsContinuationAwareResponses: boolean;
 };
 
 type EndpointRuntimeState = {
@@ -88,6 +89,7 @@ export function buildEndpointCapabilityProfile(input?: {
     hasNonImageFileInput?: boolean;
     conversationFileSummary?: ConversationFileInputSummary;
     wantsNativeResponsesReasoning?: boolean;
+    wantsContinuationAwareResponses?: boolean;
   };
 }): EndpointCapabilityProfile {
   const conversationFileSummary = input?.requestCapabilities?.conversationFileSummary;
@@ -107,6 +109,7 @@ export function buildEndpointCapabilityProfile(input?: {
       conversationFileSummary?.hasRemoteDocumentUrl === true
     ),
     wantsNativeResponsesReasoning: input?.requestCapabilities?.wantsNativeResponsesReasoning === true,
+    wantsContinuationAwareResponses: input?.requestCapabilities?.wantsContinuationAwareResponses === true,
   };
 }
 
@@ -131,6 +134,7 @@ function buildEndpointRuntimeStateKey(input: {
     capabilityProfile.hasNonImageFileInput ? 'files' : 'nofiles',
     capabilityProfile.hasRemoteDocumentUrl ? 'remoteurl' : 'noremoteurl',
     capabilityProfile.wantsNativeResponsesReasoning ? 'reasoning' : 'noreasoning',
+    capabilityProfile.wantsContinuationAwareResponses ? 'continuation' : 'nocontinuation',
   ].join(':');
 }
 
@@ -247,6 +251,7 @@ export function getUpstreamEndpointRuntimeStateSnapshot(input: {
     hasNonImageFileInput?: boolean;
     conversationFileSummary?: ConversationFileInputSummary;
     wantsNativeResponsesReasoning?: boolean;
+    wantsContinuationAwareResponses?: boolean;
   };
 }) {
   const capabilityProfile = buildEndpointCapabilityProfile({
@@ -349,6 +354,7 @@ export function recordUpstreamEndpointSuccess(input: {
     hasNonImageFileInput?: boolean;
     conversationFileSummary?: ConversationFileInputSummary;
     wantsNativeResponsesReasoning?: boolean;
+    wantsContinuationAwareResponses?: boolean;
   };
 }): UpstreamEndpointRuntimeMemoryWrite | null {
   const capabilityProfile = buildEndpointCapabilityProfile({
@@ -390,6 +396,7 @@ export function recordUpstreamEndpointFailure(input: {
     hasNonImageFileInput?: boolean;
     conversationFileSummary?: ConversationFileInputSummary;
     wantsNativeResponsesReasoning?: boolean;
+    wantsContinuationAwareResponses?: boolean;
   };
 }): UpstreamEndpointRuntimeMemoryWrite | null {
   const capabilityProfile = buildEndpointCapabilityProfile({

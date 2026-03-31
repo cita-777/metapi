@@ -1,10 +1,22 @@
 import type { IncomingMessage } from 'node:http';
 import WebSocket from 'ws';
 import {
+  extractResponsesTerminalResponseId,
+  isResponsesPreviousResponseNotFoundError,
+  shouldInferResponsesPreviousResponseId,
+  stripResponsesPreviousResponseId,
+  withResponsesPreviousResponseId,
+} from '../../transformers/openai/responses/continuation.js';
+import {
   buildCodexWebsocketHandshakeHeaders,
   buildCodexWebsocketRequestBody,
   toCodexWebsocketUrl,
 } from './codexWebsocketHeaders.js';
+import {
+  clearCodexSessionResponseId,
+  getCodexSessionResponseId,
+  setCodexSessionResponseId,
+} from './codexSessionResponseStore.js';
 import { createCodexWebsocketSessionStore } from './codexWebsocketSessionStore.js';
 import type {
   CodexWebsocketRuntimeResult,
@@ -190,6 +202,23 @@ function clearSessionSocket(session: CodexWebsocketSession, socket: WebSocket): 
   session.socketUrl = null;
 }
 
+function buildContinuationAwareRuntimeBody(
+  sessionId: string,
+  body: Record<string, unknown>,
+): Record<string, unknown> {
+  const rememberedResponseId = getCodexSessionResponseId(sessionId);
+  if (!shouldInferResponsesPreviousResponseId(body, rememberedResponseId)) {
+    return body;
+  }
+  return withResponsesPreviousResponseId(body, rememberedResponseId);
+}
+
+function rememberSessionResponseId(sessionId: string, payload: unknown): void {
+  const responseId = extractResponsesTerminalResponseId(payload);
+  if (!responseId) return;
+  setCodexSessionResponseId(sessionId, responseId);
+}
+
 async function ensureSessionSocket(
   session: CodexWebsocketSession,
   input: CodexWebsocketRuntimeSendInput,
@@ -232,9 +261,11 @@ async function ensureSessionSocket(
   };
 }
 
-async function sendSessionRequest(
+async function sendSessionRequestAttempt(
   session: CodexWebsocketSession,
-  input: CodexWebsocketRuntimeSendInput,
+  input: CodexWebsocketRuntimeSendInput & {
+    body: Record<string, unknown>;
+  },
 ): Promise<CodexWebsocketRuntimeResult> {
   const { socket, reusedSession } = await ensureSessionSocket(session, input);
   const events: Array<Record<string, unknown>> = [];
@@ -262,7 +293,13 @@ async function sendSessionRequest(
         events.push(parsed);
         if (!isTerminalEvent(parsed)) return;
         if (settled) return;
-        if (isRuntimeErrorEvent(parsed)) {
+        if (
+          isRuntimeErrorEvent(parsed)
+          || isResponsesPreviousResponseNotFoundError({
+            payload: parsed,
+            rawErrText: extractTerminalErrorMessage(parsed),
+          })
+        ) {
           settled = true;
           cleanup();
           clearSessionSocket(session, socket);
@@ -274,6 +311,7 @@ async function sendSessionRequest(
           }));
           return;
         }
+        rememberSessionResponseId(session.sessionId, parsed);
         settled = true;
         cleanup();
         resolve({
@@ -307,6 +345,43 @@ async function sendSessionRequest(
   });
 }
 
+async function sendSessionRequest(
+  session: CodexWebsocketSession,
+  input: CodexWebsocketRuntimeSendInput,
+): Promise<CodexWebsocketRuntimeResult> {
+  let currentBody = buildContinuationAwareRuntimeBody(session.sessionId, input.body);
+  let previousResponseRecoveryTried = false;
+
+  for (;;) {
+    try {
+      return await sendSessionRequestAttempt(session, {
+        ...input,
+        body: currentBody,
+      });
+    } catch (error) {
+      if (
+        previousResponseRecoveryTried
+        || !(error instanceof CodexWebsocketRuntimeError)
+        || !isResponsesPreviousResponseNotFoundError({
+          payload: error.payload ?? error.events[error.events.length - 1],
+          rawErrText: error.message,
+        })
+      ) {
+        throw error;
+      }
+
+      const previousResponseRecovery = stripResponsesPreviousResponseId(currentBody);
+      if (!previousResponseRecovery.removed) {
+        throw error;
+      }
+
+      previousResponseRecoveryTried = true;
+      clearCodexSessionResponseId(session.sessionId);
+      currentBody = previousResponseRecovery.body;
+    }
+  }
+}
+
 export function createCodexWebsocketRuntime(input?: {
   sessionStore?: CodexWebsocketSessionStore;
 }) {
@@ -334,6 +409,7 @@ export function createCodexWebsocketRuntime(input?: {
       await closeSocket(session.socket);
       session.socket = null;
       session.socketUrl = null;
+      clearCodexSessionResponseId(sessionId);
     },
 
     async closeAllSessions(): Promise<void> {

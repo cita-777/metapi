@@ -74,6 +74,7 @@ type ExecuteEndpointFlowInput = {
   ) => Promise<Awaited<ReturnType<typeof fetch>>>;
   tryRecover?: (ctx: EndpointAttemptContext) => Promise<EndpointRecoverResult>;
   shouldDowngrade?: (ctx: EndpointAttemptContext) => boolean;
+  shouldAbortRemainingEndpoints?: (ctx: EndpointAttemptContext & { errText: string }) => boolean;
   onDowngrade?: (ctx: EndpointAttemptContext & { errText: string }) => void | Promise<void>;
   onAttemptFailure?: (ctx: EndpointAttemptContext & { errText: string }) => void | Promise<void>;
   onAttemptSuccess?: (ctx: EndpointAttemptSuccessContext) => void | Promise<void>;
@@ -191,6 +192,16 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
 
     const isLastEndpoint = endpointIndex >= endpointCount - 1;
     if (input.disableCrossProtocolFallback && !isLastEndpoint) {
+      finalStatus = response.status;
+      finalErrText = errText;
+      finalRawErrText = rawErrText;
+      break;
+    }
+    const shouldAbortRemainingEndpoints = !isLastEndpoint && !!input.shouldAbortRemainingEndpoints?.({
+      ...baseContext,
+      errText,
+    });
+    if (shouldAbortRemainingEndpoints) {
       finalStatus = response.status;
       finalErrText = errText;
       finalRawErrText = rawErrText;

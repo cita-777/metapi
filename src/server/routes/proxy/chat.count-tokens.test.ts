@@ -59,6 +59,7 @@ vi.mock('../../services/modelPricingService.js', () => ({
 
 vi.mock('../../services/proxyRetryPolicy.js', () => ({
   shouldRetryProxyRequest: () => false,
+  shouldAbortSameSiteEndpointFallback: () => false,
 }));
 
 vi.mock('../../services/proxyUsageFallbackService.js', () => ({

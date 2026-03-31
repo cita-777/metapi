@@ -4,10 +4,12 @@ import { AddressInfo } from 'node:net';
 import WebSocket, { WebSocketServer } from 'ws';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../../config.js';
+import { resetCodexSessionResponseStore } from '../../proxy-core/runtime/codexSessionResponseStore.js';
 
 const fetchMock = vi.fn();
 const selectChannelMock = vi.fn();
 const selectNextChannelMock = vi.fn();
+const selectPreferredChannelMock = vi.fn();
 const previewSelectedChannelMock = vi.fn();
 const recordSuccessMock = vi.fn();
 const recordFailureMock = vi.fn();
@@ -35,6 +37,7 @@ vi.mock('../../services/tokenRouter.js', () => ({
   tokenRouter: {
     selectChannel: (...args: unknown[]) => selectChannelMock(...args),
     selectNextChannel: (...args: unknown[]) => selectNextChannelMock(...args),
+    selectPreferredChannel: (...args: unknown[]) => selectPreferredChannelMock(...args),
     previewSelectedChannel: (...args: unknown[]) => previewSelectedChannelMock(...args),
     recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
     recordFailure: (...args: unknown[]) => recordFailureMock(...args),
@@ -78,6 +81,7 @@ vi.mock('../../services/modelPricingService.js', () => ({
 
 vi.mock('../../services/proxyRetryPolicy.js', () => ({
   shouldRetryProxyRequest: () => false,
+  shouldAbortSameSiteEndpointFallback: () => false,
 }));
 
 vi.mock('../../services/proxyUsageFallbackService.js', () => ({
@@ -307,9 +311,11 @@ describe('responses websocket transport', () => {
   });
 
   beforeEach(() => {
+    resetCodexSessionResponseStore();
     fetchMock.mockReset();
     selectChannelMock.mockReset();
     selectNextChannelMock.mockReset();
+    selectPreferredChannelMock.mockReset();
     previewSelectedChannelMock.mockReset();
     recordSuccessMock.mockReset();
     recordFailureMock.mockReset();
@@ -324,6 +330,7 @@ describe('responses websocket transport', () => {
     const selectedChannel = createSelectedChannel();
     selectChannelMock.mockReturnValue(selectedChannel);
     selectNextChannelMock.mockReturnValue(null);
+    selectPreferredChannelMock.mockReturnValue(null);
     previewSelectedChannelMock.mockResolvedValue(selectedChannel);
     upstreamConnectionCount = 0;
     upstreamUpgradeHeaders = {};
@@ -521,6 +528,143 @@ describe('responses websocket transport', () => {
     expect(upstreamUpgradeHeaders['x-codex-turn-state']).toBe('turn-state-123');
     expect(upstreamUpgradeHeaders['x-codex-beta-features']).toBe('feature-a,feature-b');
     expect(upstreamUpgradeHeaders['openai-beta']).toContain('responses_websockets=2099-01-01');
+  });
+
+  it('infers previous_response_id for websocket tool-output follow-up turns when the client omits it', async () => {
+    const selectedChannel = createSelectedChannel({
+      siteUrl: upstreamSiteUrl,
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+
+    const socket = createClientSocket(baseUrl, {
+      session_id: 'ws-session-prev-infer',
+    });
+    await waitForSocketOpen(socket);
+
+    const firstResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+    const firstResponse = await firstResponsePromise;
+
+    const secondResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed' && message?.response?.id === 'resp_upstream_2',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [
+        {
+          id: 'tool_out_ws_1',
+          type: 'function_call_output',
+          call_id: 'call_ws_1',
+          output: '{"ok":true}',
+        },
+      ],
+    }));
+    await secondResponsePromise;
+    socket.close();
+
+    expect(firstResponse?.response?.id).toBe('resp_upstream_1');
+    expect(upstreamRequests).toHaveLength(2);
+    expect(upstreamRequests[1]).toMatchObject({
+      type: 'response.create',
+      previous_response_id: 'resp_upstream_1',
+      input: [
+        {
+          id: 'tool_out_ws_1',
+          type: 'function_call_output',
+          call_id: 'call_ws_1',
+          output: '{"ok":true}',
+        },
+      ],
+    });
+  });
+
+  it('retries websocket turns once without previous_response_id when the upstream reports previous_response_not_found', async () => {
+    const selectedChannel = createSelectedChannel({
+      siteUrl: upstreamSiteUrl,
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    upstreamMessageHandler = (socket, parsed, requestIndex) => {
+      if (requestIndex === 1) {
+        socket.send(JSON.stringify({
+          type: 'error',
+          error: {
+            message: 'previous_response_not_found',
+            code: 'previous_response_not_found',
+            type: 'invalid_request_error',
+          },
+        }));
+        return;
+      }
+      socket.send(JSON.stringify({
+        type: 'response.completed',
+        response: {
+          id: 'resp_upstream_recovered',
+          object: 'response',
+          model: parsed.model || 'gpt-5.4',
+          status: 'completed',
+          output: [],
+          usage: {
+            input_tokens: 1,
+            output_tokens: 1,
+            total_tokens: 2,
+          },
+        },
+      }));
+    };
+
+    const socket = createClientSocket(baseUrl, {
+      session_id: 'ws-session-prev-recovery',
+    });
+    await waitForSocketOpen(socket);
+
+    const responsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed' && message?.response?.id === 'resp_upstream_recovered',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      previous_response_id: 'resp_stale_ws',
+      input: [
+        {
+          id: 'tool_out_ws_retry_1',
+          type: 'function_call_output',
+          call_id: 'call_ws_retry_1',
+          output: '{"retry":true}',
+        },
+      ],
+    }));
+    await responsePromise;
+    socket.close();
+
+    expect(upstreamRequests).toHaveLength(2);
+    expect(upstreamRequests[0]).toMatchObject({
+      type: 'response.create',
+      previous_response_id: 'resp_stale_ws',
+    });
+    expect(upstreamRequests[1]).toMatchObject({
+      type: 'response.create',
+      input: [
+        {
+          id: 'tool_out_ws_retry_1',
+          type: 'function_call_output',
+          call_id: 'call_ws_retry_1',
+          output: '{"retry":true}',
+        },
+      ],
+    });
+    expect(upstreamRequests[1]?.previous_response_id).toBeUndefined();
   });
 
   it('falls back to the HTTP responses executor when the upstream codex websocket upgrade returns 426', async () => {
