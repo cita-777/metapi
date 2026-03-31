@@ -3,7 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { fetch, File as UndiciFile, FormData as UndiciFormData } from 'undici';
 import { config } from '../../config.js';
 import { readRuntimeResponseText } from '../../proxy-core/executors/types.js';
-import { TESTER_FORCED_CHANNEL_HEADER } from '../../proxy-core/channelSelection.js';
+import {
+  TESTER_FORCED_CHANNEL_HEADER,
+  TESTER_REQUEST_HEADER,
+} from '../../proxy-core/channelSelection.js';
 
 type UndiciRequestInit = Parameters<typeof fetch>[1];
 
@@ -512,6 +515,7 @@ async function buildUpstreamRequestInit(
   forceStream: boolean,
 ): Promise<UndiciRequestInit> {
   const headers: Record<string, string> = createDefaultHeadersForPath(envelope.path);
+  headers[TESTER_REQUEST_HEADER] = '1';
   if (typeof envelope.forcedChannelId === 'number' && envelope.forcedChannelId > 0) {
     headers[TESTER_FORCED_CHANNEL_HEADER] = String(envelope.forcedChannelId);
   }

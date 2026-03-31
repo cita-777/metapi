@@ -113,6 +113,7 @@ const BLOCKED_PASSTHROUGH_HEADERS = new Set([
   'sec-websocket-extensions',
 ]);
 const METAPI_INTERNAL_HEADER_BLOCKLIST = new Set([
+  'x-metapi-tester-request',
   'x-metapi-tester-forced-channel-id',
 ]);
 const METAPI_INTERNAL_HEADER_ALLOWLIST = new Set([

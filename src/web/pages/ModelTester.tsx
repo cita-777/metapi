@@ -897,7 +897,7 @@ export default function ModelTester() {
     return () => {
       cancelled = true;
     };
-  }, [customRequestMode, forcedChannelId, inputs.mode, inputs.model]);
+  }, [customRequestMode, inputs.mode, inputs.model]);
 
   useEffect(() => {
     if (!inputs.model) return;

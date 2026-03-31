@@ -246,7 +246,10 @@ export async function handleOpenAiResponsesSurfaceRequest(
     }
     if (!await ensureModelAllowedForDownstreamKey(request, reply, requestedModel)) return;
     const downstreamPolicy = getDownstreamRoutingPolicy(request);
-    const forcedChannelId = getTesterForcedChannelId(request.headers as Record<string, unknown>);
+    const forcedChannelId = getTesterForcedChannelId({
+      headers: request.headers as Record<string, unknown>,
+      clientIp: request.ip,
+    });
     const downstreamApiKeyId = getProxyAuthContext(request)?.keyId ?? null;
     const maxRetries = getProxyMaxChannelRetries();
     const failureToolkit = createSurfaceFailureToolkit({
@@ -513,8 +516,8 @@ export async function handleOpenAiResponsesSurfaceRequest(
           errorMessage: busyMessage,
           retryCount,
         });
-        retryCount += 1;
-        if (retryCount <= maxRetries && canRetryChannelSelection(retryCount - 1, forcedChannelId)) {
+        if (retryCount < maxRetries && canRetryChannelSelection(retryCount, forcedChannelId)) {
+          retryCount += 1;
           continue;
         }
         await finalizeDebugFailure(503, {

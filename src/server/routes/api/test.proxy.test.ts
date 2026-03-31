@@ -87,6 +87,7 @@ describe('testRoutes proxy tester transport', () => {
     const [url, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toMatch(/\/v1\/responses$/);
     expect(requestInit.headers).toMatchObject({
+      'x-metapi-tester-request': '1',
       'x-metapi-tester-forced-channel-id': '77',
     });
     expect(JSON.parse(String(requestInit.body))).toEqual({
@@ -125,6 +126,7 @@ describe('testRoutes proxy tester transport', () => {
     const [url, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toMatch(/\/v1\/messages$/);
     expect(requestInit.headers).toMatchObject({
+      'x-metapi-tester-request': '1',
       'x-metapi-tester-forced-channel-id': '55',
     });
     expect(JSON.parse(String(requestInit.body))).toEqual({

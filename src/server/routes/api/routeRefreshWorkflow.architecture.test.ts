@@ -10,6 +10,16 @@ function expectNoDirectModelServiceRouteRefresh(source: string): void {
   expect(source).not.toMatch(/import\s*\{[^}]*\brebuildTokenRoutesFromAvailability\b[^}]*\}\s*from\s*['"][^'"]*modelService\.js['"]/m);
 }
 
+function expectImportsRouteRefreshWorkflow(source: string): void {
+  expect(source).toMatch(
+    /import\s+\*\s+as\s+routeRefreshWorkflow\s+from\s+['"][^'"]*routeRefreshWorkflow\.js['"]/m,
+  );
+}
+
+function expectCallsSelectProxyChannelForAttempt(source: string): void {
+  expect(source).toMatch(/\bselectProxyChannelForAttempt\s*\(/);
+}
+
 describe('route refresh workflow architecture boundaries', () => {
   it('keeps api controllers on the shared route refresh workflow instead of modelService', () => {
     const tokensSource = readSource('./tokens.ts');
@@ -42,7 +52,7 @@ describe('route refresh workflow architecture boundaries', () => {
     const channelSelectionSource = readSource('../../proxy-core/channelSelection.ts');
 
     for (const source of [schedulerSource, oauthServiceSource, channelSelectionSource]) {
-      expect(source).toContain('routeRefreshWorkflow');
+      expectImportsRouteRefreshWorkflow(source);
       expectNoDirectModelServiceRouteRefresh(source);
     }
 
@@ -67,10 +77,10 @@ describe('route refresh workflow architecture boundaries', () => {
       videosSource,
       sharedSurfaceSource,
     ]) {
-      expect(source).toContain('selectProxyChannelForAttempt');
+      expectCallsSelectProxyChannelForAttempt(source);
     }
 
-    expect(geminiSurfaceSource).toContain('selectGeminiChannel');
-    expect(geminiSurfaceSource).toContain('selectNextGeminiProbeChannel');
+    expect(geminiSurfaceSource).toMatch(/\bselectGeminiChannel\s*\(/);
+    expect(geminiSurfaceSource).toMatch(/\bselectNextGeminiProbeChannel\s*\(/);
   });
 });

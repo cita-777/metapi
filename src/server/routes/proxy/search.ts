@@ -59,7 +59,10 @@ export async function searchProxyRoute(app: FastifyInstance) {
 
     if (!await ensureModelAllowedForDownstreamKey(request, reply, requestedModel)) return;
     const downstreamPolicy = getDownstreamRoutingPolicy(request);
-    const forcedChannelId = getTesterForcedChannelId(request.headers as Record<string, unknown>);
+    const forcedChannelId = getTesterForcedChannelId({
+      headers: request.headers as Record<string, unknown>,
+      clientIp: request.ip,
+    });
     const downstreamApiKeyId = getProxyAuthContext(request)?.keyId ?? null;
     const downstreamPath = '/v1/search';
     const clientContext = detectDownstreamClientContext({

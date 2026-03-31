@@ -7,6 +7,34 @@ import { tokenRouter } from '../services/tokenRouter.js';
 type SelectedChannel = Awaited<ReturnType<typeof tokenRouter.selectChannel>>;
 
 export const TESTER_FORCED_CHANNEL_HEADER = 'x-metapi-tester-forced-channel-id';
+export const TESTER_REQUEST_HEADER = 'x-metapi-tester-request';
+
+function headerValueEquals(
+  headers: Record<string, unknown> | undefined,
+  expectedKey: string,
+  expectedValue: string,
+): boolean {
+  if (!headers) return false;
+  const normalizedExpectedKey = expectedKey.trim().toLowerCase();
+  const normalizedExpectedValue = expectedValue.trim().toLowerCase();
+  for (const [rawKey, rawValue] of Object.entries(headers)) {
+    if (rawKey.trim().toLowerCase() !== normalizedExpectedKey) continue;
+    if (typeof rawValue === 'string' && rawValue.trim().toLowerCase() === normalizedExpectedValue) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isLoopbackClientIp(value: string | null | undefined): boolean {
+  const trimmed = (value || '').trim();
+  if (!trimmed) return false;
+  if (trimmed === '::1' || trimmed === '127.0.0.1') return true;
+  if (trimmed.startsWith('::ffff:')) {
+    return trimmed.slice('::ffff:'.length).trim() === '127.0.0.1';
+  }
+  return false;
+}
 
 function normalizeForcedChannelId(value: unknown): number | null {
   const numeric = typeof value === 'number'
@@ -19,7 +47,20 @@ function normalizeForcedChannelId(value: unknown): number | null {
   return normalized > 0 ? normalized : null;
 }
 
-export function getTesterForcedChannelId(headers?: Record<string, unknown>): number | null {
+type TesterRequestInput = {
+  headers?: Record<string, unknown>;
+  clientIp?: string | null;
+};
+
+export function isTrustedTesterRequest(input?: TesterRequestInput): boolean {
+  if (!input) return false;
+  if (!isLoopbackClientIp(input.clientIp)) return false;
+  return headerValueEquals(input.headers, TESTER_REQUEST_HEADER, '1');
+}
+
+export function getTesterForcedChannelId(input?: TesterRequestInput): number | null {
+  if (!isTrustedTesterRequest(input)) return null;
+  const headers = input?.headers;
   if (!headers) return null;
   for (const [rawKey, rawValue] of Object.entries(headers)) {
     if (rawKey.trim().toLowerCase() !== TESTER_FORCED_CHANNEL_HEADER) continue;

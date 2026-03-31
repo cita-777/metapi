@@ -10,6 +10,7 @@ const refreshModelsAndRebuildRoutesMock = vi.fn();
 const refreshOauthAccessTokenSingleflightMock = vi.fn();
 const selectChannelMock = vi.fn();
 const selectNextChannelMock = vi.fn();
+const selectPreferredChannelMock = vi.fn();
 const recordSuccessMock = vi.fn();
 const recordFailureMock = vi.fn();
 const explainSelectionMock = vi.fn();
@@ -68,6 +69,7 @@ vi.mock('../../services/tokenRouter.js', () => ({
   tokenRouter: {
     selectChannel: (...args: unknown[]) => selectChannelMock(...args),
     selectNextChannel: (...args: unknown[]) => selectNextChannelMock(...args),
+    selectPreferredChannel: (...args: unknown[]) => selectPreferredChannelMock(...args),
     recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
     recordFailure: (...args: unknown[]) => recordFailureMock(...args),
     explainSelection: (...args: unknown[]) => explainSelectionMock(...args),
@@ -181,6 +183,7 @@ describe('gemini native proxy routes', () => {
     refreshOauthAccessTokenSingleflightMock.mockReset();
     selectChannelMock.mockReset();
     selectNextChannelMock.mockReset();
+    selectPreferredChannelMock.mockReset();
     recordSuccessMock.mockReset();
     recordFailureMock.mockReset();
     explainSelectionMock.mockReset();
@@ -232,6 +235,7 @@ describe('gemini native proxy routes', () => {
       actualModel: 'gemini-2.5-flash',
     });
     selectNextChannelMock.mockReturnValue(null);
+    selectPreferredChannelMock.mockReturnValue(null);
     recordSuccessMock.mockResolvedValue(undefined);
     recordFailureMock.mockResolvedValue(undefined);
     resetUpstreamEndpointRuntimeState();
@@ -316,6 +320,60 @@ describe('gemini native proxy routes', () => {
     const [secondUrl] = fetchMock.mock.calls[1] as [string, RequestInit];
     expect(firstUrl).toContain('key=gemini-key');
     expect(secondUrl).toContain('key=gemini-key-2');
+  });
+
+  it('pins /v1beta/models to the forced tester channel when present', async () => {
+    selectPreferredChannelMock
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce({
+        channel: { id: 77, routeId: 22 },
+        site: { id: 88, name: 'forced-gemini-site', url: 'https://generativelanguage.googleapis.com', platform: 'gemini' },
+        account: { id: 39, username: 'forced-user' },
+        tokenName: 'forced',
+        tokenValue: 'forced-gemini-key',
+        actualModel: 'gemini-2.0-flash',
+      });
+
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      models: [
+        { name: 'models/gemini-2.0-flash', displayName: 'Gemini 2.0 Flash' },
+      ],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1beta/models',
+      remoteAddress: '127.0.0.1',
+      headers: {
+        authorization: 'Bearer sk-managed-gemini',
+        'x-metapi-tester-request': '1',
+        'x-metapi-tester-forced-channel-id': '77',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(selectChannelMock).not.toHaveBeenCalled();
+    expect(selectNextChannelMock).not.toHaveBeenCalled();
+    expect(selectPreferredChannelMock).toHaveBeenCalledTimes(2);
+    expect(selectPreferredChannelMock).toHaveBeenNthCalledWith(
+      1,
+      'gemini-2.5-flash',
+      77,
+      expect.anything(),
+      expect.any(Array),
+    );
+    expect(selectPreferredChannelMock).toHaveBeenNthCalledWith(
+      2,
+      'gemini-2.0-flash',
+      77,
+      expect.anything(),
+      expect.any(Array),
+    );
+    const [targetUrl] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(targetUrl).toContain('key=forced-gemini-key');
   });
 
   it('serves gemini-cli model list from local static catalog without upstream fetch', async () => {
