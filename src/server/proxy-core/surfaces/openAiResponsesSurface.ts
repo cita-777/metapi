@@ -2,7 +2,7 @@ import { TextDecoder } from 'node:util';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { config } from '../../config.js';
 import { reportProxyAllFailed } from '../../services/alertService.js';
-import { mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParser.js';
+import { hasProxyUsagePayload, mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParser.js';
 import { openAiResponsesTransformer } from '../../transformers/openai/responses/index.js';
 import {
   buildUpstreamEndpointRequest,
@@ -604,13 +604,19 @@ export async function handleOpenAiResponsesSurfaceRequest(
 
       const upstream = endpointResult.upstream;
       const successfulUpstreamPath = endpointResult.upstreamPath;
-      const finalizeStreamSuccess = async (parsedUsage: UsageSummary, latency: number, streamDebugBody: unknown) => {
+      const finalizeStreamSuccess = async (
+        parsedUsage: UsageSummary,
+        latency: number,
+        streamDebugBody: unknown,
+        upstreamUsagePresent: boolean,
+      ) => {
         try {
           await recordSurfaceSuccess({
             selected,
             requestedModel,
             modelName,
             parsedUsage,
+            upstreamUsagePresent,
             requestStartedAtMs: startTime,
             latencyMs: latency,
             retryCount,
@@ -653,6 +659,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
             cacheCreationTokens: 0,
             promptTokensIncludeCache: null,
           };
+          let upstreamUsagePresent = false;
           const writeLines = (lines: string[]) => {
             for (const line of lines) reply.raw.write(line);
           };
@@ -663,6 +670,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
             getUsage: () => parsedUsage,
             onParsedPayload: (payload) => {
               if (payload && typeof payload === 'object') {
+                upstreamUsagePresent = upstreamUsagePresent || hasProxyUsagePayload(payload);
                 parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(payload));
               }
             },
@@ -710,6 +718,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
                   parsedUsage,
                   latency,
                   debugTrace?.options.captureStreamChunks ? rawText : { stream: true, usage: parsedUsage },
+                  upstreamUsagePresent,
                 );
 	              bindSurfaceStickyChannel({
 	                stickySessionKey,
@@ -728,6 +737,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
             }
 
             parsedUsage = parseProxyUsage(upstreamData);
+            upstreamUsagePresent = upstreamUsagePresent || hasProxyUsagePayload(upstreamData);
             const latency = Date.now() - startTime;
             const failure = detectProxyFailure({ rawText, usage: parsedUsage });
 	            if (failure) {
@@ -792,6 +802,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
                 parsedUsage,
                 latency,
                 debugTrace?.options.captureStreamChunks ? rawText : upstreamData,
+                upstreamUsagePresent,
               );
 	            bindSurfaceStickyChannel({
 	              stickySessionKey,
@@ -808,6 +819,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
             if (looksLikeResponsesSseText(rawText)) {
               try {
                 const collectedPayload = collectResponsesFinalPayloadFromSseText(rawText, modelName).payload;
+                upstreamUsagePresent = upstreamUsagePresent || hasProxyUsagePayload(collectedPayload);
                 parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(collectedPayload));
                 const createdPayload = {
                   ...collectedPayload,
@@ -829,6 +841,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
                   parsedUsage,
                   latency,
                   debugTrace?.options.captureStreamChunks ? rawText : collectedPayload,
+                  upstreamUsagePresent,
                 );
                 return;
               } catch {
@@ -867,6 +880,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
                 parsedUsage,
                 latency,
                 debugTrace?.options.captureStreamChunks ? rawText : { stream: true, usage: parsedUsage },
+                upstreamUsagePresent,
               );
               return;
             }
@@ -937,6 +951,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
               parsedUsage,
               latency,
               debugTrace?.options.captureStreamChunks ? rawText : { stream: true, usage: parsedUsage },
+              upstreamUsagePresent,
             );
 	          bindSurfaceStickyChannel({
 	            stickySessionKey,
@@ -976,6 +991,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
         }
         const latency = Date.now() - startTime;
         const parsedUsage = parseProxyUsage(upstreamData);
+        const upstreamUsagePresent = hasProxyUsagePayload(upstreamData);
         const failure = detectProxyFailure({ rawText, usage: parsedUsage });
 	        if (failure) {
 	          clearSurfaceStickyChannel({
@@ -1022,6 +1038,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
             requestedModel,
             modelName,
             parsedUsage,
+            upstreamUsagePresent,
             requestStartedAtMs: startTime,
             latencyMs: latency,
             retryCount,

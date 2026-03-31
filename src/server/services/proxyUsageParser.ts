@@ -16,6 +16,60 @@ const ZERO_USAGE: ParsedProxyUsage = {
   promptTokensIncludeCache: null,
 };
 
+const USAGE_DIRECT_KEYS = [
+  'prompt_tokens',
+  'promptTokens',
+  'prompt_token_count',
+  'promptTokenCount',
+  'input_tokens',
+  'inputTokens',
+  'input_token_count',
+  'inputTokenCount',
+  'completion_tokens',
+  'completionTokens',
+  'completion_token_count',
+  'completionTokenCount',
+  'candidates_token_count',
+  'candidatesTokenCount',
+  'output_tokens',
+  'outputTokens',
+  'output_token_count',
+  'outputTokenCount',
+  'total_tokens',
+  'totalTokens',
+  'total_token_count',
+  'totalTokenCount',
+  'cache_read_input_tokens',
+  'cacheReadInputTokens',
+  'prompt_cache_hit_tokens',
+  'promptCacheHitTokens',
+  'cached_tokens',
+  'cachedTokens',
+  'cache_read_tokens',
+  'cacheReadTokens',
+  'cache_creation_input_tokens',
+  'cacheCreationInputTokens',
+  'cache_creation_tokens',
+  'cacheCreationTokens',
+  'claude_cache_creation_5_m_tokens',
+  'claudeCacheCreation5mTokens',
+  'claude_cache_creation_1_h_tokens',
+  'claudeCacheCreation1hTokens',
+] as const;
+
+const USAGE_DETAIL_KEYS = [
+  'prompt_tokens_details',
+  'promptTokensDetails',
+  'input_tokens_details',
+  'inputTokensDetails',
+  'completion_tokens_details',
+  'completionTokensDetails',
+  'output_tokens_details',
+  'outputTokensDetails',
+  'cache_creation',
+  'cacheCreation',
+] as const;
+
 function toPositiveInt(value: unknown): number {
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n)) return 0;
@@ -24,6 +78,10 @@ function toPositiveInt(value: unknown): number {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
+}
+
+function hasOwn(record: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
 }
 
 function collectUsageCandidates(payload: unknown): Array<Record<string, unknown>> {
@@ -251,6 +309,15 @@ export function parseProxyUsage(payload: unknown): ParsedProxyUsage {
   }
 
   return best;
+}
+
+export function hasProxyUsagePayload(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object') return false;
+  const candidates = collectUsageCandidates(payload);
+  return candidates.some((candidate) => (
+    USAGE_DIRECT_KEYS.some((key) => hasOwn(candidate, key))
+    || USAGE_DETAIL_KEYS.some((key) => hasOwn(candidate, key))
+  ));
 }
 
 export function mergeProxyUsage(base: ParsedProxyUsage, incoming: ParsedProxyUsage): ParsedProxyUsage {

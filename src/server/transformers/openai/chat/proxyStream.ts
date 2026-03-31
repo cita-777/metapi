@@ -55,6 +55,7 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
     status: 'completed',
     errorMessage: null,
   };
+  let terminalNormalizedFinal: ReturnType<typeof openAiChatOutbound.normalizeFinal> | null = null;
   let forwardedDownstreamOutput = false;
   const pendingWrites: string[] = [];
 
@@ -92,6 +93,23 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
       if (choice.toolCalls.some((item) => item.id || item.name || item.arguments)) return true;
     }
     return false;
+  };
+
+  const hasMeaningfulNormalizedFinalOutput = (): boolean => {
+    if (!terminalNormalizedFinal) return false;
+    const choices = Array.isArray(terminalNormalizedFinal.choices)
+      ? terminalNormalizedFinal.choices
+      : [];
+    if (choices.some((choice) => (
+      choice.content.length > 0
+      || choice.reasoningContent.length > 0
+      || choice.toolCalls.some((toolCall) => toolCall.id || toolCall.name || toolCall.arguments)
+    ))) {
+      return true;
+    }
+    if (terminalNormalizedFinal.content.length > 0) return true;
+    if (terminalNormalizedFinal.reasoningContent.length > 0) return true;
+    return terminalNormalizedFinal.toolCalls.some((toolCall) => toolCall.id || toolCall.name || toolCall.arguments);
   };
 
   const flushPendingWrites = () => {
@@ -155,7 +173,8 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
     if (input.downstreamFormat !== 'openai') return false;
     if (terminalResult.status === 'failed') return false;
     if (hasMeaningfulChatAggregateOutput()) return false;
-    return (input.getUsage?.().completionTokens ?? 0) <= 0;
+    if (hasMeaningfulNormalizedFinalOutput()) return false;
+    return true;
   };
 
   const finalize = () => {
@@ -293,6 +312,7 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
       }
       if (input.downstreamFormat === 'openai') {
         const normalizedFinal = openAiChatOutbound.normalizeFinal(payload, input.modelName, fallbackText);
+        terminalNormalizedFinal = normalizedFinal;
         streamContext.id = normalizedFinal.id;
         streamContext.model = normalizedFinal.model;
         streamContext.created = normalizedFinal.created;

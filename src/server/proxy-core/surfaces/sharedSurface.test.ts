@@ -876,6 +876,7 @@ describe('selectSurfaceChannelForAttempt', () => {
       requestStartedAtMs: 1000,
       requestEndedAtMs: 1250,
       localLatencyMs: 250,
+      upstreamUsagePresent: true,
       usage: {
         promptTokens: 10,
         completionTokens: 5,
@@ -981,6 +982,9 @@ describe('selectSurfaceChannelForAttempt', () => {
       logSuccess,
     });
 
+    expect(resolveProxyUsageWithSelfLogFallbackMock).toHaveBeenCalledWith(expect.objectContaining({
+      upstreamUsagePresent: false,
+    }));
     expect(logSuccess).toHaveBeenCalledWith(expect.objectContaining({
       promptTokens: null,
       completionTokens: null,

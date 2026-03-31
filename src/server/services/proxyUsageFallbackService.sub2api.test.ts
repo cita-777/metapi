@@ -129,4 +129,36 @@ describe('proxyUsageFallbackService sub2api', () => {
       estimatedCostFromQuota: 0.143004,
     });
   });
+
+  it('treats explicit zero upstream usage as upstream instead of unknown', async () => {
+    const result = await resolveProxyUsageWithSelfLogFallback({
+      site: {
+        url: 'https://newapi.example.com',
+        platform: 'new-api',
+      },
+      account: {
+        accessToken: 'jwt-access-token',
+      },
+      modelName: 'gpt-5.4',
+      requestStartedAtMs: Date.parse('2026-03-07T06:12:07.000Z'),
+      requestEndedAtMs: Date.parse('2026-03-07T06:12:30.000Z'),
+      localLatencyMs: 23000,
+      upstreamUsagePresent: true,
+      usage: {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+      },
+    });
+
+    expect(result).toMatchObject({
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      recoveredFromSelfLog: false,
+      usageSource: 'upstream',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchJsonWithShieldCookieRetryMock).not.toHaveBeenCalled();
+  });
 });

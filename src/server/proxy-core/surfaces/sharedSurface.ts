@@ -357,6 +357,7 @@ export async function recordSurfaceSuccess(input: {
   requestedModel: string;
   modelName: string;
   parsedUsage: SurfaceUsageSummary;
+  upstreamUsagePresent?: boolean;
   requestStartedAtMs: number;
   latencyMs: number;
   retryCount: number;
@@ -386,6 +387,11 @@ export async function recordSurfaceSuccess(input: {
   estimatedCost: number;
   billingDetails: unknown;
 }> {
+  const hasUpstreamUsage = input.upstreamUsagePresent ?? (
+    input.parsedUsage.totalTokens > 0
+    || input.parsedUsage.promptTokens > 0
+    || input.parsedUsage.completionTokens > 0
+  );
   let resolvedUsage: SurfaceResolvedUsageSummary = {
     promptTokens: input.parsedUsage.promptTokens,
     completionTokens: input.parsedUsage.completionTokens,
@@ -393,11 +399,7 @@ export async function recordSurfaceSuccess(input: {
     recoveredFromSelfLog: false,
     estimatedCostFromQuota: 0,
     selfLogBillingMeta: null,
-    usageSource: (
-      input.parsedUsage.totalTokens > 0
-      || input.parsedUsage.promptTokens > 0
-      || input.parsedUsage.completionTokens > 0
-    ) ? 'upstream' : 'unknown',
+    usageSource: hasUpstreamUsage ? 'upstream' : 'unknown',
   };
   let estimatedCost = 0;
   let billingDetails: unknown = null;
@@ -412,6 +414,7 @@ export async function recordSurfaceSuccess(input: {
       requestStartedAtMs: input.requestStartedAtMs,
       requestEndedAtMs: input.requestStartedAtMs + input.latencyMs,
       localLatencyMs: input.latencyMs,
+      upstreamUsagePresent: hasUpstreamUsage,
       usage: {
         promptTokens: input.parsedUsage.promptTokens,
         completionTokens: input.parsedUsage.completionTokens,

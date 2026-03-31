@@ -3,7 +3,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import { config } from '../../config.js';
 import { tokenRouter } from '../../services/tokenRouter.js';
 import { reportProxyAllFailed } from '../../services/alertService.js';
-import { mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParser.js';
+import { hasProxyUsagePayload, mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParser.js';
 import { type DownstreamFormat } from '../../transformers/shared/normalized.js';
 import {
   buildClaudeCountTokensUpstreamRequest,
@@ -509,6 +509,27 @@ export async function handleChatSurfaceRequest(
           cacheCreationTokens: 0,
           promptTokensIncludeCache: null,
         };
+        let upstreamUsagePresent = false;
+        const recordStreamSuccess = async (latencyMs: number) => {
+          await recordSurfaceSuccess({
+            selected,
+            requestedModel,
+            modelName,
+            parsedUsage,
+            upstreamUsagePresent,
+            requestStartedAtMs: startTime,
+            latencyMs,
+            retryCount,
+            upstreamPath: successfulUpstreamPath,
+            logSuccess: failureToolkit.log,
+            recordDownstreamCost: (estimatedCost) => {
+              recordDownstreamCostUsage(request, estimatedCost);
+            },
+            bestEffortMetrics: {
+              errorLabel: '[proxy/chat] failed to record success metrics',
+            },
+          });
+        };
 
         const writeLines = (lines: string[]) => {
           startSseResponse();
@@ -534,6 +555,7 @@ export async function handleChatSurfaceRequest(
           }),
           onParsedPayload: (payload) => {
             if (payload && typeof payload === 'object') {
+              upstreamUsagePresent = upstreamUsagePresent || hasProxyUsagePayload(payload);
               parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(payload));
             }
           },
@@ -586,6 +608,7 @@ export async function handleChatSurfaceRequest(
               }
               return;
             }
+            await recordStreamSuccess(latency);
             await finalizeDebugSuccess(
               200,
               successfulUpstreamPath,
@@ -612,6 +635,7 @@ export async function handleChatSurfaceRequest(
           if (String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli') {
             fallbackData = unwrapGeminiCliPayload(fallbackData);
           }
+          upstreamUsagePresent = upstreamUsagePresent || hasProxyUsagePayload(fallbackData);
           parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(fallbackData));
           const latency = Date.now() - startTime;
           const failure = detectProxyFailure({ rawText, usage: parsedUsage });
@@ -679,6 +703,7 @@ export async function handleChatSurfaceRequest(
             }
             return;
           }
+          await recordStreamSuccess(latency);
           await finalizeDebugSuccess(
             200,
             successfulUpstreamPath,
@@ -764,23 +789,7 @@ export async function handleChatSurfaceRequest(
         }
 
         const latency = Date.now() - startTime;
-        await recordSurfaceSuccess({
-          selected,
-          requestedModel,
-          modelName,
-          parsedUsage,
-          requestStartedAtMs: startTime,
-          latencyMs: latency,
-          retryCount,
-          upstreamPath: successfulUpstreamPath,
-          logSuccess: failureToolkit.log,
-          recordDownstreamCost: (estimatedCost) => {
-            recordDownstreamCostUsage(request, estimatedCost);
-          },
-          bestEffortMetrics: {
-            errorLabel: '[proxy/chat] failed to record success metrics',
-          },
-        });
+        await recordStreamSuccess(latency);
         await finalizeDebugSuccess(
           200,
           successfulUpstreamPath,
@@ -825,6 +834,7 @@ export async function handleChatSurfaceRequest(
 
       const latency = Date.now() - startTime;
       const parsedUsage = parseProxyUsage(upstreamData);
+      const upstreamUsagePresent = hasProxyUsagePayload(upstreamData);
       const failure = detectProxyFailure({ rawText, usage: parsedUsage });
       if (failure) {
         clearSurfaceStickyChannel({
@@ -862,6 +872,7 @@ export async function handleChatSurfaceRequest(
         requestedModel,
         modelName,
         parsedUsage,
+        upstreamUsagePresent,
         requestStartedAtMs: startTime,
         latencyMs: latency,
         retryCount,
