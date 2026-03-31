@@ -879,7 +879,6 @@ export default function Sites() {
       {createdSiteForChoice && (
         <SiteCreatedModal
           siteName={createdSiteForChoice.name}
-          platform={createdSiteForChoice.platform}
           initializationPresetId={createdSiteForChoice.initializationPresetId}
           initialSegment={
             getSiteInitializationPreset(createdSiteForChoice.initializationPresetId)?.initialSegment
@@ -1001,7 +1000,9 @@ export default function Sites() {
               <div className="alert-title">已应用官方预设 · {activeInitializationPreset.label}</div>
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.7 }}>
                 <div>{activeInitializationPreset.description}</div>
-                <div>当前已自动填入官方地址；如需走自建网关，也可以直接改 URL。</div>
+                {form.url.trim() === activeInitializationPreset.defaultUrl && (
+                  <div>当前已自动填入官方地址；如需走自建网关，也可以直接改 URL。</div>
+                )}
                 <div>推荐模型：{activeInitializationPreset.recommendedModels.join(' / ')}</div>
               </div>
             </div>

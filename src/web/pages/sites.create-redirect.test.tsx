@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, create } from 'react-test-renderer';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import ModernSelect from '../components/ModernSelect.js';
 import { ToastProvider } from '../components/Toast.js';
@@ -45,7 +45,7 @@ async function createSiteAndClickModalChoice(
   apiMock.getSites.mockResolvedValue([]);
   apiMock.addSite.mockResolvedValue(createdSite);
 
-  let root!: WebTestRenderer;
+  let root!: ReactTestRenderer;
   try {
     await act(async () => {
       root = create(
@@ -186,7 +186,7 @@ describe('Sites create redirect', () => {
     apiMock.getSites.mockResolvedValue([]);
     apiMock.addSite.mockResolvedValue({ id: 30, name: 'Demo Site', platform: 'openai' });
 
-    let root!: WebTestRenderer;
+    let root!: ReactTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -230,7 +230,7 @@ describe('Sites create redirect', () => {
     apiMock.getSites.mockResolvedValue([]);
     apiMock.addSite.mockResolvedValue({ id: 34, name: 'Demo Site', platform: 'openai' });
 
-    let root!: WebTestRenderer;
+    let root!: ReactTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -273,7 +273,7 @@ describe('Sites create redirect', () => {
     apiMock.getSites.mockResolvedValue([]);
     apiMock.addSite.mockResolvedValue({ id: 31, name: 'Demo Site', platform: 'openai' });
 
-    let root!: WebTestRenderer;
+    let root!: ReactTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -325,11 +325,67 @@ describe('Sites create redirect', () => {
     }
   });
 
+  it('stops claiming the official base url is auto-filled after the user edits it', async () => {
+    apiMock.getSites.mockResolvedValue([]);
+    apiMock.addSite.mockResolvedValue({ id: 35, name: 'Demo Site', platform: 'openai' });
+
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <MemoryRouter initialEntries={['/sites']}>
+              <Routes>
+                <Route path="/sites" element={<Sites />} />
+              </Routes>
+            </MemoryRouter>
+          </ToastProvider>,
+        );
+      });
+      await flushMicrotasks();
+
+      const addButton = root.root.find((node) => (
+        node.type === 'button'
+        && node.props.className?.includes('btn btn-primary')
+        && JSON.stringify(node.props.children).includes('添加站点')
+      ));
+      await act(async () => {
+        addButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const urlInput = root.root.find((node) => (
+        node.type === 'input'
+        && node.props.placeholder === '站点 URL (例如 https://api.example.com)'
+      ));
+      const platformSelect = root.root.findAllByType(ModernSelect).at(-1);
+
+      await act(async () => {
+        platformSelect?.props.onChange('preset:zhipu-coding-plan-openai');
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        urlInput.props.onChange({ target: { value: 'https://gateway.example.com/coding' } });
+      });
+      await flushMicrotasks();
+
+      const presetAlert = root.root.find((node) => (
+        typeof node.props.className === 'string'
+        && node.props.className.includes('alert alert-info')
+      ));
+      expect(collectText(presetAlert)).toContain('已应用官方预设');
+      expect(collectText(presetAlert)).not.toContain('当前已自动填入官方地址');
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('keeps a manually selected generic openai platform even when the url matches a Coding Plan preset', async () => {
     apiMock.getSites.mockResolvedValue([]);
     apiMock.addSite.mockResolvedValue({ id: 32, name: 'Demo Site', platform: 'openai' });
 
-    let root!: WebTestRenderer;
+    let root!: ReactTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -382,7 +438,7 @@ describe('Sites create redirect', () => {
     apiMock.getSites.mockResolvedValue([]);
     apiMock.addSite.mockResolvedValue({ id: 33, name: 'Aliyun CodingPlan', platform: 'openai', initializationPresetId: 'codingplan-openai' });
 
-    let root!: WebTestRenderer;
+    let root!: ReactTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -439,7 +495,7 @@ describe('Sites create redirect', () => {
     apiMock.getSites.mockResolvedValue([]);
     apiMock.addSite.mockResolvedValue({ id: 24, name: 'Demo Site', platform: 'new-api' });
 
-    let root!: WebTestRenderer;
+    let root!: ReactTestRenderer;
     await act(async () => {
       root = create(
         <ToastProvider>

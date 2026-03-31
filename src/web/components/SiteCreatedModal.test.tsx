@@ -9,7 +9,6 @@ describe('SiteCreatedModal', () => {
     const root = create(
       <SiteCreatedModal
         siteName="Demo Site"
-        platform="new-api"
         onChoice={onChoice}
         onClose={onClose}
       />,

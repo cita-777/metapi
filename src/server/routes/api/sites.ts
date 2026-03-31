@@ -85,7 +85,14 @@ type ErrorLike = {
 };
 
 function normalizeSiteUrl(url: string): string {
-  return stripTrailingSlashes(url);
+  const trimmed = url.trim();
+  const withScheme = trimmed.includes('://') ? trimmed : `https://${trimmed}`;
+  return stripTrailingSlashes(withScheme);
+}
+
+function normalizeSitePlatform(platform?: string): string | undefined {
+  if (platform === undefined) return undefined;
+  return platform.trim().toLowerCase();
 }
 
 function getErrorChain(error: unknown): ErrorLike[] {
@@ -359,15 +366,16 @@ export async function sitesRoutes(app: FastifyInstance) {
 
     const existingSites = await db.select().from(schema.sites).all();
     const maxSortOrder = existingSites.reduce((max, site) => Math.max(max, site.sortOrder || 0), -1);
-    const normalizedUrl = normalizeSiteUrl(url);
+    const canonicalUrl = normalizeSiteUrl(url);
+    const canonicalPlatform = normalizeSitePlatform(platform);
 
-    let detectedPlatform = platform;
+    let detectedPlatform = canonicalPlatform;
     let responseInitializationPresetId: string | null = explicitInitializationPreset?.id || null;
     if (!detectedPlatform) {
       if (explicitInitializationPreset) {
         detectedPlatform = explicitInitializationPreset.platform;
       } else {
-        const detected = await detectSite(url);
+        const detected = await detectSite(canonicalUrl);
         detectedPlatform = detected?.platform;
         responseInitializationPresetId = detected?.initializationPresetId || null;
       }
@@ -378,16 +386,16 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (!detectedPlatform) {
       return { error: 'Could not detect platform. Please specify manually.' };
     }
-    const conflictingSite = findExistingSiteBinding(existingSites, detectedPlatform, normalizedUrl);
+    const conflictingSite = findExistingSiteBinding(existingSites, detectedPlatform, canonicalUrl);
     if (conflictingSite) {
-      return sendSiteBindingConflict(reply, detectedPlatform, normalizedUrl);
+      return sendSiteBindingConflict(reply, detectedPlatform, canonicalUrl);
     }
 
     let inserted;
     try {
       inserted = await db.insert(schema.sites).values({
         name,
-        url: normalizedUrl,
+        url: canonicalUrl,
         platform: detectedPlatform,
         proxyUrl: normalizedProxyUrl.proxyUrl,
         useSystemProxy: normalizedUseSystemProxy ?? false,
@@ -400,7 +408,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       }).run();
     } catch (error) {
       if (isSitesPlatformUrlConflict(error)) {
-        return sendSiteBindingConflict(reply, detectedPlatform, normalizedUrl);
+        return sendSiteBindingConflict(reply, detectedPlatform, canonicalUrl);
       }
       throw error;
     }
@@ -490,8 +498,9 @@ export async function sitesRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: normalizedCustomHeaders.error || 'Invalid customHeaders.' });
     }
 
+    const canonicalPlatform = body.platform !== undefined ? normalizeSitePlatform(body.platform) : undefined;
     const nextUrl = body.url !== undefined ? normalizeSiteUrl(body.url) : existingSite.url;
-    const nextPlatform = body.platform !== undefined ? body.platform : existingSite.platform;
+    const nextPlatform = canonicalPlatform !== undefined ? canonicalPlatform : existingSite.platform;
     const siteIdentityChanged = nextUrl !== existingSite.url || nextPlatform !== existingSite.platform;
     if (siteIdentityChanged) {
       const siteRows = await db.select({
@@ -507,7 +516,7 @@ export async function sitesRoutes(app: FastifyInstance) {
 
     if (body.name !== undefined) updates.name = body.name;
     if (body.url !== undefined) updates.url = nextUrl;
-    if (body.platform !== undefined) updates.platform = body.platform;
+    if (body.platform !== undefined) updates.platform = canonicalPlatform;
     if (normalizedProxyUrl.present) updates.proxyUrl = normalizedProxyUrl.proxyUrl;
     if (body.useSystemProxy !== undefined) updates.useSystemProxy = normalizedUseSystemProxy;
     if (normalizedCustomHeaders.present) updates.customHeaders = normalizedCustomHeaders.customHeaders;

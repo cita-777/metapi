@@ -5,7 +5,6 @@ type NextStepChoice = 'session' | 'apikey' | 'later';
 
 type Props = {
   siteName: string;
-  platform?: string | null;
   initializationPresetId?: string | null;
   initialSegment?: 'session' | 'apikey';
   onChoice: (choice: NextStepChoice) => void;
