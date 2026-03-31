@@ -691,4 +691,59 @@ describe('TokenRouter runtime cache', () => {
     expect(current?.cooldownLevel).toBe(0);
     expect(current?.cooldownUntil).toBeNull();
   });
+
+  it('caps weighted cooldowns before Date overflow for heavily failed channels', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'weighted-cooldown-cap-site',
+      url: 'https://weighted-cooldown-cap.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'weighted-cooldown-cap-user',
+      accessToken: 'weighted-cooldown-cap-access-token',
+      apiToken: 'weighted-cooldown-cap-api-token',
+      status: 'active',
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'weighted-cooldown-cap-token',
+      token: 'sk-weighted-cooldown-cap-token',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.4',
+      routingStrategy: 'weighted',
+      enabled: true,
+    }).returning().get();
+
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: token.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      failCount: 57,
+    }).returning().get();
+
+    const router = new TokenRouter();
+
+    const startedAt = Date.now();
+    await router.recordFailure(channel.id);
+    const current = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.id, channel.id))
+      .get();
+    const cooldownMs = Date.parse(String(current?.cooldownUntil || '')) - startedAt;
+
+    expect(current?.failCount).toBe(58);
+    expect(Number.isFinite(Date.parse(String(current?.cooldownUntil || '')))).toBe(true);
+    expect(cooldownMs).toBeGreaterThanOrEqual((30 * 24 * 60 * 60 - 5) * 1000);
+    expect(cooldownMs).toBeLessThanOrEqual((30 * 24 * 60 * 60 + 5) * 1000);
+  });
 });

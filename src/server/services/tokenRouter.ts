@@ -72,6 +72,7 @@ type SiteRuntimeHealthState = {
 
 const FAILURE_BACKOFF_BASE_SEC = 15;
 const SHORT_WINDOW_LIMIT_COOLDOWN_MS = 5 * 60 * 1000;
+const MAX_FAILURE_BACKOFF_SEC = 30 * 24 * 60 * 60;
 const MIN_EFFECTIVE_UNIT_COST = 1e-6;
 const ROUND_ROBIN_FAILURE_THRESHOLD = 3;
 const ROUND_ROBIN_COOLDOWN_LEVELS_SEC = [0, 10 * 60, 60 * 60, 24 * 60 * 60] as const;
@@ -194,7 +195,7 @@ function fibonacciNumber(index: number): number {
 
 function resolveFailureBackoffSec(failCount?: number | null): number {
   const normalizedFailCount = Math.max(1, Math.trunc(failCount ?? 0));
-  return FAILURE_BACKOFF_BASE_SEC * fibonacciNumber(normalizedFailCount);
+  return Math.min(FAILURE_BACKOFF_BASE_SEC * fibonacciNumber(normalizedFailCount), MAX_FAILURE_BACKOFF_SEC);
 }
 
 function resolveRoundRobinCooldownSec(level: number): number {
