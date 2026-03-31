@@ -156,6 +156,23 @@ export async function selectSiteApiEndpointTarget(
   };
 }
 
+export async function resolveSiteApiBaseUrl(
+  site: SiteRow,
+  now?: string | Date,
+): Promise<string | null> {
+  const target = await selectSiteApiEndpointTarget(site, now);
+  return target?.baseUrl || null;
+}
+
+export async function requireSiteApiBaseUrl(
+  site: SiteRow,
+  now?: string | Date,
+): Promise<string> {
+  const baseUrl = await resolveSiteApiBaseUrl(site, now);
+  if (baseUrl) return baseUrl;
+  throw new Error('当前站点的 AI 请求地址均不可用');
+}
+
 export async function recordSiteApiEndpointFailure(
   endpointId: number,
   input: SiteApiEndpointFailureInput,

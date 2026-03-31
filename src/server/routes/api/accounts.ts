@@ -42,6 +42,7 @@ import {
   parseAccountUpdatePayload,
   parseAccountVerifyTokenPayload,
 } from '../../contracts/accountsRoutePayloads.js';
+import { requireSiteApiBaseUrl } from '../../services/siteApiEndpointService.js';
 
 type AccountWithSiteRow = {
   accounts: typeof schema.accounts.$inferSelect;
@@ -776,8 +777,9 @@ export async function accountsRoutes(app: FastifyInstance) {
 
     if (credentialMode === 'apikey') {
       try {
+        const apiBaseUrl = await requireSiteApiBaseUrl(site);
         const models = await withTimeout(
-          () => adapter.getModels(site.url, accessToken, parsedPlatformUserId),
+          () => adapter.getModels(apiBaseUrl, accessToken, parsedPlatformUserId),
           ACCOUNT_VERIFY_TIMEOUT_MS,
           `Token verification timed out (${Math.max(1, Math.round(ACCOUNT_VERIFY_TIMEOUT_MS / 1000))}s)`,
         );
@@ -1114,7 +1116,8 @@ export async function accountsRoutes(app: FastifyInstance) {
         if (!apiToken) apiToken = rawAccessToken;
       } else {
         try {
-          const models = await adapter.getModels(site.url, rawAccessToken, body.platformUserId);
+          const apiBaseUrl = await requireSiteApiBaseUrl(site);
+          const models = await adapter.getModels(apiBaseUrl, rawAccessToken, body.platformUserId);
           verifiedModels = Array.isArray(models)
             ? models.filter((item) => typeof item === 'string' && item.trim().length > 0)
             : [];

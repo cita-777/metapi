@@ -75,6 +75,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
+    await db.delete(schema.siteApiEndpoints).run();
     await db.delete(schema.settings).run();
     await db.delete(schema.sites).run();
     const { config } = await import('../config.js');
@@ -132,6 +133,49 @@ describe('refreshModelsForAccount credential discovery', () => {
 
     const tokenRows = await db.select().from(schema.tokenModelAvailability).all();
     expect(tokenRows).toHaveLength(0);
+  });
+
+  it('uses the configured ai endpoint for direct model discovery credentials', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockImplementation(async (baseUrl: string, token: string) => (
+      baseUrl === 'https://api.nih.cc' && token === 'session-token'
+        ? ['gpt-4.1']
+        : []
+    ));
+
+    const site = await db.insert(schema.sites).values({
+      name: 'nihao-panel',
+      url: 'https://nih.cc',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    await db.insert(schema.siteApiEndpoints).values({
+      siteId: site.id,
+      url: 'https://api.nih.cc',
+      enabled: true,
+      sortOrder: 0,
+    }).run();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'nihao-user',
+      accessToken: 'session-token',
+      apiToken: null,
+      status: 'active',
+      extraConfig: JSON.stringify({ credentialMode: 'session' }),
+    }).returning().get();
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      status: 'success',
+      modelCount: 1,
+      modelsPreview: ['gpt-4.1'],
+    });
+    expect(getModelsMock).toHaveBeenCalledWith('https://api.nih.cc', 'session-token', undefined);
   });
 
   it('deduplicates discovered model names before writing availability rows', async () => {
@@ -692,6 +736,63 @@ describe('refreshModelsForAccount credential discovery', () => {
       'gpt-5.3-codex',
       'gpt-5.4',
     ]);
+  });
+
+  it('uses the configured ai endpoint for codex cloud model discovery', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockRejectedValue(new Error('codex plan discovery should not call adapter.getModels'));
+    undiciFetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        models: [
+          { id: 'gpt-5.3-codex' },
+        ],
+      }),
+      text: async () => JSON.stringify({ ok: true }),
+    });
+
+    const site = await db.insert(schema.sites).values({
+      name: 'codex-panel-site',
+      url: 'https://chatgpt.com/panel-codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+
+    await db.insert(schema.siteApiEndpoints).values({
+      siteId: site.id,
+      url: 'https://chatgpt.com/backend-api/codex',
+      enabled: true,
+      sortOrder: 0,
+    }).run();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'codex-user@example.com',
+      accessToken: 'oauth-access-token',
+      apiToken: null,
+      status: 'active',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          accountId: 'chatgpt-account-456',
+          email: 'codex-user@example.com',
+          planType: 'plus',
+        },
+      }),
+    }).returning().get();
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      status: 'success',
+      modelCount: 1,
+      modelsPreview: ['gpt-5.3-codex'],
+    });
+    expect(String(undiciFetchMock.mock.calls[0]?.[0] || '')).toBe('https://chatgpt.com/backend-api/codex/models?client_version=1.0.0');
   });
 
   it('discovers Claude OAuth models from the upstream /v1/models response', async () => {

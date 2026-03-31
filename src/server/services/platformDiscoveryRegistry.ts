@@ -1,6 +1,7 @@
 import { fetch } from 'undici';
 import { schema } from '../db/index.js';
 import { withSiteRecordProxyRequestInit } from './siteProxy.js';
+import { requireSiteApiBaseUrl } from './siteApiEndpointService.js';
 import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { CLAUDE_DEFAULT_ANTHROPIC_VERSION } from './oauth/claudeProvider.js';
 import {
@@ -122,6 +123,7 @@ export async function discoverCodexModelsFromCloud(input: {
   site: PlatformDiscoverySite;
   account: PlatformDiscoveryAccount;
 }): Promise<string[]> {
+  const baseUrl = await requireSiteApiBaseUrl(input.site);
   const accessToken = (input.account.accessToken || '').trim();
   if (!accessToken) {
     throw new Error('codex oauth access token missing');
@@ -137,7 +139,7 @@ export async function discoverCodexModelsFromCloud(input: {
   }
 
   const response = await fetch(
-    buildCodexModelsEndpoint(input.site.url),
+    buildCodexModelsEndpoint(baseUrl),
     withSiteRecordProxyRequestInit(input.site, { method: 'GET', headers }),
   );
   if (!response.ok) {
@@ -151,12 +153,13 @@ export async function discoverClaudeModelsFromCloud(input: {
   site: PlatformDiscoverySite;
   account: PlatformDiscoveryAccount;
 }): Promise<string[]> {
+  const baseUrl = await requireSiteApiBaseUrl(input.site);
   const accessToken = (input.account.accessToken || '').trim();
   if (!accessToken) {
     throw new Error('claude oauth access token missing');
   }
   const response = await fetch(
-    `${input.site.url.replace(/\/+$/, '')}/v1/models`,
+    `${baseUrl.replace(/\/+$/, '')}/v1/models`,
     withSiteRecordProxyRequestInit(input.site, {
       method: 'GET',
       headers: {
@@ -212,6 +215,7 @@ export async function discoverAntigravityModelsFromCloud(input: {
   site: PlatformDiscoverySite;
   account: PlatformDiscoveryAccount;
 }): Promise<string[]> {
+  const baseUrl = await requireSiteApiBaseUrl(input.site);
   const accessToken = (input.account.accessToken || '').trim();
   if (!accessToken) {
     throw new Error('antigravity oauth access token missing');
@@ -222,10 +226,10 @@ export async function discoverAntigravityModelsFromCloud(input: {
   const requestBody = projectId ? { project: projectId } : {};
   let lastError = '';
 
-  for (const baseUrl of buildAntigravityDiscoveryBaseUrls(input.site.url || ANTIGRAVITY_UPSTREAM_BASE_URL)) {
+  for (const discoveryBaseUrl of buildAntigravityDiscoveryBaseUrls(baseUrl || ANTIGRAVITY_UPSTREAM_BASE_URL)) {
     try {
       const response = await fetch(
-        `${baseUrl}/v1internal:fetchAvailableModels`,
+        `${discoveryBaseUrl}/v1internal:fetchAvailableModels`,
         withSiteRecordProxyRequestInit(input.site, {
           method: 'POST',
           headers: {
@@ -249,7 +253,7 @@ export async function discoverAntigravityModelsFromCloud(input: {
       }
       lastError = '未获取到可用模型';
     } catch (error) {
-      lastError = error instanceof Error ? `${baseUrl}: ${error.message}` : String(error);
+      lastError = error instanceof Error ? `${discoveryBaseUrl}: ${error.message}` : String(error);
     }
   }
 
