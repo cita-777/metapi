@@ -8,6 +8,7 @@ import { invalidateTokenRouterCache } from '../../services/tokenRouter.js';
 import { parseSiteCustomHeadersInput } from '../../services/siteCustomHeaders.js';
 import { getSub2ApiSubscriptionFromExtraConfig } from '../../services/accountExtraConfig.js';
 import { getSiteInitializationPreset } from '../../../shared/siteInitializationPresets.js';
+import { stripTrailingSlashes } from '../../services/urlNormalization.js';
 
 function normalizeSiteStatus(input: unknown): 'active' | 'disabled' | null {
   if (input === undefined || input === null) return null;
@@ -84,7 +85,7 @@ type ErrorLike = {
 };
 
 function normalizeSiteUrl(url: string): string {
-  return url.replace(/\/+$/, '');
+  return stripTrailingSlashes(url);
 }
 
 function getErrorChain(error: unknown): ErrorLike[] {

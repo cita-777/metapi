@@ -53,6 +53,10 @@ export default function SiteCreatedModal({
     <dialog
       ref={dialogRef}
       className="modal"
+      onCancel={(e) => {
+        e.preventDefault();
+        onClose();
+      }}
       onKeyDown={handleKeyDown}
       onClick={(e) => {
         if (e.target === dialogRef.current) {

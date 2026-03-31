@@ -10,6 +10,7 @@ import type { Dispatcher, RequestInit as UndiciRequestInit } from 'undici';
 import { Agent as UndiciAgent, ProxyAgent } from 'undici';
 import { mergeHeadersWithSiteCustomHeaders } from './siteCustomHeaders.js';
 import { getProxyUrlFromExtraConfig } from './accountExtraConfig.js';
+import { stripTrailingSlashes } from './urlNormalization.js';
 
 const SITE_PROXY_CACHE_TTL_MS = 3_000;
 const SUPPORTED_PROXY_PROTOCOLS = new Set([
@@ -100,11 +101,10 @@ function normalizeSiteUrl(value: string): string {
 
   try {
     const parsed = new URL(trimmed);
-    const pathname = parsed.pathname.replace(/\/+$/, '');
-    const normalizedPath = pathname === '/' ? '' : pathname;
+    const normalizedPath = stripTrailingSlashes(parsed.pathname);
     return `${parsed.origin}${normalizedPath}`;
   } catch {
-    return trimmed.replace(/\/+$/, '');
+    return stripTrailingSlashes(trimmed);
   }
 }
 
