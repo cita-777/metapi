@@ -136,9 +136,6 @@ function classifyModelDiscoveryError(message: string): ModelRefreshErrorCode {
 }
 
 function buildModelFailureMessage(code: ModelRefreshErrorCode, fallback?: string, platform?: string | null) {
-  if (code === 'timeout') return '模型获取失败（请求超时）';
-  if (code === 'unauthorized') return '模型获取失败，API Key 已无效';
-  if (code === 'empty_models') return '模型获取失败：未获取到可用模型';
   const raw = String(fallback || '').trim();
   if (looksLikeHtmlJsonParseError(raw) || looksLikeShieldChallenge(raw)) {
     const normalizedPlatform = String(platform || '').trim().toLowerCase();
@@ -147,6 +144,9 @@ function buildModelFailureMessage(code: ModelRefreshErrorCode, fallback?: string
     }
     return '模型获取失败：站点返回了网页而不是 JSON 响应';
   }
+  if (code === 'timeout') return '模型获取失败（请求超时）';
+  if (code === 'unauthorized') return '模型获取失败，API Key 已无效';
+  if (code === 'empty_models') return '模型获取失败：未获取到可用模型';
   return fallback || '模型获取失败';
 }
 
