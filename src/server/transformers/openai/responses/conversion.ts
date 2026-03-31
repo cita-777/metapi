@@ -844,9 +844,14 @@ export function convertResponsesBodyToOpenAiBody(
   const input = stripOrphanedResponsesToolOutputs(normalizedBody.input);
   let functionCallIndex = 0;
   let pendingToolCalls: OpenAiToolCall[] = [];
+  const emittedToolCallIds = new Set<string>();
 
   const flushPendingToolCalls = () => {
     if (pendingToolCalls.length <= 0) return;
+    for (const toolCall of pendingToolCalls) {
+      const callId = asTrimmedString(toolCall.id);
+      if (callId) emittedToolCallIds.add(callId);
+    }
     messages.push({
       role: 'assistant',
       content: '',
@@ -894,7 +899,9 @@ export function convertResponsesBodyToOpenAiBody(
 
     if (itemType === 'function_call_output' || itemType === 'custom_tool_call_output') {
       flushPendingToolCalls();
-      pushToolOutputMessage(item.call_id ?? item.id, item.output ?? item.content);
+      const toolCallId = asTrimmedString(item.call_id ?? item.id);
+      if (!toolCallId || !emittedToolCallIds.has(toolCallId)) return;
+      pushToolOutputMessage(toolCallId, item.output ?? item.content);
       return;
     }
 
@@ -924,7 +931,9 @@ export function convertResponsesBodyToOpenAiBody(
     const content = toOpenAiMessageContent(item.content ?? item.input ?? item);
 
     if (normalizedRole === 'tool') {
-      pushToolOutputMessage(item.tool_call_id ?? item.call_id ?? item.id, item.content);
+      const toolCallId = asTrimmedString(item.tool_call_id ?? item.call_id ?? item.id);
+      if (!toolCallId || !emittedToolCallIds.has(toolCallId)) return;
+      pushToolOutputMessage(toolCallId, item.content);
       return;
     }
 

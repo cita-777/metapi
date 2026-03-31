@@ -863,6 +863,51 @@ describe('convertOpenAiBodyToResponsesBody', () => {
     ]);
   });
 
+  it('drops tool outputs whose prior tool call cannot be converted into an OpenAI-compatible tool call', () => {
+    const result = convertResponsesBodyToOpenAiBody(
+      {
+        model: 'gpt-5',
+        input: [
+          {
+            type: 'function_call',
+            call_id: 'call_invalid',
+            name: '   ',
+            arguments: '{"plan":true}',
+          },
+          {
+            type: 'function_call_output',
+            call_id: 'call_invalid',
+            output: 'unsupported call',
+          },
+          {
+            type: 'message',
+            role: 'assistant',
+            content: [
+              {
+                type: 'output_text',
+                text: 'continue normally',
+              },
+            ],
+          },
+        ],
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result.messages).toEqual([
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'text',
+            text: 'continue normally',
+          },
+        ],
+      },
+    ]);
+  });
+
   it('shortens long MCP tool names consistently across tools, tool_choice and assistant tool calls', () => {
     const sharedSuffix = 'server__execute_super_long_nested_tool_name_that_needs_shortening';
     const firstName = `mcp__alpha_workspace__${sharedSuffix}`;
