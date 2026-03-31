@@ -158,7 +158,7 @@ describe('TokenRoutes routing strategy updates', () => {
         node.type === 'button'
         && typeof node.props.className === 'string'
         && node.props.className.includes('modern-select-option')
-        && collectText(node).includes('稳定优先')
+        && collectText(node).startsWith('稳定优先')
       ));
 
       await act(async () => {
@@ -172,7 +172,7 @@ describe('TokenRoutes routing strategy updates', () => {
         node.type === 'button'
         && typeof node.props.className === 'string'
         && node.props.className.includes('modern-select-trigger')
-        && collectText(node).includes('稳定优先')
+        && collectText(node).startsWith('稳定优先')
       ));
       expect(collectText(strategyTrigger)).toContain('稳定优先');
     } finally {

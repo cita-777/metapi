@@ -21,7 +21,7 @@ import {
   recordUpstreamEndpointSuccess,
 } from '../../services/upstreamEndpointRuntimeMemory.js';
 import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from '../../routes/proxy/downstreamPolicy.js';
-import { executeEndpointFlow, type BuiltEndpointRequest } from '../../routes/proxy/endpointFlow.js';
+import { executeEndpointFlow, type BuiltEndpointRequest } from '../orchestration/endpointFlow.js';
 import { detectProxyFailure } from '../../routes/proxy/proxyFailureJudge.js';
 import { getProxyAuthContext, getProxyResourceOwner } from '../../middleware/auth.js';
 import { normalizeInputFileBlock } from '../../transformers/shared/inputFile.js';

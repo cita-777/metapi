@@ -14,7 +14,7 @@ import { refreshOauthAccessTokenSingleflight } from '../../services/oauth/refres
 import { resolveChannelProxyUrl, withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { getDownstreamRoutingPolicy } from '../../routes/proxy/downstreamPolicy.js';
-import { executeEndpointFlow, type BuiltEndpointRequest } from '../../routes/proxy/endpointFlow.js';
+import { executeEndpointFlow, type BuiltEndpointRequest } from '../orchestration/endpointFlow.js';
 import { composeProxyLogMessage } from '../../routes/proxy/logPathMeta.js';
 import {
   buildUpstreamEndpointRequest,

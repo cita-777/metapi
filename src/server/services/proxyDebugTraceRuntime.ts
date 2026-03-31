@@ -1,7 +1,7 @@
 import { readRuntimeResponseText } from '../proxy-core/executors/types.js';
 import type {
   EndpointAttemptSuccessContext,
-} from '../routes/proxy/endpointFlow.js';
+} from '../proxy-core/orchestration/endpointFlow.js';
 import {
   finalizeProxyDebugTrace,
   insertProxyDebugAttempt,

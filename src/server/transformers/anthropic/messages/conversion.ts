@@ -434,14 +434,11 @@ function sanitizeAnthropicMessage(message: Record<string, unknown>): Record<stri
       .map((item) => {
         if (isRecord(item)) return sanitizeAnthropicContentBlock(item);
         if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean') {
-          return {
-            type: 'text',
-            text: String(item),
-          };
+          return sanitizeAnthropicContentBlock(toAnthropicTextBlock(String(item)) ?? {});
         }
         return null;
       })
-      .filter((item) => item !== null);
+      .filter((item): item is Record<string, unknown> => item !== null);
     if (content.length <= 0) return null;
     next.content = content;
     return next;

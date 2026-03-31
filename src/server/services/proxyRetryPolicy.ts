@@ -92,5 +92,8 @@ export function shouldRetryProxyRequest(status: number, upstreamErrorText?: stri
 }
 
 export function shouldAbortSameSiteEndpointFallback(status: number, upstreamErrorText?: string | null): boolean {
+  if (status < 500 && status !== 408 && status !== 429) {
+    return false;
+  }
   return matchesAnyPattern(SAME_SITE_ENDPOINT_ABORT_PATTERNS, upstreamErrorText);
 }

@@ -7,7 +7,7 @@ import {
   resolveUpstreamEndpointCandidates,
   type UpstreamEndpoint,
 } from '../routes/proxy/upstreamEndpoint.js';
-import { executeEndpointFlow, type BuiltEndpointRequest } from '../routes/proxy/endpointFlow.js';
+import { executeEndpointFlow, type BuiltEndpointRequest } from '../proxy-core/orchestration/endpointFlow.js';
 import type { schema } from '../db/index.js';
 
 export type RuntimeModelProbeStatus = 'supported' | 'unsupported' | 'inconclusive' | 'skipped';

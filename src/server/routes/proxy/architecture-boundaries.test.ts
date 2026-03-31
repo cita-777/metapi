@@ -104,6 +104,13 @@ describe('proxy route architecture boundaries', () => {
     expect(source).not.toContain('export function getUpstreamEndpointRuntimeStateSnapshot(');
   });
 
+  it('keeps endpoint flow orchestration owned by proxy-core instead of the route layer', () => {
+    const source = readSource('./endpointFlow.ts');
+    expect(source).toContain("from '../../proxy-core/orchestration/endpointFlow.js'");
+    expect(source).not.toContain('async function runEndpointFlowHook<');
+    expect(source).not.toContain('export async function executeEndpointFlow(');
+  });
+
   it('keeps gemini runtime closure in transformer-owned helpers', () => {
     const source = readSource('./gemini.ts');
     const surfaceSource = readSource('../../proxy-core/surfaces/geminiSurface.ts');

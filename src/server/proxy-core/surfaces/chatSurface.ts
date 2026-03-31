@@ -20,7 +20,7 @@ import {
   getDownstreamRoutingPolicy,
   recordDownstreamCostUsage,
 } from '../../routes/proxy/downstreamPolicy.js';
-import { executeEndpointFlow, type BuiltEndpointRequest } from '../../routes/proxy/endpointFlow.js';
+import { executeEndpointFlow, type BuiltEndpointRequest } from '../orchestration/endpointFlow.js';
 import { detectProxyFailure } from '../../routes/proxy/proxyFailureJudge.js';
 import { openAiChatTransformer } from '../../transformers/openai/chat/index.js';
 import { anthropicMessagesTransformer } from '../../transformers/anthropic/messages/index.js';

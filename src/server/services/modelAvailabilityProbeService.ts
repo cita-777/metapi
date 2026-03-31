@@ -385,9 +385,6 @@ export function startModelAvailabilityProbeScheduler(intervalMs = config.modelAv
     });
   }, safeIntervalMs);
   probeSchedulerTimer.unref?.();
-  void queueModelAvailabilityProbeTask({
-    title: '后台模型可用性探测',
-  });
   return {
     enabled: true,
     intervalMs: safeIntervalMs,

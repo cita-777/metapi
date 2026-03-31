@@ -3,6 +3,7 @@ import {
   rankConversationFileEndpoints,
   type ConversationFileInputSummary,
 } from '../../proxy-core/capabilities/conversationFileCapabilities.js';
+import type { UpstreamEndpoint } from '../../proxy-core/orchestration/upstreamRequest.js';
 import { resolveProviderProfile } from '../../proxy-core/providers/registry.js';
 import { config } from '../../config.js';
 import { fetchModelPricingCatalog } from '../../services/modelPricingService.js';
@@ -45,7 +46,7 @@ export {
   shouldPreferResponsesAfterLegacyChatError,
 };
 
-export type UpstreamEndpoint = 'chat' | 'messages' | 'responses';
+export type { UpstreamEndpoint } from '../../proxy-core/orchestration/upstreamRequest.js';
 export type EndpointPreference = DownstreamFormat | 'responses';
 
 type ChannelContext = {
