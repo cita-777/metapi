@@ -46,7 +46,7 @@ import {
 import { summarizeConversationFileInputsInOpenAiBody } from '../capabilities/conversationFileCapabilities.js';
 import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
 import { detectDownstreamClientContext } from '../../routes/proxy/downstreamClientContext.js';
-import { canRetryProxyChannel, getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
+import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 import {
   acquireSurfaceChannelLease,
   bindSurfaceStickyChannel,
@@ -72,6 +72,11 @@ import {
   safeUpdateSurfaceProxyDebugSelection,
   startSurfaceProxyDebugTrace,
 } from '../../services/proxyDebugTraceRuntime.js';
+import {
+  buildForcedChannelUnavailableMessage,
+  canRetryChannelSelection,
+  getTesterForcedChannelId,
+} from '../channelSelection.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -90,6 +95,32 @@ function prioritizeEndpointCandidate(
     preferred,
     ...candidates.filter((candidate) => candidate !== preferred),
   ];
+}
+
+function finalizeRetryAsUpstreamFailure(status: number, message: string) {
+  return {
+    action: 'respond' as const,
+    status,
+    payload: {
+      error: {
+        message,
+        type: 'upstream_error' as const,
+      },
+    },
+  };
+}
+
+function finalizeRetryAsExecutionFailure(message: string) {
+  return {
+    action: 'respond' as const,
+    status: 502,
+    payload: {
+      error: {
+        message: `Upstream error: ${message}`,
+        type: 'upstream_error' as const,
+      },
+    },
+  };
 }
 
 export async function handleChatSurfaceRequest(
@@ -120,6 +151,7 @@ export async function handleChatSurfaceRequest(
   } = requestEnvelope.parsed;
   if (!await ensureModelAllowedForDownstreamKey(request, reply, requestedModel)) return;
   const downstreamPolicy = getDownstreamRoutingPolicy(request);
+  const forcedChannelId = getTesterForcedChannelId(request.headers as Record<string, unknown>);
   const owner = getProxyResourceOwner(request);
   let resolvedOpenAiBody = upstreamBody;
   if (owner) {
@@ -199,19 +231,21 @@ export async function handleChatSurfaceRequest(
       excludeChannelIds,
       retryCount,
       stickySessionKey,
+      forcedChannelId,
     });
 
     if (!selected) {
+      const noChannelMessage = buildForcedChannelUnavailableMessage(forcedChannelId);
       await reportProxyAllFailed({
         model: requestedModel,
-        reason: 'No available channels after retries',
+        reason: forcedChannelId ? noChannelMessage : 'No available channels after retries',
       });
       const payload = {
-        error: { message: 'No available channels for this model', type: 'server_error' as const },
+        error: { message: noChannelMessage, type: 'server_error' as const },
       };
       await finalizeDebugFailure(503, payload, null);
       return reply.code(503).send({
-        error: { message: 'No available channels for this model', type: 'server_error' },
+        error: { message: noChannelMessage, type: 'server_error' },
       });
     }
 
@@ -361,7 +395,7 @@ export async function handleChatSurfaceRequest(
         errorMessage: busyMessage,
         retryCount,
       });
-      if (canRetryProxyChannel(retryCount)) {
+      if (canRetryChannelSelection(retryCount, forcedChannelId)) {
         retryCount += 1;
         continue;
       }
@@ -472,16 +506,21 @@ export async function handleChatSurfaceRequest(
           latencyMs: Date.now() - startTime,
           retryCount,
         });
-        if (failureOutcome.action === 'retry') {
+        const terminalFailureOutcome = failureOutcome.action === 'retry'
+          ? (canRetryChannelSelection(retryCount, forcedChannelId)
+            ? null
+            : finalizeRetryAsUpstreamFailure(endpointResult.status || 502, endpointResult.errText || 'unknown error'))
+          : failureOutcome;
+        if (!terminalFailureOutcome) {
           retryCount += 1;
           continue;
         }
         await finalizeDebugFailure(
-          failureOutcome.status,
-          failureOutcome.payload,
+          terminalFailureOutcome.status,
+          terminalFailureOutcome.payload,
           null,
         );
-        return reply.code(failureOutcome.status).send(failureOutcome.payload);
+        return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload);
       }
 
       const upstream = endpointResult.upstream;
@@ -651,16 +690,21 @@ export async function handleChatSurfaceRequest(
               totalTokens: parsedUsage.totalTokens,
               upstreamPath: successfulUpstreamPath,
             });
-            if (failureOutcome.action === 'retry') {
+            const terminalFailureOutcome = failureOutcome.action === 'retry'
+              ? (canRetryChannelSelection(retryCount, forcedChannelId)
+                ? null
+                : finalizeRetryAsUpstreamFailure(failure.status, failure.reason))
+              : failureOutcome;
+            if (!terminalFailureOutcome) {
               retryCount += 1;
               continue;
             }
             await finalizeDebugFailure(
-              failureOutcome.status,
-              failureOutcome.payload,
+              terminalFailureOutcome.status,
+              terminalFailureOutcome.payload,
               successfulUpstreamPath,
             );
-            return reply.code(failureOutcome.status).send(failureOutcome.payload);
+            return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload);
           }
 
           const streamResult = streamSession.consumeUpstreamFinalPayload(fallbackData, fallbackText, streamResponse);
@@ -848,16 +892,21 @@ export async function handleChatSurfaceRequest(
           totalTokens: parsedUsage.totalTokens,
           upstreamPath: successfulUpstreamPath,
         });
-        if (failureOutcome.action === 'retry') {
+        const terminalFailureOutcome = failureOutcome.action === 'retry'
+          ? (canRetryChannelSelection(retryCount, forcedChannelId)
+            ? null
+            : finalizeRetryAsUpstreamFailure(failure.status, failure.reason))
+          : failureOutcome;
+        if (!terminalFailureOutcome) {
           retryCount += 1;
           continue;
         }
         await finalizeDebugFailure(
-          failureOutcome.status,
-          failureOutcome.payload,
+          terminalFailureOutcome.status,
+          terminalFailureOutcome.payload,
           successfulUpstreamPath,
         );
-        return reply.code(failureOutcome.status).send(failureOutcome.payload);
+        return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload);
       }
       const normalizedFinal = downstreamTransformer.transformFinalResponse(upstreamData, modelName, rawText);
       const downstreamResponse = downstreamTransformer.serializeFinalResponse(normalizedFinal, parsedUsage);
@@ -905,16 +954,21 @@ export async function handleChatSurfaceRequest(
         latencyMs: Date.now() - startTime,
         retryCount,
       });
-      if (failureOutcome.action === 'retry') {
+      const terminalFailureOutcome = failureOutcome.action === 'retry'
+        ? (canRetryChannelSelection(retryCount, forcedChannelId)
+          ? null
+          : finalizeRetryAsExecutionFailure(err?.message || 'network failure'))
+        : failureOutcome;
+      if (!terminalFailureOutcome) {
         retryCount += 1;
         continue;
       }
       await finalizeDebugFailure(
-        failureOutcome.status,
-        failureOutcome.payload,
+        terminalFailureOutcome.status,
+        terminalFailureOutcome.payload,
         null,
       );
-      return reply.code(failureOutcome.status).send(failureOutcome.payload);
+      return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload);
       } finally {
         channelLease.release();
       }
@@ -976,6 +1030,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
     body: rawBody,
   });
   const downstreamPolicy = getDownstreamRoutingPolicy(request);
+  const forcedChannelId = getTesterForcedChannelId(request.headers as Record<string, unknown>);
   const downstreamApiKeyId = getProxyAuthContext(request)?.keyId ?? null;
   const maxRetries = getProxyMaxChannelRetries();
   const failureToolkit = createSurfaceFailureToolkit({
@@ -1034,18 +1089,20 @@ export async function handleClaudeCountTokensSurfaceRequest(
       excludeChannelIds,
       retryCount,
       stickySessionKey,
+      forcedChannelId,
     });
 
     if (!selected) {
+      const noChannelMessage = buildForcedChannelUnavailableMessage(forcedChannelId);
       await reportProxyAllFailed({
         model: requestedModel,
-        reason: 'No available channels after retries',
+        reason: forcedChannelId ? noChannelMessage : 'No available channels after retries',
       });
       await finalizeDebugFailure(503, {
-        error: { message: 'No available channels for this model', type: 'server_error' },
+        error: { message: noChannelMessage, type: 'server_error' },
       });
       return reply.code(503).send({
-        error: { message: 'No available channels for this model', type: 'server_error' },
+        error: { message: noChannelMessage, type: 'server_error' },
       });
     }
 
@@ -1090,7 +1147,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
       },
     });
     if (!endpointCandidates.includes('messages')) {
-      if (canRetryProxyChannel(retryCount)) {
+      if (canRetryChannelSelection(retryCount, forcedChannelId)) {
         retryCount += 1;
         continue;
       }
@@ -1128,7 +1185,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
         errorMessage: busyMessage,
         retryCount,
       });
-      if (canRetryProxyChannel(retryCount)) {
+      if (canRetryChannelSelection(retryCount, forcedChannelId)) {
         retryCount += 1;
         continue;
       }
@@ -1240,12 +1297,17 @@ export async function handleClaudeCountTokensSurfaceRequest(
           latencyMs: latency,
           retryCount,
         });
-        if (failureOutcome.action === 'retry') {
+        const terminalFailureOutcome = failureOutcome.action === 'retry'
+          ? (canRetryChannelSelection(retryCount, forcedChannelId)
+            ? null
+            : finalizeRetryAsUpstreamFailure(upstream.status, typeof payload === 'string' ? payload : JSON.stringify(payload)))
+          : failureOutcome;
+        if (!terminalFailureOutcome) {
           retryCount += 1;
           continue;
         }
-        await finalizeDebugFailure(failureOutcome.status, failureOutcome.payload, upstreamRequest.path);
-        return reply.code(failureOutcome.status).send(failureOutcome.payload);
+        await finalizeDebugFailure(terminalFailureOutcome.status, terminalFailureOutcome.payload, upstreamRequest.path);
+        return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload);
       }
 
       tokenRouter.recordSuccess(selected.channel.id, latency, 0, modelName);
@@ -1284,12 +1346,17 @@ export async function handleClaudeCountTokensSurfaceRequest(
         latencyMs: Date.now() - startTime,
         retryCount,
       });
-      if (failureOutcome.action === 'retry') {
+      const terminalFailureOutcome = failureOutcome.action === 'retry'
+        ? (canRetryChannelSelection(retryCount, forcedChannelId)
+          ? null
+          : finalizeRetryAsExecutionFailure(error?.message || 'network failure'))
+        : failureOutcome;
+      if (!terminalFailureOutcome) {
         retryCount += 1;
         continue;
       }
-      await finalizeDebugFailure(failureOutcome.status, failureOutcome.payload, null);
-      return reply.code(failureOutcome.status).send(failureOutcome.payload);
+      await finalizeDebugFailure(terminalFailureOutcome.status, terminalFailureOutcome.payload, null);
+      return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload);
     } finally {
       channelLease.release();
     }

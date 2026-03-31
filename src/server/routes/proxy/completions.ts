@@ -1,7 +1,6 @@
 ﻿import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { fetch } from 'undici';
 import { tokenRouter } from '../../services/tokenRouter.js';
-import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertService.js';
 import { isTokenExpiredError } from '../../services/alertRules.js';
 import { shouldRetryProxyRequest } from '../../services/proxyRetryPolicy.js';
@@ -18,7 +17,13 @@ import { getProxyAuthContext } from '../../middleware/auth.js';
 import { buildUpstreamUrl } from './upstreamUrl.js';
 import { detectDownstreamClientContext, type DownstreamClientContext } from './downstreamClientContext.js';
 import { insertProxyLog } from '../../services/proxyLogStore.js';
-import { canRetryProxyChannel, getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
+import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
+import {
+  buildForcedChannelUnavailableMessage,
+  canRetryChannelSelection,
+  getTesterForcedChannelId,
+  selectProxyChannelForAttempt,
+} from '../../proxy-core/channelSelection.js';
 
 export async function completionsProxyRoute(app: FastifyInstance) {
   app.post('/v1/completions', async (request: FastifyRequest, reply: FastifyReply) => {
@@ -29,6 +34,7 @@ export async function completionsProxyRoute(app: FastifyInstance) {
     }
     if (!await ensureModelAllowedForDownstreamKey(request, reply, requestedModel)) return;
     const downstreamPolicy = getDownstreamRoutingPolicy(request);
+    const forcedChannelId = getTesterForcedChannelId(request.headers as Record<string, unknown>);
     const downstreamApiKeyId = getProxyAuthContext(request)?.keyId ?? null;
     const downstreamPath = '/v1/completions';
     const clientContext = detectDownstreamClientContext({
@@ -42,22 +48,22 @@ export async function completionsProxyRoute(app: FastifyInstance) {
     let retryCount = 0;
 
     while (retryCount <= getProxyMaxChannelRetries()) {
-      let selected = retryCount === 0
-        ? await tokenRouter.selectChannel(requestedModel, downstreamPolicy)
-        : await tokenRouter.selectNextChannel(requestedModel, excludeChannelIds, downstreamPolicy);
-
-      if (!selected && retryCount === 0) {
-        await routeRefreshWorkflow.refreshModelsAndRebuildRoutes();
-        selected = await tokenRouter.selectChannel(requestedModel, downstreamPolicy);
-      }
+      const selected = await selectProxyChannelForAttempt({
+        requestedModel,
+        downstreamPolicy,
+        excludeChannelIds,
+        retryCount,
+        forcedChannelId,
+      });
 
       if (!selected) {
+        const noChannelMessage = buildForcedChannelUnavailableMessage(forcedChannelId);
         await reportProxyAllFailed({
           model: requestedModel,
-          reason: 'No available channels after retries',
+          reason: forcedChannelId ? noChannelMessage : 'No available channels after retries',
         });
         return reply.code(503).send({
-          error: { message: 'No available channels for this model', type: 'server_error' },
+          error: { message: noChannelMessage, type: 'server_error' },
         });
       }
 
@@ -112,7 +118,7 @@ export async function completionsProxyRoute(app: FastifyInstance) {
             });
           }
 
-          if (shouldRetryProxyRequest(upstream.status, errText) && canRetryProxyChannel(retryCount)) {
+          if (shouldRetryProxyRequest(upstream.status, errText) && canRetryChannelSelection(retryCount, forcedChannelId)) {
             retryCount++;
             continue;
           }
@@ -258,7 +264,7 @@ export async function completionsProxyRoute(app: FastifyInstance) {
             downstreamPath,
           );
 
-          if (shouldRetryProxyRequest(failure.status, errText) && canRetryProxyChannel(retryCount)) {
+          if (shouldRetryProxyRequest(failure.status, errText) && canRetryChannelSelection(retryCount, forcedChannelId)) {
             retryCount += 1;
             continue;
           }
@@ -341,7 +347,7 @@ export async function completionsProxyRoute(app: FastifyInstance) {
           clientContext,
           downstreamPath,
         );
-        if (canRetryProxyChannel(retryCount)) {
+        if (canRetryChannelSelection(retryCount, forcedChannelId)) {
           retryCount++;
           continue;
         }

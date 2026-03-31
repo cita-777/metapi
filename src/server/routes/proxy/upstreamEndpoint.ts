@@ -116,7 +116,7 @@ const BLOCKED_PASSTHROUGH_HEADERS = new Set([
 const ANTIGRAVITY_RUNTIME_USER_AGENT = 'antigravity/1.19.6 darwin/arm64';
 
 function shouldSkipPassthroughHeader(key: string): boolean {
-  return HOP_BY_HOP_HEADERS.has(key) || BLOCKED_PASSTHROUGH_HEADERS.has(key);
+  return HOP_BY_HOP_HEADERS.has(key) || BLOCKED_PASSTHROUGH_HEADERS.has(key) || key.startsWith('x-metapi-');
 }
 
 function extractSafePassthroughHeaders(

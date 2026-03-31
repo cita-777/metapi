@@ -232,6 +232,7 @@ type TestChatRequestPayload = {
   messages: Array<{ role: string; content: string }>;
   targetFormat?: 'openai' | 'claude' | 'responses' | 'gemini';
   stream?: boolean;
+  forcedChannelId?: number | null;
   temperature?: number;
   top_p?: number;
   max_tokens?: number;
@@ -257,6 +258,7 @@ export type ProxyTestRequestEnvelope = {
   stream?: boolean;
   jobMode?: boolean;
   rawMode?: boolean;
+  forcedChannelId?: number | null;
   jsonBody?: unknown;
   rawJsonText?: string;
   multipartFields?: Record<string, string>;

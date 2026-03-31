@@ -1,7 +1,6 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { fetch } from 'undici';
 import { tokenRouter } from '../../services/tokenRouter.js';
-import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertService.js';
 import { isTokenExpiredError } from '../../services/alertRules.js';
 import { estimateProxyCost } from '../../services/modelPricingService.js';
@@ -17,7 +16,13 @@ import {
   refreshProxyVideoTaskSnapshot,
   saveProxyVideoTask,
 } from '../../services/proxyVideoTaskStore.js';
-import { canRetryProxyChannel, getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
+import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
+import {
+  buildForcedChannelUnavailableMessage,
+  canRetryChannelSelection,
+  getTesterForcedChannelId,
+  selectProxyChannelForAttempt,
+} from '../../proxy-core/channelSelection.js';
 
 function rewriteVideoResponsePublicId(payload: unknown, publicId: string): unknown {
   if (!payload || typeof payload !== 'object') return payload;
@@ -47,26 +52,27 @@ export async function videosProxyRoute(app: FastifyInstance) {
     if (!await ensureModelAllowedForDownstreamKey(request, reply, requestedModel)) return;
 
     const downstreamPolicy = getDownstreamRoutingPolicy(request);
+    const forcedChannelId = getTesterForcedChannelId(request.headers as Record<string, unknown>);
     const excludeChannelIds: number[] = [];
     let retryCount = 0;
 
     while (retryCount <= getProxyMaxChannelRetries()) {
-      let selected = retryCount === 0
-        ? await tokenRouter.selectChannel(requestedModel, downstreamPolicy)
-        : await tokenRouter.selectNextChannel(requestedModel, excludeChannelIds, downstreamPolicy);
-
-      if (!selected && retryCount === 0) {
-        await routeRefreshWorkflow.refreshModelsAndRebuildRoutes();
-        selected = await tokenRouter.selectChannel(requestedModel, downstreamPolicy);
-      }
+      const selected = await selectProxyChannelForAttempt({
+        requestedModel,
+        downstreamPolicy,
+        excludeChannelIds,
+        retryCount,
+        forcedChannelId,
+      });
 
       if (!selected) {
+        const noChannelMessage = buildForcedChannelUnavailableMessage(forcedChannelId);
         await reportProxyAllFailed({
           model: requestedModel,
-          reason: 'No available channels after retries',
+          reason: forcedChannelId ? noChannelMessage : 'No available channels after retries',
         });
         return reply.code(503).send({
-          error: { message: 'No available channels for this model', type: 'server_error' },
+          error: { message: noChannelMessage, type: 'server_error' },
         });
       }
 
@@ -115,7 +121,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
               detail: `HTTP ${upstream.status}`,
             });
           }
-          if (shouldRetryProxyRequest(upstream.status, text) && canRetryProxyChannel(retryCount)) {
+          if (shouldRetryProxyRequest(upstream.status, text) && canRetryChannelSelection(retryCount, forcedChannelId)) {
             retryCount += 1;
             continue;
           }
@@ -170,7 +176,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
           errorText: error?.message || 'network failure',
           modelName: upstreamModel,
         }));
-        if (canRetryProxyChannel(retryCount)) {
+        if (canRetryChannelSelection(retryCount, forcedChannelId)) {
           retryCount += 1;
           continue;
         }

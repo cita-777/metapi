@@ -1,4 +1,3 @@
-import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { resolveChannelProxyUrl, withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
 import type { SiteProxyConfigLike } from '../../services/siteProxy.js';
@@ -19,6 +18,7 @@ import { recordOauthQuotaResetHint } from '../../services/oauth/quota.js';
 import { refreshOauthAccessTokenSingleflight } from '../../services/oauth/refreshSingleflight.js';
 import { proxyChannelCoordinator } from '../../services/proxyChannelCoordinator.js';
 import { readRuntimeResponseText } from '../executors/types.js';
+import { selectProxyChannelForAttempt } from '../channelSelection.js';
 
 type SelectedChannel = Awaited<ReturnType<typeof tokenRouter.selectChannel>>;
 type SurfaceWarningScope = 'chat' | 'responses';
@@ -107,44 +107,9 @@ export async function selectSurfaceChannelForAttempt(input: {
   excludeChannelIds: number[];
   retryCount: number;
   stickySessionKey?: string | null;
+  forcedChannelId?: number | null;
 }): Promise<SelectedChannel> {
-  let selected: SelectedChannel = null;
-
-  if (input.retryCount === 0 && input.stickySessionKey) {
-    const preferredChannelId = proxyChannelCoordinator.getStickyChannelId(input.stickySessionKey);
-    if (preferredChannelId && !input.excludeChannelIds.includes(preferredChannelId)) {
-      selected = await tokenRouter.selectPreferredChannel(
-        input.requestedModel,
-        preferredChannelId,
-        input.downstreamPolicy,
-        input.excludeChannelIds,
-      );
-      if (!selected) {
-        proxyChannelCoordinator.clearStickyChannel(input.stickySessionKey, preferredChannelId);
-      }
-    }
-  }
-
-  if (!selected) {
-    selected = input.retryCount === 0
-      ? await tokenRouter.selectChannel(input.requestedModel, input.downstreamPolicy)
-      : await tokenRouter.selectNextChannel(
-        input.requestedModel,
-        input.excludeChannelIds,
-        input.downstreamPolicy,
-      );
-  }
-
-  if (!selected && input.retryCount === 0) {
-    try {
-      await routeRefreshWorkflow.refreshModelsAndRebuildRoutes();
-    } catch (error) {
-      console.warn('[proxy/surface] failed to refresh routes after empty selection', error);
-    }
-    selected = await tokenRouter.selectChannel(input.requestedModel, input.downstreamPolicy);
-  }
-
-  return selected;
+  return await selectProxyChannelForAttempt(input);
 }
 
 export function buildSurfaceStickySessionKey(input: {

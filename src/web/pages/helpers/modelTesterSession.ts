@@ -93,6 +93,7 @@ export type TesterProxyEnvelope = {
   stream: boolean;
   jobMode: boolean;
   rawMode: boolean;
+  forcedChannelId?: number | null;
   jsonBody?: unknown;
   rawJsonText?: string;
   multipartFields?: Record<string, string>;
@@ -146,6 +147,7 @@ export type ModelTesterSessionState = {
   conversationFiles: ConversationDraftFile[];
   pendingPayload: TesterProxyEnvelope | null;
   pendingJobId?: string | null;
+  forcedChannelId?: number | null;
   customRequestMode: boolean;
   customRequestBody: string;
   showDebugPanel: boolean;
@@ -231,6 +233,13 @@ const toNullableFiniteNumber = (value: unknown): number | null => {
   if (value === null || value === undefined || value === '') return null;
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   return null;
+};
+
+const toPositiveInteger = (value: unknown): number | null => {
+  const parsed = toNullableFiniteNumber(value);
+  if (parsed === null) return null;
+  const normalized = Math.trunc(parsed);
+  return normalized > 0 ? normalized : null;
 };
 
 const sanitizeString = (value: unknown, fallback = ''): string =>
@@ -838,6 +847,8 @@ const parsePendingPayload = (
 
     if ('jsonBody' in value) pending.jsonBody = value.jsonBody;
     if (typeof value.rawJsonText === 'string') pending.rawJsonText = value.rawJsonText;
+    const forcedChannelId = toPositiveInteger(value.forcedChannelId);
+    if (forcedChannelId !== null) pending.forcedChannelId = forcedChannelId;
     if (isRecord(value.multipartFields)) {
       pending.multipartFields = Object.fromEntries(
         Object.entries(value.multipartFields)
@@ -1152,6 +1163,7 @@ export const parseModelTesterSession = (raw: string | null): ModelTesterSessionS
     pendingPayload: parsePendingPayload(parsed.pendingPayload, inputs, parameterEnabled),
     customRequestMode: toBoolean(parsed.customRequestMode, false),
     customRequestBody: typeof parsed.customRequestBody === 'string' ? parsed.customRequestBody : '',
+    forcedChannelId: toPositiveInteger(parsed.forcedChannelId),
     showDebugPanel: toBoolean(parsed.showDebugPanel, false),
     activeDebugTab: typeof parsed.activeDebugTab === 'string' && VALID_DEBUG_TABS.has(parsed.activeDebugTab)
       ? parsed.activeDebugTab as DebugTab
@@ -1341,6 +1353,23 @@ export const buildApiPayload = (
 ): TesterProxyEnvelope =>
   buildConversationRequestEnvelope(messages, inputs, parameterEnabled);
 
+export const attachForcedChannelToEnvelope = (
+  envelope: TesterProxyEnvelope,
+  forcedChannelId?: number | null,
+): TesterProxyEnvelope => {
+  const normalizedForcedChannelId = toPositiveInteger(forcedChannelId);
+  if (normalizedForcedChannelId === null) {
+    if (!('forcedChannelId' in envelope)) return envelope;
+    const { forcedChannelId: _forcedChannelId, ...rest } = envelope;
+    return rest;
+  }
+
+  return {
+    ...envelope,
+    forcedChannelId: normalizedForcedChannelId,
+  };
+};
+
 export const parseCustomRequestBody = (raw: string): Record<string, unknown> | null => {
   if (!raw.trim()) return null;
   try {
@@ -1496,4 +1525,3 @@ export const findLastLoadingAssistantIndex = (messages: ChatMessage[]): number =
 
 export const countConversationTurns = (messages: ChatMessage[]): number =>
   messages.reduce((turns, message) => turns + (message.role === 'user' ? 1 : 0), 0);
-

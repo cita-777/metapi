@@ -206,6 +206,57 @@ describe('selectSurfaceChannelForAttempt', () => {
     expect(clearStickyChannelMock).not.toHaveBeenCalled();
   });
 
+  it('uses the forced tester channel before sticky or automatic selection', async () => {
+    const selected = { channel: { id: 88 } };
+    selectPreferredChannelMock.mockResolvedValueOnce(selected);
+
+    const { selectSurfaceChannelForAttempt } = await import('./sharedSurface.js');
+    const result = await selectSurfaceChannelForAttempt({
+      requestedModel: 'gpt-5.2',
+      downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
+      excludeChannelIds: [],
+      retryCount: 0,
+      stickySessionKey: 'sticky-session',
+      forcedChannelId: 88,
+    });
+
+    expect(result).toBe(selected);
+    expect(selectPreferredChannelMock).toHaveBeenCalledWith(
+      'gpt-5.2',
+      88,
+      EMPTY_DOWNSTREAM_ROUTING_POLICY,
+      [],
+    );
+    expect(getStickyChannelIdMock).not.toHaveBeenCalled();
+    expect(selectChannelMock).not.toHaveBeenCalled();
+    expect(selectNextChannelMock).not.toHaveBeenCalled();
+    expect(refreshModelsAndRebuildRoutesMock).not.toHaveBeenCalled();
+  });
+
+  it('does not refresh or fall back when the forced tester channel is unavailable', async () => {
+    selectPreferredChannelMock.mockResolvedValueOnce(null);
+
+    const { selectSurfaceChannelForAttempt } = await import('./sharedSurface.js');
+    const result = await selectSurfaceChannelForAttempt({
+      requestedModel: 'gpt-5.2',
+      downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
+      excludeChannelIds: [],
+      retryCount: 0,
+      forcedChannelId: 91,
+    });
+
+    expect(result).toBeNull();
+    expect(selectPreferredChannelMock).toHaveBeenCalledWith(
+      'gpt-5.2',
+      91,
+      EMPTY_DOWNSTREAM_ROUTING_POLICY,
+      [],
+    );
+    expect(selectChannelMock).not.toHaveBeenCalled();
+    expect(selectNextChannelMock).not.toHaveBeenCalled();
+    expect(refreshModelsAndRebuildRoutesMock).not.toHaveBeenCalled();
+  });
+
   it('clears stale sticky bindings and falls back to regular selection when the preferred channel is unavailable', async () => {
     const selected = { channel: { id: 22 } };
     getStickyChannelIdMock.mockReturnValueOnce(55);
