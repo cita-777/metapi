@@ -23,6 +23,7 @@ export type SiteSavePayload = {
   url: string;
   externalCheckinUrl: string;
   platform: string;
+  initializationPresetId?: string | null;
   proxyUrl: string;
   useSystemProxy: boolean;
   customHeaders: string;

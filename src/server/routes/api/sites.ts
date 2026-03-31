@@ -7,6 +7,7 @@ import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { invalidateTokenRouterCache } from '../../services/tokenRouter.js';
 import { parseSiteCustomHeadersInput } from '../../services/siteCustomHeaders.js';
 import { getSub2ApiSubscriptionFromExtraConfig } from '../../services/accountExtraConfig.js';
+import { getSiteInitializationPreset } from '../../../shared/siteInitializationPresets.js';
 
 function normalizeSiteStatus(input: unknown): 'active' | 'disabled' | null {
   if (input === undefined || input === null) return null;
@@ -280,6 +281,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     name: string;
     url: string;
     platform?: string;
+    initializationPresetId?: string | null;
     proxyUrl?: string | null;
     useSystemProxy?: boolean;
     customHeaders?: string | null;
@@ -289,7 +291,32 @@ export async function sitesRoutes(app: FastifyInstance) {
     sortOrder?: number;
     globalWeight?: number;
   } }>('/api/sites', async (request, reply) => {
-    const { name, url, platform, proxyUrl, useSystemProxy, customHeaders, externalCheckinUrl, status, isPinned, sortOrder, globalWeight } = request.body;
+    if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body)) {
+      return reply.code(400).send({ error: 'Invalid site payload. Expected object.' });
+    }
+    const {
+      name,
+      url,
+      platform,
+      initializationPresetId,
+      proxyUrl,
+      useSystemProxy,
+      customHeaders,
+      externalCheckinUrl,
+      status,
+      isPinned,
+      sortOrder,
+      globalWeight,
+    } = request.body;
+    if (typeof name !== 'string' || !name.trim()) {
+      return reply.code(400).send({ error: 'Invalid name. Expected non-empty string.' });
+    }
+    if (typeof url !== 'string' || !url.trim()) {
+      return reply.code(400).send({ error: 'Invalid url. Expected non-empty string.' });
+    }
+    if (platform !== undefined && typeof platform !== 'string') {
+      return reply.code(400).send({ error: 'Invalid platform. Expected string.' });
+    }
     const normalizedStatus = normalizeSiteStatus(status);
     if (status !== undefined && !normalizedStatus) {
       return reply.code(400).send({ error: 'Invalid site status. Expected active or disabled.' });
@@ -322,15 +349,30 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (!normalizedCustomHeaders.valid) {
       return reply.code(400).send({ error: normalizedCustomHeaders.error || 'Invalid customHeaders.' });
     }
+    const explicitInitializationPreset = initializationPresetId == null || initializationPresetId === ''
+      ? null
+      : getSiteInitializationPreset(initializationPresetId);
+    if (initializationPresetId != null && initializationPresetId !== '' && !explicitInitializationPreset) {
+      return reply.code(400).send({ error: 'Invalid initializationPresetId.' });
+    }
 
     const existingSites = await db.select().from(schema.sites).all();
     const maxSortOrder = existingSites.reduce((max, site) => Math.max(max, site.sortOrder || 0), -1);
     const normalizedUrl = normalizeSiteUrl(url);
 
     let detectedPlatform = platform;
+    let responseInitializationPresetId: string | null = explicitInitializationPreset?.id || null;
     if (!detectedPlatform) {
-      const detected = await detectSite(url);
-      detectedPlatform = detected?.platform;
+      if (explicitInitializationPreset) {
+        detectedPlatform = explicitInitializationPreset.platform;
+      } else {
+        const detected = await detectSite(url);
+        detectedPlatform = detected?.platform;
+        responseInitializationPresetId = detected?.initializationPresetId || null;
+      }
+    }
+    if (explicitInitializationPreset && explicitInitializationPreset.platform !== detectedPlatform) {
+      return reply.code(400).send({ error: 'initializationPresetId does not match the selected platform.' });
     }
     if (!detectedPlatform) {
       return { error: 'Could not detect platform. Please specify manually.' };
@@ -370,7 +412,10 @@ export async function sitesRoutes(app: FastifyInstance) {
       return reply.code(500).send({ error: 'Create site failed' });
     }
     invalidateSiteCaches();
-    return result;
+    return {
+      ...result,
+      ...(responseInitializationPresetId ? { initializationPresetId: responseInitializationPresetId } : {}),
+    };
   });
 
   // Update a site
@@ -398,7 +443,19 @@ export async function sitesRoutes(app: FastifyInstance) {
     }
 
     const updates: any = {};
+    if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body)) {
+      return reply.code(400).send({ error: 'Invalid site payload. Expected object.' });
+    }
     const body = request.body;
+    if (body.name !== undefined && (typeof body.name !== 'string' || !body.name.trim())) {
+      return reply.code(400).send({ error: 'Invalid name. Expected non-empty string.' });
+    }
+    if (body.url !== undefined && (typeof body.url !== 'string' || !body.url.trim())) {
+      return reply.code(400).send({ error: 'Invalid url. Expected non-empty string.' });
+    }
+    if (body.platform !== undefined && typeof body.platform !== 'string') {
+      return reply.code(400).send({ error: 'Invalid platform. Expected string.' });
+    }
     const normalizedStatus = normalizeSiteStatus(body.status);
     if (body.status !== undefined && !normalizedStatus) {
       return reply.code(400).send({ error: 'Invalid site status. Expected active or disabled.' });

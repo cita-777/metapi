@@ -27,6 +27,10 @@ import {
   type SiteEditorState,
   type SiteForm,
 } from './helpers/sitesEditor.js';
+import {
+  getSiteInitializationPreset,
+  listSiteInitializationPresets,
+} from '../../shared/siteInitializationPresets.js';
 
 type SiteSubscriptionSummary = {
   activeCount: number;
@@ -176,18 +180,18 @@ const platformColors: Record<string, string> = {
 
 const SITE_PLATFORM_OPTIONS = [
   { value: '', label: '平台类型（可自动检测）' },
-  { value: 'new-api', label: 'new-api' },
-  { value: 'one-api', label: 'one-api' },
-  { value: 'anyrouter', label: 'anyrouter' },
-  { value: 'veloera', label: 'veloera' },
-  { value: 'one-hub', label: 'one-hub' },
-  { value: 'done-hub', label: 'done-hub' },
-  { value: 'sub2api', label: 'sub2api' },
-  { value: 'openai', label: 'openai' },
-  { value: 'codex', label: 'codex' },
-  { value: 'claude', label: 'claude' },
-  { value: 'gemini', label: 'gemini' },
-  { value: 'cliproxyapi', label: 'cliproxyapi' },
+  { value: 'new-api', label: 'new-api', description: '聚合面板，适合多渠道统一管理' },
+  { value: 'one-api', label: 'one-api', description: '经典聚合面板，常见于通用 OpenAI 中转' },
+  { value: 'anyrouter', label: 'anyrouter', description: 'any大善人今天还能用吗' },
+  { value: 'veloera', label: 'veloera', description: 'Veloera 兼容站点，常见于聚合代理场景' },
+  { value: 'one-hub', label: 'one-hub', description: '聚合面板，偏向多账号统一管理' },
+  { value: 'done-hub', label: 'done-hub', description: '聚合面板，适合统一转发与管理' },
+  { value: 'sub2api', label: 'sub2api', description: '订阅式中转面板，可同步套餐与余额信息' },
+  { value: 'openai', label: 'openai', description: '通用 OpenAI 兼容接口，手填 Base URL 即可' },
+  { value: 'codex', label: 'codex', description: 'Codex OAuth / Session 优先入口' },
+  { value: 'claude', label: 'claude', description: '通用 Claude / Anthropic 兼容接口' },
+  { value: 'gemini', label: 'gemini', description: '通用 Gemini / Google AI 兼容接口' },
+  { value: 'cliproxyapi', label: 'cliproxyapi', description: 'CPA接入口' },
 ];
 
 export default function Sites() {
@@ -211,7 +215,9 @@ export default function Sites() {
     id: number;
     name: string;
     platform?: string | null;
+    initializationPresetId?: string | null;
   } | null>(null);
+  const [selectedInitializationPresetId, setSelectedInitializationPresetId] = useState<string | null>(null);
   const isMobile = useIsMobile();
   const [showMobileTools, setShowMobileTools] = useState(false);
   const [batchActionLoading, setBatchActionLoading] = useState(false);
@@ -232,6 +238,11 @@ export default function Sites() {
   const [disabledModelsSaving, setDisabledModelsSaving] = useState(false);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [disabledModelSearch, setDisabledModelSearch] = useState('');
+  const initializationPresetOptions = useMemo(() => listSiteInitializationPresets(), []);
+  const selectedInitializationPreset = useMemo(
+    () => getSiteInitializationPreset(selectedInitializationPresetId),
+    [selectedInitializationPresetId],
+  );
 
   const disabledModelSet = useMemo(() => new Set(disabledModels), [disabledModels]);
 
@@ -298,14 +309,28 @@ export default function Sites() {
 
   const platformOptions = useMemo(() => {
     const current = form.platform.trim();
-    if (!current || SITE_PLATFORM_OPTIONS.some((option) => option.value === current)) {
-      return SITE_PLATFORM_OPTIONS;
-    }
+    const genericOptions = (!current || SITE_PLATFORM_OPTIONS.some((option) => option.value === current))
+      ? SITE_PLATFORM_OPTIONS
+      : [
+        ...SITE_PLATFORM_OPTIONS,
+        { value: current, label: `${current}（当前值）` },
+      ];
+    const presetOptions = initializationPresetOptions.map((preset) => ({
+      value: `preset:${preset.id}`,
+      label: preset.label,
+      description: [
+        preset.defaultUrl ? '自动填充官方地址' : '',
+        preset.recommendedSkipModelFetch ? 'API Key 优先初始化' : '',
+      ].filter(Boolean).join(' · '),
+    }));
     return [
-      ...SITE_PLATFORM_OPTIONS,
-      { value: current, label: `${current}（当前值）` },
+      genericOptions[0]!,
+      ...presetOptions,
+      ...genericOptions.slice(1),
     ];
-  }, [form.platform]);
+  }, [form.platform, initializationPresetOptions]);
+  const activeInitializationPreset = selectedInitializationPreset;
+  const platformSelectValue = selectedInitializationPreset ? `preset:${selectedInitializationPreset.id}` : form.platform;
 
   useEffect(() => {
     return () => {
@@ -339,6 +364,7 @@ export default function Sites() {
   const closeEditor = () => {
     setEditor(null);
     setForm(emptySiteForm());
+    setSelectedInitializationPresetId(null);
   };
 
   const scrollToEditorTop = () => {
@@ -355,12 +381,14 @@ export default function Sites() {
     }
     setEditor({ mode: 'add' });
     setForm(emptySiteForm());
+    setSelectedInitializationPresetId(null);
     scrollToEditorTop();
   };
 
   const openEdit = (site: SiteRow) => {
     setEditor({ mode: 'edit', editingSiteId: site.id });
     setForm(siteFormFromSite(site));
+    setSelectedInitializationPresetId(null);
     scrollToEditorTop();
     // Load disabled models and discovered models independently so a best-effort
     // availability fetch cannot wipe the existing disabled-model state.
@@ -448,6 +476,7 @@ export default function Sites() {
       url: form.url.trim(),
       externalCheckinUrl: form.externalCheckinUrl.trim(),
       platform: form.platform.trim(),
+      initializationPresetId: selectedInitializationPresetId,
       proxyUrl: form.proxyUrl.trim(),
       useSystemProxy: !!form.useSystemProxy,
       customHeaders: serializedCustomHeaders.customHeaders,
@@ -466,14 +495,18 @@ export default function Sites() {
         toast.success(`站点 "${payload.name}" 已添加`);
         const createdSiteId = Number(created?.id) || 0;
         if (createdSiteId > 0) {
-          // 所有平台都弹出选择Modal，让用户决定下一步
           const createdPlatform = typeof created?.platform === 'string' && created.platform.trim()
             ? created.platform.trim()
             : payload.platform;
+          const returnedPreset = getSiteInitializationPreset(created?.initializationPresetId);
+          const fallbackPreset = selectedInitializationPreset && selectedInitializationPreset.platform === createdPlatform
+            ? selectedInitializationPreset
+            : null;
           setCreatedSiteForChoice({
             id: createdSiteId,
             name: payload.name,
             platform: createdPlatform,
+            initializationPresetId: returnedPreset?.id || fallbackPreset?.id || null,
           });
         }
       } else {
@@ -526,6 +559,9 @@ export default function Sites() {
       create: '1',
       siteId: String(siteId),
     });
+    if (createdSiteForChoice.initializationPresetId) {
+      params.set('initPreset', createdSiteForChoice.initializationPresetId);
+    }
 
     if (choice === 'session') {
       // codex平台使用OAuth流程
@@ -557,8 +593,19 @@ export default function Sites() {
     try {
       const result = await api.detectSite(form.url.trim());
       if (result?.platform) {
+        const detectedPreset = getSiteInitializationPreset(result?.initializationPresetId);
         setForm((prev) => ({ ...prev, platform: result.platform }));
-        toast.success(`检测到平台: ${result.platform}`);
+        setSelectedInitializationPresetId((current) => {
+          if (detectedPreset) return detectedPreset.id;
+          const activePreset = getSiteInitializationPreset(current);
+          if (activePreset && activePreset.platform !== result.platform) return null;
+          return current;
+        });
+        toast.success(
+          detectedPreset
+            ? `检测到平台: ${result.platform}（${detectedPreset.label}）`
+            : `检测到平台: ${result.platform}`,
+        );
       } else {
         toast.error(result?.error || '无法识别平台类型');
       }
@@ -833,6 +880,11 @@ export default function Sites() {
         <SiteCreatedModal
           siteName={createdSiteForChoice.name}
           platform={createdSiteForChoice.platform}
+          initializationPresetId={createdSiteForChoice.initializationPresetId}
+          initialSegment={
+            getSiteInitializationPreset(createdSiteForChoice.initializationPresetId)?.initialSegment
+            || resolveInitialConnectionSegment(createdSiteForChoice.platform)
+          }
           onChoice={handleSiteCreatedChoice}
           onClose={() => {
             setCreatedSiteForChoice(null);
@@ -904,15 +956,35 @@ export default function Sites() {
             </div>
             <div
               style={{
-                border: `1px solid ${form.platform.trim() ? 'color-mix(in srgb, var(--color-success) 48%, transparent)' : 'var(--color-border)'}`,
+                border: `1px solid ${form.platform.trim() ? 'color-mix(in srgb, var(--color-primary) 28%, var(--color-border))' : 'var(--color-border)'}`,
                 borderRadius: 'var(--radius-sm)',
-                background: form.platform.trim() ? 'color-mix(in srgb, var(--color-success) 10%, var(--color-bg))' : 'var(--color-bg)',
-                transition: 'all 0.2s',
+                background: 'var(--color-bg)',
+                boxShadow: form.platform.trim() ? '0 0 0 2px color-mix(in srgb, var(--color-primary) 10%, transparent)' : 'none',
+                transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
               }}
             >
               <ModernSelect
-                value={form.platform}
-                onChange={(value) => setForm((prev) => ({ ...prev, platform: value }))}
+                value={platformSelectValue}
+                onChange={(value) => {
+                  if (value.startsWith('preset:')) {
+                    const preset = getSiteInitializationPreset(value.slice('preset:'.length));
+                    if (!preset) return;
+                    setSelectedInitializationPresetId(preset.id);
+                    setForm((prev) => {
+                      const currentUrl = prev.url.trim();
+                      const shouldFillDefaultUrl = !currentUrl
+                        || (activeInitializationPreset?.defaultUrl && currentUrl === activeInitializationPreset.defaultUrl);
+                      return {
+                        ...prev,
+                        platform: preset.platform,
+                        url: shouldFillDefaultUrl && preset.defaultUrl ? preset.defaultUrl : prev.url,
+                      };
+                    });
+                    return;
+                  }
+                  setForm((prev) => ({ ...prev, platform: value }));
+                  setSelectedInitializationPresetId(null);
+                }}
                 options={platformOptions}
                 placeholder="平台类型（可自动检测）"
               />
@@ -924,6 +996,16 @@ export default function Sites() {
               style={formInputStyle}
             />
           </ResponsiveFormGrid>
+          {activeInitializationPreset && (
+            <div className="alert alert-info animate-scale-in">
+              <div className="alert-title">已应用官方预设 · {activeInitializationPreset.label}</div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.7 }}>
+                <div>{activeInitializationPreset.description}</div>
+                <div>当前已自动填入官方地址；如需走自建网关，也可以直接改 URL。</div>
+                <div>推荐模型：{activeInitializationPreset.recommendedModels.join(' / ')}</div>
+              </div>
+            </div>
+          )}
           <div
             style={{
               display: 'flex',

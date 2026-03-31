@@ -259,4 +259,167 @@ describe('sites proxy settings', () => {
     expect(response.statusCode).toBe(400);
     expect((response.json() as { error?: string }).error).toContain('must use a string value');
   });
+
+  it('rejects create payloads whose name is not a string', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 123,
+        url: 'https://typed-site.example.com',
+        platform: 'new-api',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { error?: string }).error).toContain('Invalid name');
+  });
+
+  it('rejects update payloads whose url is not a string', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'typed-site',
+        url: 'https://typed-site.example.com',
+        platform: 'new-api',
+      },
+    });
+    expect(created.statusCode).toBe(200);
+    const site = created.json() as { id: number };
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${site.id}`,
+      payload: {
+        url: 123,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { error?: string }).error).toContain('Invalid url');
+  });
+
+  it('rejects create payloads that are not objects', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: null,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { error?: string }).error).toContain('Invalid site payload');
+  });
+
+  it('rejects update payloads that are not objects', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'typed-site',
+        url: 'https://typed-site.example.com',
+        platform: 'new-api',
+      },
+    });
+    expect(created.statusCode).toBe(200);
+    const site = created.json() as { id: number };
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${site.id}`,
+      payload: null,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { error?: string }).error).toContain('Invalid site payload');
+  });
+
+  it('detects Aliyun CodingPlan endpoints with initialization preset metadata', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites/detect',
+      payload: {
+        url: 'https://coding.dashscope.aliyuncs.com/v1',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      platform: 'openai',
+      initializationPresetId: 'codingplan-openai',
+    });
+  });
+
+  it('creates CodingPlan sites without explicit platform by using preset-backed detection', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'Aliyun CodingPlan',
+        url: 'https://coding.dashscope.aliyuncs.com/v1',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      name: 'Aliyun CodingPlan',
+      platform: 'openai',
+      initializationPresetId: 'codingplan-openai',
+    });
+  });
+
+  it('does not force CodingPlan preset metadata when the user explicitly chooses generic openai', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'Aliyun Generic OpenAI',
+        url: 'https://coding.dashscope.aliyuncs.com/v1',
+        platform: 'openai',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      name: 'Aliyun Generic OpenAI',
+      platform: 'openai',
+    });
+    expect(response.json()).not.toHaveProperty('initializationPresetId');
+  });
+
+  it('preserves explicit preset metadata even when the preset uses a custom gateway url', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'Aliyun CodingPlan Gateway',
+        url: 'https://gateway.example.com/coding/v1',
+        platform: 'openai',
+        initializationPresetId: 'codingplan-openai',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      name: 'Aliyun CodingPlan Gateway',
+      platform: 'openai',
+      initializationPresetId: 'codingplan-openai',
+    });
+  });
+
+  it('detects Zhipu Coding Plan OpenAI endpoint with initialization preset metadata', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites/detect',
+      payload: {
+        url: 'https://open.bigmodel.cn/api/coding/paas/v4',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      platform: 'openai',
+      initializationPresetId: 'zhipu-coding-plan-openai',
+    });
+  });
 });

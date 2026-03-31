@@ -10,6 +10,7 @@ describe('defaultConnectionSegment', () => {
     expect(resolveInitialConnectionSegment('one-hub')).toBe('session');
     expect(resolveInitialConnectionSegment('done-hub')).toBe('session');
     expect(resolveInitialConnectionSegment('sub2api')).toBe('session');
+    expect(resolveInitialConnectionSegment('codex')).toBe('session');
   });
 
   it('maps API-key-only platforms to the apikey segment', () => {
