@@ -27,18 +27,14 @@ export default function SiteCreatedModal({ siteName, platform, onChoice, onClose
     };
   }, []);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      onChoice('later');
-    }
-  };
-
   return (
     <dialog
       ref={dialogRef}
       className="modal"
-      onKeyDown={handleKeyDown}
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
       onClick={(e) => {
         if (e.target === dialogRef.current) {
           onChoice('later');
