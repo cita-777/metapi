@@ -27,9 +27,9 @@ function extractJsonErrorMessage(rawText: string): string {
 }
 
 function extractHtmlTitle(rawText: string): string {
-  const match = rawText.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const match = rawText.match(/<title[^>]*>([^<>]*)<\/title>/i);
   if (!match?.[1]) return '';
-  return collapseWhitespace(match[1].replace(/<[^>]+>/g, ''));
+  return collapseWhitespace(match[1]);
 }
 
 function extractCloudflareHtmlSummary(rawText: string, status: number): string {
@@ -57,8 +57,8 @@ function extractHtmlSummary(rawText: string, status: number): string {
   const title = extractHtmlTitle(rawText);
   if (title) return title;
 
-  const heading = rawText.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1] || '';
-  return collapseWhitespace(heading.replace(/<[^>]+>/g, ''));
+  const heading = rawText.match(/<h1[^>]*>([^<>]*)<\/h1>/i)?.[1] || '';
+  return collapseWhitespace(heading);
 }
 
 function formatUrlOrigin(url: URL): string {
