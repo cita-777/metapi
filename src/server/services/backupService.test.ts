@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { eq } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 
 type DbModule = typeof import('../db/index.js');
 type BackupServiceModule = typeof import('./backupService.js');
@@ -155,6 +155,19 @@ describe('backupService', () => {
       createdAt: now,
     }).run();
 
+    await db.insert(schema.siteApiEndpoints).values({
+      siteId: site.id,
+      url: 'https://api-roundtrip.example.com',
+      enabled: true,
+      sortOrder: 0,
+      cooldownUntil: null,
+      lastSelectedAt: now,
+      lastFailedAt: null,
+      lastFailureReason: null,
+      createdAt: now,
+      updatedAt: now,
+    }).run();
+
     await db.insert(schema.modelAvailability).values([
       {
         accountId: account.id,
@@ -198,6 +211,15 @@ describe('backupService', () => {
     expect(exported.version).toBe('2.1');
     expect(exported.accounts.siteDisabledModels).toEqual([
       { siteId: site.id, modelName: 'gpt-hidden' },
+    ]);
+    expect(exported.accounts.siteApiEndpoints).toEqual([
+      expect.objectContaining({
+        siteId: site.id,
+        url: 'https://api-roundtrip.example.com',
+        enabled: true,
+        sortOrder: 0,
+        cooldownUntil: null,
+      }),
     ]);
     expect(exported.accounts.manualModels).toEqual([
       { accountId: account.id, modelName: 'gpt-manual' },
@@ -579,6 +601,33 @@ describe('backupService', () => {
       createdAt: exportedAt,
     }).run();
 
+    await db.insert(schema.siteApiEndpoints).values([
+      {
+        siteId: site.id,
+        url: 'https://api-a.example.com',
+        enabled: true,
+        sortOrder: 0,
+        cooldownUntil: null,
+        lastSelectedAt: exportedAt,
+        lastFailedAt: null,
+        lastFailureReason: null,
+        createdAt: exportedAt,
+        updatedAt: exportedAt,
+      },
+      {
+        siteId: site.id,
+        url: 'https://api-b.example.com',
+        enabled: false,
+        sortOrder: 1,
+        cooldownUntil: exportedAt,
+        lastSelectedAt: null,
+        lastFailedAt: exportedAt,
+        lastFailureReason: 'HTTP 429',
+        createdAt: exportedAt,
+        updatedAt: exportedAt,
+      },
+    ]).run();
+
     await db.insert(schema.modelAvailability).values([
       {
         accountId: account.id,
@@ -677,6 +726,22 @@ describe('backupService', () => {
       name: 'local-site-name',
       updatedAt: localRuntimeAt,
     }).where(eq(schema.sites.id, site.id)).run();
+
+    await db.delete(schema.siteApiEndpoints)
+      .where(eq(schema.siteApiEndpoints.siteId, site.id))
+      .run();
+    await db.insert(schema.siteApiEndpoints).values({
+      siteId: site.id,
+      url: 'https://api-local-only.example.com',
+      enabled: true,
+      sortOrder: 9,
+      cooldownUntil: null,
+      lastSelectedAt: localRuntimeAt,
+      lastFailedAt: null,
+      lastFailureReason: null,
+      createdAt: localRuntimeAt,
+      updatedAt: localRuntimeAt,
+    }).run();
 
     await db.update(schema.tokenRoutes).set({
       displayName: 'local-route-name',
@@ -821,6 +886,11 @@ describe('backupService', () => {
     const restoredAccount = await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();
     const restoredRoute = await db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, route.id)).get();
     const restoredChannel = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, insertedChannel!.id)).get();
+    const restoredSiteApiEndpoints = await db.select()
+      .from(schema.siteApiEndpoints)
+      .where(eq(schema.siteApiEndpoints.siteId, site.id))
+      .orderBy(asc(schema.siteApiEndpoints.sortOrder), asc(schema.siteApiEndpoints.id))
+      .all();
     const restoredDisabledModels = await db.select().from(schema.siteDisabledModels).all();
     const restoredAvailability = await db.select().from(schema.modelAvailability).all();
     const restoredTokenAvailability = await db.select().from(schema.tokenModelAvailability).all();
@@ -847,6 +917,25 @@ describe('backupService', () => {
     expect(restoredChannel?.consecutiveFailCount).toBe(4);
     expect(restoredChannel?.cooldownLevel).toBe(2);
     expect(restoredChannel?.cooldownUntil).toBe(localRuntimeAt);
+
+    expect(restoredSiteApiEndpoints).toEqual([
+      expect.objectContaining({
+        siteId: site.id,
+        url: 'https://api-a.example.com',
+        enabled: true,
+        sortOrder: 0,
+        cooldownUntil: null,
+        lastFailureReason: null,
+      }),
+      expect.objectContaining({
+        siteId: site.id,
+        url: 'https://api-b.example.com',
+        enabled: false,
+        sortOrder: 1,
+        cooldownUntil: exportedAt,
+        lastFailureReason: 'HTTP 429',
+      }),
+    ]);
 
     expect(restoredDisabledModels).toEqual([
       expect.objectContaining({ siteId: site.id, modelName: 'gpt-backup-disabled' }),

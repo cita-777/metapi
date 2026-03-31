@@ -14,6 +14,7 @@ function createDbSchemaMock() {
   return {
     settings: { __table: 'settings' },
     sites: { __table: 'sites' },
+    siteApiEndpoints: { __table: 'siteApiEndpoints' },
     siteAnnouncements: { __table: 'siteAnnouncements' },
     siteDisabledModels: { __table: 'siteDisabledModels' },
     accounts: { __table: 'accounts' },
@@ -243,6 +244,81 @@ describe('databaseMigrationService', () => {
     expect(siteStatement?.values[useSystemProxyIndex]).toBe(true);
     expect(customHeadersIndex).toBeGreaterThanOrEqual(0);
     expect(siteStatement?.values[customHeadersIndex]).toBe('{"x-site-scope":"internal"}');
+  });
+
+  it('includes site api endpoints when building migration statements', () => {
+    const statements = __databaseMigrationServiceTestUtils.buildStatements({
+      version: 'test',
+      timestamp: Date.now(),
+      accounts: {
+        sites: [{
+          id: 1,
+          name: 'demo',
+          url: 'https://example.com',
+          platform: 'new-api',
+          status: 'active',
+        }],
+        siteApiEndpoints: [{
+          id: 9,
+          siteId: 1,
+          url: 'https://api.example.com',
+          enabled: true,
+          sortOrder: 2,
+          cooldownUntil: '2026-03-31T12:05:00.000Z',
+          lastSelectedAt: '2026-03-31T12:00:00.000Z',
+          lastFailedAt: '2026-03-31T11:59:00.000Z',
+          lastFailureReason: 'HTTP 502',
+          createdAt: '2026-03-30T00:00:00.000Z',
+          updatedAt: '2026-03-31T12:05:00.000Z',
+        }],
+        siteAnnouncements: [],
+        siteDisabledModels: [],
+        accounts: [],
+        accountTokens: [],
+        checkinLogs: [],
+        modelAvailability: [],
+        tokenModelAvailability: [],
+        tokenRoutes: [],
+        routeChannels: [],
+        routeGroupSources: [],
+        proxyLogs: [],
+        proxyVideoTasks: [],
+        proxyFiles: [],
+        downstreamApiKeys: [],
+        events: [],
+      },
+      preferences: {
+        settings: [],
+      },
+    } as any);
+
+    const endpointStatement = statements.find((statement) => statement.table === 'site_api_endpoints');
+    expect(endpointStatement?.columns).toEqual([
+      'id',
+      'site_id',
+      'url',
+      'enabled',
+      'sort_order',
+      'cooldown_until',
+      'last_selected_at',
+      'last_failed_at',
+      'last_failure_reason',
+      'created_at',
+      'updated_at',
+    ]);
+    expect(endpointStatement?.values).toEqual([
+      9,
+      1,
+      'https://api.example.com',
+      true,
+      2,
+      '2026-03-31T12:05:00.000Z',
+      '2026-03-31T12:00:00.000Z',
+      '2026-03-31T11:59:00.000Z',
+      'HTTP 502',
+      '2026-03-30T00:00:00.000Z',
+      '2026-03-31T12:05:00.000Z',
+    ]);
   });
 
   it('serializes parsed JSON-column values when building migration statements', () => {

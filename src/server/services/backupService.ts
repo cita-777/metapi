@@ -38,6 +38,7 @@ export interface BackupWebdavState {
 }
 
 type SiteRow = typeof schema.sites.$inferSelect;
+type SiteApiEndpointRow = typeof schema.siteApiEndpoints.$inferSelect;
 type AccountRow = typeof schema.accounts.$inferSelect;
 type AccountTokenRow = typeof schema.accountTokens.$inferSelect;
 type TokenRouteRow = typeof schema.tokenRoutes.$inferSelect;
@@ -100,6 +101,7 @@ type BackupDownstreamApiKeyRow = Pick<DownstreamApiKeyRow,
 
 interface AccountsBackupSection {
   sites: SiteRow[];
+  siteApiEndpoints?: SiteApiEndpointRow[];
   accounts: BackupAccountRow[];
   accountTokens: AccountTokenRow[];
   tokenRoutes: TokenRouteRow[];
@@ -1282,6 +1284,7 @@ function isSettingValueAcceptable(key: string, value: unknown): boolean {
 async function exportAccountsSection(): Promise<AccountsBackupSection> {
   const [
     sites,
+    siteApiEndpoints,
     accounts,
     accountTokens,
     tokenRoutes,
@@ -1292,6 +1295,13 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
     downstreamApiKeys,
   ] = await Promise.all([
     db.select().from(schema.sites).orderBy(asc(schema.sites.id)).all(),
+    db.select().from(schema.siteApiEndpoints)
+      .orderBy(
+        asc(schema.siteApiEndpoints.siteId),
+        asc(schema.siteApiEndpoints.sortOrder),
+        asc(schema.siteApiEndpoints.id),
+      )
+      .all(),
     db.select().from(schema.accounts).orderBy(asc(schema.accounts.id)).all(),
     db.select().from(schema.accountTokens).orderBy(asc(schema.accountTokens.id)).all(),
     db.select().from(schema.tokenRoutes).orderBy(asc(schema.tokenRoutes.id)).all(),
@@ -1309,6 +1319,7 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
 
   return {
     sites,
+    siteApiEndpoints,
     accounts: accounts.map(({ balanceUsed: _balanceUsed, lastCheckinAt: _lastCheckinAt, lastBalanceRefresh: _lastBalanceRefresh, ...row }) => row),
     accountTokens,
     tokenRoutes,
@@ -1389,6 +1400,9 @@ function coerceAccountsSection(input: unknown): AccountsBackupSection | null {
   if (!isRecord(input)) return null;
 
   const sites = Array.isArray(input.sites) ? input.sites as SiteRow[] : null;
+  const siteApiEndpoints = Array.isArray(input.siteApiEndpoints)
+    ? input.siteApiEndpoints as SiteApiEndpointRow[]
+    : undefined;
   const accounts = Array.isArray(input.accounts) ? input.accounts as BackupAccountRow[] : null;
   const accountTokens = Array.isArray(input.accountTokens) ? input.accountTokens as AccountTokenRow[] : null;
   const tokenRoutes = Array.isArray(input.tokenRoutes) ? input.tokenRoutes as TokenRouteRow[] : null;
@@ -1410,6 +1424,7 @@ function coerceAccountsSection(input: unknown): AccountsBackupSection | null {
 
   return {
     sites,
+    siteApiEndpoints,
     accounts,
     accountTokens,
     tokenRoutes,
@@ -1529,6 +1544,22 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         sortOrder: row.sortOrder ?? 0,
         globalWeight: row.globalWeight ?? 1,
         apiKey: row.apiKey,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      }).run();
+    }
+
+    for (const row of section.siteApiEndpoints || []) {
+      await tx.insert(schema.siteApiEndpoints).values({
+        id: row.id,
+        siteId: row.siteId,
+        url: row.url,
+        enabled: row.enabled ?? true,
+        sortOrder: row.sortOrder ?? 0,
+        cooldownUntil: row.cooldownUntil ?? null,
+        lastSelectedAt: row.lastSelectedAt ?? null,
+        lastFailedAt: row.lastFailedAt ?? null,
+        lastFailureReason: row.lastFailureReason ?? null,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       }).run();
