@@ -112,11 +112,21 @@ const BLOCKED_PASSTHROUGH_HEADERS = new Set([
   'sec-websocket-version',
   'sec-websocket-extensions',
 ]);
+const METAPI_INTERNAL_HEADER_BLOCKLIST = new Set([
+  'x-metapi-tester-forced-channel-id',
+]);
+const METAPI_INTERNAL_HEADER_ALLOWLIST = new Set([
+  'x-metapi-responses-websocket-mode',
+  'x-metapi-responses-websocket-transport',
+]);
 
 const ANTIGRAVITY_RUNTIME_USER_AGENT = 'antigravity/1.19.6 darwin/arm64';
 
 function shouldSkipPassthroughHeader(key: string): boolean {
-  return HOP_BY_HOP_HEADERS.has(key) || BLOCKED_PASSTHROUGH_HEADERS.has(key) || key.startsWith('x-metapi-');
+  if (HOP_BY_HOP_HEADERS.has(key) || BLOCKED_PASSTHROUGH_HEADERS.has(key)) return true;
+  if (METAPI_INTERNAL_HEADER_BLOCKLIST.has(key)) return true;
+  if (key.startsWith('x-metapi-') && !METAPI_INTERNAL_HEADER_ALLOWLIST.has(key)) return true;
+  return false;
 }
 
 function extractSafePassthroughHeaders(

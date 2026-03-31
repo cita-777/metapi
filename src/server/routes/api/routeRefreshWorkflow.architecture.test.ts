@@ -39,6 +39,12 @@ describe('route refresh workflow architecture boundaries', () => {
     const oauthServiceSource = readSource('../../services/oauth/service.ts');
     const sharedSurfaceSource = readSource('../../proxy-core/surfaces/sharedSurface.ts');
     const geminiSurfaceSource = readSource('../../proxy-core/surfaces/geminiSurface.ts');
+    const channelSelectionSource = readSource('../../proxy-core/channelSelection.ts');
+
+    for (const source of [schedulerSource, oauthServiceSource, channelSelectionSource]) {
+      expect(source).toContain('routeRefreshWorkflow');
+      expectNoDirectModelServiceRouteRefresh(source);
+    }
 
     for (const source of [
       completionsSource,
@@ -47,13 +53,24 @@ describe('route refresh workflow architecture boundaries', () => {
       modelsRouteSource,
       searchSource,
       videosSource,
-      schedulerSource,
-      oauthServiceSource,
       sharedSurfaceSource,
       geminiSurfaceSource,
     ]) {
-      expect(source).toContain('routeRefreshWorkflow');
       expectNoDirectModelServiceRouteRefresh(source);
     }
+
+    for (const source of [
+      completionsSource,
+      embeddingsSource,
+      imagesSource,
+      searchSource,
+      videosSource,
+      sharedSurfaceSource,
+    ]) {
+      expect(source).toContain('selectProxyChannelForAttempt');
+    }
+
+    expect(geminiSurfaceSource).toContain('selectGeminiChannel');
+    expect(geminiSurfaceSource).toContain('selectNextGeminiProbeChannel');
   });
 });

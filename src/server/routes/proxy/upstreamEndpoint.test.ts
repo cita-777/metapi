@@ -935,6 +935,39 @@ describe('buildUpstreamEndpointRequest', () => {
     expect(httpRequest.headers['x-codex-beta-features']).toBeUndefined();
   });
 
+  it('preserves internal websocket transport headers but blocks tester-only forced channel headers', () => {
+    (config as any).codexHeaderDefaults = {
+      userAgent: 'codex-config-ua/1.0',
+      betaFeatures: 'multi_agent',
+    };
+
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'responses',
+      modelName: 'gpt-5.4',
+      stream: true,
+      tokenValue: 'oauth-access-token',
+      oauthProvider: 'codex',
+      sitePlatform: 'codex',
+      siteUrl: 'https://chatgpt.com/backend-api/codex',
+      openaiBody: {
+        model: 'gpt-5.4',
+        messages: [{ role: 'user', content: 'hello codex' }],
+      },
+      downstreamFormat: 'openai',
+      downstreamHeaders: {
+        'x-metapi-responses-websocket-transport': '1',
+        'x-metapi-tester-forced-channel-id': '77',
+      },
+      providerHeaders: {
+        Originator: 'codex_cli_rs',
+      },
+    } as any);
+
+    expect(request.headers['x-codex-beta-features']).toBe('multi_agent');
+    expect(request.headers['x-metapi-responses-websocket-transport']).toBeUndefined();
+    expect(request.headers['x-metapi-tester-forced-channel-id']).toBeUndefined();
+  });
+
   it('applies configured payload rules before preparing codex responses requests while forcing store false', () => {
     (config as any).payloadRules = {
       default: [
