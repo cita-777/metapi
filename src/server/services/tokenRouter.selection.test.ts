@@ -28,6 +28,7 @@ describe('TokenRouter selection scoring', () => {
   let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'];
   let resetSiteRuntimeHealthState: TokenRouterModule['resetSiteRuntimeHealthState'];
   let flushSiteRuntimeHealthPersistence: TokenRouterModule['flushSiteRuntimeHealthPersistence'];
+  let filterRecentlyFailedCandidates: TokenRouterModule['filterRecentlyFailedCandidates'];
   let config: ConfigModule['config'];
   let proxyChannelCoordinator: ProxyChannelCoordinatorModule['proxyChannelCoordinator'];
   let resetProxyChannelCoordinatorState: ProxyChannelCoordinatorModule['resetProxyChannelCoordinatorState'];
@@ -58,6 +59,7 @@ describe('TokenRouter selection scoring', () => {
     invalidateTokenRouterCache = tokenRouterModule.invalidateTokenRouterCache;
     resetSiteRuntimeHealthState = tokenRouterModule.resetSiteRuntimeHealthState;
     flushSiteRuntimeHealthPersistence = tokenRouterModule.flushSiteRuntimeHealthPersistence;
+    filterRecentlyFailedCandidates = tokenRouterModule.filterRecentlyFailedCandidates;
     config = configModule.config;
     proxyChannelCoordinator = coordinatorModule.proxyChannelCoordinator;
     resetProxyChannelCoordinatorState = coordinatorModule.resetProxyChannelCoordinatorState;
@@ -184,6 +186,27 @@ describe('TokenRouter selection scoring', () => {
     invalidateTokenRouterCache();
 
     await expect(router.selectPreferredChannel('gpt-5.2', preferredChannel.id)).resolves.toBeNull();
+  });
+
+  it('avoids recently failed candidates by default when healthy alternatives exist', () => {
+    const nowMs = Date.now();
+    const filtered = filterRecentlyFailedCandidates([
+      {
+        channel: {
+          failCount: 3,
+          lastFailAt: new Date(nowMs).toISOString(),
+        },
+      },
+      {
+        channel: {
+          failCount: 0,
+          lastFailAt: null,
+        },
+      },
+    ], nowMs);
+
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0]?.channel.failCount).toBe(0);
   });
 
   it('normalizes probability across channels on the same site', async () => {
@@ -873,6 +896,90 @@ describe('TokenRouter selection scoring', () => {
     expect(gptCandidateA?.reason || '').toContain('模型=');
   });
 
+  it('treats unknown provider for model as model-scoped degradation instead of opening a site breaker', async () => {
+    config.routingWeights = {
+      baseWeightFactor: 1,
+      valueScoreFactor: 0,
+      costWeight: 0,
+      balanceWeight: 0,
+      usageWeight: 0,
+    };
+
+    const gptRoute = await createRoute('gpt-5.4');
+    const claudeRoute = await createRoute('claude-sonnet-4-6');
+
+    const siteA = await createSite('unknown-provider-a');
+    const accountA = await createAccount(siteA.id, 'unknown-provider-user-a');
+    const tokenA = await createToken(accountA.id, 'unknown-provider-token-a');
+    const gptChannelA = await db.insert(schema.routeChannels).values({
+      routeId: gptRoute.id,
+      accountId: accountA.id,
+      tokenId: tokenA.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.routeChannels).values({
+      routeId: claudeRoute.id,
+      accountId: accountA.id,
+      tokenId: tokenA.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).run();
+
+    const siteB = await createSite('unknown-provider-b');
+    const accountB = await createAccount(siteB.id, 'unknown-provider-user-b');
+    const tokenB = await createToken(accountB.id, 'unknown-provider-token-b');
+    await db.insert(schema.routeChannels).values([
+      {
+        routeId: gptRoute.id,
+        accountId: accountB.id,
+        tokenId: tokenB.id,
+        priority: 0,
+        weight: 10,
+        enabled: true,
+      },
+      {
+        routeId: claudeRoute.id,
+        accountId: accountB.id,
+        tokenId: tokenB.id,
+        priority: 0,
+        weight: 10,
+        enabled: true,
+      },
+    ]).run();
+
+    const router = new TokenRouter();
+    for (let index = 0; index < 3; index += 1) {
+      await router.recordFailure(gptChannelA.id, {
+        status: 502,
+        errorText: 'unknown provider for model gpt-5.4',
+        modelName: 'gpt-5.4',
+      });
+    }
+    await db.update(schema.routeChannels).set({
+      cooldownUntil: null,
+      lastFailAt: null,
+      failCount: 0,
+    }).where(eq(schema.routeChannels.id, gptChannelA.id)).run();
+    invalidateTokenRouterCache();
+
+    const gptDecision = await router.explainSelection('gpt-5.4');
+    const claudeDecision = await router.explainSelection('claude-sonnet-4-6');
+    const gptCandidateA = gptDecision.candidates.find((candidate) => candidate.siteName.startsWith('unknown-provider-a'));
+    const claudeCandidateA = claudeDecision.candidates.find((candidate) => candidate.siteName.startsWith('unknown-provider-a'));
+
+    expect(gptCandidateA).toBeTruthy();
+    expect(claudeCandidateA).toBeTruthy();
+    expect(gptDecision.summary.join(' ')).not.toContain('站点熔断避让');
+    expect(claudeDecision.summary.join(' ')).not.toContain('站点熔断避让');
+    expect(gptCandidateA?.reason || '').not.toContain('站点熔断');
+    expect(claudeCandidateA?.reason || '').not.toContain('站点熔断');
+    expect((gptCandidateA?.probability || 0)).toBeLessThan((claudeCandidateA?.probability || 0));
+    expect(gptCandidateA?.reason || '').toContain('模型=');
+  });
+
   it('stable_first deterministically chooses the healthiest candidate', async () => {
     config.routingWeights = {
       baseWeightFactor: 1,
@@ -982,6 +1089,71 @@ describe('TokenRouter selection scoring', () => {
     expect(second?.channel.id).toBe(channelB.id);
     expect(third?.channel.id).toBe(channelA.id);
     expect(decision.summary.join(' ')).toContain('稳定池站点 2');
+  });
+
+  it('stable_first rotates across healthy sites in configured priority order instead of stopping at the first layer', async () => {
+    config.routingWeights = {
+      baseWeightFactor: 1,
+      valueScoreFactor: 0,
+      costWeight: 0,
+      balanceWeight: 0,
+      usageWeight: 0,
+    };
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4.1',
+      routingStrategy: 'stable_first',
+      enabled: true,
+    }).returning().get();
+
+    const siteA = await createSite('ordered-stable-a');
+    const accountA = await createAccount(siteA.id, 'ordered-stable-user-a');
+    const tokenA = await createToken(accountA.id, 'ordered-stable-token-a');
+    const channelA = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountA.id,
+      tokenId: tokenA.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const siteB = await createSite('ordered-stable-b');
+    const accountB = await createAccount(siteB.id, 'ordered-stable-user-b');
+    const tokenB = await createToken(accountB.id, 'ordered-stable-token-b');
+    const channelB = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountB.id,
+      tokenId: tokenB.id,
+      priority: 4,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const siteC = await createSite('ordered-stable-c');
+    const accountC = await createAccount(siteC.id, 'ordered-stable-user-c');
+    const tokenC = await createToken(accountC.id, 'ordered-stable-token-c');
+    const channelC = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountC.id,
+      tokenId: tokenC.id,
+      priority: 8,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    const first = await router.selectChannel('gpt-4.1');
+    const second = await router.selectChannel('gpt-4.1');
+    const third = await router.selectChannel('gpt-4.1');
+    const fourth = await router.selectChannel('gpt-4.1');
+    const decision = await router.explainSelection('gpt-4.1');
+
+    expect(first?.channel.id).toBe(channelA.id);
+    expect(second?.channel.id).toBe(channelB.id);
+    expect(third?.channel.id).toBe(channelC.id);
+    expect(fourth?.channel.id).toBe(channelA.id);
+    expect(decision.summary.join(' ')).toContain('按配置顺序轮询站点');
   });
 
   it('penalizes saturated session-scoped channels using runtime load snapshots', async () => {

@@ -116,6 +116,7 @@ const SITE_MODEL_FAILURE_PATTERNS: RegExp[] = [
   /does\s+not\s+support(?:\s+the)?\s+model/i,
   /no\s+such\s+model/i,
   /unknown\s+model/i,
+  /unknown\s+provider\s+for\s+model/i,
   /invalid\s+model/i,
   /model.*does\s+not\s+exist/i,
   /当前\s*api\s*不支持所选模型/i,
@@ -182,6 +183,7 @@ type WeightedSelectionResult = {
 
 const siteRuntimeHealthStates = new Map<number, SiteRuntimeHealthState>();
 const siteModelRuntimeHealthStates = new Map<number, Map<string, SiteRuntimeHealthState>>();
+const stableFirstLastSelectedSiteByKey = new Map<string, number>();
 let siteRuntimeHealthLoaded = false;
 let siteRuntimeHealthLoadPromise: Promise<void> | null = null;
 let siteRuntimeHealthSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -226,6 +228,18 @@ function isUsageLimitRateLimitFailure(context: SiteRuntimeFailureContext = {}): 
   return matchesAnyPattern(USAGE_LIMIT_RATE_LIMIT_PATTERNS, context.errorText);
 }
 
+function isModelScopedRuntimeFailure(context: SiteRuntimeFailureContext = {}): boolean {
+  return matchesAnyPattern(SITE_MODEL_FAILURE_PATTERNS, context.errorText);
+}
+
+function isProtocolRuntimeFailure(context: SiteRuntimeFailureContext = {}): boolean {
+  return matchesAnyPattern(SITE_PROTOCOL_FAILURE_PATTERNS, context.errorText);
+}
+
+function isValidationRuntimeFailure(context: SiteRuntimeFailureContext = {}): boolean {
+  return matchesAnyPattern(SITE_VALIDATION_FAILURE_PATTERNS, context.errorText);
+}
+
 function clampNumber(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
@@ -262,6 +276,18 @@ function resolveSiteRuntimeFailurePenalty(context: SiteRuntimeFailureContext = {
     return 0.4;
   }
 
+  if (isModelScopedRuntimeFailure({ status, errorText })) {
+    return 0.9;
+  }
+
+  if (isProtocolRuntimeFailure({ status, errorText })) {
+    return 0.6;
+  }
+
+  if (isValidationRuntimeFailure({ status, errorText })) {
+    return 0.25;
+  }
+
   if (status >= 500 || matchesAnyPattern(SITE_TRANSIENT_FAILURE_PATTERNS, errorText)) {
     return 2.5;
   }
@@ -272,18 +298,6 @@ function resolveSiteRuntimeFailurePenalty(context: SiteRuntimeFailureContext = {
 
   if (status === 401 || status === 403) {
     return 1.8;
-  }
-
-  if (matchesAnyPattern(SITE_PROTOCOL_FAILURE_PATTERNS, errorText)) {
-    return 0.6;
-  }
-
-  if (matchesAnyPattern(SITE_MODEL_FAILURE_PATTERNS, errorText)) {
-    return 0.9;
-  }
-
-  if (matchesAnyPattern(SITE_VALIDATION_FAILURE_PATTERNS, errorText)) {
-    return 0.25;
   }
 
   if (status >= 400 && status < 500) {
@@ -297,6 +311,15 @@ function isTransientSiteRuntimeFailure(context: SiteRuntimeFailureContext = {}):
   const status = typeof context.status === 'number' ? context.status : 0;
   const errorText = (context.errorText || '').trim();
   if (isUsageLimitRateLimitFailure({ status, errorText })) {
+    return false;
+  }
+  if (isModelScopedRuntimeFailure({ status, errorText })) {
+    return false;
+  }
+  if (isProtocolRuntimeFailure({ status, errorText })) {
+    return false;
+  }
+  if (isValidationRuntimeFailure({ status, errorText })) {
     return false;
   }
   return status >= 500 || status === 429 || matchesAnyPattern(SITE_TRANSIENT_FAILURE_PATTERNS, errorText);
@@ -914,6 +937,7 @@ export function invalidateTokenRouterCache(): void {
     routes: [],
   };
   routeMatchCache.clear();
+  stableFirstLastSelectedSiteByKey.clear();
 }
 
 function isSiteDisabled(status?: string | null): boolean {
@@ -941,7 +965,7 @@ export function filterRecentlyFailedCandidates<T extends { channel: FailureAware
   avoidSec?: number,
 ): T[] {
   if (candidates.length <= 1) return candidates;
-  if (avoidSec == null || avoidSec <= 0) return candidates;
+  if (avoidSec != null && avoidSec <= 0) return candidates;
 
   const healthy = candidates.filter((candidate) => !isChannelRecentlyFailed(candidate.channel, nowMs, avoidSec));
   // If all channels failed recently, keep them all and let weight/random decide.
@@ -1484,7 +1508,7 @@ export class TokenRouter {
       summary.push(`按显示名命中：${normalizeRouteDisplayName(match.route.displayName)}`);
       summary.push('显示名仅用于聚合展示，实际转发模型按选中通道来源模型决定');
     }
-    const availableByPriority = new Map<number, RouteChannelCandidate[]>();
+    const available: RouteChannelCandidate[] = [];
     const candidates: RouteDecisionCandidate[] = [];
     const candidateMap = new Map<number, RouteDecisionCandidate>();
 
@@ -1518,13 +1542,11 @@ export class TokenRouter {
       candidateMap.set(candidate.channelId, candidate);
 
       if (eligible) {
-        const priority = row.channel.priority ?? 0;
-        if (!availableByPriority.has(priority)) availableByPriority.set(priority, []);
-        availableByPriority.get(priority)!.push(row);
+        available.push(row);
       }
     }
 
-    if (availableByPriority.size === 0) {
+    if (available.length === 0) {
       summary.push('没有可用通道（全部被禁用、站点不可用、冷却或令牌不可用）');
       return {
         requestedModel,
@@ -1538,10 +1560,7 @@ export class TokenRouter {
     }
 
     if (routeStrategy === 'round_robin') {
-      const rawOrdered = this.getRoundRobinCandidates(match.channels.filter((row) => {
-        const target = candidateMap.get(row.channel.id);
-        return !!target?.eligible;
-      }));
+      const rawOrdered = this.getRoundRobinCandidates(available);
       const breakerFiltered = filterSiteRuntimeBrokenCandidatesByModel(rawOrdered, runtimeModelResolver, nowMs);
       if (breakerFiltered.avoided.length > 0) {
         for (const item of breakerFiltered.avoided) {
@@ -1612,6 +1631,109 @@ export class TokenRouter {
       };
     }
 
+    if (routeStrategy === 'stable_first') {
+      const breakerFiltered = filterSiteRuntimeBrokenCandidatesByModel(available, runtimeModelResolver, nowMs);
+      if (breakerFiltered.avoided.length > 0) {
+        for (const item of breakerFiltered.avoided) {
+          const target = candidateMap.get(item.candidate.channel.id);
+          if (!target) continue;
+          target.reason = item.reason;
+        }
+      }
+
+      const filteredCandidates = filterRecentlyFailedCandidates(breakerFiltered.candidates, nowMs);
+      const avoided = breakerFiltered.candidates.filter((row) => !filteredCandidates.some((item) => item.channel.id === row.channel.id));
+      if (avoided.length > 0) {
+        for (const row of avoided) {
+          const target = candidateMap.get(row.channel.id);
+          if (!target) continue;
+          target.avoidedByRecentFailure = true;
+          target.reason = `最近失败，优先避让（${resolveFailureBackoffSec(row.channel.failCount)} 秒窗口）`;
+        }
+      }
+
+      const weighted = this.calculateWeightedSelection(
+        filteredCandidates,
+        useChannelSourceModelForCost ? runtimeModelResolver : mappedModel,
+        downstreamPolicy,
+        nowMs,
+        'stable_first',
+        this.buildStableFirstRotationKey(match.route.id, requestedModel),
+      );
+      for (const detail of weighted.details) {
+        const target = candidateMap.get(detail.candidate.channel.id);
+        if (!target) continue;
+        target.probability = Number((detail.probability * 100).toFixed(2));
+        if (target.eligible && !target.avoidedByRecentFailure) {
+          target.reason = detail.reason;
+        }
+      }
+
+      if (!weighted.selected) {
+        summary.push('本次未选出通道');
+        return {
+          requestedModel,
+          actualModel: mappedModel,
+          matched: true,
+          routeId: match.route.id,
+          modelPattern: match.route.modelPattern,
+          summary,
+          candidates,
+        };
+      }
+
+      const summaryParts = [`稳定优先：可用 ${available.length}`];
+      if (weighted.stableSiteCount > 0) {
+        summaryParts.push(`稳定池站点 ${weighted.stableSiteCount}`);
+      }
+      summaryParts.push('按配置顺序轮询站点');
+      if (breakerFiltered.avoided.length > 0) {
+        const breakerSummaryLabel = breakerFiltered.avoided.some((item) => item.reason.includes('模型熔断'))
+          ? '运行时熔断避让'
+          : '站点熔断避让';
+        summaryParts.push(`${breakerSummaryLabel} ${breakerFiltered.avoided.length}`);
+      }
+      if (avoided.length > 0) {
+        summaryParts.push(`最近失败避让 ${avoided.length}`);
+      }
+      summary.push(summaryParts.join('，'));
+
+      const selectedChannel = candidateMap.get(weighted.selected.channel.id);
+      const selectedLabel = selectedChannel
+        ? `${selectedChannel.username} @ ${selectedChannel.siteName} / ${selectedChannel.tokenName}`
+        : `channel-${weighted.selected.channel.id}`;
+      const actualModel = resolveActualModelForSelectedChannel(
+        requestedModel,
+        match.route,
+        mappedModel,
+        weighted.selected.channel.sourceModel,
+      );
+      summary.push(`最终选择：${selectedLabel}（P${weighted.selected.channel.priority ?? 0}）`);
+      if (actualModel !== mappedModel) {
+        summary.push(`实际转发模型：${actualModel}`);
+      }
+
+      return {
+        requestedModel,
+        actualModel,
+        matched: true,
+        routeId: match.route.id,
+        modelPattern: match.route.modelPattern,
+        selectedChannelId: weighted.selected.channel.id,
+        selectedAccountId: weighted.selected.account.id,
+        selectedLabel,
+        summary,
+        candidates,
+      };
+    }
+
+    const availableByPriority = new Map<number, RouteChannelCandidate[]>();
+    for (const row of available) {
+      const priority = row.channel.priority ?? 0;
+      if (!availableByPriority.has(priority)) availableByPriority.set(priority, []);
+      availableByPriority.get(priority)!.push(row);
+    }
+
     const sortedPriorities = Array.from(availableByPriority.keys()).sort((a, b) => a - b);
     let selected: RouteChannelCandidate | null = null;
     let selectedPriority = 0;
@@ -1645,7 +1767,7 @@ export class TokenRouter {
         useChannelSourceModelForCost ? runtimeModelResolver : mappedModel,
         downstreamPolicy,
         nowMs,
-        routeStrategy === 'stable_first' ? 'stable_first' : 'weighted',
+        'weighted',
       );
       for (const detail of weighted.details) {
         const target = candidateMap.get(detail.candidate.channel.id);
@@ -1660,9 +1782,6 @@ export class TokenRouter {
       selected = weighted.selected;
       selectedPriority = priority;
       const layerSummaryParts = [`优先级 P${priority}：可用 ${rawLayer.length}`];
-      if (routeStrategy === 'stable_first' && weighted.stableSiteCount > 1) {
-        layerSummaryParts.push(`稳定池站点 ${weighted.stableSiteCount}，按站点轮询`);
-      }
       if (breakerFiltered.avoided.length > 0) {
         const breakerSummaryLabel = breakerFiltered.avoided.some((item) => item.reason.includes('模型熔断'))
           ? '运行时熔断避让'
@@ -1971,6 +2090,40 @@ export class TokenRouter {
       };
     }
 
+    if (routeStrategy === 'stable_first') {
+      const breakerFiltered = filterSiteRuntimeBrokenCandidatesByModel(available, runtimeModelResolver, nowMs);
+      const candidates = filterRecentlyFailedCandidates(breakerFiltered.candidates, nowMs);
+      const selected = this.stableFirstSelect(
+        candidates,
+        requestedByDisplayName ? runtimeModelResolver : mappedModel,
+        downstreamPolicy,
+        nowMs,
+        this.buildStableFirstRotationKey(match.route.id, requestedModel),
+      );
+      if (!selected) return null;
+
+      const tokenValue = this.resolveChannelTokenValue(selected);
+      if (!tokenValue) return null;
+      if (recordSelection) {
+        await this.recordChannelSelection(selected.channel.id);
+        this.recordStableFirstSiteSelection(match.route.id, requestedModel, selected.site.id);
+      }
+
+      const actualModel = resolveActualModelForSelectedChannel(
+        requestedModel,
+        match.route,
+        mappedModel,
+        selected.channel.sourceModel,
+      );
+
+      return {
+        ...selected,
+        tokenValue,
+        tokenName: selected.token?.name || 'default',
+        actualModel,
+      };
+    }
+
     const layers = new Map<number, typeof available>();
     for (const candidate of available) {
       const priority = candidate.channel.priority ?? 0;
@@ -1983,14 +2136,7 @@ export class TokenRouter {
       const rawLayer = layers.get(priority) ?? [];
       const breakerFiltered = filterSiteRuntimeBrokenCandidatesByModel(rawLayer, runtimeModelResolver, nowMs);
       const candidates = filterRecentlyFailedCandidates(breakerFiltered.candidates, nowMs);
-      const selected = routeStrategy === 'stable_first'
-        ? this.stableFirstSelect(
-          candidates,
-          requestedByDisplayName ? runtimeModelResolver : mappedModel,
-          downstreamPolicy,
-          nowMs,
-        )
-        : this.weightedRandomSelect(
+      const selected = this.weightedRandomSelect(
         candidates,
         requestedByDisplayName ? runtimeModelResolver : mappedModel,
         downstreamPolicy,
@@ -2000,9 +2146,6 @@ export class TokenRouter {
 
       const tokenValue = this.resolveChannelTokenValue(selected);
       if (!tokenValue) continue;
-      if (routeStrategy === 'stable_first' && recordSelection) {
-        await this.recordChannelSelection(selected.channel.id);
-      }
 
       const actualModel = resolveActualModelForSelectedChannel(
         requestedModel,
@@ -2064,6 +2207,9 @@ export class TokenRouter {
     if (!tokenValue) return null;
     if (recordSelection && (routeStrategy === 'round_robin' || routeStrategy === 'stable_first')) {
       await this.recordChannelSelection(selected.channel.id);
+      if (routeStrategy === 'stable_first') {
+        this.recordStableFirstSiteSelection(match.route.id, requestedModel, selected.site.id);
+      }
     }
 
     const actualModel = resolveActualModelForSelectedChannel(
@@ -2221,29 +2367,39 @@ export class TokenRouter {
     return (left.channel.id ?? 0) - (right.channel.id ?? 0);
   }
 
-  private calculateStableFirstLeaderScore(
-    candidate: RouteChannelCandidate,
-    contribution: number,
-    oldestSelectedAtMs: number | null,
-    newestSelectedAtMs: number | null,
-  ): number {
-    const selectedAtMs = parseIsoTimeMs(candidate.channel.lastSelectedAt || candidate.channel.lastUsedAt);
-    let freshnessMultiplier = 1;
-    if (selectedAtMs == null) {
-      freshnessMultiplier = 1.15;
-    } else if (
-      oldestSelectedAtMs != null
-      && newestSelectedAtMs != null
-      && newestSelectedAtMs > oldestSelectedAtMs
-    ) {
-      const freshnessRatio = clampNumber(
-        (newestSelectedAtMs - selectedAtMs) / (newestSelectedAtMs - oldestSelectedAtMs),
-        0,
-        1,
-      );
-      freshnessMultiplier = 0.85 + (freshnessRatio * 0.3);
+  private buildStableFirstRotationKey(routeId: number, requestedModel: string): string {
+    const normalizedModel = normalizeModelAlias(requestedModel)
+      || normalizeRouteDisplayName(requestedModel).toLowerCase()
+      || String(routeId);
+    return `${routeId}:${normalizedModel}`;
+  }
+
+  private recordStableFirstSiteSelection(routeId: number, requestedModel: string, siteId: number): void {
+    if (!Number.isFinite(siteId) || siteId <= 0) return;
+    stableFirstLastSelectedSiteByKey.set(this.buildStableFirstRotationKey(routeId, requestedModel), siteId);
+  }
+
+  private getStableFirstSiteOrder(candidates: RouteChannelCandidate[], siteId: number): number {
+    let order = Number.POSITIVE_INFINITY;
+    for (const candidate of candidates) {
+      if (candidate.site.id !== siteId) continue;
+      order = Math.min(order, candidate.channel.priority ?? 0);
     }
-    return contribution * freshnessMultiplier;
+    return Number.isFinite(order) ? order : 0;
+  }
+
+  private getStableFirstOrderedSiteLeaderIndices(
+    candidates: RouteChannelCandidate[],
+    stableSiteLeaderIndices: number[],
+  ): number[] {
+    return [...stableSiteLeaderIndices].sort((leftIndex, rightIndex) => {
+      const leftSiteId = candidates[leftIndex]?.site.id ?? 0;
+      const rightSiteId = candidates[rightIndex]?.site.id ?? 0;
+      const orderDiff = this.getStableFirstSiteOrder(candidates, leftSiteId)
+        - this.getStableFirstSiteOrder(candidates, rightSiteId);
+      if (orderDiff !== 0) return orderDiff;
+      return (candidates[leftIndex]?.channel.id ?? 0) - (candidates[rightIndex]?.channel.id ?? 0);
+    });
   }
 
   private async recordChannelSelection(channelId: number): Promise<void> {
@@ -2271,8 +2427,16 @@ export class TokenRouter {
     modelName: string | ((candidate: RouteChannelCandidate) => string),
     downstreamPolicy: DownstreamRoutingPolicy,
     nowMs = Date.now(),
+    stableFirstRotationKey?: string,
   ) {
-    return this.calculateWeightedSelection(candidates, modelName, downstreamPolicy, nowMs, 'stable_first').selected;
+    return this.calculateWeightedSelection(
+      candidates,
+      modelName,
+      downstreamPolicy,
+      nowMs,
+      'stable_first',
+      stableFirstRotationKey,
+    ).selected;
   }
 
   private calculateWeightedSelection(
@@ -2281,6 +2445,7 @@ export class TokenRouter {
     downstreamPolicy: DownstreamRoutingPolicy,
     nowMs = Date.now(),
     selectionMode: WeightedSelectionMode = 'weighted',
+    stableFirstRotationKey?: string,
   ): WeightedSelectionResult {
     if (candidates.length === 0) {
       return {
@@ -2422,11 +2587,12 @@ export class TokenRouter {
         ? `${siteRuntimeDetail.combinedMultiplier.toFixed(2)}（站点=${siteRuntimeDetail.globalMultiplier.toFixed(2)}，模型=${siteRuntimeDetail.modelMultiplier.toFixed(2)}）`
         : `${siteRuntimeDetail.globalMultiplier.toFixed(2)}`;
       const runtimeLoadText = formatChannelRuntimeLoad(channelRuntimeLoad);
+      const stableSiteOrder = this.getStableFirstSiteOrder(candidates, candidate.site.id);
       const reasonPrefix = selectionMode === 'stable_first'
         ? `稳定优先（综合评分第 ${rankByIndex.get(i) ?? 1} / ${candidates.length}`
         : '按权重随机';
       const stablePoolText = selectionMode === 'stable_first'
-        ? `，稳定池站点=${stableSiteIds.size}${stableSiteIds.has(candidate.site.id) ? '（在池中）' : '（池外）'}`
+        ? `，轮询顺位=P${stableSiteOrder}，稳定池站点=${stableSiteIds.size}${stableSiteIds.has(candidate.site.id) ? '（在池中）' : '（池外）'}`
         : '';
       return {
         candidate,
@@ -2449,7 +2615,12 @@ export class TokenRouter {
         }
       }
     } else {
-      selected = this.selectStableFirstCandidate(candidates, contributions, rankedIndices) ?? selected;
+      selected = this.selectStableFirstCandidate(
+        candidates,
+        contributions,
+        rankedIndices,
+        stableFirstRotationKey,
+      ) ?? selected;
     }
 
     return {
@@ -2489,41 +2660,21 @@ export class TokenRouter {
     candidates: RouteChannelCandidate[],
     contributions: number[],
     rankedIndices: number[],
+    stableFirstRotationKey?: string,
   ): RouteChannelCandidate | null {
     const stableSiteLeaderIndices = this.getStableFirstSiteLeaderIndices(candidates, contributions, rankedIndices);
     if (stableSiteLeaderIndices.length <= 0) return candidates[rankedIndices[0] ?? 0] ?? null;
 
-    const selectedAtValues = stableSiteLeaderIndices
-      .map((index) => parseIsoTimeMs(candidates[index]?.channel.lastSelectedAt || candidates[index]?.channel.lastUsedAt))
-      .filter((value): value is number => value != null);
-    const oldestSelectedAtMs = selectedAtValues.length > 0 ? Math.min(...selectedAtValues) : null;
-    const newestSelectedAtMs = selectedAtValues.length > 0 ? Math.max(...selectedAtValues) : null;
-
-    const selectedSiteLeader = [...stableSiteLeaderIndices].sort((leftIndex, rightIndex) => {
-      const rightScore = this.calculateStableFirstLeaderScore(
-        candidates[rightIndex],
-        contributions[rightIndex] ?? 0,
-        oldestSelectedAtMs,
-        newestSelectedAtMs,
-      );
-      const leftScore = this.calculateStableFirstLeaderScore(
-        candidates[leftIndex],
-        contributions[leftIndex] ?? 0,
-        oldestSelectedAtMs,
-        newestSelectedAtMs,
-      );
-      const scoreDiff = rightScore - leftScore;
-      if (Math.abs(scoreDiff) > 1e-9) {
-        return scoreDiff > 0 ? 1 : -1;
-      }
-      const selectionOrder = this.compareStableFirstCandidates(candidates[leftIndex], candidates[rightIndex]);
-      if (selectionOrder !== 0) return selectionOrder;
-      const contributionDiff = (contributions[rightIndex] ?? 0) - (contributions[leftIndex] ?? 0);
-      if (Math.abs(contributionDiff) > 1e-9) {
-        return contributionDiff > 0 ? 1 : -1;
-      }
-      return leftIndex - rightIndex;
-    })[0];
+    const orderedSiteLeaderIndices = this.getStableFirstOrderedSiteLeaderIndices(candidates, stableSiteLeaderIndices);
+    const lastSelectedSiteId = stableFirstRotationKey
+      ? stableFirstLastSelectedSiteByKey.get(stableFirstRotationKey)
+      : undefined;
+    const lastSelectedIndex = typeof lastSelectedSiteId === 'number'
+      ? orderedSiteLeaderIndices.findIndex((index) => candidates[index]?.site.id === lastSelectedSiteId)
+      : -1;
+    const selectedSiteLeader = orderedSiteLeaderIndices[lastSelectedIndex >= 0
+      ? ((lastSelectedIndex + 1) % orderedSiteLeaderIndices.length)
+      : 0];
     if (selectedSiteLeader == null) return candidates[rankedIndices[0] ?? 0] ?? null;
 
     const selectedSiteId = candidates[selectedSiteLeader]?.site.id;
