@@ -228,16 +228,33 @@ export default function UpdateCenterSection() {
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
   const streamAbortRef = useRef<AbortController | null>(null);
 
+  const applyStatus = (next: UpdateCenterStatus) => {
+    setStatus(next);
+    setConfig(next.config || DEFAULT_CONFIG);
+  };
+
   const loadStatus = async () => {
     setLoading(true);
     try {
       const next = await api.getUpdateCenterStatus() as UpdateCenterStatus;
-      setStatus(next);
-      setConfig(next.config || DEFAULT_CONFIG);
+      applyStatus(next);
     } catch (error: any) {
       toast.error(error?.message || '加载更新中心失败');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const refreshStatus = async (showErrorToast = true) => {
+    try {
+      const next = await api.checkUpdateCenter() as UpdateCenterStatus;
+      applyStatus(next);
+      return next;
+    } catch (error: any) {
+      if (showErrorToast) {
+        toast.error(error?.message || '检查更新失败');
+      }
+      throw error;
     }
   };
 
@@ -269,12 +286,10 @@ export default function UpdateCenterSection() {
   const checkNow = async () => {
     setChecking(true);
     try {
-      const next = await api.checkUpdateCenter() as UpdateCenterStatus;
-      setStatus(next);
-      setConfig(next.config || DEFAULT_CONFIG);
+      await refreshStatus(true);
       toast.success('已刷新更新信息');
-    } catch (error: any) {
-      toast.error(error?.message || '检查更新失败');
+    } catch {
+      // refreshStatus already handled the toast
     } finally {
       setChecking(false);
     }
@@ -343,7 +358,7 @@ export default function UpdateCenterSection() {
       toast.error(error?.message || '部署失败');
     } finally {
       setDeploying(false);
-      void loadStatus();
+      void refreshStatus(false).catch(() => {});
     }
   };
 
@@ -378,7 +393,7 @@ export default function UpdateCenterSection() {
       toast.error(error?.message || '回退失败');
     } finally {
       setDeploying(false);
-      void loadStatus();
+      void refreshStatus(false).catch(() => {});
     }
   };
 

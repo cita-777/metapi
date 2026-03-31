@@ -4,15 +4,15 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 const {
-  buildUpdateCenterStatusMock,
+  refreshUpdateCenterStatusCacheMock,
   sendNotificationMock,
 } = vi.hoisted(() => ({
-  buildUpdateCenterStatusMock: vi.fn(),
+  refreshUpdateCenterStatusCacheMock: vi.fn(),
   sendNotificationMock: vi.fn(),
 }));
 
 vi.mock('./updateCenterStatusService.js', () => ({
-  buildUpdateCenterStatus: (...args: unknown[]) => buildUpdateCenterStatusMock(...args),
+  refreshUpdateCenterStatusCache: (...args: unknown[]) => refreshUpdateCenterStatusCacheMock(...args),
 }));
 
 vi.mock('./notifyService.js', () => ({
@@ -51,7 +51,7 @@ describe('updateCenterPollingService', () => {
 
   beforeEach(async () => {
     vi.useFakeTimers();
-    buildUpdateCenterStatusMock.mockReset();
+    refreshUpdateCenterStatusCacheMock.mockReset();
     sendNotificationMock.mockReset();
 
     await db.delete(schema.events).run();
@@ -76,17 +76,59 @@ describe('updateCenterPollingService', () => {
   });
 
   it('runs immediately, writes one event, and only notifies once for the same candidate', async () => {
-    buildUpdateCenterStatusMock.mockResolvedValue({
-      currentVersion: '1.2.3',
-      githubRelease: {
-        normalizedVersion: '1.3.0',
-        displayVersion: '1.3.0',
-        tagName: 'v1.3.0',
-      },
-      dockerHubTag: null,
-      helper: {
-        imageTag: '1.2.3',
-      },
+    refreshUpdateCenterStatusCacheMock.mockImplementation(async () => {
+      const previousRuntime = await loadUpdateCenterRuntimeState();
+      const runtime = {
+        ...previousRuntime,
+        lastCheckedAt: '2026-03-31 12:00:00',
+        lastCheckError: null,
+        lastResolvedSource: 'github-release' as const,
+        lastResolvedDisplayVersion: '1.3.0',
+        lastResolvedCandidateKey: 'github-release:v1.3.0',
+        statusSnapshot: {
+          githubRelease: {
+            source: 'github-release' as const,
+            rawVersion: 'v1.3.0',
+            normalizedVersion: '1.3.0',
+            url: 'https://github.com/cita-777/metapi/releases/tag/v1.3.0',
+            tagName: 'v1.3.0',
+            digest: null,
+            displayVersion: '1.3.0',
+            publishedAt: '2026-03-31T12:00:00Z',
+          },
+          dockerHubTag: null,
+          helper: {
+            ok: true,
+            releaseName: 'metapi',
+            namespace: 'ai',
+            revision: '12',
+            imageRepository: '1467078763/metapi',
+            imageTag: '1.2.3',
+            imageDigest: null,
+            healthy: true,
+            history: [],
+          },
+        },
+      };
+      return {
+        status: {
+          currentVersion: '1.2.3',
+          githubRelease: runtime.statusSnapshot.githubRelease,
+          dockerHubTag: null,
+          helper: runtime.statusSnapshot.helper,
+          runtime,
+        },
+        candidate: {
+          source: 'github-release',
+          kind: 'new-version',
+          candidateKey: 'github-release:v1.3.0',
+          displayVersion: '1.3.0',
+          tagName: 'v1.3.0',
+          digest: null,
+        },
+        previousRuntime,
+        runtime,
+      };
     });
 
     startUpdateCenterPolling(60_000);
@@ -109,6 +151,15 @@ describe('updateCenterPollingService', () => {
       lastResolvedSource: 'github-release',
       lastResolvedCandidateKey: 'github-release:v1.3.0',
       lastNotifiedCandidateKey: 'github-release:v1.3.0',
+      statusSnapshot: {
+        githubRelease: expect.objectContaining({
+          normalizedVersion: '1.3.0',
+        }),
+        dockerHubTag: null,
+        helper: expect.objectContaining({
+          imageTag: '1.2.3',
+        }),
+      },
     }));
 
     await vi.advanceTimersByTimeAsync(60_000);
@@ -119,7 +170,7 @@ describe('updateCenterPollingService', () => {
   });
 
   it('stores the latest check error without creating events or notifications when the background check fails', async () => {
-    buildUpdateCenterStatusMock.mockRejectedValue(new Error('GitHub releases lookup timed out'));
+    refreshUpdateCenterStatusCacheMock.mockRejectedValue(new Error('GitHub releases lookup timed out'));
 
     startUpdateCenterPolling(60_000);
     await vi.advanceTimersByTimeAsync(0);
@@ -133,19 +184,60 @@ describe('updateCenterPollingService', () => {
   });
 
   it('persists the notified candidate even when the downstream notification send fails', async () => {
-    buildUpdateCenterStatusMock.mockImplementation(async () => ({
-      currentVersion: '1.2.3',
-      githubRelease: {
-        normalizedVersion: '1.3.0',
-        displayVersion: '1.3.0',
-        tagName: 'v1.3.0',
-      },
-      dockerHubTag: null,
-      helper: {
-        imageTag: '1.2.3',
-      },
-      runtime: await loadUpdateCenterRuntimeState(),
-    }));
+    refreshUpdateCenterStatusCacheMock.mockImplementation(async () => {
+      const previousRuntime = await loadUpdateCenterRuntimeState();
+      const runtime = {
+        ...previousRuntime,
+        lastCheckedAt: '2026-03-31 12:01:00',
+        lastCheckError: null,
+        lastResolvedSource: 'github-release' as const,
+        lastResolvedDisplayVersion: '1.3.0',
+        lastResolvedCandidateKey: 'github-release:v1.3.0',
+        statusSnapshot: {
+          githubRelease: {
+            source: 'github-release' as const,
+            rawVersion: 'v1.3.0',
+            normalizedVersion: '1.3.0',
+            url: 'https://github.com/cita-777/metapi/releases/tag/v1.3.0',
+            tagName: 'v1.3.0',
+            digest: null,
+            displayVersion: '1.3.0',
+            publishedAt: '2026-03-31T12:01:00Z',
+          },
+          dockerHubTag: null,
+          helper: {
+            ok: true,
+            releaseName: 'metapi',
+            namespace: 'ai',
+            revision: '12',
+            imageRepository: '1467078763/metapi',
+            imageTag: '1.2.3',
+            imageDigest: null,
+            healthy: true,
+            history: [],
+          },
+        },
+      };
+      return {
+        status: {
+          currentVersion: '1.2.3',
+          githubRelease: runtime.statusSnapshot.githubRelease,
+          dockerHubTag: null,
+          helper: runtime.statusSnapshot.helper,
+          runtime,
+        },
+        candidate: {
+          source: 'github-release',
+          kind: 'new-version',
+          candidateKey: 'github-release:v1.3.0',
+          displayVersion: '1.3.0',
+          tagName: 'v1.3.0',
+          digest: null,
+        },
+        previousRuntime,
+        runtime,
+      };
+    });
     sendNotificationMock.mockRejectedValue(new Error('notification downstream failed'));
 
     startUpdateCenterPolling(60_000);
@@ -155,10 +247,19 @@ describe('updateCenterPollingService', () => {
     expect(sendNotificationMock).toHaveBeenCalledTimes(1);
     expect(await db.select().from(schema.events).all()).toHaveLength(1);
     expect(await loadUpdateCenterRuntimeState()).toEqual(expect.objectContaining({
-      lastCheckError: null,
+      lastCheckError: 'notification downstream failed',
       lastResolvedCandidateKey: 'github-release:v1.3.0',
       lastNotifiedCandidateKey: 'github-release:v1.3.0',
       lastNotifiedAt: expect.any(String),
+      statusSnapshot: {
+        githubRelease: expect.objectContaining({
+          normalizedVersion: '1.3.0',
+        }),
+        dockerHubTag: null,
+        helper: expect.objectContaining({
+          imageTag: '1.2.3',
+        }),
+      },
     }));
   });
 });

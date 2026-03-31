@@ -1,9 +1,9 @@
 import { db, schema } from '../db/index.js';
 import { formatUtcSqlDateTime } from './localTimeService.js';
 import { sendNotification } from './notifyService.js';
-import { buildUpdateCenterStatus } from './updateCenterStatusService.js';
+import { refreshUpdateCenterStatusCache } from './updateCenterStatusService.js';
 import { loadUpdateCenterRuntimeState, saveUpdateCenterRuntimeState } from './updateCenterRuntimeStateService.js';
-import { resolveUpdateReminderCandidate } from './updateCenterReminderService.js';
+import type { UpdateReminderCandidate } from './updateCenterReminderService.js';
 
 const DEFAULT_UPDATE_CENTER_INTERVAL_MS = 15 * 60 * 1000;
 
@@ -15,7 +15,7 @@ function summarizeError(error: unknown) {
   return String(error || 'unknown error');
 }
 
-function buildReminderEvent(candidate: ReturnType<typeof resolveUpdateReminderCandidate>) {
+function buildReminderEvent(candidate: UpdateReminderCandidate | null) {
   if (!candidate) return null;
   const title = candidate.kind === 'new-digest'
     ? '更新中心发现新 digest'
@@ -35,23 +35,11 @@ async function runSyncOnce() {
   const checkedAt = formatUtcSqlDateTime(new Date());
 
   try {
-    const status = await buildUpdateCenterStatus();
-    const previousRuntime = status.runtime || await loadUpdateCenterRuntimeState();
-    const candidate = resolveUpdateReminderCandidate({
-      currentVersion: status.currentVersion,
-      helper: status.helper as { imageTag?: string | null; imageDigest?: string | null } | null,
-      githubRelease: status.githubRelease,
-      dockerHubTag: status.dockerHubTag,
-    });
-
-    const nextRuntime = {
-      ...previousRuntime,
-      lastCheckedAt: checkedAt,
-      lastCheckError: null,
-      lastResolvedSource: candidate?.source || null,
-      lastResolvedDisplayVersion: candidate?.displayVersion || null,
-      lastResolvedCandidateKey: candidate?.candidateKey || null,
-    };
+    const {
+      candidate,
+      previousRuntime,
+      runtime,
+    } = await refreshUpdateCenterStatusCache(checkedAt);
 
     if (candidate && candidate.candidateKey !== previousRuntime.lastNotifiedCandidateKey) {
       const reminderEvent = buildReminderEvent(candidate);
@@ -64,16 +52,16 @@ async function runSyncOnce() {
           relatedType: 'update_center',
           createdAt: checkedAt,
         }).run();
-        nextRuntime.lastNotifiedCandidateKey = candidate.candidateKey;
-        nextRuntime.lastNotifiedAt = checkedAt;
-        await saveUpdateCenterRuntimeState(nextRuntime);
+        await saveUpdateCenterRuntimeState({
+          ...runtime,
+          lastNotifiedCandidateKey: candidate.candidateKey,
+          lastNotifiedAt: checkedAt,
+        });
         await sendNotification(reminderEvent.title, reminderEvent.message, 'info', {
           bypassThrottle: true,
         });
       }
     }
-
-    await saveUpdateCenterRuntimeState(nextRuntime);
   } catch (error) {
     const previousRuntime = await loadUpdateCenterRuntimeState();
     await saveUpdateCenterRuntimeState({

@@ -2,7 +2,14 @@ import { eq } from 'drizzle-orm';
 
 import { db, schema } from '../db/index.js';
 import { upsertSetting } from '../db/upsertSetting.js';
-import type { UpdateCenterVersionSource } from './updateCenterVersionService.js';
+import type { UpdateCenterHelperStatus } from './updateCenterHelperClient.js';
+import type { UpdateCenterVersionCandidate, UpdateCenterVersionSource } from './updateCenterVersionService.js';
+
+export type UpdateCenterStatusSnapshot = {
+  githubRelease: UpdateCenterVersionCandidate | null;
+  dockerHubTag: UpdateCenterVersionCandidate | null;
+  helper: UpdateCenterHelperStatus | null;
+};
 
 export type UpdateCenterRuntimeState = {
   lastCheckedAt: string | null;
@@ -12,6 +19,7 @@ export type UpdateCenterRuntimeState = {
   lastResolvedCandidateKey: string | null;
   lastNotifiedCandidateKey: string | null;
   lastNotifiedAt: string | null;
+  statusSnapshot: UpdateCenterStatusSnapshot | null;
 };
 
 export const UPDATE_CENTER_RUNTIME_STATE_SETTING_KEY = 'update_center_runtime_state_v1';
@@ -25,6 +33,7 @@ export function getDefaultUpdateCenterRuntimeState(): UpdateCenterRuntimeState {
     lastResolvedCandidateKey: null,
     lastNotifiedCandidateKey: null,
     lastNotifiedAt: null,
+    statusSnapshot: null,
   };
 }
 
@@ -38,6 +47,72 @@ function normalizeNullableSource(value: unknown): UpdateCenterVersionSource | nu
   return value === 'docker-hub-tag' || value === 'github-release' ? value : null;
 }
 
+function normalizeVersionCandidate(input: unknown): UpdateCenterVersionCandidate | null {
+  if (!input || typeof input !== 'object') return null;
+  const record = input as Record<string, unknown>;
+  const source = normalizeNullableSource(record.source);
+  const rawVersion = normalizeNullableString(record.rawVersion);
+  const normalizedVersion = normalizeNullableString(record.normalizedVersion);
+  if (!source || !rawVersion || !normalizedVersion) return null;
+  return {
+    source,
+    rawVersion,
+    normalizedVersion,
+    url: normalizeNullableString(record.url),
+    tagName: normalizeNullableString(record.tagName),
+    digest: normalizeNullableString(record.digest),
+    displayVersion: normalizeNullableString(record.displayVersion),
+    publishedAt: normalizeNullableString(record.publishedAt),
+  };
+}
+
+function normalizeHelperHistoryEntry(input: unknown): NonNullable<UpdateCenterHelperStatus['history']>[number] | null {
+  if (!input || typeof input !== 'object') return null;
+  const record = input as Record<string, unknown>;
+  const revision = normalizeNullableString(record.revision);
+  if (!revision) return null;
+  return {
+    revision,
+    updatedAt: normalizeNullableString(record.updatedAt),
+    status: normalizeNullableString(record.status),
+    description: normalizeNullableString(record.description),
+    imageRepository: normalizeNullableString(record.imageRepository),
+    imageTag: normalizeNullableString(record.imageTag),
+    imageDigest: normalizeNullableString(record.imageDigest),
+  };
+}
+
+function normalizeHelperSnapshot(input: unknown): UpdateCenterHelperStatus | null {
+  if (!input || typeof input !== 'object') return null;
+  const record = input as Record<string, unknown>;
+  return {
+    ok: typeof record.ok === 'boolean' ? record.ok : false,
+    releaseName: normalizeNullableString(record.releaseName),
+    namespace: normalizeNullableString(record.namespace),
+    revision: normalizeNullableString(record.revision),
+    imageRepository: normalizeNullableString(record.imageRepository),
+    imageTag: normalizeNullableString(record.imageTag),
+    imageDigest: normalizeNullableString(record.imageDigest),
+    healthy: typeof record.healthy === 'boolean' ? record.healthy : false,
+    error: normalizeNullableString(record.error) || undefined,
+    history: Array.isArray(record.history)
+      ? record.history
+        .map((entry) => normalizeHelperHistoryEntry(entry))
+        .filter((entry): entry is NonNullable<UpdateCenterHelperStatus['history']>[number] => !!entry)
+      : [],
+  };
+}
+
+function normalizeStatusSnapshot(input: unknown): UpdateCenterStatusSnapshot | null {
+  if (!input || typeof input !== 'object') return null;
+  const record = input as Record<string, unknown>;
+  return {
+    githubRelease: normalizeVersionCandidate(record.githubRelease),
+    dockerHubTag: normalizeVersionCandidate(record.dockerHubTag),
+    helper: normalizeHelperSnapshot(record.helper),
+  };
+}
+
 export function normalizeUpdateCenterRuntimeState(input: unknown): UpdateCenterRuntimeState {
   const defaults = getDefaultUpdateCenterRuntimeState();
   const record = input && typeof input === 'object' ? input as Record<string, unknown> : {};
@@ -49,6 +124,9 @@ export function normalizeUpdateCenterRuntimeState(input: unknown): UpdateCenterR
     lastResolvedCandidateKey: normalizeNullableString(record.lastResolvedCandidateKey) ?? defaults.lastResolvedCandidateKey,
     lastNotifiedCandidateKey: normalizeNullableString(record.lastNotifiedCandidateKey) ?? defaults.lastNotifiedCandidateKey,
     lastNotifiedAt: normalizeNullableString(record.lastNotifiedAt) ?? defaults.lastNotifiedAt,
+    statusSnapshot: Object.prototype.hasOwnProperty.call(record, 'statusSnapshot')
+      ? normalizeStatusSnapshot(record.statusSnapshot)
+      : defaults.statusSnapshot,
   };
 }
 
