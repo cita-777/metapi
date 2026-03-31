@@ -5,6 +5,7 @@ type ProxyLogPathMeta = {
   sessionId: string | null;
   downstreamPath: string | null;
   upstreamPath: string | null;
+  usageSource: string | null;
   errorMessage: string;
 };
 
@@ -17,6 +18,7 @@ export function parseProxyLogPathMeta(message?: string): ProxyLogPathMeta {
     sessionId: parsed.sessionId,
     downstreamPath: parsed.downstreamPath,
     upstreamPath: parsed.upstreamPath,
+    usageSource: parsed.usageSource,
     errorMessage: parsed.messageText,
   };
 }

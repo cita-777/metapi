@@ -11,6 +11,7 @@ import {
   type ProxyLogListItem,
   type ProxyLogsSummary,
   type ProxyLogStatusFilter,
+  type ProxyLogUsageSource,
 } from '../api.js';
 import { useToast } from '../components/Toast.js';
 import { ModelBadge } from '../components/BrandIcon.js';
@@ -278,6 +279,17 @@ function formatBillingDetailSummary(log: ProxyLogRenderItem) {
   const detail = log.billingDetails;
   if (!detail) return null;
   return `模型倍率 ${formatCompactNumber(detail.pricing.modelRatio)}，输出倍率 ${formatCompactNumber(detail.pricing.completionRatio)}，缓存倍率 ${formatCompactNumber(detail.pricing.cacheRatio)}，缓存创建倍率 ${formatCompactNumber(detail.pricing.cacheCreationRatio)}，分组倍率 ${formatCompactNumber(detail.pricing.groupRatio)}`;
+}
+
+function formatProxyLogUsageSource(source: ProxyLogUsageSource | undefined): string | null {
+  if (source === 'upstream') return '上游返回';
+  if (source === 'self-log') return '站点日志回填';
+  if (source === 'unknown') return '未知';
+  return null;
+}
+
+function formatProxyLogTokenValue(value: number | null | undefined): string {
+  return typeof value === 'number' ? value.toLocaleString() : '--';
 }
 
 function renderDownstreamKeySummary(log: ProxyLogRenderItem) {
@@ -1905,13 +1917,13 @@ export default function ProxyLogs() {
                       <div className="mobile-summary-metric-label">用时</div>
                       <div className="mobile-summary-metric-value">{formatLatency(log.latencyMs)}</div>
                     </div>
-                    <div className="mobile-summary-metric">
-                      <div className="mobile-summary-metric-label">输入</div>
-                      <div className="mobile-summary-metric-value">{log.promptTokens?.toLocaleString() || '-'}</div>
+                      <div className="mobile-summary-metric">
+                        <div className="mobile-summary-metric-label">输入</div>
+                      <div className="mobile-summary-metric-value">{formatProxyLogTokenValue(log.promptTokens)}</div>
                     </div>
                     <div className="mobile-summary-metric">
                       <div className="mobile-summary-metric-label">输出</div>
-                      <div className="mobile-summary-metric-value">{log.completionTokens?.toLocaleString() || '-'}</div>
+                      <div className="mobile-summary-metric-value">{formatProxyLogTokenValue(log.completionTokens)}</div>
                     </div>
                     <div className="mobile-summary-metric">
                       <div className="mobile-summary-metric-label">花费</div>
@@ -1923,6 +1935,7 @@ export default function ProxyLogs() {
                       <MobileField label="时间" value={formatDateTimeLocal(log.createdAt)} />
                       <MobileField label="站点" value={<SiteBadgeLink siteId={siteIdByName.get(String(log.siteName || '').trim())} siteName={log.siteName} badgeStyle={{ fontSize: 11 }} />} />
                       <MobileField label="重试" value={log.retryCount > 0 ? log.retryCount : 0} />
+                      <MobileField label="用量来源" value={formatProxyLogUsageSource(detailLog.usageSource ?? pathMeta.usageSource) || '--'} />
                       {detailState?.loading && <div style={{ color: 'var(--color-text-muted)' }}>加载详情中...</div>}
                       {detailState?.error && <div style={{ color: 'var(--color-danger)' }}>{detailState.error}</div>}
                       {billingDetailSummary && <div style={{ color: 'var(--color-text-muted)' }}>{billingDetailSummary}</div>}
@@ -2033,10 +2046,10 @@ export default function ProxyLogs() {
                         </span>
                       </td>
                       <td style={{ textAlign: 'right', fontSize: 12, fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-secondary)' }}>
-                        {log.promptTokens?.toLocaleString() || '-'}
+                        {formatProxyLogTokenValue(log.promptTokens)}
                       </td>
                       <td style={{ textAlign: 'right', fontSize: 12, fontVariantNumeric: 'tabular-nums', color: 'var(--color-text-secondary)' }}>
-                        {log.completionTokens?.toLocaleString() || '-'}
+                        {formatProxyLogTokenValue(log.completionTokens)}
                       </td>
                       <td style={{ textAlign: 'right', fontSize: 12, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
                         {typeof log.estimatedCost === 'number' ? `$${log.estimatedCost.toFixed(6)}` : '-'}
@@ -2084,6 +2097,9 @@ export default function ProxyLogs() {
                                     {billingDetailSummary && (
                                       <div style={{ color: 'var(--color-text-muted)' }}>{billingDetailSummary}</div>
                                     )}
+                                    <div style={{ color: 'var(--color-text-muted)' }}>
+                                      用量来源：{formatProxyLogUsageSource(detailLog.usageSource ?? pathMeta.usageSource) || '未知'}
+                                    </div>
                                     <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
                                       <span style={{ color: 'var(--color-text-muted)', flexShrink: 0 }}>客户端</span>
                                       <div style={{ minWidth: 0 }}>
@@ -2121,9 +2137,9 @@ export default function ProxyLogs() {
                                     </div>
                                   ) : (
                                     <span>
-                                      输入 {detailLog.promptTokens?.toLocaleString() || 0} tokens
-                                      {' + '}输出 {detailLog.completionTokens?.toLocaleString() || 0} tokens
-                                      {' = '}总计 {detailLog.totalTokens?.toLocaleString() || 0} tokens
+                                      输入 {formatProxyLogTokenValue(detailLog.promptTokens)} tokens
+                                      {' + '}输出 {formatProxyLogTokenValue(detailLog.completionTokens)} tokens
+                                      {' = '}总计 {formatProxyLogTokenValue(detailLog.totalTokens)} tokens
                                       {typeof detailLog.estimatedCost === 'number' && (
                                         <>，预估费用 <strong style={{ color: 'var(--color-text-primary)' }}>${detailLog.estimatedCost.toFixed(6)}</strong></>
                                       )}

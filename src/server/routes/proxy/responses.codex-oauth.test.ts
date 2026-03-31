@@ -845,6 +845,39 @@ describe('responses proxy codex oauth refresh', () => {
     expect(String(insertedProxyLogs.at(-1)?.errorMessage || '')).toContain('empty content');
   });
 
+  it('does not record success when a native responses stream completes with prompt tokens only and no output', async () => {
+    config.proxyEmptyContentFailEnabled = true;
+
+    fetchMock.mockResolvedValue(createSseResponse([
+      'event: response.created\n',
+      'data: {"type":"response.created","response":{"id":"resp_codex_prompt_only","model":"gpt-5.4","created_at":1706000000,"status":"in_progress","output":[]}}\n\n',
+      'event: response.completed\n',
+      'data: {"type":"response.completed","response":{"id":"resp_codex_prompt_only","model":"gpt-5.4","status":"completed","output":[],"output_text":"","usage":{"input_tokens":5,"output_tokens":0,"total_tokens":5}}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-5.4',
+        input: 'hello codex',
+        stream: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('event: response.failed');
+    expect(response.body).not.toContain('event: response.completed');
+    expect(recordSuccessMock).not.toHaveBeenCalled();
+    expect(recordFailureMock).toHaveBeenCalledTimes(1);
+    expect(insertedProxyLogs.at(-1)).toMatchObject({
+      status: 'failed',
+      httpStatus: 200,
+    });
+    expect(String(insertedProxyLogs.at(-1)?.errorMessage || '')).toContain('empty content');
+  });
+
   it('does not retry or mark failure after converting a non-stream upstream payload into SSE when post-stream usage accounting fails', async () => {
     resolveProxyUsageWithSelfLogFallbackMock.mockRejectedValueOnce(new Error('usage accounting failed'));
     fetchMock.mockResolvedValue(new Response(JSON.stringify({

@@ -6,6 +6,7 @@ type ComposeProxyLogMessageArgs = {
   traceHint?: string | null;
   downstreamPath?: string | null;
   upstreamPath?: string | null;
+  usageSource?: string | null;
   errorMessage?: string | null;
 };
 
@@ -21,6 +22,7 @@ export function composeProxyLogMessage({
   traceHint,
   downstreamPath,
   upstreamPath,
+  usageSource,
   errorMessage,
 }: ComposeProxyLogMessageArgs): string | null {
   const rawMessage = typeof errorMessage === 'string' ? errorMessage.trim() : '';
@@ -29,6 +31,7 @@ export function composeProxyLogMessage({
   const finalSessionId = (sessionId || traceHint || parsed.sessionId || '').trim();
   const finalDownstreamPath = (downstreamPath || parsed.downstreamPath || '').trim();
   const finalUpstreamPath = (upstreamPath || parsed.upstreamPath || '').trim();
+  const finalUsageSource = (usageSource || parsed.usageSource || '').trim();
   const finalMessageText = parsed.messageText.trim();
 
   const prefixParts: string[] = [];
@@ -36,6 +39,7 @@ export function composeProxyLogMessage({
   if (finalSessionId) prefixParts.push(`[session:${finalSessionId}]`);
   if (finalDownstreamPath) prefixParts.push(`[downstream:${finalDownstreamPath}]`);
   if (finalUpstreamPath) prefixParts.push(`[upstream:${finalUpstreamPath}]`);
+  if (finalUsageSource) prefixParts.push(`[usage:${finalUsageSource}]`);
 
   if (prefixParts.length === 0 && !finalMessageText) return null;
   if (finalMessageText) return `${prefixParts.join(' ')} ${finalMessageText}`.trim();

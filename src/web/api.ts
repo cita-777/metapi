@@ -393,6 +393,7 @@ export type RuntimeSettingsPayload = {
 
 export type ProxyLogStatusFilter = 'all' | 'success' | 'failed';
 export type ProxyLogClientConfidence = 'exact' | 'heuristic' | 'unknown' | null;
+export type ProxyLogUsageSource = 'upstream' | 'self-log' | 'unknown' | null;
 
 export type ProxyLogBillingDetails = {
   quotaType: number;
@@ -448,6 +449,7 @@ export type ProxyLogListItem = {
   clientAppId?: string | null;
   clientAppName?: string | null;
   clientConfidence?: ProxyLogClientConfidence;
+  usageSource?: ProxyLogUsageSource;
   promptTokens?: number | null;
   completionTokens?: number | null;
   estimatedCost?: number | null;

@@ -315,6 +315,76 @@ describe('chat proxy stream behavior', () => {
     expect(recordFailureMock).toHaveBeenCalledTimes(1);
   });
 
+  it('returns HTTP upstream_error when streamed chat SSE yields only empty deltas before DONE', async () => {
+    config.proxyEmptyContentFailEnabled = true;
+
+    const encoder = new TextEncoder();
+    const upstreamBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"id":"chatcmpl-empty-sse","choices":[{"delta":{}}]}\n\n'));
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      },
+    });
+
+    fetchMock.mockResolvedValue(new Response(upstreamBody, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        model: 'gpt-4o-mini',
+        stream: true,
+        messages: [{ role: 'user', content: 'hi' }],
+      },
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.headers['content-type']).not.toContain('text/event-stream');
+    expect(response.json()?.error?.type).toBe('upstream_error');
+    expect(response.json()?.error?.message).toContain('empty content');
+    expect(recordSuccessMock).not.toHaveBeenCalled();
+    expect(recordFailureMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns HTTP upstream_error when streamed chat SSE carries prompt usage but no assistant output', async () => {
+    config.proxyEmptyContentFailEnabled = true;
+
+    const encoder = new TextEncoder();
+    const upstreamBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"id":"chatcmpl-empty-usage","choices":[{"delta":{}}],"usage":{"prompt_tokens":42203,"completion_tokens":0,"total_tokens":42203}}\n\n'));
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      },
+    });
+
+    fetchMock.mockResolvedValue(new Response(upstreamBody, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        model: 'gpt-5.4',
+        stream: true,
+        messages: [{ role: 'user', content: 'long prompt' }],
+      },
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.headers['content-type']).not.toContain('text/event-stream');
+    expect(response.json()?.error?.type).toBe('upstream_error');
+    expect(response.json()?.error?.message).toContain('empty content');
+    expect(recordSuccessMock).not.toHaveBeenCalled();
+    expect(recordFailureMock).toHaveBeenCalledTimes(1);
+  });
+
   it('returns clear 400 when /v1/chat/completions receives responses-style input without messages', async () => {
     const response = await app.inject({
       method: 'POST',

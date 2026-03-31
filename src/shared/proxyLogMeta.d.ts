@@ -3,6 +3,7 @@ export type ParsedProxyLogMetadata = {
   sessionId: string | null;
   downstreamPath: string | null;
   upstreamPath: string | null;
+  usageSource: string | null;
   messageText: string;
 };
 

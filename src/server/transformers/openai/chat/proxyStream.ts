@@ -4,6 +4,7 @@ import { type DownstreamFormat, type ParsedSseEvent } from '../../shared/normali
 import { createOpenAiChatAggregateState, applyOpenAiChatStreamEvent, finalizeOpenAiChatAggregate } from './aggregator.js';
 import { openAiChatOutbound } from './outbound.js';
 import { openAiChatStream } from './stream.js';
+import { config } from '../../../config.js';
 
 type StreamReader = {
   read(): Promise<{ done: boolean; value?: Uint8Array }>;
@@ -15,6 +16,11 @@ type ChatProxyStreamSessionInput = {
   downstreamFormat: DownstreamFormat;
   modelName: string;
   successfulUpstreamPath: string;
+  getUsage?: () => {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
   onParsedPayload?: (payload: unknown) => void;
   writeLines: (lines: string[]) => void;
   writeRaw: (chunk: string) => void;
@@ -49,6 +55,8 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
     status: 'completed',
     errorMessage: null,
   };
+  let forwardedDownstreamOutput = false;
+  const pendingWrites: string[] = [];
 
   const extractFailureMessage = (payload: unknown, fallback = 'upstream stream failed'): string => {
     if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
@@ -76,9 +84,97 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
     };
   };
 
+  const hasMeaningfulChatAggregateOutput = (): boolean => {
+    if (input.downstreamFormat !== 'openai' || !chatAggregateState) return false;
+    for (const choice of chatAggregateState.choices.values()) {
+      if (choice.content.length > 0) return true;
+      if (choice.reasoning.length > 0) return true;
+      if (choice.toolCalls.some((item) => item.id || item.name || item.arguments)) return true;
+    }
+    return false;
+  };
+
+  const flushPendingWrites = () => {
+    if (pendingWrites.length <= 0) return;
+    input.writeLines([...pendingWrites]);
+    pendingWrites.length = 0;
+  };
+
+  const emitLines = (lines: string[], options?: { meaningful?: boolean; force?: boolean }) => {
+    if (lines.length <= 0) return;
+    if (input.downstreamFormat !== 'openai') {
+      input.writeLines(lines);
+      return;
+    }
+    if (forwardedDownstreamOutput) {
+      input.writeLines(lines);
+      return;
+    }
+    if (options?.force) {
+      pendingWrites.length = 0;
+      forwardedDownstreamOutput = true;
+      input.writeLines(lines);
+      return;
+    }
+    if (options?.meaningful) {
+      forwardedDownstreamOutput = true;
+      flushPendingWrites();
+      input.writeLines(lines);
+      return;
+    }
+    pendingWrites.push(...lines);
+  };
+
+  const emitRaw = (chunk: string, options?: { meaningful?: boolean; force?: boolean }) => {
+    if (!chunk) return;
+    if (input.downstreamFormat !== 'openai') {
+      input.writeRaw(chunk);
+      return;
+    }
+    if (forwardedDownstreamOutput) {
+      input.writeRaw(chunk);
+      return;
+    }
+    if (options?.force) {
+      pendingWrites.length = 0;
+      forwardedDownstreamOutput = true;
+      input.writeRaw(chunk);
+      return;
+    }
+    if (options?.meaningful) {
+      forwardedDownstreamOutput = true;
+      flushPendingWrites();
+      input.writeRaw(chunk);
+      return;
+    }
+    pendingWrites.push(chunk);
+  };
+
+  const shouldFailEmptyChatCompletion = (): boolean => {
+    if (!config.proxyEmptyContentFailEnabled) return false;
+    if (input.downstreamFormat !== 'openai') return false;
+    if (terminalResult.status === 'failed') return false;
+    if (hasMeaningfulChatAggregateOutput()) return false;
+    return (input.getUsage?.().completionTokens ?? 0) <= 0;
+  };
+
   const finalize = () => {
     if (finalized) return;
     finalized = true;
+
+    if (shouldFailEmptyChatCompletion()) {
+      markFailed({
+        error: {
+          message: 'Upstream returned empty content',
+        },
+      }, 'Upstream returned empty content');
+      return;
+    }
+
+    if (input.downstreamFormat === 'openai' && !forwardedDownstreamOutput) {
+      forwardedDownstreamOutput = true;
+      flushPendingWrites();
+    }
 
     // For native Anthropic streams, EOF without message_stop is not a clean
     // completion. Forward the partial stream as-is instead of fabricating an
@@ -108,12 +204,12 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
           }),
         ).slice(-1)[0];
         if (terminalChunk) {
-          input.writeLines([`data: ${JSON.stringify(terminalChunk)}\n\n`]);
+          emitLines([`data: ${JSON.stringify(terminalChunk)}\n\n`], { meaningful: true });
         }
       }
     }
 
-    input.writeLines(downstreamTransformer.serializeDone(streamContext, claudeContext));
+    emitLines(downstreamTransformer.serializeDone(streamContext, claudeContext), { meaningful: true });
   };
 
   const handleEventBlock = async (eventBlock: ParsedSseEvent): Promise<boolean> => {
@@ -153,19 +249,26 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
       const payloadType = typeof (parsedPayload as Record<string, unknown>).type === 'string'
         ? String((parsedPayload as Record<string, unknown>).type)
         : '';
-      if (payloadType === 'response.failed' || payloadType === 'error') {
+      const isFailurePayload = payloadType === 'response.failed' || payloadType === 'error';
+      if (isFailurePayload) {
         markFailed(parsedPayload);
       }
       const normalizedEvent = downstreamTransformer.transformStreamEvent(parsedPayload, streamContext, input.modelName);
       if (input.downstreamFormat === 'openai' && chatAggregateState) {
         applyOpenAiChatStreamEvent(chatAggregateState, normalizedEvent);
       }
-      input.writeLines(downstreamTransformer.serializeStreamEvent(normalizedEvent, streamContext, claudeContext));
+      emitLines(
+        downstreamTransformer.serializeStreamEvent(normalizedEvent, streamContext, claudeContext),
+        {
+          meaningful: hasMeaningfulChatAggregateOutput(),
+          force: isFailurePayload,
+        },
+      );
       return input.downstreamFormat === 'claude' && claudeContext.doneSent;
     }
 
     if (input.downstreamFormat === 'openai') {
-      input.writeRaw(`data: ${eventBlock.data}\n\n`);
+      emitRaw(`data: ${eventBlock.data}\n\n`, { meaningful: true });
       return false;
     }
 
@@ -193,13 +296,14 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
         streamContext.id = normalizedFinal.id;
         streamContext.model = normalizedFinal.model;
         streamContext.created = normalizedFinal.created;
-        input.writeLines(
+        emitLines(
           openAiChatOutbound
             .buildSyntheticChunks(normalizedFinal)
             .map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`),
+          { meaningful: true },
         );
       } else {
-        input.writeLines(
+        emitLines(
           anthropicMessagesTransformer.serializeUpstreamFinalAsStream(
             payload,
             input.modelName,
@@ -207,6 +311,7 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
             streamContext,
             claudeContext,
           ),
+          { meaningful: true },
         );
       }
       finalize();

@@ -5,12 +5,13 @@ import { parseProxyLogMetadata } from './proxyLogMeta.js';
 describe('proxyLogMeta', () => {
   it('parses all supported proxy log prefixes', () => {
     expect(parseProxyLogMetadata(
-      '[client:codex] [session:turn-1] [downstream:/v1/responses] [upstream:/responses] boom',
+      '[client:codex] [session:turn-1] [downstream:/v1/responses] [upstream:/responses] [usage:self-log] boom',
     )).toEqual({
       clientKind: 'codex',
       sessionId: 'turn-1',
       downstreamPath: '/v1/responses',
       upstreamPath: '/responses',
+      usageSource: 'self-log',
       messageText: 'boom',
     });
   });
@@ -21,6 +22,7 @@ describe('proxyLogMeta', () => {
       sessionId: null,
       downstreamPath: null,
       upstreamPath: null,
+      usageSource: null,
       messageText: 'network timeout',
     });
   });
@@ -31,6 +33,7 @@ describe('proxyLogMeta', () => {
       sessionId: 'turn-1',
       downstreamPath: null,
       upstreamPath: null,
+      usageSource: null,
       messageText: 'boom',
     });
 
@@ -39,6 +42,7 @@ describe('proxyLogMeta', () => {
       sessionId: null,
       downstreamPath: null,
       upstreamPath: null,
+      usageSource: null,
       messageText: 'boom',
     });
 
@@ -47,6 +51,7 @@ describe('proxyLogMeta', () => {
       sessionId: '1',
       downstreamPath: null,
       upstreamPath: '/x',
+      usageSource: null,
       messageText: 'msg',
     });
 
@@ -55,6 +60,7 @@ describe('proxyLogMeta', () => {
       sessionId: null,
       downstreamPath: null,
       upstreamPath: null,
+      usageSource: null,
       messageText: '',
     });
   });

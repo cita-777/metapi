@@ -51,6 +51,7 @@ interface ProxyUsageFallbackResult extends ProxyUsage {
   recoveredFromSelfLog: boolean;
   estimatedCostFromQuota: number;
   selfLogBillingMeta: SelfLogBillingMeta | null;
+  usageSource: 'upstream' | 'self-log' | 'unknown';
 }
 
 export interface SelfLogBillingMeta {
@@ -534,11 +535,13 @@ export async function resolveProxyUsageWithSelfLogFallback(
   input: ProxyUsageFallbackInput,
 ): Promise<ProxyUsageFallbackResult> {
   const normalizedUsage = normalizeUsage(input.usage);
+  const fallbackUsageSource = isUsageMissing(normalizedUsage) ? 'unknown' : 'upstream';
   const fallback: ProxyUsageFallbackResult = {
     ...normalizedUsage,
     recoveredFromSelfLog: false,
     estimatedCostFromQuota: 0,
     selfLogBillingMeta: null,
+    usageSource: fallbackUsageSource,
   };
 
   const platform = String(input.site.platform || '').toLowerCase();
@@ -577,6 +580,7 @@ export async function resolveProxyUsageWithSelfLogFallback(
       recoveredFromSelfLog: true,
       estimatedCostFromQuota: toRecoveredCost(matched),
       selfLogBillingMeta: matched.billingMeta,
+      usageSource: useMatchedTokens ? 'self-log' : fallbackUsageSource,
     };
   } catch {
     return fallback;
