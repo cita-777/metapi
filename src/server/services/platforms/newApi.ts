@@ -549,6 +549,15 @@ export class NewApiAdapter extends BasePlatformAdapter {
     return '';
   }
 
+  private isHtmlJsonParseErrorMessage(message?: string | null): boolean {
+    if (!message) return false;
+    const text = message.toLowerCase();
+    return (
+      text.includes("unexpected token '<'")
+      || (text.includes('not valid json') && (text.includes('<html') || text.includes('<script')))
+    );
+  }
+
   private isShieldChallenge(contentType: string, text: string): boolean {
     const ct = (contentType || '').toLowerCase();
     if (ct.includes('text/html') && /var\s+arg1\s*=|acw_sc__v2|cdn_sec_tc|<script/i.test(text)) {
@@ -1162,10 +1171,15 @@ export class NewApiAdapter extends BasePlatformAdapter {
     const resolvedUserId = platformUserId || await this.discoverUserId(baseUrl, accessToken);
     let failureMessage: string | null = null;
     const rememberFailure = (message?: string | null) => {
-      if (failureMessage) return;
       const text = typeof message === 'string' ? message.trim() : '';
       if (!text) return;
-      failureMessage = text;
+      if (!failureMessage) {
+        failureMessage = text;
+        return;
+      }
+      if (this.isHtmlJsonParseErrorMessage(failureMessage) && !this.isHtmlJsonParseErrorMessage(text)) {
+        failureMessage = text;
+      }
     };
 
     try {
