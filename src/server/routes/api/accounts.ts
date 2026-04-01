@@ -325,11 +325,19 @@ async function getModelsWithSiteApiEndpointPool(
   accessToken: string,
   platformUserId?: number,
 ): Promise<string[]> {
-  return runWithSiteApiEndpointPool(site, (target) => withTimeout(
-    () => adapter.getModels(target.baseUrl, accessToken, platformUserId),
-    ACCOUNT_VERIFY_TIMEOUT_MS,
-    buildAccountVerifyTimeoutMessage(),
-  ));
+  const timeoutMessage = buildAccountVerifyTimeoutMessage();
+  const deadline = Date.now() + ACCOUNT_VERIFY_TIMEOUT_MS;
+  return runWithSiteApiEndpointPool(site, (target) => {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      throw new Error(timeoutMessage);
+    }
+    return withTimeout(
+      () => adapter.getModels(target.baseUrl, accessToken, platformUserId),
+      remainingMs,
+      timeoutMessage,
+    );
+  });
 }
 
 function resolveUserIdFailureReason(message: string, hasProvidedUserId: boolean): VerifyFailureReason {

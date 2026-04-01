@@ -4,6 +4,7 @@ export type SiteCustomHeaderField = {
 };
 
 export type SiteApiEndpointField = {
+  draftId?: string;
   url: string;
   enabled: boolean;
   cooldownUntil?: string | null;

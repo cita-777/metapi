@@ -86,7 +86,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
       const startTime = Date.now();
 
       try {
-        const { upstream, text } = await runWithSiteApiEndpointPool(selected.site, async (target) => {
+        const { upstream, text, baseUrl } = await runWithSiteApiEndpointPool(selected.site, async (target) => {
           const targetUrl = buildUpstreamUrl(target.baseUrl, '/v1/videos');
           const accountProxy = getProxyUrlFromExtraConfig(selected.account.extraConfig);
           const requestInit = multipartForm
@@ -115,9 +115,11 @@ export async function videosProxyRoute(app: FastifyInstance) {
           if (!response.ok) {
             throw new SiteApiEndpointRequestError(responseText || 'unknown error', {
               status: response.status,
+              rawErrText: responseText || null,
             });
           }
           return {
+            baseUrl: target.baseUrl,
             upstream: response,
             text: responseText,
           };
@@ -134,7 +136,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
 
         const mapping = await saveProxyVideoTask({
           upstreamVideoId,
-          siteUrl: selected.site.url,
+          siteUrl: baseUrl,
           tokenValue: selected.tokenValue,
           requestedModel,
           actualModel: upstreamModel,
@@ -203,7 +205,15 @@ export async function videosProxyRoute(app: FastifyInstance) {
       });
     }
 
-    const { upstream } = await requestMappedVideoTaskUpstream(mapping, 'GET');
+    let upstream: Awaited<ReturnType<typeof fetch>>;
+    try {
+      ({ upstream } = await requestMappedVideoTaskUpstream(mapping, 'GET'));
+    } catch (error) {
+      if (isSiteApiEndpointFailure(error)) {
+        return sendVideoTaskEndpointFailure(reply, error);
+      }
+      throw error;
+    }
     const text = await upstream.text();
     try {
       const data = JSON.parse(text);
@@ -228,7 +238,15 @@ export async function videosProxyRoute(app: FastifyInstance) {
       });
     }
 
-    const { upstream } = await requestMappedVideoTaskUpstream(mapping, 'DELETE');
+    let upstream: Awaited<ReturnType<typeof fetch>>;
+    try {
+      ({ upstream } = await requestMappedVideoTaskUpstream(mapping, 'DELETE'));
+    } catch (error) {
+      if (isSiteApiEndpointFailure(error)) {
+        return sendVideoTaskEndpointFailure(reply, error);
+      }
+      throw error;
+    }
     if (upstream.ok) {
       await deleteProxyVideoTaskByPublicId(mapping.publicId);
       return reply.code(upstream.status).send();
@@ -258,6 +276,7 @@ async function requestMappedVideoTaskUpstream(
       if (shouldRetryProxyRequest(upstream.status, errorText || `HTTP ${upstream.status}`)) {
         throw new SiteApiEndpointRequestError(errorText || `HTTP ${upstream.status}`, {
           status: upstream.status,
+          rawErrText: errorText || null,
         });
       }
     }
@@ -270,6 +289,31 @@ async function requestMappedVideoTaskUpstream(
   }
 
   return buildRequest(mapping.siteUrl);
+}
+
+function isSiteApiEndpointFailure(error: unknown): error is SiteApiEndpointRequestError {
+  return error instanceof SiteApiEndpointRequestError
+    || (typeof error === 'object' && error !== null && (error as { name?: unknown }).name === 'SiteApiEndpointRequestError');
+}
+
+function sendVideoTaskEndpointFailure(
+  reply: FastifyReply,
+  error: { status?: number | null; rawErrText?: string | null; message?: string | null },
+) {
+  const status = typeof error.status === 'number' && error.status > 0 ? error.status : 502;
+  const rawText = (typeof error.rawErrText === 'string' && error.rawErrText.trim())
+    ? error.rawErrText
+    : (typeof error.message === 'string' ? error.message.trim() : '');
+  if (!rawText) {
+    return reply.code(status).send({
+      error: { message: 'Upstream request failed', type: 'upstream_error' },
+    });
+  }
+  try {
+    return reply.code(status).send(JSON.parse(rawText));
+  } catch {
+    return reply.code(status).type('text/plain').send(rawText);
+  }
 }
 
 async function recordTokenRouterEventBestEffort(

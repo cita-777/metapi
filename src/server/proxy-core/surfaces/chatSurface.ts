@@ -938,7 +938,7 @@ export async function handleChatSurfaceRequest(
         err instanceof SiteApiEndpointRequestError
         || err?.name === 'SiteApiEndpointRequestError'
         || err?.siteApiEndpointUpstreamFailure === true
-        || endpointFailureStatus !== null
+        || (endpointFailureStatus !== null && endpointFailureStatus >= 500)
       );
       if (isSiteApiEndpointFailure) {
         const failureOutcome = await failureToolkit.handleUpstreamFailure({
@@ -951,16 +951,21 @@ export async function handleChatSurfaceRequest(
           latencyMs: Date.now() - startTime,
           retryCount,
         });
-        if (failureOutcome.action === 'retry') {
+        const terminalFailureOutcome = failureOutcome.action === 'retry'
+          ? (canRetryChannelSelection(retryCount, forcedChannelId)
+            ? null
+            : finalizeRetryAsUpstreamFailure(endpointFailureStatus || 502, err.message || 'unknown error'))
+          : failureOutcome;
+        if (!terminalFailureOutcome) {
           retryCount += 1;
           continue;
         }
         await finalizeDebugFailure(
-          failureOutcome.status,
-          failureOutcome.payload,
+          terminalFailureOutcome.status,
+          terminalFailureOutcome.payload,
           null,
         );
-        return reply.code(failureOutcome.status).send(failureOutcome.payload);
+        return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload);
       }
       const failureOutcome = await failureToolkit.handleExecutionError({
         selected,

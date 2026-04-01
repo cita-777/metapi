@@ -227,7 +227,27 @@ export default function Sites() {
   const [sortMode, setSortMode] = useState<SortMode>('custom');
   const [highlightSiteId, setHighlightSiteId] = useState<number | null>(null);
   const [editor, setEditor] = useState<SiteEditorState | null>(null);
-  const [form, setForm] = useState<SiteForm>(emptySiteForm());
+  const apiEndpointDraftIdRef = useRef(0);
+  const createApiEndpointDraftId = () => {
+    apiEndpointDraftIdRef.current += 1;
+    return `site-api-endpoint-draft-${apiEndpointDraftIdRef.current}`;
+  };
+  const createEmptyApiEndpointRow = (): SiteApiEndpointField => ({
+    ...emptySiteApiEndpoint(),
+    draftId: createApiEndpointDraftId(),
+  });
+  const hydrateSiteForm = (value: SiteForm): SiteForm => {
+    const sourceRows = value.apiEndpoints.length > 0 ? value.apiEndpoints : [createEmptyApiEndpointRow()];
+    return {
+      ...value,
+      apiEndpoints: sourceRows.map((endpoint) => ({
+        ...endpoint,
+        draftId: endpoint.draftId || createApiEndpointDraftId(),
+      })),
+    };
+  };
+  const createEmptySiteForm = (): SiteForm => hydrateSiteForm(emptySiteForm());
+  const [form, setForm] = useState<SiteForm>(() => createEmptySiteForm());
   const [detecting, setDetecting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<number | null>(null);
@@ -388,7 +408,7 @@ export default function Sites() {
 
   const closeEditor = () => {
     setEditor(null);
-    setForm(emptySiteForm());
+    setForm(createEmptySiteForm());
     setSelectedInitializationPresetId(null);
   };
 
@@ -405,14 +425,14 @@ export default function Sites() {
       return;
     }
     setEditor({ mode: 'add' });
-    setForm(emptySiteForm());
+    setForm(createEmptySiteForm());
     setSelectedInitializationPresetId(null);
     scrollToEditorTop();
   };
 
   const openEdit = (site: SiteRow) => {
     setEditor({ mode: 'edit', editingSiteId: site.id });
-    setForm(siteFormFromSite(site));
+    setForm(hydrateSiteForm(siteFormFromSite(site)));
     setSelectedInitializationPresetId(detectSiteInitializationPreset(site.url, site.platform)?.id || null);
     scrollToEditorTop();
     // Load disabled models and discovered models independently so a best-effort
@@ -595,7 +615,7 @@ export default function Sites() {
   const addApiEndpointRow = () => {
     setForm((prev) => ({
       ...prev,
-      apiEndpoints: [...prev.apiEndpoints, emptySiteApiEndpoint()],
+      apiEndpoints: [...prev.apiEndpoints, createEmptyApiEndpointRow()],
     }));
   };
 
@@ -604,7 +624,7 @@ export default function Sites() {
       const nextEndpoints = prev.apiEndpoints.filter((_, itemIndex) => itemIndex !== index);
       return {
         ...prev,
-        apiEndpoints: nextEndpoints.length > 0 ? nextEndpoints : [emptySiteApiEndpoint()],
+        apiEndpoints: nextEndpoints.length > 0 ? nextEndpoints : [createEmptyApiEndpointRow()],
       };
     });
   };
@@ -1113,7 +1133,7 @@ export default function Sites() {
             </div>
             {form.apiEndpoints.map((endpoint, index) => (
               <div
-                key={endpoint.url.trim() || `site-api-endpoint-draft-${index}`}
+                key={endpoint.draftId || `site-api-endpoint-draft-${index}`}
                 style={{
                   display: 'flex',
                   flexDirection: 'column',

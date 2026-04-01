@@ -229,8 +229,12 @@ export async function discoverAntigravityModelsFromCloud(input: {
   const requestBody = projectId ? { project: projectId } : {};
   return runWithSiteApiEndpointPool(input.site, async (target) => {
     let lastError = '';
+    const selectedBaseUrl = normalizeBaseUrl(target.baseUrl || ANTIGRAVITY_UPSTREAM_BASE_URL) || ANTIGRAVITY_UPSTREAM_BASE_URL;
+    const discoveryBaseUrls = target.endpointId
+      ? [selectedBaseUrl]
+      : buildAntigravityDiscoveryBaseUrls(selectedBaseUrl);
 
-    for (const discoveryBaseUrl of buildAntigravityDiscoveryBaseUrls(target.baseUrl || ANTIGRAVITY_UPSTREAM_BASE_URL)) {
+    for (const discoveryBaseUrl of discoveryBaseUrls) {
       try {
         const response = await fetch(
           `${discoveryBaseUrl}/v1internal:fetchAvailableModels`,

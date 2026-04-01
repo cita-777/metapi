@@ -58,7 +58,7 @@ describe('siteApiEndpointService', () => {
     });
   });
 
-  it('selects the least recently selected enabled endpoint', async () => {
+  it('selects the least recently selected enabled endpoint when sort order is tied', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'pool-site',
       url: 'https://panel.example.com',
@@ -92,6 +92,45 @@ describe('siteApiEndpointService', () => {
       configuredEndpointCount: 2,
       endpoint: expect.objectContaining({
         url: 'https://api-a.example.com/',
+        sortOrder: 0,
+      }),
+    });
+  });
+
+  it('prefers lower sortOrder before lastSelectedAt when selecting an enabled endpoint', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'ordered-site',
+      url: 'https://panel.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    await db.insert(schema.siteApiEndpoints).values([
+      {
+        siteId: site.id,
+        url: 'https://api-secondary.example.com',
+        enabled: true,
+        sortOrder: 1,
+        lastSelectedAt: '2026-03-31T11:00:00.000Z',
+      },
+      {
+        siteId: site.id,
+        url: 'https://api-primary.example.com',
+        enabled: true,
+        sortOrder: 0,
+        lastSelectedAt: '2026-03-31T11:59:00.000Z',
+      },
+    ]).run();
+
+    const selected = await selectSiteApiEndpointTarget(site, '2026-03-31T12:00:00.000Z');
+
+    expect(selected).toMatchObject({
+      kind: 'endpoint',
+      siteId: site.id,
+      baseUrl: 'https://api-primary.example.com',
+      configuredEndpointCount: 2,
+      endpoint: expect.objectContaining({
+        url: 'https://api-primary.example.com',
         sortOrder: 0,
       }),
     });

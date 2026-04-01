@@ -1459,6 +1459,86 @@ describe('refreshModelsForAccount credential discovery', () => {
     });
   });
 
+  it('rotates antigravity discovery across configured ai endpoints before using built-in fallback hosts', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockRejectedValue(new Error('antigravity oauth discovery should not call adapter.getModels'));
+    undiciFetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        json: async () => ({ error: 'endpoint-a unavailable' }),
+        text: async () => 'endpoint-a unavailable',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          models: {
+            'gemini-3-pro-preview': { displayName: 'Gemini 3 Pro Preview' },
+          },
+        }),
+        text: async () => JSON.stringify({ ok: true }),
+      });
+
+    const site = await db.insert(schema.sites).values({
+      name: 'antigravity-endpoint-pool-site',
+      url: 'https://cloudcode-panel.example.com',
+      platform: 'antigravity',
+      status: 'active',
+    }).returning().get();
+
+    await db.insert(schema.siteApiEndpoints).values([
+      {
+        siteId: site.id,
+        url: 'https://api-antigravity-a.example.com',
+        enabled: true,
+        sortOrder: 0,
+      },
+      {
+        siteId: site.id,
+        url: 'https://api-antigravity-b.example.com',
+        enabled: true,
+        sortOrder: 1,
+      },
+    ]).run();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'antigravity-endpoint-pool@example.com',
+      accessToken: 'antigravity-access-token',
+      apiToken: null,
+      status: 'active',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'antigravity',
+          email: 'antigravity-endpoint-pool@example.com',
+          projectId: 'project-demo',
+        },
+      }),
+    }).returning().get();
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      status: 'success',
+      modelCount: 1,
+      modelsPreview: ['gemini-3-pro-preview'],
+    });
+    expect(undiciFetchMock).toHaveBeenCalledTimes(2);
+    expect(String(undiciFetchMock.mock.calls[0]?.[0] || '')).toBe('https://api-antigravity-a.example.com/v1internal:fetchAvailableModels');
+    expect(String(undiciFetchMock.mock.calls[1]?.[0] || '')).toBe('https://api-antigravity-b.example.com/v1internal:fetchAvailableModels');
+
+    const endpoints = await db.select().from(schema.siteApiEndpoints).all();
+    const firstEndpoint = endpoints.find((item) => item.url === 'https://api-antigravity-a.example.com');
+    const secondEndpoint = endpoints.find((item) => item.url === 'https://api-antigravity-b.example.com');
+    expect(firstEndpoint?.cooldownUntil).toBeTruthy();
+    expect(firstEndpoint?.lastFailureReason).toContain('HTTP 503');
+    expect(secondEndpoint?.lastSelectedAt).toBeTruthy();
+  });
+
   it('preserves manual models after successful model refresh', async () => {
     getApiTokenMock.mockResolvedValue(null);
     getModelsMock.mockResolvedValue(['gpt-4.1', 'claude-opus-4-6']);

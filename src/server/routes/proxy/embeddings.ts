@@ -81,10 +81,23 @@ export async function embeddingsProxyRoute(app: FastifyInstance) {
             },
             body: JSON.stringify(forwardBody),
           }, getProxyUrlFromExtraConfig(selected.account.extraConfig)));
-          const responseText = await response.text();
+          const status = response.status;
+          let responseText = '';
+          try {
+            responseText = await response.text();
+          } catch (error) {
+            if (!response.ok) {
+              throw new SiteApiEndpointRequestError('unknown error', {
+                status,
+                cause: error,
+              });
+            }
+            throw error;
+          }
           if (!response.ok) {
             throw new SiteApiEndpointRequestError(responseText || 'unknown error', {
-              status: response.status,
+              status,
+              rawErrText: responseText || null,
             });
           }
           return {

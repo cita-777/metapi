@@ -164,10 +164,10 @@ export async function selectSiteApiEndpointTarget(
   const eligible = endpoints
     .filter((endpoint) => (endpoint.enabled ?? true) && !isEndpointCoolingDown(endpoint, nowIso))
     .sort((left, right) => {
-      const selectionOrder = compareNullableTimeAsc(left.lastSelectedAt, right.lastSelectedAt);
-      if (selectionOrder !== 0) return selectionOrder;
       const sortOrder = (left.sortOrder ?? 0) - (right.sortOrder ?? 0);
       if (sortOrder !== 0) return sortOrder;
+      const selectionOrder = compareNullableTimeAsc(left.lastSelectedAt, right.lastSelectedAt);
+      if (selectionOrder !== 0) return selectionOrder;
       return (left.id ?? 0) - (right.id ?? 0);
     });
 
