@@ -55,6 +55,7 @@ vi.mock('../../services/modelPricingService.js', () => ({
 
 vi.mock('../../services/proxyRetryPolicy.js', () => ({
   shouldRetryProxyRequest: () => false,
+  RETRYABLE_TIMEOUT_PATTERNS: [/(request timed out|connection timed out|read timeout|\btimed out\b)/i],
 }));
 
 vi.mock('../../services/proxyUsageFallbackService.js', () => ({
@@ -68,12 +69,33 @@ vi.mock('../../services/oauth/refreshSingleflight.js', () => ({
 vi.mock('../../db/index.js', () => ({
   db: {
     insert: (arg: any) => dbInsertMock(arg),
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          orderBy: () => ({
+            all: async () => [],
+          }),
+        }),
+      }),
+    }),
+    update: () => ({
+      set: () => ({
+        where: () => ({
+          run: async () => undefined,
+        }),
+      }),
+    }),
   },
   hasProxyLogBillingDetailsColumn: async () => false,
   hasProxyLogClientColumns: async () => false,
   hasProxyLogDownstreamApiKeyIdColumn: async () => false,
   schema: {
     proxyLogs: {},
+    siteApiEndpoints: {
+      id: {},
+      siteId: {},
+      sortOrder: {},
+    },
   },
 }));
 
@@ -144,7 +166,9 @@ describe('chat proxy codex oauth compatibility', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    if (app) {
+      await app.close();
+    }
   });
 
   it('strips codex-unsupported responses fields and aggregates the SSE result for /v1/messages callers', async () => {

@@ -1,5 +1,6 @@
 import { FastifyInstance, FastifyReply } from 'fastify';
 import { db, schema } from '../../db/index.js';
+import { getInsertedRowId } from '../../db/insertHelpers.js';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { detectSite } from '../../services/siteDetector.js';
 import { invalidateSiteProxyCache, normalizeSiteUrl, parseSiteProxyUrlInput } from '../../services/siteProxy.js';
@@ -559,8 +560,8 @@ export async function sitesRoutes(app: FastifyInstance) {
           sortOrder: normalizedSortOrder ?? (maxSortOrder + 1),
           globalWeight: normalizedGlobalWeight ?? 1,
         }).run();
-        const siteId = Number(siteInsert.lastInsertRowid || 0);
-        if (siteId > 0 && normalizedApiEndpoints.present && normalizedApiEndpoints.apiEndpoints.length > 0) {
+        const siteId = getInsertedRowId(siteInsert);
+        if (siteId && normalizedApiEndpoints.present && normalizedApiEndpoints.apiEndpoints.length > 0) {
           await tx.insert(schema.siteApiEndpoints).values(
             normalizedApiEndpoints.apiEndpoints.map((row) => ({
               siteId,
@@ -578,8 +579,8 @@ export async function sitesRoutes(app: FastifyInstance) {
       }
       throw error;
     }
-    const siteId = Number(inserted.lastInsertRowid || 0);
-    if (siteId <= 0) {
+    const siteId = getInsertedRowId(inserted);
+    if (!siteId) {
       return reply.code(500).send({ error: 'Create site failed' });
     }
     const result = await loadSiteWithApiEndpoints(siteId);
