@@ -20,22 +20,23 @@ function expectCallsSelectProxyChannelForAttempt(source: string): void {
   expect(source).toMatch(/\bselectProxyChannelForAttempt\s*\(/);
 }
 
+function expectCallsRebuildRoutesOnly(source: string): void {
+  expect(source).toMatch(/\brouteRefreshWorkflow\.rebuildRoutesOnly\s*\(/);
+}
+
 describe('route refresh workflow architecture boundaries', () => {
   it('keeps api controllers on the shared route refresh workflow instead of modelService', () => {
     const tokensSource = readSource('./tokens.ts');
     const settingsSource = readSource('./settings.ts');
     const statsSource = readSource('./stats.ts');
 
-    expect(tokensSource).toContain("from '../../services/routeRefreshWorkflow.js'");
-    expect(tokensSource).not.toContain("from '../../services/modelService.js'");
+    for (const source of [tokensSource, settingsSource, statsSource]) {
+      expectImportsRouteRefreshWorkflow(source);
+      expectNoDirectModelServiceRouteRefresh(source);
+    }
 
-    expect(settingsSource).toContain("from '../../services/routeRefreshWorkflow.js'");
-    expect(settingsSource).not.toContain("from '../../services/modelService.js'");
-
-    expect(statsSource).toContain("from '../../services/routeRefreshWorkflow.js'");
-    expectNoDirectModelServiceRouteRefresh(statsSource);
-    expect(tokensSource).toContain('const rebuild = await routeRefreshWorkflow.rebuildRoutesOnly();');
-    expect(statsSource).toContain('const rebuild = await routeRefreshWorkflow.rebuildRoutesOnly();');
+    expectCallsRebuildRoutesOnly(tokensSource);
+    expectCallsRebuildRoutesOnly(statsSource);
   });
 
   it('keeps proxy fallback refreshes and scheduler hooks on the route refresh workflow', () => {

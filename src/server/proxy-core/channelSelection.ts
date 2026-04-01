@@ -42,9 +42,8 @@ export function normalizeForcedChannelId(value: unknown): number | null {
     : typeof value === 'string' && value.trim()
       ? Number(value.trim())
       : NaN;
-  if (!Number.isFinite(numeric)) return null;
-  const normalized = Math.trunc(numeric);
-  return normalized > 0 ? normalized : null;
+  if (!Number.isSafeInteger(numeric) || numeric <= 0) return null;
+  return numeric;
 }
 
 type TesterRequestInput = {
@@ -102,6 +101,19 @@ export async function selectProxyChannelForAttempt(input: {
   }
 
   let selected: SelectedChannel = null;
+  let refreshedRoutes = false;
+
+  const refreshRoutesForFirstAttempt = async (): Promise<boolean> => {
+    if (input.retryCount > 0 || refreshedRoutes) return false;
+    refreshedRoutes = true;
+    try {
+      await routeRefreshWorkflow.refreshModelsAndRebuildRoutes();
+      return true;
+    } catch (error) {
+      console.warn('[proxy/surface] failed to refresh routes after empty selection', error);
+      return false;
+    }
+  };
 
   if (input.retryCount === 0 && input.stickySessionKey) {
     const preferredChannelId = proxyChannelCoordinator.getStickyChannelId(input.stickySessionKey);
@@ -113,7 +125,16 @@ export async function selectProxyChannelForAttempt(input: {
         input.excludeChannelIds,
       );
       if (!selected) {
-        proxyChannelCoordinator.clearStickyChannel(input.stickySessionKey, preferredChannelId);
+        const refreshSucceeded = await refreshRoutesForFirstAttempt();
+        selected = await tokenRouter.selectPreferredChannel(
+          input.requestedModel,
+          preferredChannelId,
+          input.downstreamPolicy,
+          input.excludeChannelIds,
+        );
+        if (!selected && refreshSucceeded) {
+          proxyChannelCoordinator.clearStickyChannel(input.stickySessionKey, preferredChannelId);
+        }
       }
     }
   }
@@ -128,12 +149,8 @@ export async function selectProxyChannelForAttempt(input: {
       );
   }
 
-  if (!selected && input.retryCount === 0) {
-    try {
-      await routeRefreshWorkflow.refreshModelsAndRebuildRoutes();
-    } catch (error) {
-      console.warn('[proxy/surface] failed to refresh routes after empty selection', error);
-    }
+  if (!selected && input.retryCount === 0 && !refreshedRoutes) {
+    await refreshRoutesForFirstAttempt();
     selected = await tokenRouter.selectChannel(input.requestedModel, input.downstreamPolicy);
   }
 

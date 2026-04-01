@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, create } from 'react-test-renderer';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import ModelTester from './ModelTester.js';
 import {
   DEBUG_TABS,
@@ -135,7 +135,7 @@ describe('ModelTester fixed channel behavior', () => {
   });
 
   it('keeps the restored fixed channel selected through initial model hydration', async () => {
-    let root!: WebTestRenderer;
+    let root!: ReactTestRenderer;
 
     try {
       await act(async () => {
