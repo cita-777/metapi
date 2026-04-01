@@ -140,9 +140,9 @@ function formatAccountsPayloadError(error: z.ZodError): string {
   return 'Invalid account payload.';
 }
 
-export function parseAccountCreatePayload(input: unknown):
-{ success: true; data: AccountCreatePayload } | { success: false; error: string } {
-  const result = accountCreatePayloadSchema.safeParse(normalizeAccountsPayloadInput(input));
+function parseAccountsPayload<T>(schema: z.ZodType<T>, input: unknown):
+{ success: true; data: T } | { success: false; error: string } {
+  const result = schema.safeParse(normalizeAccountsPayloadInput(input));
   if (!result.success) {
     return {
       success: false,
@@ -153,109 +153,44 @@ export function parseAccountCreatePayload(input: unknown):
     success: true,
     data: result.data,
   };
+}
+
+export function parseAccountCreatePayload(input: unknown):
+{ success: true; data: AccountCreatePayload } | { success: false; error: string } {
+  return parseAccountsPayload(accountCreatePayloadSchema, input);
 }
 
 export function parseAccountUpdatePayload(input: unknown):
 { success: true; data: AccountUpdatePayload } | { success: false; error: string } {
-  const result = accountUpdatePayloadSchema.safeParse(normalizeAccountsPayloadInput(input));
-  if (!result.success) {
-    return {
-      success: false,
-      error: formatAccountsPayloadError(result.error),
-    };
-  }
-  return {
-    success: true,
-    data: result.data,
-  };
+  return parseAccountsPayload(accountUpdatePayloadSchema, input);
 }
 
 export function parseAccountBatchPayload(input: unknown):
 { success: true; data: AccountBatchPayload } | { success: false; error: string } {
-  const result = accountBatchPayloadSchema.safeParse(normalizeAccountsPayloadInput(input));
-  if (!result.success) {
-    return {
-      success: false,
-      error: formatAccountsPayloadError(result.error),
-    };
-  }
-  return {
-    success: true,
-    data: result.data,
-  };
+  return parseAccountsPayload(accountBatchPayloadSchema, input);
 }
 
 export function parseAccountRebindSessionPayload(input: unknown):
 { success: true; data: AccountRebindSessionPayload } | { success: false; error: string } {
-  const result = accountRebindSessionPayloadSchema.safeParse(normalizeAccountsPayloadInput(input));
-  if (!result.success) {
-    return {
-      success: false,
-      error: formatAccountsPayloadError(result.error),
-    };
-  }
-  return {
-    success: true,
-    data: result.data,
-  };
+  return parseAccountsPayload(accountRebindSessionPayloadSchema, input);
 }
 
 export function parseAccountHealthRefreshPayload(input: unknown):
 { success: true; data: AccountHealthRefreshPayload } | { success: false; error: string } {
-  const result = accountHealthRefreshPayloadSchema.safeParse(normalizeAccountsPayloadInput(input));
-  if (!result.success) {
-    return {
-      success: false,
-      error: formatAccountsPayloadError(result.error),
-    };
-  }
-  return {
-    success: true,
-    data: result.data,
-  };
+  return parseAccountsPayload(accountHealthRefreshPayloadSchema, input);
 }
 
 export function parseAccountLoginPayload(input: unknown):
 { success: true; data: AccountLoginPayload } | { success: false; error: string } {
-  const result = accountLoginPayloadSchema.safeParse(normalizeAccountsPayloadInput(input));
-  if (!result.success) {
-    return {
-      success: false,
-      error: formatAccountsPayloadError(result.error),
-    };
-  }
-  return {
-    success: true,
-    data: result.data,
-  };
+  return parseAccountsPayload(accountLoginPayloadSchema, input);
 }
 
 export function parseAccountVerifyTokenPayload(input: unknown):
 { success: true; data: AccountVerifyTokenPayload } | { success: false; error: string } {
-  const result = accountVerifyTokenPayloadSchema.safeParse(normalizeAccountsPayloadInput(input));
-  if (!result.success) {
-    return {
-      success: false,
-      error: formatAccountsPayloadError(result.error),
-    };
-  }
-  return {
-    success: true,
-    data: result.data,
-  };
+  return parseAccountsPayload(accountVerifyTokenPayloadSchema, input);
 }
 
 export function parseAccountManualModelsPayload(input: unknown):
 { success: true; data: AccountManualModelsPayload } | { success: false; error: string } {
-  const result = accountManualModelsPayloadSchema.safeParse(normalizeAccountsPayloadInput(input));
-  if (!result.success) {
-    return {
-      success: false,
-      error: formatAccountsPayloadError(result.error),
-    };
-  }
-  return {
-    success: true,
-    data: result.data,
-  };
+  return parseAccountsPayload(accountManualModelsPayloadSchema, input);
 }
