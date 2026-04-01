@@ -352,6 +352,61 @@ describe('downstream api keys routes', () => {
     });
   });
 
+  it('rejects malformed create, update, and batch payloads at the route boundary', async () => {
+    const invalidCreateRes = await app.inject({
+      method: 'POST',
+      url: '/api/downstream-keys',
+      payload: {
+        name: 'bad-create',
+        key: 'sk-bad-create-001',
+        enabled: 'false',
+      },
+    });
+    expect(invalidCreateRes.statusCode).toBe(400);
+    expect(invalidCreateRes.json()).toMatchObject({
+      success: false,
+      message: 'Invalid enabled. Expected boolean.',
+    });
+
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/downstream-keys',
+      payload: {
+        name: 'shape-ok',
+        key: 'sk-shape-ok-001',
+      },
+    });
+    expect(createRes.statusCode).toBe(200);
+    const keyId = createRes.json().item.id as number;
+
+    const invalidUpdateRes = await app.inject({
+      method: 'PUT',
+      url: `/api/downstream-keys/${keyId}`,
+      payload: {
+        tags: ['valid', 123],
+      },
+    });
+    expect(invalidUpdateRes.statusCode).toBe(400);
+    expect(invalidUpdateRes.json()).toMatchObject({
+      success: false,
+      message: 'Invalid tags. Expected string or string[].',
+    });
+
+    const invalidBatchRes = await app.inject({
+      method: 'POST',
+      url: '/api/downstream-keys/batch',
+      payload: {
+        ids: [String(keyId)],
+        action: 'disable',
+      },
+    });
+    expect(invalidBatchRes.statusCode).toBe(400);
+    expect(invalidBatchRes.json()).toMatchObject({
+      success: false,
+      message: 'Invalid ids. Expected number[].',
+    });
+  });
+
   it('returns summary, overview and trend aggregated from proxy logs', async () => {
     const inserted = await db.insert(schema.downstreamApiKeys).values({
       name: 'analytics-key',

@@ -20,6 +20,15 @@ import {
   saveRouteDecisionSnapshots,
 } from '../../services/routeDecisionSnapshotStore.js';
 import { normalizeTokenRouteMode, type RouteMode } from '../../../shared/tokenRouteContract.js';
+import {
+  parseRouteChannelBatchCreatePayload,
+  parseRouteChannelCreatePayload,
+  parseRouteChannelUpdatePayload,
+  parseRouteRebuildPayload,
+  parseTokenRouteBatchPayload,
+  parseTokenRouteCreatePayload,
+  parseTokenRouteUpdatePayload,
+} from '../../contracts/tokenRoutePayloads.js';
 
 function isExactModelPattern(modelPattern: string): boolean {
   const normalized = modelPattern.trim();
@@ -760,9 +769,14 @@ export async function tokensRoutes(app: FastifyInstance) {
   });
 
   // Batch add channels to a route
-  app.post<{ Params: { id: string }; Body: { channels: Array<{ accountId: number; tokenId?: number; sourceModel?: string }> } }>('/api/routes/:id/channels/batch', async (request, reply) => {
+  app.post<{ Params: { id: string }; Body: unknown }>('/api/routes/:id/channels/batch', async (request, reply) => {
+    const parsedBody = parseRouteChannelBatchCreatePayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ success: false, message: parsedBody.error });
+    }
+
     const routeId = parseInt(request.params.id, 10);
-    const body = request.body;
+    const body = parsedBody.data;
 
     const route = await getRouteWithSources(routeId);
     if (!route) {
@@ -955,8 +969,13 @@ export async function tokensRoutes(app: FastifyInstance) {
   });
 
   // Create a route
-  app.post<{ Body: { routeMode?: string; modelPattern?: string; displayName?: string; displayIcon?: string; modelMapping?: string; routingStrategy?: string; enabled?: boolean; sourceRouteIds?: number[] } }>('/api/routes', async (request, reply) => {
-    const body = request.body;
+  app.post<{ Body: unknown }>('/api/routes', async (request, reply) => {
+    const parsedBody = parseTokenRouteCreatePayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ success: false, message: parsedBody.error });
+    }
+
+    const body = parsedBody.data;
     const routeMode = normalizeRouteMode(body.routeMode);
     const displayName = typeof body.displayName === 'string' ? body.displayName.trim() : '';
     const sourceRouteIds = normalizeSourceRouteIdsInput(body.sourceRouteIds);
@@ -1014,9 +1033,14 @@ export async function tokensRoutes(app: FastifyInstance) {
   });
 
   // Update a route
-  app.put<{ Params: { id: string }; Body: any }>('/api/routes/:id', async (request, reply) => {
+  app.put<{ Params: { id: string }; Body: unknown }>('/api/routes/:id', async (request, reply) => {
+    const parsedBody = parseTokenRouteUpdatePayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ success: false, message: parsedBody.error });
+    }
+
     const id = parseInt(request.params.id, 10);
-    const body = request.body as Record<string, unknown>;
+    const body = parsedBody.data;
     const existingRoute = await getRouteWithSources(id);
     if (!existingRoute) {
       return reply.code(404).send({ success: false, message: '路由不存在' });
@@ -1113,11 +1137,12 @@ export async function tokensRoutes(app: FastifyInstance) {
 
 
   // Batch update routes (enable/disable)
-  app.post<{ Body: { ids: number[]; action: 'enable' | 'disable' } }>('/api/routes/batch', async (request, reply) => {
-    const body = request.body;
-    if (!body || typeof body !== 'object') {
-      return reply.code(400).send({ success: false, message: '请求体必须是对象' });
+  app.post<{ Body: unknown }>('/api/routes/batch', async (request, reply) => {
+    const parsedBody = parseTokenRouteBatchPayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ success: false, message: parsedBody.error });
     }
+    const body = parsedBody.data;
     const action = body.action;
     if (action !== 'enable' && action !== 'disable') {
       return reply.code(400).send({ success: false, message: 'action 必须是 enable 或 disable' });
@@ -1154,9 +1179,14 @@ export async function tokensRoutes(app: FastifyInstance) {
     return { success: true, updatedCount: Number(updateResult?.changes || 0) };
   });
   // Add a channel to a route
-  app.post<{ Params: { id: string }; Body: { accountId: number; tokenId?: number; sourceModel?: string; priority?: number; weight?: number } }>('/api/routes/:id/channels', async (request, reply) => {
+  app.post<{ Params: { id: string }; Body: unknown }>('/api/routes/:id/channels', async (request, reply) => {
+    const parsedBody = parseRouteChannelCreatePayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ success: false, message: parsedBody.error });
+    }
+
     const routeId = parseInt(request.params.id, 10);
-    const body = request.body;
+    const body = parsedBody.data;
 
     const route = await getRouteWithSources(routeId);
     if (!route) {
@@ -1247,9 +1277,14 @@ export async function tokensRoutes(app: FastifyInstance) {
   });
 
   // Update a channel
-  app.put<{ Params: { channelId: string }; Body: any }>('/api/channels/:channelId', async (request, reply) => {
+  app.put<{ Params: { channelId: string }; Body: unknown }>('/api/channels/:channelId', async (request, reply) => {
+    const parsedBody = parseRouteChannelUpdatePayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ success: false, message: parsedBody.error });
+    }
+
     const channelId = parseInt(request.params.channelId, 10);
-    const body = request.body as Record<string, unknown>;
+    const body = parsedBody.data;
 
     const channel = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, channelId)).get();
     if (!channel) {
@@ -1282,9 +1317,10 @@ export async function tokensRoutes(app: FastifyInstance) {
       else updates.sourceModel = String(body.sourceModel).trim() || null;
     }
 
-    for (const key of ['priority', 'weight', 'enabled', 'tokenId']) {
-      if (body[key] !== undefined) updates[key] = body[key];
-    }
+    if (body.priority !== undefined) updates.priority = body.priority;
+    if (body.weight !== undefined) updates.weight = body.weight;
+    if (body.enabled !== undefined) updates.enabled = body.enabled;
+    if (body.tokenId !== undefined) updates.tokenId = body.tokenId;
 
     await db.update(schema.routeChannels).set(updates).where(eq(schema.routeChannels.id, channelId)).run();
     await clearRouteDecisionSnapshot(channel.routeId);
@@ -1307,14 +1343,19 @@ export async function tokensRoutes(app: FastifyInstance) {
   });
 
   // Rebuild routes/channels from model availability.
-  app.post<{ Body?: { refreshModels?: boolean; wait?: boolean } }>('/api/routes/rebuild', async (request, reply) => {
-    const body = (request.body || {}) as { refreshModels?: boolean };
+  app.post<{ Body: unknown }>('/api/routes/rebuild', async (request, reply) => {
+    const parsedBody = parseRouteRebuildPayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ success: false, message: parsedBody.error });
+    }
+
+    const body = parsedBody.data;
     if (body.refreshModels === false) {
       const rebuild = await routeRefreshWorkflow.rebuildRoutesOnly();
       return { success: true, rebuild };
     }
 
-    if ((request.body as { wait?: boolean } | undefined)?.wait) {
+    if (body.wait) {
       const result = await routeRefreshWorkflow.refreshModelsAndRebuildRoutes();
       return { success: true, ...result };
     }

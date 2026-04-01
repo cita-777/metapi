@@ -138,5 +138,20 @@ describe('settings database migration api', () => {
       targetDb.close();
     }
   });
-});
 
+  it('rejects non-boolean overwrite payload when migrating through settings api', async () => {
+    const targetPath = join(dataDir, 'target-migrate-invalid.db');
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/settings/database/migrate',
+      payload: {
+        dialect: 'sqlite',
+        connectionString: targetPath,
+        overwrite: 'false',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { message?: string }).message).toContain('overwrite');
+  });
+});

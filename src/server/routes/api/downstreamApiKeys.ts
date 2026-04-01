@@ -9,6 +9,10 @@ import {
   toPersistenceJson,
 } from '../../services/downstreamApiKeyService.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
+import {
+  parseDownstreamApiKeyBatchPayload,
+  parseDownstreamApiKeyPayload,
+} from '../../contracts/downstreamApiKeyRoutePayloads.js';
 
 function parseRouteId(raw: string): number | null {
   const id = Number.parseInt(raw, 10);
@@ -439,25 +443,16 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
     };
   });
 
-  app.post<{
-    Body: {
-      name?: unknown;
-      key?: unknown;
-      description?: unknown;
-      groupName?: unknown;
-      tags?: unknown;
-      enabled?: unknown;
-      expiresAt?: unknown;
-      maxCost?: unknown;
-      maxRequests?: unknown;
-      supportedModels?: unknown;
-      allowedRouteIds?: unknown;
-      siteWeightMultipliers?: unknown;
-    };
-  }>('/api/downstream-keys', async (request, reply) => {
+  app.post<{ Body: unknown }>('/api/downstream-keys', async (request, reply) => {
+    const parsedBody = parseDownstreamApiKeyPayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ success: false, message: parsedBody.error });
+    }
+
+    const body = parsedBody.data;
     let normalized: ReturnType<typeof normalizeDownstreamApiKeyPayload>;
     try {
-      normalized = normalizeDownstreamApiKeyPayload(request.body || {});
+      normalized = normalizeDownstreamApiKeyPayload(body);
     } catch (error: unknown) {
       return reply.code(400).send({ success: false, message: (error as Error)?.message || '参数无效' });
     }
@@ -523,23 +518,12 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
     }
   });
 
-  app.put<{
-    Params: { id: string };
-    Body: {
-      name?: unknown;
-      key?: unknown;
-      description?: unknown;
-      groupName?: unknown;
-      tags?: unknown;
-      enabled?: unknown;
-      expiresAt?: unknown;
-      maxCost?: unknown;
-      maxRequests?: unknown;
-      supportedModels?: unknown;
-      allowedRouteIds?: unknown;
-      siteWeightMultipliers?: unknown;
-    };
-  }>('/api/downstream-keys/:id', async (request, reply) => {
+  app.put<{ Params: { id: string }; Body: unknown }>('/api/downstream-keys/:id', async (request, reply) => {
+    const parsedBody = parseDownstreamApiKeyPayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ success: false, message: parsedBody.error });
+    }
+
     const id = parseRouteId(request.params.id);
     if (!id) {
       return reply.code(400).send({ success: false, message: 'id 无效' });
@@ -554,21 +538,22 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
     }
 
     const existingView = toDownstreamApiKeyPolicyView(existing);
+    const body = parsedBody.data;
     let normalized: ReturnType<typeof normalizeDownstreamApiKeyPayload>;
     try {
       normalized = normalizeDownstreamApiKeyPayload({
-        name: request.body?.name ?? existing.name,
-        key: request.body?.key ?? existing.key,
-        description: request.body?.description ?? existing.description,
-        groupName: request.body?.groupName ?? existing.groupName,
-        tags: request.body?.tags ?? existingView.tags,
-        enabled: request.body?.enabled ?? existing.enabled,
-        expiresAt: request.body?.expiresAt ?? existing.expiresAt,
-        maxCost: request.body?.maxCost ?? existing.maxCost,
-        maxRequests: request.body?.maxRequests ?? existing.maxRequests,
-        supportedModels: request.body?.supportedModels ?? existingView.supportedModels,
-        allowedRouteIds: request.body?.allowedRouteIds ?? existingView.allowedRouteIds,
-        siteWeightMultipliers: request.body?.siteWeightMultipliers ?? existingView.siteWeightMultipliers,
+        name: body.name ?? existing.name,
+        key: body.key ?? existing.key,
+        description: body.description ?? existing.description,
+        groupName: body.groupName ?? existing.groupName,
+        tags: body.tags ?? existingView.tags,
+        enabled: body.enabled ?? existing.enabled,
+        expiresAt: body.expiresAt ?? existing.expiresAt,
+        maxCost: body.maxCost ?? existing.maxCost,
+        maxRequests: body.maxRequests ?? existing.maxRequests,
+        supportedModels: body.supportedModels ?? existingView.supportedModels,
+        allowedRouteIds: body.allowedRouteIds ?? existingView.allowedRouteIds,
+        siteWeightMultipliers: body.siteWeightMultipliers ?? existingView.siteWeightMultipliers,
       });
     } catch (error: unknown) {
       return reply.code(400).send({ success: false, message: (error as Error)?.message || '参数无效' });
@@ -663,16 +648,15 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
     return { success: true };
   });
 
-  app.post<{ Body?: {
-    ids?: number[];
-    action?: string;
-    groupOperation?: string;
-    groupName?: unknown;
-    tagOperation?: string;
-    tags?: unknown;
-  } }>('/api/downstream-keys/batch', async (request, reply) => {
-    const ids = normalizeBatchIds(request.body?.ids);
-    const action = String(request.body?.action || '').trim();
+  app.post<{ Body: unknown }>('/api/downstream-keys/batch', async (request, reply) => {
+    const parsedBody = parseDownstreamApiKeyBatchPayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ success: false, message: parsedBody.error });
+    }
+
+    const body = parsedBody.data;
+    const ids = normalizeBatchIds(body.ids);
+    const action = String(body.action || '').trim();
     if (ids.length === 0) {
       return reply.code(400).send({ success: false, message: 'ids is required' });
     }
@@ -680,10 +664,10 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: 'Invalid action' });
     }
 
-    const groupOperation = String(request.body?.groupOperation || 'keep').trim();
-    const tagOperation = String(request.body?.tagOperation || 'keep').trim();
-    const normalizedGroupName = normalizeDownstreamApiKeyPayload({ groupName: request.body?.groupName }).groupName;
-    const normalizedTags = normalizeDownstreamApiKeyPayload({ tags: request.body?.tags }).tags;
+    const groupOperation = String(body.groupOperation || 'keep').trim();
+    const tagOperation = String(body.tagOperation || 'keep').trim();
+    const normalizedGroupName = normalizeDownstreamApiKeyPayload({ groupName: body.groupName }).groupName;
+    const normalizedTags = normalizeDownstreamApiKeyPayload({ tags: body.tags }).tags;
 
     if (action === 'updateMetadata') {
       if (!['keep', 'set', 'clear'].includes(groupOperation)) {

@@ -26,6 +26,14 @@ import {
   testDatabaseConnection,
   type MigrationDialect,
 } from '../../services/databaseMigrationService.js';
+import {
+  parseSystemProxyTestPayload,
+  parseDatabaseMigrationPayload,
+  parseBackupImportPayload,
+  parseRuntimeSettingsPayload,
+  parseBackupWebdavConfigPayload,
+  parseBackupWebdavExportPayload,
+} from '../../contracts/settingsRoutePayloads.js';
 import { formatUtcSqlDateTime, getResolvedTimeZone } from '../../services/localTimeService.js';
 import { extractClientIp, isIpAllowed } from '../../middleware/auth.js';
 import { invalidateSiteProxyCache, normalizeSiteProxyUrl, withExplicitProxyRequestInit } from '../../services/siteProxy.js';
@@ -798,10 +806,18 @@ export async function settingsRoutes(app: FastifyInstance) {
     return { brands: getAllBrandNames() };
   });
 
-  app.post<{ Body: SystemProxyTestBody }>('/api/settings/system-proxy/test', async (request, reply) => {
-    const rawProxyUrl = request.body?.proxyUrl === undefined
+  app.post<{ Body: unknown }>('/api/settings/system-proxy/test', async (request, reply) => {
+    const parsedBody = parseSystemProxyTestPayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({
+        success: false,
+        message: parsedBody.error,
+      });
+    }
+
+    const rawProxyUrl = parsedBody.data.proxyUrl === undefined
       ? config.systemProxyUrl
-      : String(request.body.proxyUrl || '').trim();
+      : String(parsedBody.data.proxyUrl || '').trim();
     const normalizedProxyUrl = rawProxyUrl
       ? normalizeSiteProxyUrl(rawProxyUrl)
       : '';
@@ -835,8 +851,16 @@ export async function settingsRoutes(app: FastifyInstance) {
     }
   });
 
-  app.put<{ Body: RuntimeSettingsBody }>('/api/settings/runtime', async (request, reply) => {
-    const body = request.body || {};
+  app.put<{ Body: unknown }>('/api/settings/runtime', async (request, reply) => {
+    const parsedBody = parseRuntimeSettingsPayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({
+        success: false,
+        message: parsedBody.error,
+      });
+    }
+
+    const body = parsedBody.data as RuntimeSettingsBody;
     const changedLabels: string[] = [];
     const currentRequestIp = extractClientIp(request.ip, request.headers['x-forwarded-for']);
 
@@ -1590,9 +1614,17 @@ export async function settingsRoutes(app: FastifyInstance) {
     };
   });
 
-  app.put<{ Body: DatabaseMigrationBody }>('/api/settings/database/runtime', async (request, reply) => {
+  app.put<{ Body: unknown }>('/api/settings/database/runtime', async (request, reply) => {
     try {
-      const normalized = normalizeMigrationInput(request.body || {});
+      const parsedBody = parseDatabaseMigrationPayload(request.body);
+      if (!parsedBody.success) {
+        return reply.code(400).send({
+          success: false,
+          message: parsedBody.error,
+        });
+      }
+
+      const normalized = normalizeMigrationInput(parsedBody.data);
       await upsertSetting(DB_TYPE_SETTING_KEY, normalized.dialect);
       await upsertSetting(DB_URL_SETTING_KEY, normalized.connectionString);
       await upsertSetting(DB_SSL_SETTING_KEY, normalized.ssl);
@@ -1622,9 +1654,17 @@ export async function settingsRoutes(app: FastifyInstance) {
     }
   });
 
-  app.post<{ Body: DatabaseMigrationBody }>('/api/settings/database/test-connection', async (request, reply) => {
+  app.post<{ Body: unknown }>('/api/settings/database/test-connection', async (request, reply) => {
     try {
-      const result = await testDatabaseConnection(request.body || {});
+      const parsedBody = parseDatabaseMigrationPayload(request.body);
+      if (!parsedBody.success) {
+        return reply.code(400).send({
+          success: false,
+          message: parsedBody.error,
+        });
+      }
+
+      const result = await testDatabaseConnection(parsedBody.data);
       return {
         success: true,
         message: '目标数据库连接成功',
@@ -1638,9 +1678,17 @@ export async function settingsRoutes(app: FastifyInstance) {
     }
   });
 
-  app.post<{ Body: DatabaseMigrationBody }>('/api/settings/database/migrate', async (request, reply) => {
+  app.post<{ Body: unknown }>('/api/settings/database/migrate', async (request, reply) => {
     try {
-      const result = await migrateCurrentDatabase(request.body || {});
+      const parsedBody = parseDatabaseMigrationPayload(request.body);
+      if (!parsedBody.success) {
+        return reply.code(400).send({
+          success: false,
+          message: parsedBody.error,
+        });
+      }
+
+      const result = await migrateCurrentDatabase(parsedBody.data);
       appendSettingsEvent({
         type: 'status',
         title: '数据库迁移已完成',
@@ -1668,14 +1716,14 @@ export async function settingsRoutes(app: FastifyInstance) {
     return await exportBackup(type);
   });
 
-  app.post<{ Body: { data?: Record<string, unknown> } }>('/api/settings/backup/import', async (request, reply) => {
-    const payload = request.body?.data;
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+  app.post<{ Body: unknown }>('/api/settings/backup/import', async (request, reply) => {
+    const parsedBody = parseBackupImportPayload(request.body);
+    if (!parsedBody.success) {
       return reply.code(400).send({ success: false, message: '导入数据格式错误：需要 JSON 对象' });
     }
 
     try {
-      const result = await importBackup(payload);
+      const result = await importBackup(parsedBody.data.data);
       for (const item of result.appliedSettings) {
         applyImportedSettingToRuntime(item.key, item.value);
       }
@@ -1701,7 +1749,15 @@ export async function settingsRoutes(app: FastifyInstance) {
 
   app.put<{ Body: BackupWebdavConfigBody }>('/api/settings/backup/webdav', async (request, reply) => {
     try {
-      const body = request.body || {};
+      const parsedBody = parseBackupWebdavConfigPayload(request.body);
+      if (!parsedBody.success) {
+        return reply.code(400).send({
+          success: false,
+          message: parsedBody.error,
+        });
+      }
+
+      const body = parsedBody.data;
       const result = await saveBackupWebdavConfig({
         enabled: body.enabled === undefined ? undefined : body.enabled === true,
         fileUrl: body.fileUrl === undefined ? undefined : String(body.fileUrl || ''),
@@ -1723,7 +1779,15 @@ export async function settingsRoutes(app: FastifyInstance) {
 
   app.post<{ Body: { type?: string } }>('/api/settings/backup/webdav/export', async (request, reply) => {
     try {
-      const rawType = typeof request.body?.type === 'string' ? request.body.type.trim().toLowerCase() : '';
+      const parsedBody = parseBackupWebdavExportPayload(request.body);
+      if (!parsedBody.success) {
+        return reply.code(400).send({
+          success: false,
+          message: parsedBody.error,
+        });
+      }
+
+      const rawType = typeof parsedBody.data.type === 'string' ? parsedBody.data.type.trim().toLowerCase() : '';
       const type: BackupExportType | undefined = rawType === 'all' || rawType === 'accounts' || rawType === 'preferences'
         ? rawType
         : undefined;

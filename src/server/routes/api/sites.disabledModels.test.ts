@@ -178,6 +178,22 @@ describe('sites disabled models API', () => {
         expect(resp.statusCode).toBe(400);
     });
 
+    it('returns 400 when models contains non-string entries', async () => {
+        const site = await db.insert(schema.sites).values({
+            name: 'test-site',
+            url: 'https://test-site.example.com',
+            platform: 'new-api',
+        }).returning().get();
+
+        const resp = await app.inject({
+            method: 'PUT',
+            url: `/api/sites/${site.id}/disabled-models`,
+            payload: { models: ['gpt-4o', 123] },
+        });
+        expect(resp.statusCode).toBe(400);
+        expect(resp.json()).toMatchObject({ error: 'Invalid models. Expected string[].' });
+    });
+
     it('deduplicates model names', async () => {
         const site = await db.insert(schema.sites).values({
             name: 'test-site',

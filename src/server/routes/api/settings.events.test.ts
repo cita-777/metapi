@@ -278,6 +278,21 @@ describe('settings and auth events', () => {
     expect(body.message).toContain('Webhook URL');
   });
 
+  it('rejects non-boolean webhookEnabled payloads instead of coercing them', async () => {
+    (config as any).webhookEnabled = false;
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      payload: {
+        webhookEnabled: 'false',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { message?: string }).message).toContain('Webhook 开关');
+    expect(config.webhookEnabled).toBe(false);
+  });
+
   it('rejects telegram config when bot token is missing but telegram is enabled', async () => {
     const response = await app.inject({
       method: 'PUT',
@@ -403,6 +418,20 @@ describe('settings and auth events', () => {
     expect(getResponse.statusCode).toBe(200);
     const runtime = getResponse.json() as { telegramUseSystemProxy?: boolean };
     expect(runtime.telegramUseSystemProxy).toBe(true);
+  });
+
+  it('rejects non-boolean telegram use system proxy payloads instead of coercing them', async () => {
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      payload: {
+        telegramUseSystemProxy: 'false',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { message?: string }).message).toContain('Telegram 使用系统代理');
+    expect((config as any).telegramUseSystemProxy).toBe(false);
   });
 
   it('persists and returns routing fallback unit cost from runtime settings', async () => {

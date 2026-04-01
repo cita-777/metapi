@@ -128,4 +128,22 @@ describe('accounts login shield detection', () => {
       message: '请求过于频繁，请稍后再试',
     });
   });
+
+  it('rejects malformed login payloads at the route boundary', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/accounts/login',
+      payload: {
+        siteId: '1',
+        username: 'demo-user',
+        password: 'demo-password',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      success: false,
+      message: 'Invalid siteId. Expected positive number.',
+    });
+  });
 });

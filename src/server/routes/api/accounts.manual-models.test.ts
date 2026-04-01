@@ -153,4 +153,30 @@ describe('accounts manual models endpoint', () => {
 
     expect(response.statusCode).toBe(400);
   });
+
+  it('rejects non-string manual model entries at the route boundary', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Test Site',
+      url: 'https://test.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      accessToken: 'test-token',
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/accounts/${account.id}/models/manual`,
+      payload: {
+        models: ['gpt-4-manual', 123],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      message: 'Invalid models. Expected string[].',
+    });
+  });
 });

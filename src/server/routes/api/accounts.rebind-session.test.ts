@@ -88,6 +88,33 @@ describe('accounts rebind-session api', { timeout: 15_000 }, () => {
     expect(latest?.status).toBe('expired');
   });
 
+  it('rejects non-string accessToken payload before session rebind verification', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Rebind Site',
+      url: 'https://rebind.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'linuxdo_1001',
+      accessToken: 'old-access-token',
+      status: 'expired',
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/accounts/${account.id}/rebind-session`,
+      payload: {
+        accessToken: { value: 'bad-token' },
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { message?: string }).message).toContain('accessToken');
+    expect(verifyTokenMock).not.toHaveBeenCalled();
+  });
+
   it('returns rebind hint when verify reports invalid access token', async () => {
     verifyTokenMock.mockRejectedValueOnce(new Error('无权进行此操作，access token 无效'));
 

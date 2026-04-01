@@ -129,6 +129,54 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
     expect(parsedExtra.credentialMode).toBe('apikey');
   });
 
+  it('rejects malformed verify-token payloads at the route boundary', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/accounts/verify-token',
+      payload: {
+        siteId: '1',
+        accessToken: 'sk-fast-verify',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      success: false,
+      message: 'Invalid siteId. Expected positive number.',
+    });
+  });
+
+  it('rejects array payloads when adding account', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/accounts',
+      payload: [],
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { message?: string }).message).toContain('account payload');
+  });
+
+  it('rejects non-string accessToken when adding account', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Typed Site',
+      url: 'https://typed.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/accounts',
+      payload: {
+        siteId: site.id,
+        accessToken: 123,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { message?: string }).message).toContain('accessToken');
+  });
+
   it('marks apikey connection healthy in account list after model discovery succeeds', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'Healthy API Key Site',
@@ -348,5 +396,53 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
     const updated = await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();
     expect(updated?.isPinned).toBe(true);
     expect(updated?.sortOrder).toBe(5);
+  });
+
+  it('rejects array payloads when updating account', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Update Site',
+      url: 'https://update.example.com',
+      platform: 'new-api',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'update-user',
+      accessToken: 'access-token',
+      status: 'active',
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/accounts/${account.id}`,
+      payload: [],
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { message?: string }).message).toContain('account payload');
+  });
+
+  it('rejects non-string username when updating account', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Update Site',
+      url: 'https://update.example.com',
+      platform: 'new-api',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'update-user',
+      accessToken: 'access-token',
+      status: 'active',
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/accounts/${account.id}`,
+      payload: {
+        username: 123,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { message?: string }).message).toContain('username');
   });
 });

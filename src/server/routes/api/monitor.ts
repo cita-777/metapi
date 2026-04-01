@@ -4,6 +4,7 @@ import { upsertSetting } from '../../db/upsertSetting.js';
 import { config } from '../../config.js';
 import { eq } from 'drizzle-orm';
 import { createRateLimitGuard } from '../../middleware/requestRateLimit.js';
+import { parseMonitorConfigPayload } from '../../contracts/supportRoutePayloads.js';
 
 const MONITOR_AUTH_COOKIE = 'meta_monitor_auth';
 const LDOH_BASE_URL = 'https://ldoh.105117.xyz';
@@ -136,11 +137,16 @@ export async function monitorRoutes(app: FastifyInstance) {
     };
   });
 
-  app.put<{ Body: { ldohCookie?: string | null } }>(
+  app.put<{ Body: unknown }>(
     '/api/monitor/config',
     { preHandler: [limitMonitorConfigWrite] },
     async (request, reply) => {
-    const raw = String(request.body?.ldohCookie || '').trim();
+    const parsedBody = parseMonitorConfigPayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ success: false, message: parsedBody.error });
+    }
+
+    const raw = String(parsedBody.data.ldohCookie || '').trim();
     if (!raw) {
       await upsertSetting(LDOH_COOKIE_SETTING_KEY, '');
       return { success: true, message: 'LDOH Cookie 已清空', ldohCookieConfigured: false };

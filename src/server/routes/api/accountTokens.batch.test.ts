@@ -172,4 +172,18 @@ describe('account token batch routes', () => {
     expect(response.statusCode).toBe(400);
     expect((response.json() as { message?: string }).message).toContain('action');
   });
+
+  it('rejects batch payloads whose ids include non-number values', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/account-tokens/batch',
+      payload: {
+        ids: [1, '2'],
+        action: 'enable',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { message?: string }).message).toContain('ids');
+  });
 });

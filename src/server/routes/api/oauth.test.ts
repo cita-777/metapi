@@ -121,6 +121,55 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     });
   });
 
+  it('rejects malformed oauth payloads at the route boundary', async () => {
+    const invalidStartResponse = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/providers/antigravity/start',
+      payload: {
+        accountId: '1',
+      },
+    });
+    expect(invalidStartResponse.statusCode).toBe(400);
+    expect(invalidStartResponse.json()).toMatchObject({
+      message: 'Invalid accountId. Expected positive number.',
+    });
+
+    const startResponse = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/providers/antigravity/start',
+      headers: {
+        host: 'metapi.example',
+        'x-forwarded-proto': 'https',
+      },
+    });
+    expect(startResponse.statusCode).toBe(200);
+    const state = (startResponse.json() as { state: string }).state;
+
+    const invalidCallbackResponse = await app.inject({
+      method: 'POST',
+      url: `/api/oauth/sessions/${encodeURIComponent(state)}/manual-callback`,
+      payload: {
+        callbackUrl: 123,
+      },
+    });
+    expect(invalidCallbackResponse.statusCode).toBe(400);
+    expect(invalidCallbackResponse.json()).toMatchObject({
+      message: 'Invalid callbackUrl. Expected string.',
+    });
+
+    const invalidRebindResponse = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/connections/1/rebind',
+      payload: {
+        proxyUrl: 123,
+      },
+    });
+    expect(invalidRebindResponse.statusCode).toBe(400);
+    expect(invalidRebindResponse.json()).toMatchObject({
+      message: 'Invalid proxyUrl. Expected string or null.',
+    });
+  });
+
   it('starts an antigravity oauth session and returns provider metadata', async () => {
     const startResponse = await app.inject({
       method: 'POST',

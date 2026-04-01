@@ -109,6 +109,28 @@ describe('accounts health refresh runtime state', () => {
     });
   });
 
+  it('rejects non-boolean wait payload when refreshing health', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/accounts/health/refresh',
+      payload: { wait: 'true' },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { message?: string }).message).toContain('wait');
+  });
+
+  it('rejects non-number accountId payload when refreshing health', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/accounts/health/refresh',
+      payload: { accountId: '1', wait: true },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { message?: string }).message).toContain('账号 ID');
+  });
+
   it('returns readable task messages when starting a background refresh for all accounts', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'Wind Hub',

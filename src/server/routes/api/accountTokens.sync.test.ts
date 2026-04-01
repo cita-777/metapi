@@ -572,6 +572,22 @@ describe('account tokens sync routes with site status', () => {
     expect(syncedDefaultToken?.token).toBe('sk-synced-token');
   });
 
+  it('rejects non-boolean wait when syncing all account tokens', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/account-tokens/sync-all',
+      payload: {
+        wait: 'true',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      success: false,
+      message: 'Invalid wait. Expected boolean.',
+    });
+  });
+
   it('creates token via upstream api and syncs into local store when manual token is omitted', async () => {
     const { account, site } = await seedAccount({ siteStatus: 'active' });
     createApiTokenMock.mockResolvedValue(true);
@@ -641,6 +657,40 @@ describe('account tokens sync routes with site status', () => {
       expiredTime: 2_000_000_000,
       allowIps: '1.1.1.1,2.2.2.2',
     });
+  });
+
+  it('rejects non-string token payload when creating manual account token', async () => {
+    const { account } = await seedAccount({ siteStatus: 'active' });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/account-tokens',
+      payload: {
+        accountId: account.id,
+        token: { value: 'bad-token' },
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { message?: string }).message).toContain('token');
+  });
+
+  it('rejects non-boolean unlimitedQuota payload when creating upstream account token', async () => {
+    const { account } = await seedAccount({ siteStatus: 'active' });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/account-tokens',
+      payload: {
+        accountId: account.id,
+        name: 'typed-token',
+        unlimitedQuota: 'false',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { message?: string }).message).toContain('unlimitedQuota');
+    expect(createApiTokenMock).not.toHaveBeenCalled();
   });
 
   it('returns 400 when limited token misses remainQuota', async () => {
@@ -888,6 +938,29 @@ describe('account tokens sync routes with site status', () => {
       enabled: true,
     });
     expect((latest as any)?.valueStatus).toBe('ready');
+  });
+
+  it('rejects non-string name payload when updating account token', async () => {
+    const { account } = await seedAccount({ siteStatus: 'active' });
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'typed-token',
+      token: 'sk-real-token',
+      source: 'manual',
+      enabled: true,
+      isDefault: false,
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/account-tokens/${token.id}`,
+      payload: {
+        name: 123,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { message?: string }).message).toContain('name');
   });
 
   it('deletes masked_pending placeholders locally without calling upstream delete', async () => {

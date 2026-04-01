@@ -176,6 +176,21 @@ describe('settings database runtime config api', () => {
     expect(putBody.saved?.ssl).toBe(false);
   });
 
+  it('rejects non-boolean ssl payload when saving runtime database config', async () => {
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/database/runtime',
+      payload: {
+        dialect: 'postgres',
+        connectionString: 'postgres://user:pass@db.example.com:5432/mydb',
+        ssl: 'false',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { message?: string }).message).toContain('ssl');
+  });
+
   it('includes ssl in active runtime state', async () => {
     const response = await app.inject({
       method: 'GET',

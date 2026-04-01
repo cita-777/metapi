@@ -4,6 +4,7 @@ import { config } from '../../config.js';
 import { eq } from 'drizzle-orm';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { createRateLimitGuard } from '../../middleware/requestRateLimit.js';
+import { parseAuthChangePayload } from '../../contracts/supportRoutePayloads.js';
 
 const limitAdminTokenChange = createRateLimitGuard({
   bucket: 'auth-change',
@@ -13,11 +14,16 @@ const limitAdminTokenChange = createRateLimitGuard({
 
 export async function authRoutes(app: FastifyInstance) {
   // Change admin auth token (requires old token verification)
-  app.post<{ Body: { oldToken: string; newToken: string } }>(
+  app.post<{ Body: unknown }>(
     '/api/settings/auth/change',
     { preHandler: [limitAdminTokenChange] },
     async (request, reply) => {
-    const { oldToken, newToken } = request.body;
+    const parsedBody = parseAuthChangePayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ success: false, message: parsedBody.error });
+    }
+
+    const { oldToken, newToken } = parsedBody.data;
 
     if (!oldToken || !newToken) {
       return reply.code(400).send({ success: false, message: '请填写所有字段' });
