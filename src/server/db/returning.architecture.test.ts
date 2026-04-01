@@ -1,8 +1,9 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-const SERVER_ROOT = new URL('../', import.meta.url);
+const SERVER_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const FORBIDDEN_PATTERN = '.returning(';
 const INSERT_ID_PATTERN = 'lastInsertRowid';
 
@@ -27,7 +28,7 @@ function collectProductionServerFiles(rootDir: string): string[] {
 
 describe('server database dialect architecture boundaries', () => {
   it('keeps production server code free of drizzle builder returning calls', () => {
-    const rootDir = SERVER_ROOT.pathname;
+    const rootDir = SERVER_ROOT;
     const offenders = collectProductionServerFiles(rootDir)
       .filter((filePath) => readFileSync(filePath, 'utf8').includes(FORBIDDEN_PATTERN))
       .map((filePath) => relative(rootDir, filePath));
@@ -36,9 +37,9 @@ describe('server database dialect architecture boundaries', () => {
   });
 
   it('keeps lastInsertRowid handling inside the db layer', () => {
-    const rootDir = SERVER_ROOT.pathname;
+    const rootDir = SERVER_ROOT;
     const offenders = collectProductionServerFiles(rootDir)
-      .filter((filePath) => !relative(rootDir, filePath).startsWith('db/'))
+      .filter((filePath) => !relative(rootDir, filePath).split(sep).join('/').startsWith('db/'))
       .filter((filePath) => readFileSync(filePath, 'utf8').includes(INSERT_ID_PATTERN))
       .map((filePath) => relative(rootDir, filePath));
 

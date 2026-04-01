@@ -58,6 +58,29 @@ describe('db proxy query wrapper', () => {
     expect(testUtils.shouldWrapObject(Promise.resolve())).toBe(false);
   });
 
+  it('normalizes postgres inserts with returning ids for numeric-id tables', async () => {
+    const query = vi.fn(async () => ({
+      rows: [{ id: 42 }],
+      rowCount: 1,
+    }));
+    const executor = { query };
+
+    const result = await testUtils.pgProxyQuery(
+      executor as any,
+      'insert into "sites" ("name") values ($1)',
+      ['demo'],
+      'execute',
+    );
+
+    expect(query).toHaveBeenCalledWith({
+      text: 'insert into "sites" ("name") values ($1) returning id',
+      values: ['demo'],
+    });
+    expect(result).toEqual({
+      rows: [{ changes: 1, lastInsertRowid: 42 }],
+    });
+  });
+
   it('builds mysql pool options with jsonStrings enabled', () => {
     expect(testUtils.buildMysqlPoolOptions('mysql://root:pass@db.example.com:3306/metapi', false)).toMatchObject({
       uri: 'mysql://root:pass@db.example.com:3306/metapi',

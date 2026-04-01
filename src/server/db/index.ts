@@ -1398,6 +1398,7 @@ export async function switchRuntimeDatabase(nextDialect: RuntimeDbDialect, nextD
 export const __dbProxyTestUtils = {
   wrapQueryLike,
   shouldWrapObject,
+  pgProxyQuery,
   resolveSqlitePath,
   resolveVitestSqlitePath,
   buildMysqlPoolOptions,

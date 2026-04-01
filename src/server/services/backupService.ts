@@ -1742,7 +1742,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         }).run();
         const downstreamApiKeyId = requireInsertedRowId(
           insertedKey,
-          `failed to import downstream api key: ${normalizedKey}`,
+          `failed to import downstream api key: ${maskSecret(normalizedKey)}`,
         );
         downstreamApiKeyIdByKey.set(normalizedKey, downstreamApiKeyId);
       }
