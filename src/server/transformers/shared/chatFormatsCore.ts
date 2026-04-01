@@ -1710,10 +1710,7 @@ export function normalizeUpstreamStreamEvent(
         };
       })
       .filter((item): item is NonNullable<typeof item> => !!item);
-    const hasKnownToolCalls = (
-      toolCalls.length > 0
-      || Object.values(context.toolCalls).some((toolCall) => !!(toolCall.id || toolCall.name || toolCall.arguments))
-    );
+    const hasKnownToolCalls = toolCalls.length > 0 || context.nextResponsesToolCallIndex > 0;
     return {
       ...(contentDelta || reasoningDelta ? { role: 'assistant' as const } : {}),
       ...(contentDelta ? { contentDelta } : {}),
@@ -1889,12 +1886,13 @@ function buildOpenAiStreamChunk(
     const toolCalls = event.toolCallDeltas.map((toolDelta) => {
       const index = Number.isFinite(toolDelta.index) ? Math.max(0, Math.trunc(toolDelta.index)) : 0;
       const existing = context.toolCalls[index] || {};
-      const id = toolDelta.id || existing.id || `call_meta_${index}`;
+      const id = toolDelta.id || existing.id;
       const name = toolDelta.name || existing.name || '';
       const nextArguments = `${existing.arguments || ''}${toolDelta.argumentsDelta ?? ''}`;
+      // Keep synthetic call_meta_* ids as serialization-only fallbacks so later real ids can still backfill.
       context.toolCalls[index] = {
-        id,
-        name: name || existing.name,
+        ...(id ? { id } : {}),
+        ...(name || existing.name ? { name: name || existing.name } : {}),
         arguments: nextArguments,
       };
 
