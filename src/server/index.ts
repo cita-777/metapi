@@ -287,6 +287,11 @@ function applyRuntimeSettings(settingsMap: Map<string, string>) {
     config.routingFallbackUnitCost = Math.max(1e-6, routingFallbackUnitCost);
   }
 
+  const tokenRouterFailureCooldownMaxSec = parseSettingFromMap<number>(settingsMap, 'token_router_failure_cooldown_max_sec');
+  if (typeof tokenRouterFailureCooldownMaxSec === 'number' && Number.isFinite(tokenRouterFailureCooldownMaxSec) && tokenRouterFailureCooldownMaxSec > 0) {
+    config.tokenRouterFailureCooldownMaxSec = Math.max(1, Math.trunc(tokenRouterFailureCooldownMaxSec));
+  }
+
   const webhookUrl = parseSettingFromMap<string>(settingsMap, 'webhook_url');
   if (typeof webhookUrl === 'string') config.webhookUrl = webhookUrl;
 

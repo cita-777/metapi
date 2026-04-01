@@ -203,6 +203,19 @@ function resolveFailureBackoffSec(failCount?: number | null): number {
   return Math.min(FAILURE_BACKOFF_BASE_SEC * fibonacciNumber(normalizedFailCount), MAX_FAILURE_BACKOFF_SEC);
 }
 
+function resolveConfiguredFailureCooldownMaxMs(): number {
+  const raw = Number(config.tokenRouterFailureCooldownMaxSec);
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return 30 * 24 * 60 * 60 * 1000;
+  }
+  return Math.max(1_000, Math.trunc(raw * 1000));
+}
+
+function clampFailureCooldownMs(cooldownMs: number): number {
+  const normalized = Math.max(0, Math.trunc(cooldownMs));
+  return Math.min(normalized, resolveConfiguredFailureCooldownMaxMs());
+}
+
 function resolveRoundRobinCooldownSec(level: number): number {
   const normalizedLevel = Math.max(0, Math.min(ROUND_ROBIN_COOLDOWN_LEVELS_SEC.length - 1, Math.trunc(level)));
   return ROUND_ROBIN_COOLDOWN_LEVELS_SEC[normalizedLevel] ?? 0;
@@ -1772,6 +1785,29 @@ export class TokenRouter {
   }
 
   /**
+   * Clear persisted failure and cooldown state for the given channels.
+   */
+  async clearChannelFailureState(channelIds: number[]): Promise<number> {
+    const normalizedChannelIds = Array.from(new Set(
+      channelIds
+        .filter((channelId): channelId is number => Number.isFinite(channelId) && channelId > 0)
+        .map((channelId) => Math.trunc(channelId)),
+    ));
+    if (normalizedChannelIds.length === 0) return 0;
+
+    const result = await db.update(schema.routeChannels).set({
+      failCount: 0,
+      lastFailAt: null,
+      consecutiveFailCount: 0,
+      cooldownLevel: 0,
+      cooldownUntil: null,
+    }).where(inArray(schema.routeChannels.id, normalizedChannelIds)).run();
+
+    invalidateTokenRouterCache();
+    return Number(result?.changes || normalizedChannelIds.length);
+  }
+
+  /**
    * Record failure and set cooldown.
    */
   async recordFailure(channelId: number, context: SiteRuntimeFailureContext | string | null = {}) {
@@ -1810,12 +1846,14 @@ export class TokenRouter {
       if (consecutiveFailCount >= ROUND_ROBIN_FAILURE_THRESHOLD) {
         cooldownLevel = Math.min(cooldownLevel + 1, ROUND_ROBIN_COOLDOWN_LEVELS_SEC.length - 1);
         const cooldownSec = resolveRoundRobinCooldownSec(cooldownLevel);
-        cooldownUntil = cooldownSec > 0 ? new Date(nowMs + cooldownSec * 1000).toISOString() : null;
+        cooldownUntil = cooldownSec > 0
+          ? new Date(nowMs + clampFailureCooldownMs(cooldownSec * 1000)).toISOString()
+          : null;
         consecutiveFailCount = 0;
       }
     } else {
       const cooldownSec = resolveFailureBackoffSec(failCount);
-      cooldownUntil = new Date(nowMs + cooldownSec * 1000).toISOString();
+      cooldownUntil = new Date(nowMs + clampFailureCooldownMs(cooldownSec * 1000)).toISOString();
       consecutiveFailCount = 0;
       cooldownLevel = 0;
     }

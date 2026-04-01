@@ -695,6 +695,15 @@ async function fetchChannelsForRoutes(routeIds: number[]): Promise<Map<number, a
   });
 }
 
+function resolveActualRouteIdsForRoute(route: RouteRow): number[] {
+  if (isExplicitGroupRoute(route)) {
+    return Array.from(new Set(
+      route.sourceRouteIds.filter((routeId): routeId is number => Number.isFinite(routeId) && routeId > 0),
+    ));
+  }
+  return [route.id];
+}
+
 async function buildRouteChannelSummaryMap(routes: RouteRow[]): Promise<Map<number, RouteChannelSummary>> {
   const channelsByRoute = await fetchChannelsForRouteRows(routes);
   const summaryByRoute = new Map<number, RouteChannelSummary>();
@@ -766,6 +775,37 @@ export async function tokensRoutes(app: FastifyInstance) {
     }
     const channelsByRoute = await fetchChannelsForRouteRows([route]);
     return channelsByRoute.get(routeId) || [];
+  });
+
+  app.post<{ Params: { id: string } }>('/api/routes/:id/cooldown/clear', async (request, reply) => {
+    const routeId = parseInt(request.params.id, 10);
+    const route = await getRouteWithSources(routeId);
+    if (!route) {
+      return reply.code(404).send({ success: false, message: '路由不存在' });
+    }
+
+    const actualRouteIds = resolveActualRouteIdsForRoute(route);
+    const channelRows: Array<{ id: number; routeId: number }> = actualRouteIds.length > 0
+      ? await db.select({
+        id: schema.routeChannels.id,
+        routeId: schema.routeChannels.routeId,
+      }).from(schema.routeChannels)
+        .where(inArray(schema.routeChannels.routeId, actualRouteIds))
+        .all()
+      : [];
+    const affectedRouteIds = Array.from(new Set(channelRows.map((row) => row.routeId)));
+    const clearedChannels = await tokenRouter.clearChannelFailureState(channelRows.map((row) => row.id));
+
+    await clearRouteDecisionSnapshot(routeId);
+    if (affectedRouteIds.length > 0) {
+      await clearRouteDecisionSnapshots(affectedRouteIds);
+      await clearDependentExplicitGroupSnapshotsBySourceRouteIds(affectedRouteIds);
+    }
+
+    return {
+      success: true,
+      clearedChannels,
+    };
   });
 
   // Batch add channels to a route

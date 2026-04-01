@@ -90,6 +90,7 @@ interface RuntimeSettingsBody {
   notifyCooldownSec?: number;
   adminIpAllowlist?: string[] | string;
   routingFallbackUnitCost?: number;
+  tokenRouterFailureCooldownMaxSec?: number;
   routingWeights?: Partial<RoutingWeights>;
   proxyErrorKeywords?: string[] | string;
   proxyEmptyContentFailEnabled?: boolean;
@@ -665,6 +666,12 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       config.routingFallbackUnitCost = Math.max(1e-6, n);
       return;
     }
+    case 'token_router_failure_cooldown_max_sec': {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n <= 0) return;
+      config.tokenRouterFailureCooldownMaxSec = Math.max(1, Math.trunc(n));
+      return;
+    }
     default:
       return;
   }
@@ -694,6 +701,7 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     proxyDebugRetentionHours: config.proxyDebugRetentionHours,
     proxyDebugMaxBodyBytes: config.proxyDebugMaxBodyBytes,
     routingFallbackUnitCost: config.routingFallbackUnitCost,
+    tokenRouterFailureCooldownMaxSec: config.tokenRouterFailureCooldownMaxSec,
     routingWeights: config.routingWeights,
     webhookUrl: config.webhookUrl,
     barkUrl: config.barkUrl,
@@ -1583,6 +1591,19 @@ export async function settingsRoutes(app: FastifyInstance) {
       }
       config.routingFallbackUnitCost = normalized;
       upsertSetting('routing_fallback_unit_cost', normalized);
+    }
+
+    if (body.tokenRouterFailureCooldownMaxSec !== undefined) {
+      const nextCooldownMaxSec = Number(body.tokenRouterFailureCooldownMaxSec);
+      if (!Number.isFinite(nextCooldownMaxSec) || nextCooldownMaxSec <= 0) {
+        return reply.code(400).send({ success: false, message: '路由失败冷却上限必须是大于 0 的数字（秒）' });
+      }
+      const normalized = Math.max(1, Math.trunc(nextCooldownMaxSec));
+      if (normalized !== config.tokenRouterFailureCooldownMaxSec) {
+        changedLabels.push(`路由失败冷却上限（${config.tokenRouterFailureCooldownMaxSec}s -> ${normalized}s）`);
+      }
+      config.tokenRouterFailureCooldownMaxSec = normalized;
+      upsertSetting('token_router_failure_cooldown_max_sec', normalized);
     }
 
     if (changedLabels.length > 0) {

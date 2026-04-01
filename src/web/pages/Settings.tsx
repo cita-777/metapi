@@ -28,6 +28,13 @@ import { generateDownstreamSkKey } from './helpers/generateDownstreamSkKey.js';
 const PROXY_TOKEN_PREFIX = 'sk-';
 const FACTORY_RESET_ADMIN_TOKEN = 'change-me-admin-token';
 const FACTORY_RESET_CONFIRM_SECONDS = 3;
+const SECONDS_PER_DAY = 24 * 60 * 60;
+const ROUTE_COOLDOWN_UNIT_OPTIONS = [
+  { value: 'second', label: '秒', multiplierSec: 1 },
+  { value: 'minute', label: '分钟', multiplierSec: 60 },
+  { value: 'hour', label: '小时', multiplierSec: 60 * 60 },
+  { value: 'day', label: '天', multiplierSec: SECONDS_PER_DAY },
+] as const;
 const CHECKIN_SCHEDULE_MODE_OPTIONS = [
   { value: 'cron', label: 'Cron' },
   { value: 'interval', label: '间隔签到' },
@@ -40,6 +47,7 @@ const CHECKIN_INTERVAL_OPTIONS = Array.from({ length: 24 }, (_, index) => {
   };
 });
 type DbDialect = 'sqlite' | 'mysql' | 'postgres';
+type RouteCooldownUnit = typeof ROUTE_COOLDOWN_UNIT_OPTIONS[number]['value'];
 
 type RuntimeSettings = {
   checkinCron: string;
@@ -55,6 +63,8 @@ type RuntimeSettings = {
   proxySessionChannelConcurrencyLimit: number;
   proxySessionChannelQueueWaitMs: number;
   routingFallbackUnitCost: number;
+  routeFailureCooldownMaxValue: number;
+  routeFailureCooldownMaxUnit: RouteCooldownUnit;
   routingWeights: RoutingWeights;
   systemProxyUrl: string;
   proxyErrorKeywords: string[];
@@ -184,6 +194,35 @@ function inferUrlDialect(connectionString: string): 'mysql' | 'postgres' | null 
   return null;
 }
 
+function resolveRouteCooldownInput(seconds: number | null | undefined): {
+  value: number;
+  unit: RouteCooldownUnit;
+} {
+  const normalizedSeconds = Number.isFinite(Number(seconds)) && Number(seconds) > 0
+    ? Math.max(1, Math.trunc(Number(seconds)))
+    : 30 * SECONDS_PER_DAY;
+
+  for (const option of [...ROUTE_COOLDOWN_UNIT_OPTIONS].reverse()) {
+    if (normalizedSeconds % option.multiplierSec === 0) {
+      return {
+        value: normalizedSeconds / option.multiplierSec,
+        unit: option.value,
+      };
+    }
+  }
+
+  return {
+    value: normalizedSeconds,
+    unit: 'second',
+  };
+}
+
+function toRouteCooldownSeconds(value: number, unit: RouteCooldownUnit): number {
+  const normalizedValue = Number.isFinite(value) && value > 0 ? Math.max(1, Math.trunc(value)) : 1;
+  const unitConfig = ROUTE_COOLDOWN_UNIT_OPTIONS.find((option) => option.value === unit) || ROUTE_COOLDOWN_UNIT_OPTIONS[0];
+  return normalizedValue * unitConfig.multiplierSec;
+}
+
 export default function Settings() {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
@@ -201,6 +240,8 @@ export default function Settings() {
     proxySessionChannelConcurrencyLimit: 2,
     proxySessionChannelQueueWaitMs: 1500,
     routingFallbackUnitCost: 1,
+    routeFailureCooldownMaxValue: 30,
+    routeFailureCooldownMaxUnit: 'day',
     routingWeights: defaultWeights,
     systemProxyUrl: '',
     proxyErrorKeywords: [],
@@ -414,6 +455,7 @@ export default function Settings() {
         api.getRuntimeDatabaseConfig(),
       ]);
       setMaskedToken(authInfo.masked || '****');
+      const routeCooldownInput = resolveRouteCooldownInput(runtimeInfo.tokenRouterFailureCooldownMaxSec);
       setRuntime({
         checkinCron: runtimeInfo.checkinCron || '0 8 * * *',
         checkinScheduleMode: runtimeInfo.checkinScheduleMode === 'interval' ? 'interval' : 'cron',
@@ -438,6 +480,8 @@ export default function Settings() {
         routingFallbackUnitCost: Number(runtimeInfo.routingFallbackUnitCost) > 0
           ? Number(runtimeInfo.routingFallbackUnitCost)
           : 1,
+        routeFailureCooldownMaxValue: routeCooldownInput.value,
+        routeFailureCooldownMaxUnit: routeCooldownInput.unit,
         routingWeights: {
           ...defaultWeights,
           ...(runtimeInfo.routingWeights || {}),
@@ -845,6 +889,10 @@ export default function Settings() {
       await api.updateRuntimeSettings({
         routingWeights: runtime.routingWeights,
         routingFallbackUnitCost: runtime.routingFallbackUnitCost,
+        tokenRouterFailureCooldownMaxSec: toRouteCooldownSeconds(
+          runtime.routeFailureCooldownMaxValue,
+          runtime.routeFailureCooldownMaxUnit,
+        ),
         disableCrossProtocolFallback: runtime.disableCrossProtocolFallback,
       });
       toast.success('Routing weights saved');
@@ -1497,6 +1545,50 @@ export default function Settings() {
               }}
               style={inputStyle}
             />
+          </div>
+          <div style={{ marginBottom: 12, maxWidth: 420 }}>
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>
+              普通失败冷却上限
+            </div>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'stretch', flexWrap: 'wrap' }}>
+              <input
+                type="number"
+                aria-label="路由失败冷却上限数值"
+                min={1}
+                step={1}
+                value={runtime.routeFailureCooldownMaxValue}
+                onChange={(e) => {
+                  const nextValue = Number(e.target.value);
+                  setRuntime((prev) => ({
+                    ...prev,
+                    routeFailureCooldownMaxValue: Number.isFinite(nextValue) && nextValue > 0
+                      ? Math.max(1, Math.trunc(nextValue))
+                      : prev.routeFailureCooldownMaxValue,
+                  }));
+                }}
+                style={{ ...inputStyle, flex: '1 1 180px', marginBottom: 0 }}
+              />
+              <div style={{ width: 132, minWidth: 132 }}>
+                <ModernSelect
+                  size="sm"
+                  value={runtime.routeFailureCooldownMaxUnit}
+                  onChange={(nextValue) => {
+                    setRuntime((prev) => ({
+                      ...prev,
+                      routeFailureCooldownMaxUnit: nextValue as RouteCooldownUnit,
+                    }));
+                  }}
+                  options={ROUTE_COOLDOWN_UNIT_OPTIONS.map((option) => ({
+                    value: option.value,
+                    label: option.label,
+                  }))}
+                  placeholder="选择单位"
+                />
+              </div>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 6, lineHeight: 1.6 }}>
+              支持秒、分钟、小时、天。只封顶普通失败与轮询分级冷却；429 限额类冷却仍优先遵循上游 reset 提示，避免过早重试。
+            </div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
             <button

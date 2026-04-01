@@ -386,6 +386,7 @@ export type RuntimeSettingsPayload = {
   notifyCooldownSec?: number;
   adminIpAllowlist?: string[] | string;
   routingFallbackUnitCost?: number;
+  tokenRouterFailureCooldownMaxSec?: number;
   routingWeights?: RuntimeRoutingWeightsPayload;
   proxyErrorKeywords?: string[] | string;
   proxyEmptyContentFailEnabled?: boolean;
@@ -717,6 +718,7 @@ export const api = {
   addRoute: (data: any) => request('/api/routes', { method: 'POST', body: JSON.stringify(data) }),
   updateRoute: (id: number, data: any) => request(`/api/routes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteRoute: (id: number) => request(`/api/routes/${id}`, { method: 'DELETE' }),
+  clearRouteCooldown: (id: number) => request(`/api/routes/${id}/cooldown/clear`, { method: 'POST' }),
   batchUpdateRoutes: (data: { ids: number[]; action: 'enable' | 'disable' }) =>
     request('/api/routes/batch', { method: 'POST', body: JSON.stringify(data) }),
   addChannel: (routeId: number, data: any) => request(`/api/routes/${routeId}/channels`, { method: 'POST', body: JSON.stringify(data) }),

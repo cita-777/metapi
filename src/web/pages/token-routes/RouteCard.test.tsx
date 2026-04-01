@@ -41,6 +41,8 @@ describe('RouteCard', () => {
         onEdit={vi.fn()}
         onDelete={vi.fn()}
         onToggleEnabled={vi.fn()}
+        onClearCooldown={vi.fn()}
+        clearingCooldown={false}
         onRoutingStrategyChange={vi.fn()}
         updatingRoutingStrategy={false}
         channels={undefined}
@@ -84,5 +86,54 @@ describe('RouteCard', () => {
       whiteSpace: 'nowrap',
       flexShrink: 1,
     });
+  });
+
+  it('renders a clear cooldown action on expanded cards', () => {
+    const onClearCooldown = vi.fn();
+    const root = create(
+      <RouteCard
+        route={buildRoute()}
+        brand={null}
+        expanded
+        onToggleExpand={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggleEnabled={vi.fn()}
+        onClearCooldown={onClearCooldown}
+        clearingCooldown={false}
+        onRoutingStrategyChange={vi.fn()}
+        updatingRoutingStrategy={false}
+        channels={[]}
+        loadingChannels={false}
+        routeDecision={null}
+        loadingDecision={false}
+        candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
+        channelTokenDraft={{}}
+        updatingChannel={{}}
+        savingPriority={false}
+        onTokenDraftChange={vi.fn()}
+        onSaveToken={vi.fn()}
+        onDeleteChannel={vi.fn()}
+        onToggleChannelEnabled={vi.fn()}
+        onChannelDragEnd={vi.fn()}
+        onSplitPriorityBucket={vi.fn()}
+        missingTokenSiteItems={[]}
+        missingTokenGroupItems={[]}
+        onCreateTokenForMissing={vi.fn()}
+        onAddChannel={vi.fn()}
+        onSiteBlockModel={vi.fn()}
+        expandedSourceGroupMap={{}}
+        onToggleSourceGroup={vi.fn()}
+      />,
+    );
+
+    const button = root.root.find((node) => (
+      node.type === 'button'
+      && typeof node.props.onClick === 'function'
+      && collectText(node).trim() === '清除冷却'
+    ));
+
+    button.props.onClick();
+    expect(onClearCooldown).toHaveBeenCalledTimes(1);
   });
 });

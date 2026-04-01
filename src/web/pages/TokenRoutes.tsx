@@ -136,6 +136,7 @@ export default function TokenRoutes() {
   const [updatingChannel, setUpdatingChannel] = useState<Record<number, boolean>>({});
   const [savingPriorityByRoute, setSavingPriorityByRoute] = useState<Record<number, boolean>>({});
   const [updatingRoutingStrategyByRoute, setUpdatingRoutingStrategyByRoute] = useState<Record<number, boolean>>({});
+  const [clearingCooldownByRoute, setClearingCooldownByRoute] = useState<Record<number, boolean>>({});
 
   const [decisionByRoute, setDecisionByRoute] = useState<Record<number, RouteDecision | null>>({});
   const [loadingDecision, setLoadingDecision] = useState(false);
@@ -1188,6 +1189,42 @@ export default function TokenRoutes() {
     }
   };
 
+  const handleClearRouteCooldown = async (routeId: number) => {
+    if (clearingCooldownByRoute[routeId]) return;
+    setClearingCooldownByRoute((prev) => ({ ...prev, [routeId]: true }));
+    try {
+      await api.clearRouteCooldown(routeId);
+      await loadChannels(routeId, true);
+
+      const route = routeSummaries.find((item) => item.id === routeId);
+      if (route) {
+        try {
+          if (isRouteExactModel(route)) {
+            const res = await api.getRouteDecision(route.modelPattern);
+            setDecisionByRoute((prev) => ({
+              ...prev,
+              [routeId]: (res?.decision || null) as RouteDecision | null,
+            }));
+          } else {
+            const res = await api.getRouteWideDecisionsBatch([routeId]);
+            setDecisionByRoute((prev) => ({
+              ...prev,
+              [routeId]: (res?.decisions?.[String(routeId)] || null) as RouteDecision | null,
+            }));
+          }
+        } catch {
+          // Ignore best-effort decision refresh failures after manual cooldown clearing.
+        }
+      }
+
+      toast.success('路由冷却已清除');
+    } catch (e: any) {
+      toast.error(e.message || '清除路由冷却失败');
+    } finally {
+      setClearingCooldownByRoute((prev) => ({ ...prev, [routeId]: false }));
+    }
+  };
+
   const toggleExpand = async (routeId: number) => {
     const isCurrentlyExpanded = expandedRouteIds.includes(routeId);
     if (isCurrentlyExpanded) {
@@ -1346,6 +1383,12 @@ export default function TokenRoutes() {
   handleSiteBlockModelRef.current = handleSiteBlockModel;
   const stableSiteBlockModel = useCallback(
     (channelId: number, routeId: number) => handleSiteBlockModelRef.current(channelId, routeId),
+    [],
+  );
+  const handleClearRouteCooldownRef = useRef(handleClearRouteCooldown);
+  handleClearRouteCooldownRef.current = handleClearRouteCooldown;
+  const stableClearRouteCooldown = useCallback(
+    (routeId: number) => handleClearRouteCooldownRef.current(routeId),
     [],
   );
 
@@ -1701,6 +1744,8 @@ export default function TokenRoutes() {
                     onEdit={stableEditRoute}
                     onDelete={stableDeleteRoute}
                     onToggleEnabled={stableToggleEnabled}
+                    onClearCooldown={stableClearRouteCooldown}
+                    clearingCooldown={!!clearingCooldownByRoute[route.id]}
                     onRoutingStrategyChange={stableRoutingStrategyChange}
                     updatingRoutingStrategy={!!updatingRoutingStrategyByRoute[route.id]}
                     channels={channelsByRouteId[route.id]}
@@ -1740,6 +1785,8 @@ export default function TokenRoutes() {
               onEdit={stableEditRoute}
               onDelete={stableDeleteRoute}
               onToggleEnabled={stableToggleEnabled}
+              onClearCooldown={stableClearRouteCooldown}
+              clearingCooldown={!!clearingCooldownByRoute[route.id]}
               onRoutingStrategyChange={stableRoutingStrategyChange}
               updatingRoutingStrategy={!!updatingRoutingStrategyByRoute[route.id]}
               channels={channelsByRouteId[route.id]}
