@@ -249,14 +249,15 @@ export async function writeSurfaceProxyLog(input: {
 export function createSurfaceDispatchRequest(input: {
   site: SiteProxyConfigLike & { url: string };
   accountExtraConfig?: string | null;
+  siteUrl?: string;
 }) {
   const channelProxyUrl = resolveChannelProxyUrl(input.site, input.accountExtraConfig);
   return (
     request: BuiltEndpointRequest,
     targetUrl?: string,
-  ) => (
+    ) => (
     dispatchRuntimeRequest({
-      siteUrl: input.site.url,
+      siteUrl: input.siteUrl ?? input.site.url,
       targetUrl,
       request,
       buildInit: (_requestUrl, requestForFetch) => withSiteRecordProxyRequestInit(input.site, {

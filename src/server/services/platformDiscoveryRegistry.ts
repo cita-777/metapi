@@ -1,7 +1,7 @@
 import { fetch } from 'undici';
 import { schema } from '../db/index.js';
 import { withSiteRecordProxyRequestInit } from './siteProxy.js';
-import { requireSiteApiBaseUrl } from './siteApiEndpointService.js';
+import { runWithSiteApiEndpointPool } from './siteApiEndpointService.js';
 import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { CLAUDE_DEFAULT_ANTHROPIC_VERSION } from './oauth/claudeProvider.js';
 import {
@@ -123,7 +123,6 @@ export async function discoverCodexModelsFromCloud(input: {
   site: PlatformDiscoverySite;
   account: PlatformDiscoveryAccount;
 }): Promise<string[]> {
-  const baseUrl = await requireSiteApiBaseUrl(input.site);
   const accessToken = (input.account.accessToken || '').trim();
   if (!accessToken) {
     throw new Error('codex oauth access token missing');
@@ -138,42 +137,47 @@ export async function discoverCodexModelsFromCloud(input: {
     headers['Chatgpt-Account-Id'] = oauth.accountId;
   }
 
-  const response = await fetch(
-    buildCodexModelsEndpoint(baseUrl),
-    withSiteRecordProxyRequestInit(input.site, { method: 'GET', headers }),
-  );
-  if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(`HTTP ${response.status}: ${text || 'codex model discovery failed'}`);
-  }
-  return normalizeDiscoveredModels(extractCodexModelIds(await response.json()));
+  const payload = await runWithSiteApiEndpointPool(input.site, async (target) => {
+    const response = await fetch(
+      buildCodexModelsEndpoint(target.baseUrl),
+      withSiteRecordProxyRequestInit(input.site, { method: 'GET', headers }),
+    );
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`HTTP ${response.status}: ${text || 'codex model discovery failed'}`);
+    }
+    return response.json();
+  });
+  return normalizeDiscoveredModels(extractCodexModelIds(payload));
 }
 
 export async function discoverClaudeModelsFromCloud(input: {
   site: PlatformDiscoverySite;
   account: PlatformDiscoveryAccount;
 }): Promise<string[]> {
-  const baseUrl = await requireSiteApiBaseUrl(input.site);
   const accessToken = (input.account.accessToken || '').trim();
   if (!accessToken) {
     throw new Error('claude oauth access token missing');
   }
-  const response = await fetch(
-    `${baseUrl.replace(/\/+$/, '')}/v1/models`,
-    withSiteRecordProxyRequestInit(input.site, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: 'application/json',
-        'anthropic-version': CLAUDE_DEFAULT_ANTHROPIC_VERSION,
-      },
-    }),
-  );
-  if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(`HTTP ${response.status}: ${text || 'claude oauth model discovery failed'}`);
-  }
-  return normalizeDiscoveredModels(extractClaudeModelIds(await response.json()));
+  const payload = await runWithSiteApiEndpointPool(input.site, async (target) => {
+    const response = await fetch(
+      `${target.baseUrl.replace(/\/+$/, '')}/v1/models`,
+      withSiteRecordProxyRequestInit(input.site, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/json',
+          'anthropic-version': CLAUDE_DEFAULT_ANTHROPIC_VERSION,
+        },
+      }),
+    );
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`HTTP ${response.status}: ${text || 'claude oauth model discovery failed'}`);
+    }
+    return response.json();
+  });
+  return normalizeDiscoveredModels(extractClaudeModelIds(payload));
 }
 
 export async function validateGeminiCliOauthConnection(input: {
@@ -215,7 +219,6 @@ export async function discoverAntigravityModelsFromCloud(input: {
   site: PlatformDiscoverySite;
   account: PlatformDiscoveryAccount;
 }): Promise<string[]> {
-  const baseUrl = await requireSiteApiBaseUrl(input.site);
   const accessToken = (input.account.accessToken || '').trim();
   if (!accessToken) {
     throw new Error('antigravity oauth access token missing');
@@ -224,38 +227,41 @@ export async function discoverAntigravityModelsFromCloud(input: {
   const oauth = getOauthInfoFromAccount(input.account);
   const projectId = (oauth?.projectId || '').trim();
   const requestBody = projectId ? { project: projectId } : {};
-  let lastError = '';
+  return runWithSiteApiEndpointPool(input.site, async (target) => {
+    let lastError = '';
 
-  for (const discoveryBaseUrl of buildAntigravityDiscoveryBaseUrls(baseUrl || ANTIGRAVITY_UPSTREAM_BASE_URL)) {
-    try {
-      const response = await fetch(
-        `${discoveryBaseUrl}/v1internal:fetchAvailableModels`,
-        withSiteRecordProxyRequestInit(input.site, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-            'User-Agent': ANTIGRAVITY_MODELS_USER_AGENT,
-          },
-          body: JSON.stringify(requestBody),
-        }),
-      );
-      if (!response.ok) {
-        lastError = await response.text().catch(() => '') || `HTTP ${response.status}`;
-        continue;
-      }
+    for (const discoveryBaseUrl of buildAntigravityDiscoveryBaseUrls(target.baseUrl || ANTIGRAVITY_UPSTREAM_BASE_URL)) {
+      try {
+        const response = await fetch(
+          `${discoveryBaseUrl}/v1internal:fetchAvailableModels`,
+          withSiteRecordProxyRequestInit(input.site, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              Accept: 'application/json',
+              'Content-Type': 'application/json',
+              'User-Agent': ANTIGRAVITY_MODELS_USER_AGENT,
+            },
+            body: JSON.stringify(requestBody),
+          }),
+        );
+        if (!response.ok) {
+          const text = await response.text().catch(() => '');
+          lastError = `HTTP ${response.status}: ${text || '未获取到可用模型'}`;
+          continue;
+        }
 
-      const payload = await response.json();
-      const models = normalizeDiscoveredModels(extractAntigravityModelIds(payload));
-      if (models.length > 0) {
-        return models;
+        const payload = await response.json();
+        const models = normalizeDiscoveredModels(extractAntigravityModelIds(payload));
+        if (models.length > 0) {
+          return models;
+        }
+        lastError = '未获取到可用模型';
+      } catch (error) {
+        lastError = error instanceof Error ? `${discoveryBaseUrl}: ${error.message}` : String(error);
       }
-      lastError = '未获取到可用模型';
-    } catch (error) {
-      lastError = error instanceof Error ? `${discoveryBaseUrl}: ${error.message}` : String(error);
     }
-  }
 
-  throw new Error(lastError || '未获取到可用模型');
+    throw new Error(lastError || '未获取到可用模型');
+  });
 }

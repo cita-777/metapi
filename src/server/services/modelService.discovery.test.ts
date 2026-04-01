@@ -795,6 +795,88 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(String(undiciFetchMock.mock.calls[0]?.[0] || '')).toBe('https://chatgpt.com/backend-api/codex/models?client_version=1.0.0');
   });
 
+  it('rotates codex cloud discovery across configured ai endpoints after a retryable failure', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockRejectedValue(new Error('codex plan discovery should not call adapter.getModels'));
+    undiciFetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 502,
+        json: async () => ({ error: 'bad gateway' }),
+        text: async () => 'bad gateway',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          models: [
+            { id: 'gpt-5.3-codex' },
+          ],
+        }),
+        text: async () => JSON.stringify({ ok: true }),
+      });
+
+    const site = await db.insert(schema.sites).values({
+      name: 'codex-pool-site',
+      url: 'https://chatgpt.com/panel-codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+
+    await db.insert(schema.siteApiEndpoints).values([
+      {
+        siteId: site.id,
+        url: 'https://chatgpt.com/backend-api/codex-a',
+        enabled: true,
+        sortOrder: 0,
+      },
+      {
+        siteId: site.id,
+        url: 'https://chatgpt.com/backend-api/codex-b',
+        enabled: true,
+        sortOrder: 1,
+      },
+    ]).run();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'codex-pool-user@example.com',
+      accessToken: 'oauth-access-token',
+      apiToken: null,
+      status: 'active',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          accountId: 'chatgpt-account-789',
+          email: 'codex-pool-user@example.com',
+          planType: 'plus',
+        },
+      }),
+    }).returning().get();
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      status: 'success',
+      modelCount: 1,
+      modelsPreview: ['gpt-5.3-codex'],
+    });
+    expect(String(undiciFetchMock.mock.calls[0]?.[0] || '')).toBe('https://chatgpt.com/backend-api/codex-a/models?client_version=1.0.0');
+    expect(String(undiciFetchMock.mock.calls[1]?.[0] || '')).toBe('https://chatgpt.com/backend-api/codex-b/models?client_version=1.0.0');
+
+    const endpoints = await db.select().from(schema.siteApiEndpoints)
+      .where(eq(schema.siteApiEndpoints.siteId, site.id))
+      .all();
+    const firstEndpoint = endpoints.find((item) => item.url === 'https://chatgpt.com/backend-api/codex-a');
+    const secondEndpoint = endpoints.find((item) => item.url === 'https://chatgpt.com/backend-api/codex-b');
+    expect(firstEndpoint?.cooldownUntil).toBeTruthy();
+    expect(firstEndpoint?.lastFailureReason).toContain('HTTP 502');
+    expect(secondEndpoint?.lastSelectedAt).toBeTruthy();
+  });
+
   it('discovers Claude OAuth models from the upstream /v1/models response', async () => {
     getApiTokenMock.mockResolvedValue(null);
     getModelsMock.mockRejectedValue(new Error('claude oauth discovery should not call adapter.getModels'));

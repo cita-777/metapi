@@ -46,6 +46,20 @@ export interface RecordedSiteApiEndpointFailure extends SiteApiEndpointFailureDi
   cooldownUntil: string | null;
 }
 
+export class SiteApiEndpointRequestError extends Error {
+  readonly status: number | null;
+  readonly rawErrText: string | null;
+
+  constructor(message: string, options?: { status?: number | null; rawErrText?: string | null; cause?: unknown }) {
+    super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
+    this.name = 'SiteApiEndpointRequestError';
+    this.status = typeof options?.status === 'number' ? options.status : null;
+    this.rawErrText = typeof options?.rawErrText === 'string' && options.rawErrText.trim()
+      ? options.rawErrText
+      : null;
+  }
+}
+
 export function normalizeSiteApiEndpointBaseUrl(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return '';
@@ -84,16 +98,30 @@ function extractFailureMessage(input: SiteApiEndpointFailureInput): string {
 }
 
 function formatFailureReason(status: number | null, message: string): string {
-  if (status && message) return `HTTP ${status}: ${message}`;
+  if (status && message) {
+    if (message.match(new RegExp(`^HTTP\\s+${status}\\b`, 'i'))) {
+      return message;
+    }
+    return `HTTP ${status}: ${message}`;
+  }
   if (status) return `HTTP ${status}`;
   return message || 'endpoint failure';
+}
+
+function parseStatusFromFailureMessage(message: string): number | null {
+  const matched = message.match(/\bHTTP\s+(\d{3})\b/i);
+  if (!matched) return null;
+  const status = Number.parseInt(matched[1] || '', 10);
+  return Number.isFinite(status) ? status : null;
 }
 
 export function classifySiteApiEndpointFailure(
   input: SiteApiEndpointFailureInput,
 ): SiteApiEndpointFailureDisposition {
-  const status = typeof input.status === 'number' ? input.status : null;
   const message = extractFailureMessage(input);
+  const status = typeof input.status === 'number'
+    ? input.status
+    : parseStatusFromFailureMessage(message);
   const failureReason = formatFailureReason(status, message);
 
   if (status !== null) {
@@ -208,4 +236,52 @@ export async function recordSiteApiEndpointSuccess(
     lastFailureReason: null,
     updatedAt: nowIso,
   }).where(eq(schema.siteApiEndpoints.id, endpointId)).run();
+}
+
+export async function runWithSiteApiEndpointPool<T>(
+  site: SiteRow,
+  operation: (target: SiteApiEndpointTarget) => Promise<T>,
+): Promise<T> {
+  const attemptedEndpointIds = new Set<number>();
+  let lastError: unknown;
+
+  while (true) {
+    const target = await selectSiteApiEndpointTarget(site);
+    if (!target) {
+      if (lastError) throw lastError;
+      throw new Error('当前站点的 AI 请求地址均不可用');
+    }
+    if (target.endpointId && attemptedEndpointIds.has(target.endpointId)) {
+      if (lastError) throw lastError;
+      throw new Error('当前站点的 AI 请求地址均不可用');
+    }
+
+    try {
+      const result = await operation(target);
+      if (target.endpointId) {
+        try {
+          await recordSiteApiEndpointSuccess(target.endpointId);
+        } catch (error) {
+          console.warn('[siteApiEndpointService] failed to record endpoint success', error);
+        }
+      }
+      return result;
+    } catch (error) {
+      lastError = error;
+      if (!target.endpointId) {
+        throw error;
+      }
+
+      const recordedFailure = await recordSiteApiEndpointFailure(target.endpointId, {
+        status: error instanceof SiteApiEndpointRequestError ? error.status : undefined,
+        message: error instanceof Error ? error.message : String(error ?? ''),
+        error,
+      });
+      if (!recordedFailure.rotateToNextEndpoint) {
+        throw error;
+      }
+
+      attemptedEndpointIds.add(target.endpointId);
+    }
+  }
 }

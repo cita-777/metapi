@@ -94,6 +94,60 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
     expect(verifyTokenMock).not.toHaveBeenCalled();
   });
 
+  it('rotates API key verification across configured ai endpoints after a retryable failure', async () => {
+    getModelsMock
+      .mockRejectedValueOnce(new Error('HTTP 502: temporary upstream failure'))
+      .mockResolvedValueOnce(['gpt-4o-mini']);
+
+    const site = await db.insert(schema.sites).values({
+      name: 'Nihao Pool',
+      url: 'https://nih.cc',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    await db.insert(schema.siteApiEndpoints).values([
+      {
+        siteId: site.id,
+        url: 'https://api-a.nih.cc',
+        enabled: true,
+        sortOrder: 0,
+      },
+      {
+        siteId: site.id,
+        url: 'https://api-b.nih.cc',
+        enabled: true,
+        sortOrder: 1,
+      },
+    ]).run();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/accounts/verify-token',
+      payload: {
+        siteId: site.id,
+        accessToken: 'sk-rotate',
+        credentialMode: 'apikey',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      success: true,
+      tokenType: 'apikey',
+      modelCount: 1,
+    });
+    expect(getModelsMock).toHaveBeenNthCalledWith(1, 'https://api-a.nih.cc', 'sk-rotate', undefined);
+    expect(getModelsMock).toHaveBeenNthCalledWith(2, 'https://api-b.nih.cc', 'sk-rotate', undefined);
+
+    const endpoints = await db.select().from(schema.siteApiEndpoints).all();
+    const firstEndpoint = endpoints.find((item) => item.url === 'https://api-a.nih.cc');
+    const secondEndpoint = endpoints.find((item) => item.url === 'https://api-b.nih.cc');
+    expect(firstEndpoint?.cooldownUntil).toBeTruthy();
+    expect(firstEndpoint?.lastFailureReason).toContain('HTTP 502');
+    expect(secondEndpoint?.lastSelectedAt).toBeTruthy();
+  });
+
   it('keeps session verification on the panel host even when api endpoints exist', async () => {
     verifyTokenMock.mockResolvedValueOnce({
       tokenType: 'session',
@@ -168,5 +222,50 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
       tokenType: 'apikey',
     });
     expect(getModelsMock).toHaveBeenCalledWith('https://api.nih.cc', 'sk-nihao-create', undefined);
+  });
+
+  it('rotates API key account creation across configured ai endpoints after a retryable failure', async () => {
+    getModelsMock
+      .mockRejectedValueOnce(new Error('HTTP 502: temporary upstream failure'))
+      .mockResolvedValueOnce(['gpt-4o-mini']);
+
+    const site = await db.insert(schema.sites).values({
+      name: 'Nihao Create Pool',
+      url: 'https://nih.cc',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    await db.insert(schema.siteApiEndpoints).values([
+      {
+        siteId: site.id,
+        url: 'https://api-create-a.nih.cc',
+        enabled: true,
+        sortOrder: 0,
+      },
+      {
+        siteId: site.id,
+        url: 'https://api-create-b.nih.cc',
+        enabled: true,
+        sortOrder: 1,
+      },
+    ]).run();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/accounts',
+      payload: {
+        siteId: site.id,
+        accessToken: 'sk-nihao-create-rotate',
+        credentialMode: 'apikey',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      tokenType: 'apikey',
+    });
+    expect(getModelsMock).toHaveBeenNthCalledWith(1, 'https://api-create-a.nih.cc', 'sk-nihao-create-rotate', undefined);
+    expect(getModelsMock).toHaveBeenNthCalledWith(2, 'https://api-create-b.nih.cc', 'sk-nihao-create-rotate', undefined);
   });
 });

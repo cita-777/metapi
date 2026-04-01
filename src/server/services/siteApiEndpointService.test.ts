@@ -203,6 +203,33 @@ describe('siteApiEndpointService', () => {
     });
   });
 
+  it('parses retryable HTTP status codes from failure messages when no explicit status is provided', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'message-status-site',
+      url: 'https://panel.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const endpoint = await db.insert(schema.siteApiEndpoints).values({
+      siteId: site.id,
+      url: 'https://api-message-status.example.com',
+      enabled: true,
+      sortOrder: 0,
+    }).returning().get();
+
+    const result = await recordSiteApiEndpointFailure(endpoint.id, {
+      message: 'HTTP 502: upstream temporarily unavailable',
+    }, '2026-03-31T12:00:00.000Z');
+
+    expect(result).toMatchObject({
+      retryable: true,
+      rotateToNextEndpoint: true,
+      cooldownUntil: '2026-03-31T12:05:00.000Z',
+      failureReason: 'HTTP 502: upstream temporarily unavailable',
+    });
+  });
+
   it('records auth and validation failures without triggering cooldown rotation', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'non-retryable-site',

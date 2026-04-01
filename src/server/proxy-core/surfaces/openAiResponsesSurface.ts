@@ -70,6 +70,7 @@ import {
   safeUpdateSurfaceProxyDebugSelection,
   startSurfaceProxyDebugTrace,
 } from '../../services/proxyDebugTraceRuntime.js';
+import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
 import {
   buildForcedChannelUnavailableMessage,
   canRetryChannelSelection,
@@ -423,122 +424,84 @@ export async function handleOpenAiResponsesSurfaceRequest(
           downstreamHeaders: request.headers as Record<string, unknown>,
         })
       );
-      const buildEndpointRequest = (endpoint: 'chat' | 'messages' | 'responses') => {
-        const upstreamStream = isStream || (isCodexSite && endpoint === 'responses');
-        const endpointRequest = buildUpstreamEndpointRequest({
-          endpoint,
-          modelName,
-          stream: upstreamStream,
-          tokenValue: selected.tokenValue,
-          oauthProvider: oauth?.provider,
-          oauthProjectId: oauth?.projectId,
-          sitePlatform: selected.site.platform,
-          siteUrl: selected.site.url,
-          openaiBody: openAiBody,
-          downstreamFormat: 'responses',
-          responsesOriginalBody: normalizedResponsesBody,
-          downstreamHeaders: request.headers as Record<string, unknown>,
-          providerHeaders: buildProviderHeaders(),
-        });
-        const upstreamPath = (
-          isCompactRequest && endpoint === 'responses'
-            ? `${endpointRequest.path}/compact`
-            : endpointRequest.path
-        );
-        return {
-          endpoint,
-          path: upstreamPath,
-          headers: endpointRequest.headers,
-          body: endpointRequest.body as Record<string, unknown>,
-          runtime: endpointRequest.runtime,
-        };
-      };
-      const baseDispatchRequest = createSurfaceDispatchRequest({
-        site: selected.site,
-        accountExtraConfig: selected.account.extraConfig,
-      });
-      const dispatchRequest = (
-        endpointRequest: BuiltEndpointRequest,
-        targetUrl?: string,
-      ) => {
-        if (!isCodexSite || endpointRequest.path !== '/responses') {
-          return baseDispatchRequest(endpointRequest, targetUrl);
-        }
-        const sessionId = getCodexSessionHeaderValue(endpointRequest.headers);
-        return runCodexHttpSessionTask(
-          sessionId,
-          () => baseDispatchRequest(endpointRequest, targetUrl),
-        );
-      };
-      const endpointStrategy = openAiResponsesTransformer.compatibility.createEndpointStrategy({
-        isStream: isStream || isCodexSite,
-        requiresNativeResponsesFileUrl,
-        dispatchRequest,
-      });
-      const tryRecover = async (ctx: Parameters<NonNullable<typeof endpointStrategy.tryRecover>>[0]) => {
-        if (oauth && shouldRefreshOauthResponsesRequest({
-          oauthProvider: oauth.provider,
-          status: ctx.response.status,
-          response: ctx.response,
-          rawErrText: ctx.rawErrText || '',
-        })) {
-          const recovered = await trySurfaceOauthRefreshRecovery({
-            ctx,
-            selected,
-            siteUrl: selected.site.url,
-            buildRequest: (endpoint) => buildEndpointRequest(endpoint),
-            dispatchRequest,
+      const executeEndpointResultForSiteApiBaseUrl = async (siteApiBaseUrl: string) => {
+        const buildEndpointRequest = (endpoint: 'chat' | 'messages' | 'responses') => {
+          const upstreamStream = isStream || (isCodexSite && endpoint === 'responses');
+          const endpointRequest = buildUpstreamEndpointRequest({
+            endpoint,
+            modelName,
+            stream: upstreamStream,
+            tokenValue: selected.tokenValue,
+            oauthProvider: oauth?.provider,
+            oauthProjectId: oauth?.projectId,
+            sitePlatform: selected.site.platform,
+            siteUrl: siteApiBaseUrl,
+            openaiBody: openAiBody,
+            downstreamFormat: 'responses',
+            responsesOriginalBody: normalizedResponsesBody,
+            downstreamHeaders: request.headers as Record<string, unknown>,
+            providerHeaders: buildProviderHeaders(),
           });
-          if (recovered?.upstream?.ok) {
-            return recovered;
+          const upstreamPath = (
+            isCompactRequest && endpoint === 'responses'
+              ? `${endpointRequest.path}/compact`
+              : endpointRequest.path
+          );
+          return {
+            endpoint,
+            path: upstreamPath,
+            headers: endpointRequest.headers,
+            body: endpointRequest.body as Record<string, unknown>,
+            runtime: endpointRequest.runtime,
+          };
+        };
+        const baseDispatchRequest = createSurfaceDispatchRequest({
+          site: selected.site,
+          siteUrl: siteApiBaseUrl,
+          accountExtraConfig: selected.account.extraConfig,
+        });
+        const dispatchRequest = (
+          endpointRequest: BuiltEndpointRequest,
+          targetUrl?: string,
+        ) => {
+          if (!isCodexSite || !endpointRequest.path.startsWith('/responses')) {
+            return baseDispatchRequest(endpointRequest, targetUrl);
           }
-        }
-        return endpointStrategy.tryRecover(ctx);
-      };
+          const sessionId = getCodexSessionHeaderValue(endpointRequest.headers);
+          return runCodexHttpSessionTask(
+            sessionId,
+            () => baseDispatchRequest(endpointRequest, targetUrl),
+          );
+        };
+        const endpointStrategy = openAiResponsesTransformer.compatibility.createEndpointStrategy({
+          isStream: isStream || isCodexSite,
+          requiresNativeResponsesFileUrl,
+          dispatchRequest,
+        });
+        const tryRecover = async (ctx: Parameters<NonNullable<typeof endpointStrategy.tryRecover>>[0]) => {
+          if (oauth && shouldRefreshOauthResponsesRequest({
+            oauthProvider: oauth.provider,
+            status: ctx.response.status,
+            response: ctx.response,
+            rawErrText: ctx.rawErrText || '',
+          })) {
+            const recovered = await trySurfaceOauthRefreshRecovery({
+              ctx,
+              selected,
+              siteUrl: siteApiBaseUrl,
+              buildRequest: (endpoint) => buildEndpointRequest(endpoint),
+              dispatchRequest,
+            });
+            if (recovered?.upstream?.ok) {
+              return recovered;
+            }
+          }
+          return endpointStrategy.tryRecover(ctx);
+        };
 
-      const startTime = Date.now();
-      const leaseResult = await acquireSurfaceChannelLease({
-        stickySessionKey,
-        selected,
-      });
-      if (leaseResult.status === 'timeout') {
-        clearSurfaceStickyChannel({
-          stickySessionKey,
-          selected,
-        });
-        const busyMessage = buildSurfaceChannelBusyMessage(leaseResult.waitMs);
-        await failureToolkit.log({
-          selected,
-          modelRequested: requestedModel,
-          status: 'failed',
-          httpStatus: 503,
-          latencyMs: leaseResult.waitMs,
-          errorMessage: busyMessage,
-          retryCount,
-        });
-        if (retryCount < maxRetries && canRetryChannelSelection(retryCount, forcedChannelId)) {
-          retryCount += 1;
-          continue;
-        }
-        await finalizeDebugFailure(503, {
-          error: {
-            message: busyMessage,
-            type: 'server_error',
-          },
-        });
-        return reply.code(503).send({
-          error: {
-            message: busyMessage,
-            type: 'server_error',
-          },
-        });
-      }
-      const channelLease = leaseResult.lease;
-
-      try {
         const debugAttemptBase = reserveSurfaceProxyDebugAttemptBase(debugTrace, endpointCandidates.length);
-        const endpointResult = await executeEndpointFlow({
-          siteUrl: selected.site.url,
+        return executeEndpointFlow({
+          siteUrl: siteApiBaseUrl,
           disableCrossProtocolFallback: config.disableCrossProtocolFallback,
           endpointCandidates,
           buildRequest: (endpoint) => buildEndpointRequest(endpoint),
@@ -611,76 +574,98 @@ export async function handleOpenAiResponsesSurfaceRequest(
             });
           },
         });
-
-        if (!endpointResult.ok) {
-          clearSurfaceStickyChannel({
-            stickySessionKey,
-            selected,
-          });
-          const failureOutcome = await failureToolkit.handleUpstreamFailure({
-            selected,
-            requestedModel,
-            modelName,
-            status: endpointResult.status || 502,
-            errText: endpointResult.errText || 'unknown error',
-            rawErrText: endpointResult.rawErrText,
-            latencyMs: Date.now() - startTime,
-            retryCount,
-          });
-          const terminalFailureOutcome = failureOutcome.action === 'retry'
-            ? (canRetryChannelSelection(retryCount, forcedChannelId)
-              ? null
-              : finalizeRetryAsUpstreamFailure(endpointResult.status || 502, endpointResult.errText || 'unknown error'))
-            : failureOutcome;
-          if (!terminalFailureOutcome) {
-            retryCount += 1;
-            continue;
-          }
-          await finalizeDebugFailure(
-            terminalFailureOutcome.status,
-            terminalFailureOutcome.payload,
-            null,
-          );
-          return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload);
-        }
-
-      const upstream = endpointResult.upstream;
-      const successfulUpstreamPath = endpointResult.upstreamPath;
-      const finalizeStreamSuccess = async (
-        parsedUsage: UsageSummary,
-        latency: number,
-        streamDebugBody: unknown,
-        upstreamUsagePresent: boolean,
-      ) => {
-        try {
-          await recordSurfaceSuccess({
-            selected,
-            requestedModel,
-            modelName,
-            parsedUsage,
-            upstreamUsagePresent,
-            requestStartedAtMs: startTime,
-            latencyMs: latency,
-            retryCount,
-            upstreamPath: successfulUpstreamPath,
-            logSuccess: failureToolkit.log,
-            recordDownstreamCost: (estimatedCost) => {
-              recordDownstreamCostUsage(request, estimatedCost);
-            },
-            bestEffortMetrics: {
-              errorLabel: '[responses] post-stream bookkeeping failed:',
-            },
-          });
-        } catch (error) {
-          console.error('[responses] post-stream success logging failed:', error);
-        }
-        await finalizeDebugSuccess(
-          200,
-          successfulUpstreamPath,
-          buildSurfaceProxyDebugResponseHeaders(upstream),
-          streamDebugBody,
-        );
       };
+
+      const startTime = Date.now();
+      const leaseResult = await acquireSurfaceChannelLease({
+        stickySessionKey,
+        selected,
+      });
+      if (leaseResult.status === 'timeout') {
+        clearSurfaceStickyChannel({
+          stickySessionKey,
+          selected,
+        });
+      const busyMessage = buildSurfaceChannelBusyMessage(leaseResult.waitMs);
+      await failureToolkit.log({
+        selected,
+        modelRequested: requestedModel,
+        status: 'failed',
+        httpStatus: 503,
+        latencyMs: leaseResult.waitMs,
+        errorMessage: busyMessage,
+        retryCount,
+      });
+      if (retryCount < maxRetries && canRetryChannelSelection(retryCount, forcedChannelId)) {
+        retryCount += 1;
+        continue;
+      }
+        await finalizeDebugFailure(503, {
+          error: {
+            message: busyMessage,
+            type: 'server_error',
+          },
+        });
+        return reply.code(503).send({
+          error: {
+            message: busyMessage,
+            type: 'server_error',
+          },
+        });
+      }
+      const channelLease = leaseResult.lease;
+
+      try {
+        const endpointResult = await runWithSiteApiEndpointPool(selected.site, async (target) => {
+          const result = await executeEndpointResultForSiteApiBaseUrl(target.baseUrl);
+          if (!result.ok) {
+            const upstreamFailure = new SiteApiEndpointRequestError(result.errText || 'unknown error', {
+              status: result.status || 502,
+              rawErrText: result.rawErrText || result.errText || 'unknown error',
+            }) as SiteApiEndpointRequestError & { siteApiEndpointUpstreamFailure?: boolean };
+            upstreamFailure.siteApiEndpointUpstreamFailure = true;
+            throw upstreamFailure;
+          }
+          return result;
+        });
+
+        const upstream = endpointResult.upstream;
+        const successfulUpstreamPath = endpointResult.upstreamPath;
+        const finalizeStreamSuccess = async (
+          parsedUsage: UsageSummary,
+          latency: number,
+          streamDebugBody: unknown,
+          upstreamUsagePresent: boolean,
+        ) => {
+          try {
+            await recordSurfaceSuccess({
+              selected,
+              requestedModel,
+              modelName,
+              parsedUsage,
+              upstreamUsagePresent,
+              requestStartedAtMs: startTime,
+              latencyMs: latency,
+              retryCount,
+              upstreamPath: successfulUpstreamPath,
+              logSuccess: failureToolkit.log,
+              recordDownstreamCost: (estimatedCost) => {
+                recordDownstreamCostUsage(request, estimatedCost);
+              },
+              bestEffortMetrics: {
+                errorLabel: '[responses] post-stream bookkeeping failed:',
+              },
+            });
+          } catch (error) {
+            console.error('[responses] post-stream success logging failed:', error);
+          }
+          await finalizeDebugSuccess(
+            200,
+            successfulUpstreamPath,
+            buildSurfaceProxyDebugResponseHeaders(upstream),
+            streamDebugBody,
+          );
+        };
 
         if (isStream) {
           const upstreamContentType = (upstream.headers.get('content-type') || '').toLowerCase();
@@ -1126,22 +1111,56 @@ export async function handleOpenAiResponsesSurfaceRequest(
 	          stickySessionKey,
 	          selected,
 	        });
+          const endpointFailureStatus = typeof err?.status === 'number' ? err.status : null;
+          const isSiteApiEndpointFailure = (
+            err instanceof SiteApiEndpointRequestError
+            || err?.name === 'SiteApiEndpointRequestError'
+            || err?.siteApiEndpointUpstreamFailure === true
+            || (endpointFailureStatus !== null && endpointFailureStatus >= 500)
+          );
+          if (isSiteApiEndpointFailure) {
+            const failureOutcome = await failureToolkit.handleUpstreamFailure({
+              selected,
+          requestedModel,
+          modelName,
+          status: endpointFailureStatus || 502,
+          errText: err?.message || 'unknown error',
+          rawErrText: err?.rawErrText || err?.message || 'unknown error',
+          latencyMs: Date.now() - startTime,
+          retryCount,
+        });
+            const terminalFailureOutcome = failureOutcome.action === 'retry'
+              ? (canRetryChannelSelection(retryCount, forcedChannelId)
+                ? null
+                : finalizeRetryAsUpstreamFailure(endpointFailureStatus || 502, err?.message || 'unknown error'))
+              : failureOutcome;
+            if (!terminalFailureOutcome) {
+              retryCount += 1;
+              continue;
+            }
+            await finalizeDebugFailure(
+              terminalFailureOutcome.status,
+              terminalFailureOutcome.payload,
+              null,
+            );
+            return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload);
+          }
 	        const failureOutcome = await failureToolkit.handleExecutionError({
 	          selected,
 	          requestedModel,
-	          modelName,
-	          errorMessage: err?.message || 'network failure',
-	          latencyMs: Date.now() - startTime,
-	          retryCount,
-	        });
-	        const terminalFailureOutcome = failureOutcome.action === 'retry'
-	          ? (canRetryChannelSelection(retryCount, forcedChannelId)
-	            ? null
-	            : finalizeRetryAsExecutionFailure(err?.message || 'network failure'))
-	          : failureOutcome;
-	        if (!terminalFailureOutcome) {
-	          retryCount += 1;
-	          continue;
+            modelName,
+            errorMessage: err?.message || 'network failure',
+            latencyMs: Date.now() - startTime,
+            retryCount,
+          });
+          const terminalFailureOutcome = failureOutcome.action === 'retry'
+            ? (canRetryChannelSelection(retryCount, forcedChannelId)
+              ? null
+              : finalizeRetryAsExecutionFailure(err?.message || 'network failure'))
+            : failureOutcome;
+          if (!terminalFailureOutcome) {
+            retryCount += 1;
+            continue;
 	        }
 		        await finalizeDebugFailure(
 	            terminalFailureOutcome.status,

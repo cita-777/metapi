@@ -60,6 +60,7 @@ import {
   selectSurfaceChannelForAttempt,
   trySurfaceOauthRefreshRecovery,
 } from './sharedSurface.js';
+import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
 import {
   buildSurfaceProxyDebugResponseHeaders,
   captureSurfaceProxyDebugSuccessResponseBody,
@@ -316,67 +317,145 @@ export async function handleChatSurfaceRequest(
         downstreamHeaders: request.headers as Record<string, unknown>,
       })
     );
-    const buildEndpointRequest = (
-      endpoint: 'chat' | 'messages' | 'responses',
-      options: { forceNormalizeClaudeBody?: boolean } = {},
-    ) => {
-      const upstreamStream = isStream || (isCodexSite && endpoint === 'responses');
-      const endpointRequest = buildUpstreamEndpointRequest({
-        endpoint,
-        modelName,
-        stream: upstreamStream,
-        tokenValue: selected.tokenValue,
-        oauthProvider: oauth?.provider,
-        oauthProjectId: oauth?.projectId,
-        sitePlatform: selected.site.platform,
-        siteUrl: selected.site.url,
-        openaiBody: resolvedOpenAiBody,
-        downstreamFormat,
-        claudeOriginalBody,
-        forceNormalizeClaudeBody: options.forceNormalizeClaudeBody,
-        downstreamHeaders: request.headers as Record<string, unknown>,
-        providerHeaders: buildProviderHeaders(),
-        codexSessionCacheKey,
-      });
-      return {
-        endpoint,
-        path: endpointRequest.path,
-        headers: endpointRequest.headers,
-        body: endpointRequest.body as Record<string, unknown>,
-        runtime: endpointRequest.runtime,
-      };
-    };
-    const dispatchRequest = createSurfaceDispatchRequest({
-      site: selected.site,
-      accountExtraConfig: selected.account.extraConfig,
-    });
-    const endpointStrategy = downstreamTransformer.compatibility.createEndpointStrategy({
-      downstreamFormat,
-      endpointCandidates,
-      modelName,
-      requestedModelHint: requestedModel,
-      sitePlatform: selected.site.platform,
-      isStream: isStream || isCodexSite,
-      buildRequest: ({ endpoint, forceNormalizeClaudeBody }) => buildEndpointRequest(
-        endpoint,
-        { forceNormalizeClaudeBody },
-      ),
-      dispatchRequest,
-    });
-    const tryRecover = async (ctx: Parameters<NonNullable<typeof endpointStrategy.tryRecover>>[0]) => {
-      if ((ctx.response.status === 401 || ctx.response.status === 403) && oauth) {
-        const recovered = await trySurfaceOauthRefreshRecovery({
-          ctx,
-          selected,
-          siteUrl: selected.site.url,
-          buildRequest: (endpoint) => buildEndpointRequest(endpoint),
-          dispatchRequest,
+    const executeEndpointResultForSiteApiBaseUrl = async (siteApiBaseUrl: string) => {
+      const buildEndpointRequest = (
+        endpoint: 'chat' | 'messages' | 'responses',
+        options: { forceNormalizeClaudeBody?: boolean } = {},
+      ) => {
+        const upstreamStream = isStream || (isCodexSite && endpoint === 'responses');
+        const endpointRequest = buildUpstreamEndpointRequest({
+          endpoint,
+          modelName,
+          stream: upstreamStream,
+          tokenValue: selected.tokenValue,
+          oauthProvider: oauth?.provider,
+          oauthProjectId: oauth?.projectId,
+          sitePlatform: selected.site.platform,
+          siteUrl: siteApiBaseUrl,
+          openaiBody: resolvedOpenAiBody,
+          downstreamFormat,
+          claudeOriginalBody,
+          forceNormalizeClaudeBody: options.forceNormalizeClaudeBody,
+          downstreamHeaders: request.headers as Record<string, unknown>,
+          providerHeaders: buildProviderHeaders(),
+          codexSessionCacheKey,
         });
-        if (recovered?.upstream?.ok) {
-          return recovered;
+        return {
+          endpoint,
+          path: endpointRequest.path,
+          headers: endpointRequest.headers,
+          body: endpointRequest.body as Record<string, unknown>,
+          runtime: endpointRequest.runtime,
+        };
+      };
+      const dispatchRequest = createSurfaceDispatchRequest({
+        site: selected.site,
+        siteUrl: siteApiBaseUrl,
+        accountExtraConfig: selected.account.extraConfig,
+      });
+      const endpointStrategy = downstreamTransformer.compatibility.createEndpointStrategy({
+        downstreamFormat,
+        endpointCandidates,
+        modelName,
+        requestedModelHint: requestedModel,
+        sitePlatform: selected.site.platform,
+        isStream: isStream || isCodexSite,
+        buildRequest: ({ endpoint, forceNormalizeClaudeBody }) => buildEndpointRequest(
+          endpoint,
+          { forceNormalizeClaudeBody },
+        ),
+        dispatchRequest,
+      });
+      const tryRecover = async (ctx: Parameters<NonNullable<typeof endpointStrategy.tryRecover>>[0]) => {
+        if ((ctx.response.status === 401 || ctx.response.status === 403) && oauth) {
+          const recovered = await trySurfaceOauthRefreshRecovery({
+            ctx,
+            selected,
+            siteUrl: siteApiBaseUrl,
+            buildRequest: (endpoint) => buildEndpointRequest(endpoint),
+            dispatchRequest,
+          });
+          if (recovered?.upstream?.ok) {
+            return recovered;
+          }
         }
-      }
-      return endpointStrategy.tryRecover(ctx);
+        return endpointStrategy.tryRecover(ctx);
+      };
+      const debugAttemptBase = reserveSurfaceProxyDebugAttemptBase(debugTrace, endpointCandidates.length);
+      return executeEndpointFlow({
+        siteUrl: siteApiBaseUrl,
+        disableCrossProtocolFallback: config.disableCrossProtocolFallback,
+        endpointCandidates,
+        buildRequest: (endpoint) => buildEndpointRequest(endpoint),
+        dispatchRequest,
+        tryRecover,
+        onAttemptFailure: async (ctx) => {
+          const memoryWrite = recordUpstreamEndpointFailure({
+            ...endpointRuntimeContext,
+            endpoint: ctx.request.endpoint,
+            status: ctx.response.status,
+            errorText: ctx.rawErrText,
+          });
+          await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
+            attemptIndex: debugAttemptBase + ctx.endpointIndex,
+            endpoint: ctx.request.endpoint,
+            requestPath: ctx.request.path,
+            targetUrl: ctx.targetUrl,
+            runtimeExecutor: ctx.request.runtime?.executor || 'default',
+            requestHeaders: ctx.request.headers,
+            requestBody: ctx.request.body,
+            responseStatus: ctx.response.status,
+            responseHeaders: buildSurfaceProxyDebugResponseHeaders(ctx.response),
+            responseBody: parseSurfaceProxyDebugTextPayload(ctx.rawErrText),
+            rawErrorText: ctx.rawErrText,
+            recoverApplied: ctx.recoverApplied === true,
+            downgradeDecision: false,
+            downgradeReason: null,
+            memoryWrite,
+          });
+        },
+        onAttemptSuccess: async (ctx) => {
+          const memoryWrite = recordUpstreamEndpointSuccess({
+            ...endpointRuntimeContext,
+            endpoint: ctx.request.endpoint,
+          });
+          const responseBody = await captureSurfaceProxyDebugSuccessResponseBody(debugTrace, ctx);
+          await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
+            attemptIndex: debugAttemptBase + ctx.endpointIndex,
+            endpoint: ctx.request.endpoint,
+            requestPath: ctx.request.path,
+            targetUrl: ctx.targetUrl,
+            runtimeExecutor: ctx.request.runtime?.executor || 'default',
+            requestHeaders: ctx.request.headers,
+            requestBody: ctx.request.body,
+            responseStatus: ctx.response.status,
+            responseHeaders: buildSurfaceProxyDebugResponseHeaders(ctx.response),
+            responseBody,
+            rawErrorText: null,
+            recoverApplied: ctx.recoverApplied === true,
+            downgradeDecision: false,
+            downgradeReason: null,
+            memoryWrite,
+          });
+        },
+        shouldDowngrade: endpointStrategy.shouldDowngrade,
+        onDowngrade: async (ctx) => {
+          await safeUpdateSurfaceProxyDebugAttempt(debugTrace, debugAttemptBase + ctx.endpointIndex, {
+            downgradeDecision: true,
+            downgradeReason: ctx.errText,
+            rawErrorText: ctx.rawErrText,
+          });
+          return failureToolkit.log({
+            selected,
+            modelRequested: requestedModel,
+            status: 'failed',
+            httpStatus: ctx.response.status,
+            latencyMs: Date.now() - startTime,
+            errorMessage: ctx.errText,
+            retryCount,
+          });
+        },
+      });
     };
     let startTime = Date.now();
     const leaseResult = await acquireSurfaceChannelLease({
@@ -418,113 +497,18 @@ export async function handleChatSurfaceRequest(
     const channelLease = leaseResult.lease;
 
     try {
-      const debugAttemptBase = reserveSurfaceProxyDebugAttemptBase(debugTrace, endpointCandidates.length);
-      const endpointResult = await executeEndpointFlow({
-          siteUrl: selected.site.url,
-          disableCrossProtocolFallback: config.disableCrossProtocolFallback,
-          endpointCandidates,
-          buildRequest: (endpoint) => buildEndpointRequest(endpoint),
-          dispatchRequest,
-          tryRecover,
-          onAttemptFailure: async (ctx) => {
-            const memoryWrite = recordUpstreamEndpointFailure({
-              ...endpointRuntimeContext,
-              endpoint: ctx.request.endpoint,
-              status: ctx.response.status,
-              errorText: ctx.rawErrText,
-            });
-            await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
-              attemptIndex: debugAttemptBase + ctx.endpointIndex,
-              endpoint: ctx.request.endpoint,
-              requestPath: ctx.request.path,
-              targetUrl: ctx.targetUrl,
-              runtimeExecutor: ctx.request.runtime?.executor || 'default',
-              requestHeaders: ctx.request.headers,
-              requestBody: ctx.request.body,
-              responseStatus: ctx.response.status,
-              responseHeaders: buildSurfaceProxyDebugResponseHeaders(ctx.response),
-              responseBody: parseSurfaceProxyDebugTextPayload(ctx.rawErrText),
-              rawErrorText: ctx.rawErrText,
-              recoverApplied: ctx.recoverApplied === true,
-              downgradeDecision: false,
-              downgradeReason: null,
-              memoryWrite,
-            });
-          },
-          onAttemptSuccess: async (ctx) => {
-            const memoryWrite = recordUpstreamEndpointSuccess({
-              ...endpointRuntimeContext,
-              endpoint: ctx.request.endpoint,
-            });
-            const responseBody = await captureSurfaceProxyDebugSuccessResponseBody(debugTrace, ctx);
-            await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
-              attemptIndex: debugAttemptBase + ctx.endpointIndex,
-              endpoint: ctx.request.endpoint,
-              requestPath: ctx.request.path,
-              targetUrl: ctx.targetUrl,
-              runtimeExecutor: ctx.request.runtime?.executor || 'default',
-              requestHeaders: ctx.request.headers,
-              requestBody: ctx.request.body,
-              responseStatus: ctx.response.status,
-              responseHeaders: buildSurfaceProxyDebugResponseHeaders(ctx.response),
-              responseBody,
-              rawErrorText: null,
-              recoverApplied: ctx.recoverApplied === true,
-              downgradeDecision: false,
-              downgradeReason: null,
-              memoryWrite,
-            });
-          },
-          shouldDowngrade: endpointStrategy.shouldDowngrade,
-          onDowngrade: async (ctx) => {
-            await safeUpdateSurfaceProxyDebugAttempt(debugTrace, debugAttemptBase + ctx.endpointIndex, {
-              downgradeDecision: true,
-              downgradeReason: ctx.errText,
-              rawErrorText: ctx.rawErrText,
-            });
-            return failureToolkit.log({
-              selected,
-              modelRequested: requestedModel,
-              status: 'failed',
-              httpStatus: ctx.response.status,
-              latencyMs: Date.now() - startTime,
-              errorMessage: ctx.errText,
-              retryCount,
-            });
-          },
-      });
-
-      if (!endpointResult.ok) {
-        clearSurfaceStickyChannel({
-          stickySessionKey,
-          selected,
-        });
-        const failureOutcome = await failureToolkit.handleUpstreamFailure({
-          selected,
-          requestedModel,
-          modelName,
-          status: endpointResult.status || 502,
-          errText: endpointResult.errText || 'unknown error',
-          rawErrText: endpointResult.rawErrText,
-          latencyMs: Date.now() - startTime,
-          retryCount,
-        });
-        const terminalFailureOutcome = failureOutcome.action === 'retry'
-          ? (canRetryChannelSelection(retryCount, forcedChannelId)
-            ? null
-            : finalizeRetryAsUpstreamFailure(endpointResult.status || 502, endpointResult.errText || 'unknown error'))
-          : failureOutcome;
-        if (!terminalFailureOutcome) {
-          retryCount += 1;
-          continue;
+      const endpointResult = await runWithSiteApiEndpointPool(selected.site, async (target) => {
+        const result = await executeEndpointResultForSiteApiBaseUrl(target.baseUrl);
+        if (!result.ok) {
+          const upstreamFailure = new SiteApiEndpointRequestError(result.errText || 'unknown error', {
+            status: result.status || 502,
+            rawErrText: result.rawErrText || result.errText || 'unknown error',
+          }) as SiteApiEndpointRequestError & { siteApiEndpointUpstreamFailure?: boolean };
+          upstreamFailure.siteApiEndpointUpstreamFailure = true;
+          throw upstreamFailure;
         }
-        await finalizeDebugFailure(
-          terminalFailureOutcome.status,
-          terminalFailureOutcome.payload,
-          null,
-        );
-        return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload);
-      }
+        return result;
+      });
 
       const upstream = endpointResult.upstream;
       const successfulUpstreamPath = endpointResult.upstreamPath;
@@ -944,14 +928,43 @@ export async function handleChatSurfaceRequest(
       });
 
       return reply.send(downstreamResponse);
-      } catch (err: any) {
-        clearSurfaceStickyChannel({
-          stickySessionKey,
-          selected,
-        });
-        const failureOutcome = await failureToolkit.handleExecutionError({
+    } catch (err: any) {
+      clearSurfaceStickyChannel({
+        stickySessionKey,
+        selected,
+      });
+      const endpointFailureStatus = typeof err?.status === 'number' ? err.status : null;
+      const isSiteApiEndpointFailure = (
+        err instanceof SiteApiEndpointRequestError
+        || err?.name === 'SiteApiEndpointRequestError'
+        || err?.siteApiEndpointUpstreamFailure === true
+        || endpointFailureStatus !== null
+      );
+      if (isSiteApiEndpointFailure) {
+        const failureOutcome = await failureToolkit.handleUpstreamFailure({
           selected,
           requestedModel,
+          modelName,
+          status: endpointFailureStatus || 502,
+          errText: err.message || 'unknown error',
+          rawErrText: err.rawErrText || err.message || 'unknown error',
+          latencyMs: Date.now() - startTime,
+          retryCount,
+        });
+        if (failureOutcome.action === 'retry') {
+          retryCount += 1;
+          continue;
+        }
+        await finalizeDebugFailure(
+          failureOutcome.status,
+          failureOutcome.payload,
+          null,
+        );
+        return reply.code(failureOutcome.status).send(failureOutcome.payload);
+      }
+      const failureOutcome = await failureToolkit.handleExecutionError({
+        selected,
+        requestedModel,
         modelName,
         errorMessage: err?.message || 'network failure',
         latencyMs: Date.now() - startTime,
@@ -1229,92 +1242,89 @@ export async function handleClaudeCountTokensSurfaceRequest(
     };
 
     try {
-      let upstreamRequest = buildRequest();
-      const dispatchRequest = createSurfaceDispatchRequest({
-        site: selected.site,
-        accountExtraConfig: selected.account.extraConfig,
-      });
-      let upstream = await dispatchRequest(upstreamRequest);
-      let recoverApplied = false;
+      const countTokensResult = await runWithSiteApiEndpointPool(selected.site, async (target) => {
+        let upstreamRequest = buildRequest();
+        const dispatchRequest = createSurfaceDispatchRequest({
+          site: selected.site,
+          siteUrl: target.baseUrl,
+          accountExtraConfig: selected.account.extraConfig,
+        });
+        let upstream = await dispatchRequest(upstreamRequest);
+        let recoverApplied = false;
 
-      if ((upstream.status === 401 || upstream.status === 403) && oauth) {
-        const recoverContext = {
-          request: upstreamRequest,
-          response: upstream,
-          rawErrText: '',
+        if ((upstream.status === 401 || upstream.status === 403) && oauth) {
+          const recoverContext = {
+            request: upstreamRequest,
+            response: upstream,
+            rawErrText: '',
+          };
+          const recovered = await trySurfaceOauthRefreshRecovery({
+            ctx: recoverContext,
+            selected,
+            siteUrl: target.baseUrl,
+            buildRequest: () => buildRequest(),
+            dispatchRequest,
+            captureFailureBody: false,
+          });
+          if (recovered?.upstream?.ok) {
+            upstreamRequest = buildRequest();
+            upstream = recovered.upstream;
+            recoverApplied = true;
+          } else {
+            upstreamRequest = recoverContext.request;
+            upstream = recoverContext.response;
+          }
+        }
+
+        const latency = Date.now() - startTime;
+        const contentType = upstream.headers.get('content-type') || 'application/json';
+        const text = await readRuntimeResponseText(upstream);
+        let payload: unknown = text;
+        try {
+          payload = JSON.parse(text);
+        } catch {
+          payload = text;
+        }
+        await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
+          attemptIndex: retryCount,
+          endpoint: upstreamRequest.endpoint,
+          requestPath: upstreamRequest.path,
+          targetUrl: `${target.baseUrl}${upstreamRequest.path}`,
+          runtimeExecutor: upstreamRequest.runtime?.executor || 'default',
+          requestHeaders: upstreamRequest.headers,
+          requestBody: upstreamRequest.body,
+          responseStatus: upstream.status,
+          responseHeaders: buildSurfaceProxyDebugResponseHeaders(upstream),
+          responseBody: payload,
+          rawErrorText: upstream.ok ? null : text,
+          recoverApplied,
+          downgradeDecision: false,
+          downgradeReason: null,
+          memoryWrite: null,
+        });
+        if (!upstream.ok) {
+          const errText = typeof payload === 'string' ? payload : JSON.stringify(payload);
+          throw new SiteApiEndpointRequestError(errText || 'unknown error', {
+            status: upstream.status,
+            rawErrText: typeof payload === 'string' ? payload : text,
+          });
+        }
+        return {
+          upstream,
+          upstreamRequest,
+          contentType,
+          payload,
+          latency,
         };
-        const recovered = await trySurfaceOauthRefreshRecovery({
-          ctx: recoverContext,
-          selected,
-          siteUrl: selected.site.url,
-          buildRequest: () => buildRequest(),
-          dispatchRequest,
-          captureFailureBody: false,
-        });
-        if (recovered?.upstream?.ok) {
-          upstreamRequest = buildRequest();
-          upstream = recovered.upstream;
-          recoverApplied = true;
-        } else {
-          upstreamRequest = recoverContext.request;
-          upstream = recoverContext.response;
-        }
-      }
-
-      const latency = Date.now() - startTime;
-      const contentType = upstream.headers.get('content-type') || 'application/json';
-      const text = await readRuntimeResponseText(upstream);
-      let payload: unknown = text;
-      try {
-        payload = JSON.parse(text);
-      } catch {
-        payload = text;
-      }
-      await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
-        attemptIndex: retryCount,
-        endpoint: upstreamRequest.endpoint,
-        requestPath: upstreamRequest.path,
-        targetUrl: `${selected.site.url}${upstreamRequest.path}`,
-        runtimeExecutor: upstreamRequest.runtime?.executor || 'default',
-        requestHeaders: upstreamRequest.headers,
-        requestBody: upstreamRequest.body,
-        responseStatus: upstream.status,
-        responseHeaders: buildSurfaceProxyDebugResponseHeaders(upstream),
-        responseBody: payload,
-        rawErrorText: upstream.ok ? null : text,
-        recoverApplied,
-        downgradeDecision: false,
-        downgradeReason: null,
-        memoryWrite: null,
       });
 
-      if (!upstream.ok) {
-        clearSurfaceStickyChannel({
-          stickySessionKey,
-          selected,
-        });
-        const failureOutcome = await failureToolkit.handleUpstreamFailure({
-          selected,
-          requestedModel,
-          modelName,
-          status: upstream.status,
-          errText: typeof payload === 'string' ? payload : JSON.stringify(payload),
-          rawErrText: typeof payload === 'string' ? payload : text,
-          latencyMs: latency,
-          retryCount,
-        });
-        const terminalFailureOutcome = failureOutcome.action === 'retry'
-          ? (canRetryChannelSelection(retryCount, forcedChannelId)
-            ? null
-            : finalizeRetryAsUpstreamFailure(upstream.status, typeof payload === 'string' ? payload : JSON.stringify(payload)))
-          : failureOutcome;
-        if (!terminalFailureOutcome) {
-          retryCount += 1;
-          continue;
-        }
-        await finalizeDebugFailure(terminalFailureOutcome.status, terminalFailureOutcome.payload, upstreamRequest.path);
-        return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload);
-      }
+      const {
+        upstream,
+        upstreamRequest,
+        contentType,
+        payload,
+        latency,
+      } = countTokensResult;
 
       tokenRouter.recordSuccess(selected.channel.id, latency, 0, modelName);
       recordDownstreamCostUsage(request, 0);
@@ -1344,6 +1354,36 @@ export async function handleClaudeCountTokensSurfaceRequest(
         stickySessionKey,
         selected,
       });
+      const endpointFailureStatus = typeof error?.status === 'number' ? error.status : null;
+      const isSiteApiEndpointFailure = (
+        error instanceof SiteApiEndpointRequestError
+        || error?.name === 'SiteApiEndpointRequestError'
+        || error?.siteApiEndpointUpstreamFailure === true
+        || (endpointFailureStatus !== null && endpointFailureStatus >= 500)
+      );
+      if (isSiteApiEndpointFailure) {
+        const failureOutcome = await failureToolkit.handleUpstreamFailure({
+          selected,
+          requestedModel,
+          modelName,
+          status: endpointFailureStatus || 502,
+          errText: error.message || 'unknown error',
+          rawErrText: error.rawErrText || error.message || 'unknown error',
+          latencyMs: Date.now() - startTime,
+          retryCount,
+        });
+        const terminalFailureOutcome = failureOutcome.action === 'retry'
+          ? (canRetryChannelSelection(retryCount, forcedChannelId)
+            ? null
+            : finalizeRetryAsUpstreamFailure(endpointFailureStatus || 502, error.message || 'unknown error'))
+          : failureOutcome;
+        if (!terminalFailureOutcome) {
+          retryCount += 1;
+          continue;
+        }
+        await finalizeDebugFailure(terminalFailureOutcome.status, terminalFailureOutcome.payload, null);
+        return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload);
+      }
       const failureOutcome = await failureToolkit.handleExecutionError({
         selected,
         requestedModel,
