@@ -10,6 +10,7 @@ type TokenRouterModule = typeof import('../../services/tokenRouter.js');
 
 describe('POST /api/routes/decision/refresh', () => {
   let app: FastifyInstance;
+  let previousDataDir: string | undefined;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'];
@@ -19,6 +20,8 @@ describe('POST /api/routes/decision/refresh', () => {
   let dataDir = '';
 
   beforeAll(async () => {
+    previousDataDir = process.env.DATA_DIR;
+    vi.resetModules();
     dataDir = mkdtempSync(join(tmpdir(), 'metapi-route-decision-refresh-task-'));
     process.env.DATA_DIR = dataDir;
 
@@ -61,7 +64,12 @@ describe('POST /api/routes/decision/refresh', () => {
         rmSync(dataDir, { recursive: true, force: true });
       } catch {}
     }
-    delete process.env.DATA_DIR;
+    if (previousDataDir === undefined) {
+      delete process.env.DATA_DIR;
+    } else {
+      process.env.DATA_DIR = previousDataDir;
+    }
+    vi.resetModules();
   });
 
   it('queues a background refresh task and persists refreshed snapshots for exact and wildcard routes', async () => {
@@ -85,9 +93,19 @@ describe('POST /api/routes/decision/refresh', () => {
       enabled: true,
     }).returning().get();
 
+    const duplicateExactRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4o-mini',
+      enabled: true,
+    }).returning().get();
+
     const wildcardRoute = await db.insert(schema.tokenRoutes).values({
       modelPattern: 're:^claude-(opus|sonnet)-4-6$',
       enabled: true,
+    }).returning().get();
+
+    const disabledRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'disabled-model',
+      enabled: false,
     }).returning().get();
 
     await db.insert(schema.routeChannels).values([
@@ -100,10 +118,27 @@ describe('POST /api/routes/decision/refresh', () => {
         enabled: true,
       },
       {
+        routeId: duplicateExactRoute.id,
+        accountId: account.id,
+        tokenId: null,
+        sourceModel: 'gpt-4o-mini',
+        priority: 0,
+        weight: 5,
+        enabled: true,
+      },
+      {
         routeId: wildcardRoute.id,
         accountId: account.id,
         tokenId: null,
         sourceModel: 'claude-opus-4-6',
+        priority: 0,
+        weight: 10,
+        enabled: true,
+      },
+      {
+        routeId: disabledRoute.id,
+        accountId: account.id,
+        tokenId: null,
         priority: 0,
         weight: 10,
         enabled: true,
@@ -128,7 +163,7 @@ describe('POST /api/routes/decision/refresh', () => {
     expect(body.jobId.length).toBeGreaterThan(10);
     expect(body.status).toBe('pending');
 
-    for (let attempt = 0; attempt < 50; attempt += 1) {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
       const task = getBackgroundTask(body.jobId);
       if (task?.status === 'succeeded') break;
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -148,11 +183,17 @@ describe('POST /api/routes/decision/refresh', () => {
     }>;
 
     const refreshedExactRoute = routes.find((route) => route.id === exactRoute.id);
+    const refreshedDuplicateExactRoute = routes.find((route) => route.id === duplicateExactRoute.id);
     const refreshedWildcardRoute = routes.find((route) => route.id === wildcardRoute.id);
+    const refreshedDisabledRoute = routes.find((route) => route.id === disabledRoute.id);
 
     expect(refreshedExactRoute?.decisionSnapshot?.matched).toBe(true);
+    expect(refreshedExactRoute?.decisionSnapshot?.routeId).toBe(exactRoute.id);
     expect(Array.isArray(refreshedExactRoute?.decisionSnapshot?.candidates)).toBe(true);
+    expect(refreshedDuplicateExactRoute?.decisionSnapshot?.matched).toBe(true);
+    expect(refreshedDuplicateExactRoute?.decisionSnapshot?.routeId).toBe(duplicateExactRoute.id);
     expect(refreshedWildcardRoute?.decisionSnapshot?.matched).toBe(true);
     expect(refreshedWildcardRoute?.decisionSnapshot?.routeId).toBe(wildcardRoute.id);
+    expect(refreshedDisabledRoute?.decisionSnapshot).toBeNull();
   });
 });

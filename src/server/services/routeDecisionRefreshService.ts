@@ -1,8 +1,10 @@
+import { eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { saveRouteDecisionSnapshots } from './routeDecisionSnapshotStore.js';
 import { matchesModelPattern, tokenRouter } from './tokenRouter.js';
+import { ROUTE_DECISION_REFRESH_TASK_TYPE } from '../../shared/tokenRouteContract.js';
 
-export const ROUTE_DECISION_REFRESH_TASK_TYPE = 'route-decision.refresh';
+export { ROUTE_DECISION_REFRESH_TASK_TYPE };
 export const ROUTE_DECISION_REFRESH_DEDUPE_KEY = 'refresh-route-decision-snapshots';
 
 function isExactModelPattern(modelPattern: string): boolean {
@@ -40,7 +42,9 @@ export async function refreshAllRouteDecisionSnapshots(options: RefreshOptions =
   const routes = await db.select({
     id: schema.tokenRoutes.id,
     modelPattern: schema.tokenRoutes.modelPattern,
-  }).from(schema.tokenRoutes).all();
+  }).from(schema.tokenRoutes)
+    .where(eq(schema.tokenRoutes.enabled, true))
+    .all();
 
   const exactModels = normalizeModels(
     routes
@@ -58,17 +62,20 @@ export async function refreshAllRouteDecisionSnapshots(options: RefreshOptions =
 
   for (const [index, model] of exactModels.entries()) {
     options.onProgress?.(`刷新精确模型概率 ${index + 1}/${exactModels.length}：${model}`);
-    if (options.refreshPricingCatalog) {
-      await tokenRouter.refreshPricingReferenceCosts(model, { refreshedKeys });
-    }
-
-    const decision = await tokenRouter.explainSelection(model);
-    const snapshotWrites = routes
-      .filter((route) => isExactModelPattern(route.modelPattern) && matchesModelPattern(model, route.modelPattern))
-      .map((route) => ({
+    const matchingRoutes = routes.filter((route) => (
+      isExactModelPattern(route.modelPattern) && matchesModelPattern(model, route.modelPattern)
+    ));
+    const snapshotWrites = [];
+    for (const route of matchingRoutes) {
+      if (options.refreshPricingCatalog) {
+        await tokenRouter.refreshPricingReferenceCostsForRoute(route.id, model, { refreshedKeys });
+      }
+      const decision = await tokenRouter.explainSelectionForRoute(route.id, model);
+      snapshotWrites.push({
         routeId: route.id,
         snapshot: decision,
-      }));
+      });
+    }
     if (snapshotWrites.length > 0) {
       await saveRouteDecisionSnapshots(snapshotWrites);
     }

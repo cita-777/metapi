@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, create, type ReactTestInstance } from 'react-test-renderer';
+import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
+import { ROUTE_DECISION_REFRESH_TASK_TYPE } from '../../shared/tokenRouteContract.js';
 import TokenRoutes from './TokenRoutes.js';
 
 const { apiMock, getBrandMock } = vi.hoisted(() => ({
@@ -87,7 +88,7 @@ describe('TokenRoutes refresh decision action', () => {
   });
 
   it('queues a background snapshot refresh task when user clicks refresh selection probability', async () => {
-    let root!: WebTestRenderer;
+    let root!: ReactTestRenderer;
     try {
       apiMock.getRoutesSummary
         .mockResolvedValueOnce([
@@ -148,7 +149,7 @@ describe('TokenRoutes refresh decision action', () => {
   });
 
   it('resumes a running background probability refresh task when revisiting the page', async () => {
-    let root!: WebTestRenderer;
+    let root!: ReactTestRenderer;
     try {
       apiMock.getRoutesSummary
         .mockResolvedValueOnce([
@@ -171,7 +172,7 @@ describe('TokenRoutes refresh decision action', () => {
         tasks: [
           {
             id: 'task-restore',
-            type: 'route-decision.refresh',
+            type: ROUTE_DECISION_REFRESH_TASK_TYPE,
             status: 'running',
           },
         ],

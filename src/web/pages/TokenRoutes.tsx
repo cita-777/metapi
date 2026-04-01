@@ -9,6 +9,7 @@ import { MobileCard, MobileField } from '../components/MobileCard.js';
 import ResponsiveFilterPanel from '../components/ResponsiveFilterPanel.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import { tr } from '../i18n.js';
+import { ROUTE_DECISION_REFRESH_TASK_TYPE } from '../../shared/tokenRouteContract.js';
 import {
   buildRouteModelCandidatesIndex,
   type RouteCandidateView,
@@ -62,8 +63,6 @@ import RouteFilterBar, { type EnabledFilter } from './token-routes/RouteFilterBa
 import ManualRoutePanel from './token-routes/ManualRoutePanel.js';
 import RouteCard from './token-routes/RouteCard.js';
 import AddChannelModal from './token-routes/AddChannelModal.js';
-
-const ROUTE_DECISION_REFRESH_TASK_TYPE = 'route-decision.refresh';
 
 const EMPTY_ROUTE_CANDIDATE_VIEW: RouteCandidateView = {
   routeCandidates: [],
@@ -307,8 +306,8 @@ export default function TokenRoutes() {
     mountedRef.current = true;
     (async () => {
       try {
-        await load();
         await resumeRouteDecisionRefreshTask();
+        await load();
       } catch {
         toast.error('加载路由配置失败');
       }

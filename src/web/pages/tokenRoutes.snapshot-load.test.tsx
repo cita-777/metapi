@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, create, type ReactTestInstance } from 'react-test-renderer';
+import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
 import TokenRoutes from './TokenRoutes.js';
@@ -113,7 +113,7 @@ describe('TokenRoutes cached snapshot load', () => {
   });
 
   it('shows cached probabilities immediately from getRoutes snapshot data', async () => {
-    let root!: WebTestRenderer;
+    let root!: ReactTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -146,7 +146,7 @@ describe('TokenRoutes cached snapshot load', () => {
   });
 
   it('keeps showing the cached snapshot marker after revisiting the page', async () => {
-    let root!: WebTestRenderer;
+    let root!: ReactTestRenderer;
     try {
       await act(async () => {
         root = create(

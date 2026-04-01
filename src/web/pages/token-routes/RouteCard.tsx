@@ -145,7 +145,7 @@ function RouteCardInner({
   const routingStrategy = normalizeRouteRoutingStrategyValue(route.routingStrategy);
   const hasCachedDecisionSnapshot = !!route.decisionSnapshot;
   const cachedDecisionTooltip = route.decisionRefreshedAt
-    ? `${tr('最近刷新')}：${formatDateTimeMinuteLocal(route.decisionRefreshedAt)}`
+    ? `${tr('最近刷新')}: ${formatDateTimeMinuteLocal(route.decisionRefreshedAt)}`
     : undefined;
   const routingStrategyOptions = [
     {

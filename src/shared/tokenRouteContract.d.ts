@@ -1,3 +1,4 @@
+export declare const ROUTE_DECISION_REFRESH_TASK_TYPE = "route-decision.refresh";
 export type RouteMode = 'pattern' | 'explicit_group';
 export type RouteDecisionCandidate = {
     channelId: number;
