@@ -1,7 +1,11 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
-import { buildFastifyOptions, config } from './config.js';
+import {
+  buildFastifyOptions,
+  config,
+  normalizeTokenRouterFailureCooldownMaxSec,
+} from './config.js';
 import { normalizePayloadRulesConfig } from './services/payloadRules.js';
 import { authMiddleware } from './middleware/auth.js';
 import { sitesRoutes } from './routes/api/sites.js';
@@ -288,8 +292,9 @@ function applyRuntimeSettings(settingsMap: Map<string, string>) {
   }
 
   const tokenRouterFailureCooldownMaxSec = parseSettingFromMap<number>(settingsMap, 'token_router_failure_cooldown_max_sec');
-  if (typeof tokenRouterFailureCooldownMaxSec === 'number' && Number.isFinite(tokenRouterFailureCooldownMaxSec) && tokenRouterFailureCooldownMaxSec > 0) {
-    config.tokenRouterFailureCooldownMaxSec = Math.max(1, Math.trunc(tokenRouterFailureCooldownMaxSec));
+  const normalizedFailureCooldownMaxSec = normalizeTokenRouterFailureCooldownMaxSec(tokenRouterFailureCooldownMaxSec);
+  if (normalizedFailureCooldownMaxSec != null) {
+    config.tokenRouterFailureCooldownMaxSec = normalizedFailureCooldownMaxSec;
   }
 
   const webhookUrl = parseSettingFromMap<string>(settingsMap, 'webhook_url');

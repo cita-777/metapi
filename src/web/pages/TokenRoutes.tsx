@@ -1194,11 +1194,12 @@ export default function TokenRoutes() {
     setClearingCooldownByRoute((prev) => ({ ...prev, [routeId]: true }));
     try {
       await api.clearRouteCooldown(routeId);
-      await loadChannels(routeId, true);
+      toast.success('路由冷却已清除');
 
-      const route = routeSummaries.find((item) => item.id === routeId);
-      if (route) {
-        try {
+      try {
+        await loadChannels(routeId, true);
+        const route = routeSummaries.find((item) => item.id === routeId);
+        if (route) {
           if (isRouteExactModel(route)) {
             const res = await api.getRouteDecision(route.modelPattern);
             setDecisionByRoute((prev) => ({
@@ -1212,12 +1213,10 @@ export default function TokenRoutes() {
               [routeId]: (res?.decisions?.[String(routeId)] || null) as RouteDecision | null,
             }));
           }
-        } catch {
-          // Ignore best-effort decision refresh failures after manual cooldown clearing.
         }
+      } catch {
+        toast.error('已清除，但刷新失败');
       }
-
-      toast.success('路由冷却已清除');
     } catch (e: any) {
       toast.error(e.message || '清除路由冷却失败');
     } finally {

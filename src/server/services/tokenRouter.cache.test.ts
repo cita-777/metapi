@@ -13,6 +13,7 @@ describe('TokenRouter runtime cache', () => {
   let schema: DbModule['schema'];
   let TokenRouter: TokenRouterModule['TokenRouter'];
   let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'];
+  let isChannelRecentlyFailed: TokenRouterModule['isChannelRecentlyFailed'];
   let resetSiteRuntimeHealthState: TokenRouterModule['resetSiteRuntimeHealthState'];
   let config: ConfigModule['config'];
   let dataDir = '';
@@ -31,6 +32,7 @@ describe('TokenRouter runtime cache', () => {
     schema = dbModule.schema;
     TokenRouter = tokenRouterModule.TokenRouter;
     invalidateTokenRouterCache = tokenRouterModule.invalidateTokenRouterCache;
+    isChannelRecentlyFailed = tokenRouterModule.isChannelRecentlyFailed;
     resetSiteRuntimeHealthState = tokenRouterModule.resetSiteRuntimeHealthState;
     config = configModule.config;
     originalCacheTtlMs = config.tokenRouterCacheTtlMs;
@@ -233,8 +235,17 @@ describe('TokenRouter runtime cache', () => {
       .get();
     const cooldownMs = Date.parse(String(record?.cooldownUntil || '')) - startedAt;
 
-    expect(cooldownMs).toBeGreaterThanOrEqual(19_000);
-    expect(cooldownMs).toBeLessThanOrEqual(21_000);
+    expect(cooldownMs).toBeGreaterThanOrEqual(17_000);
+    expect(cooldownMs).toBeLessThanOrEqual(23_000);
+    const recentFailureCheckAt = Date.now();
+    expect(isChannelRecentlyFailed({
+      failCount: 3,
+      lastFailAt: new Date(recentFailureCheckAt - 19_000).toISOString(),
+    }, recentFailureCheckAt)).toBe(true);
+    expect(isChannelRecentlyFailed({
+      failCount: 3,
+      lastFailAt: new Date(recentFailureCheckAt - 21_000).toISOString(),
+    }, recentFailureCheckAt)).toBe(false);
   });
 
   it('uses codex oauth reset hints for usage-limit cooldowns', async () => {

@@ -178,4 +178,104 @@ describe('POST /api/routes/:id/cooldown/clear', () => {
       cooldownUntil: null,
     });
   });
+
+  it('only clears cooldown for explicit-group source routes that are enabled exact routes', async () => {
+    const seeded = await seedAccountWithToken();
+    const visibleSourceRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.4',
+      enabled: true,
+    }).returning().get();
+    const disabledSourceRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4.1',
+      enabled: false,
+    }).returning().get();
+    const wildcardSourceRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-*',
+      enabled: true,
+    }).returning().get();
+
+    const groupRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-clear-group',
+      displayName: 'gpt-clear-group',
+      routeMode: 'explicit_group',
+      enabled: true,
+    }).returning().get();
+
+    await db.insert(schema.routeGroupSources).values([
+      { groupRouteId: groupRoute.id, sourceRouteId: visibleSourceRoute.id },
+      { groupRouteId: groupRoute.id, sourceRouteId: disabledSourceRoute.id },
+      { groupRouteId: groupRoute.id, sourceRouteId: wildcardSourceRoute.id },
+    ]).run();
+
+    const visibleChannel = await db.insert(schema.routeChannels).values({
+      routeId: visibleSourceRoute.id,
+      accountId: seeded.account.id,
+      tokenId: seeded.token.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      failCount: 4,
+      lastFailAt: '2026-04-01T00:00:00.000Z',
+      consecutiveFailCount: 1,
+      cooldownLevel: 2,
+      cooldownUntil: '2099-01-01T00:00:00.000Z',
+    }).returning().get();
+    const disabledChannel = await db.insert(schema.routeChannels).values({
+      routeId: disabledSourceRoute.id,
+      accountId: seeded.account.id,
+      tokenId: seeded.token.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      failCount: 6,
+      lastFailAt: '2026-04-01T00:00:00.000Z',
+      consecutiveFailCount: 2,
+      cooldownLevel: 3,
+      cooldownUntil: '2099-01-01T00:00:00.000Z',
+    }).returning().get();
+    const wildcardChannel = await db.insert(schema.routeChannels).values({
+      routeId: wildcardSourceRoute.id,
+      accountId: seeded.account.id,
+      tokenId: seeded.token.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      failCount: 7,
+      lastFailAt: '2026-04-01T00:00:00.000Z',
+      consecutiveFailCount: 2,
+      cooldownLevel: 3,
+      cooldownUntil: '2099-01-01T00:00:00.000Z',
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/routes/${groupRoute.id}/cooldown/clear`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      success: true,
+      clearedChannels: 1,
+    });
+
+    const refreshedVisible = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.id, visibleChannel.id))
+      .get();
+    const refreshedDisabled = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.id, disabledChannel.id))
+      .get();
+    const refreshedWildcard = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.id, wildcardChannel.id))
+      .get();
+
+    expect(refreshedVisible).toMatchObject({
+      failCount: 0,
+      lastFailAt: null,
+      consecutiveFailCount: 0,
+      cooldownLevel: 0,
+      cooldownUntil: null,
+    });
+    expect(refreshedDisabled?.cooldownUntil).toBe('2099-01-01T00:00:00.000Z');
+    expect(refreshedWildcard?.cooldownUntil).toBe('2099-01-01T00:00:00.000Z');
+  });
 });

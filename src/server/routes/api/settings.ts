@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import cron from 'node-cron';
 import { fetch } from 'undici';
-import { config } from '../../config.js';
+import { config, normalizeTokenRouterFailureCooldownMaxSec } from '../../config.js';
 import { db, runtimeDbDialect, schema } from '../../db/index.js';
 import { upsertSetting } from '../../db/upsertSetting.js';
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
@@ -667,9 +667,9 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       return;
     }
     case 'token_router_failure_cooldown_max_sec': {
-      const n = Number(value);
-      if (!Number.isFinite(n) || n <= 0) return;
-      config.tokenRouterFailureCooldownMaxSec = Math.max(1, Math.trunc(n));
+      const normalized = normalizeTokenRouterFailureCooldownMaxSec(value);
+      if (normalized == null) return;
+      config.tokenRouterFailureCooldownMaxSec = normalized;
       return;
     }
     default:
@@ -1594,11 +1594,10 @@ export async function settingsRoutes(app: FastifyInstance) {
     }
 
     if (body.tokenRouterFailureCooldownMaxSec !== undefined) {
-      const nextCooldownMaxSec = Number(body.tokenRouterFailureCooldownMaxSec);
-      if (!Number.isFinite(nextCooldownMaxSec) || nextCooldownMaxSec <= 0) {
+      const normalized = normalizeTokenRouterFailureCooldownMaxSec(body.tokenRouterFailureCooldownMaxSec);
+      if (normalized == null) {
         return reply.code(400).send({ success: false, message: '路由失败冷却上限必须是大于 0 的数字（秒）' });
       }
-      const normalized = Math.max(1, Math.trunc(nextCooldownMaxSec));
       if (normalized !== config.tokenRouterFailureCooldownMaxSec) {
         changedLabels.push(`路由失败冷却上限（${config.tokenRouterFailureCooldownMaxSec}s -> ${normalized}s）`);
       }

@@ -488,6 +488,26 @@ describe('settings and auth events', () => {
     expect(runtime.tokenRouterFailureCooldownMaxSec).toBe(2 * 24 * 60 * 60);
   });
 
+  it('clamps token router failure cooldown cap to the supported ceiling', async () => {
+    const ninetyDaysSec = 90 * 24 * 60 * 60;
+    const thirtyDaysSec = 30 * 24 * 60 * 60;
+    const updateResponse = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      payload: {
+        tokenRouterFailureCooldownMaxSec: ninetyDaysSec,
+      },
+    });
+
+    expect(updateResponse.statusCode).toBe(200);
+    const updated = updateResponse.json() as { tokenRouterFailureCooldownMaxSec?: number };
+    expect(updated.tokenRouterFailureCooldownMaxSec).toBe(thirtyDaysSec);
+    expect((config as any).tokenRouterFailureCooldownMaxSec).toBe(thirtyDaysSec);
+
+    const saved = await db.select().from(schema.settings).where(eq(schema.settings.key, 'token_router_failure_cooldown_max_sec')).get();
+    expect(saved?.value).toBe(JSON.stringify(thirtyDaysSec));
+  });
+
   it('persists and returns disable cross protocol fallback from runtime settings', async () => {
     const updateResponse = await app.inject({
       method: 'PUT',

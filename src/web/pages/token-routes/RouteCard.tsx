@@ -171,6 +171,14 @@ function RouteCardInner({
 
   const priorityBuckets = buildPriorityBuckets(channels || []);
   const bucketEditorItems = buildPriorityBucketEditorItems(channels || []);
+  const renderClearCooldownButton = () => {
+    if (readOnlyRoute) return null;
+    return (
+      <button onClick={() => onClearCooldown(route.id)} className="btn btn-link btn-link-info" disabled={clearingCooldown}>
+        {clearingCooldown ? tr('清除中...') : tr('清除冷却')}
+      </button>
+    );
+  };
 
   // Collapsed card
   if (!expanded) {
@@ -329,11 +337,7 @@ function RouteCardInner({
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            {!readOnlyRoute && (
-              <button onClick={() => onClearCooldown(route.id)} className="btn btn-link btn-link-info" disabled={clearingCooldown}>
-                {clearingCooldown ? tr('清除中...') : tr('清除冷却')}
-              </button>
-            )}
+            {renderClearCooldownButton()}
             {!readOnlyRoute && (explicitGroupRoute || !exactRoute) && (
               <button onClick={() => onEdit(route)} className="btn btn-link">{tr('编辑群组')}</button>
             )}
@@ -367,9 +371,7 @@ function RouteCardInner({
             </div>
             {!readOnlyRoute && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                <button onClick={() => onClearCooldown(route.id)} className="btn btn-link btn-link-info" disabled={clearingCooldown}>
-                  {clearingCooldown ? tr('清除中...') : tr('清除冷却')}
-                </button>
+                {renderClearCooldownButton()}
                 {!exactRoute && (
                   <button onClick={() => onEdit(route)} className="btn btn-link">{explicitGroupRoute ? tr('编辑群组') : tr('编辑路由')}</button>
                 )}
