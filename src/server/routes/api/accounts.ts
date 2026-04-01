@@ -105,9 +105,9 @@ function resolveStoredCredentialMode(account: typeof schema.accounts.$inferSelec
 function buildCapabilitiesFromCredentialMode(
   credentialMode: AccountCredentialMode,
   hasSessionToken: boolean,
-  extraConfig?: string | null,
+  oauthIdentity?: string | null | Pick<typeof schema.accounts.$inferSelect, 'extraConfig' | 'oauthProvider'>,
 ): AccountCapabilities {
-  if (hasOauthProvider(extraConfig)) {
+  if (hasOauthProvider(oauthIdentity)) {
     return {
       canCheckin: false,
       canRefreshBalance: false,
@@ -126,7 +126,7 @@ function buildCapabilitiesFromCredentialMode(
 
 function buildCapabilitiesForAccount(account: typeof schema.accounts.$inferSelect): AccountCapabilities {
   const credentialMode = resolveStoredCredentialMode(account);
-  return buildCapabilitiesFromCredentialMode(credentialMode, hasSessionTokenValue(account.accessToken), account.extraConfig);
+  return buildCapabilitiesFromCredentialMode(credentialMode, hasSessionTokenValue(account.accessToken), account);
 }
 
 function normalizeBatchIds(input: unknown): number[] {

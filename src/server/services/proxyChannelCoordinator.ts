@@ -38,6 +38,14 @@ export type AcquireProxyChannelLeaseResult =
 const stickySessionBindings = new Map<string, StickyEntry>();
 const channelRuntimeStates = new Map<number, ChannelRuntimeState>();
 let nextLeaseId = 1;
+type SessionScopedChannelInput =
+  | string
+  | null
+  | undefined
+  | {
+    extraConfig?: string | null;
+    oauthProvider?: string | null;
+  };
 
 function shouldUnrefTimer(timer: ReturnType<typeof setTimeout> | ReturnType<typeof setInterval>) {
   if (typeof (timer as { unref?: () => void }).unref === 'function') {
@@ -53,9 +61,14 @@ function cleanupExpiredStickyBindings(nowMs = Date.now()): void {
   }
 }
 
-function isSessionScopedChannel(extraConfig?: string | null): boolean {
-  return getCredentialModeFromExtraConfig(extraConfig) === 'session'
-    || hasOauthProvider(extraConfig);
+function getSessionScopedExtraConfig(input?: SessionScopedChannelInput): string | null | undefined {
+  if (typeof input === 'string' || input == null) return input;
+  return input.extraConfig;
+}
+
+function isSessionScopedChannel(input?: SessionScopedChannelInput): boolean {
+  return getCredentialModeFromExtraConfig(getSessionScopedExtraConfig(input)) === 'session'
+    || hasOauthProvider(input);
 }
 
 function getStickySessionTtlMs(): number {
@@ -74,8 +87,8 @@ function getChannelQueueWaitMs(): number {
   return Math.max(0, Math.trunc(config.proxySessionChannelQueueWaitMs || 0));
 }
 
-function getChannelConcurrencyLimit(extraConfig?: string | null): number {
-  if (!isSessionScopedChannel(extraConfig)) return 0;
+function getChannelConcurrencyLimit(input?: SessionScopedChannelInput): number {
+  if (!isSessionScopedChannel(input)) return 0;
   return Math.max(0, Math.trunc(config.proxySessionChannelConcurrencyLimit || 0));
 }
 
@@ -141,9 +154,9 @@ class ProxyChannelCoordinator {
     return entry.channelId;
   }
 
-  bindStickyChannel(stickySessionKey: string | null | undefined, channelId: number, extraConfig?: string | null): void {
+  bindStickyChannel(stickySessionKey: string | null | undefined, channelId: number, accountIdentity?: SessionScopedChannelInput): void {
     if (!config.proxyStickySessionEnabled) return;
-    if (!isSessionScopedChannel(extraConfig)) return;
+    if (!isSessionScopedChannel(accountIdentity)) return;
     const normalizedKey = String(stickySessionKey || '').trim();
     if (!normalizedKey || !Number.isFinite(channelId) || channelId <= 0) return;
     cleanupExpiredStickyBindings();
@@ -167,6 +180,7 @@ class ProxyChannelCoordinator {
   async acquireChannelLease(input: {
     channelId: number;
     accountExtraConfig?: string | null;
+    accountOauthProvider?: string | null;
   }): Promise<AcquireProxyChannelLeaseResult> {
     const channelId = Math.trunc(input.channelId || 0);
     if (channelId <= 0) {
@@ -176,7 +190,10 @@ class ProxyChannelCoordinator {
       };
     }
 
-    const concurrencyLimit = getChannelConcurrencyLimit(input.accountExtraConfig);
+    const concurrencyLimit = getChannelConcurrencyLimit({
+      extraConfig: input.accountExtraConfig,
+      oauthProvider: input.accountOauthProvider,
+    });
     if (concurrencyLimit <= 0) {
       return {
         status: 'acquired',
@@ -288,8 +305,8 @@ export function resetProxyChannelCoordinatorState(): void {
   nextLeaseId = 1;
 }
 
-export function isProxyChannelSessionScoped(extraConfig?: string | null): boolean {
-  return isSessionScopedChannel(extraConfig);
+export function isProxyChannelSessionScoped(input?: SessionScopedChannelInput): boolean {
+  return isSessionScopedChannel(input);
 }
 
 export const proxyChannelCoordinator = new ProxyChannelCoordinator();

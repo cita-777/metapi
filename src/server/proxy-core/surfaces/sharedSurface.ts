@@ -136,13 +136,13 @@ export function bindSurfaceStickyChannel(input: {
   stickySessionKey?: string | null;
   selected: {
     channel: { id: number };
-    account?: { extraConfig?: string | null } | null;
+    account?: { extraConfig?: string | null; oauthProvider?: string | null } | null;
   };
 }): void {
   proxyChannelCoordinator.bindStickyChannel(
     input.stickySessionKey,
     input.selected.channel.id,
-    input.selected.account?.extraConfig,
+    input.selected.account || undefined,
   );
 }
 
@@ -162,7 +162,7 @@ export async function acquireSurfaceChannelLease(input: {
   stickySessionKey?: string | null;
   selected: {
     channel: { id: number };
-    account?: { extraConfig?: string | null } | null;
+    account?: { extraConfig?: string | null; oauthProvider?: string | null } | null;
   };
 }) {
   return await proxyChannelCoordinator.acquireChannelLease({
@@ -171,6 +171,7 @@ export async function acquireSurfaceChannelLease(input: {
     // the pre-sticky-session parallel behavior instead of contending globally.
     channelId: input.stickySessionKey ? input.selected.channel.id : 0,
     accountExtraConfig: input.selected.account?.extraConfig,
+    accountOauthProvider: input.selected.account?.oauthProvider,
   });
 }
 
