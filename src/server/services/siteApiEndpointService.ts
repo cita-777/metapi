@@ -49,13 +49,22 @@ export interface RecordedSiteApiEndpointFailure extends SiteApiEndpointFailureDi
 export class SiteApiEndpointRequestError extends Error {
   readonly status: number | null;
   readonly rawErrText: string | null;
+  readonly firstByteLatencyMs: number | null;
 
-  constructor(message: string, options?: { status?: number | null; rawErrText?: string | null; cause?: unknown }) {
+  constructor(message: string, options?: {
+    status?: number | null;
+    rawErrText?: string | null;
+    firstByteLatencyMs?: number | null;
+    cause?: unknown;
+  }) {
     super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
     this.name = 'SiteApiEndpointRequestError';
     this.status = typeof options?.status === 'number' ? options.status : null;
     this.rawErrText = typeof options?.rawErrText === 'string' && options.rawErrText.trim()
       ? options.rawErrText
+      : null;
+    this.firstByteLatencyMs = typeof options?.firstByteLatencyMs === 'number' && Number.isFinite(options.firstByteLatencyMs)
+      ? options.firstByteLatencyMs
       : null;
   }
 }

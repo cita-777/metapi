@@ -949,6 +949,18 @@
           "notNull": false,
           "defaultValue": null,
           "primaryKey": false
+        },
+        "is_stream": {
+          "logicalType": "boolean",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "first_byte_latency_ms": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
         }
       }
     },

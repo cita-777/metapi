@@ -1,4 +1,5 @@
 import { fetch } from 'undici';
+import { fetchWithObservedFirstByte, isObservedFirstByteTimeoutResponse } from '../../proxy-core/firstByteTimeout.js';
 import { readRuntimeResponseText } from '../../proxy-core/executors/types.js';
 import { withSiteProxyRequestInit } from '../../services/siteProxy.js';
 import { summarizeUpstreamError } from './upstreamError.js';
@@ -71,7 +72,9 @@ type ExecuteEndpointFlowInput = {
   dispatchRequest?: (
     request: BuiltEndpointRequest,
     targetUrl: string,
+    signal?: AbortSignal,
   ) => Promise<Awaited<ReturnType<typeof fetch>>>;
+  firstByteTimeoutMs?: number;
   tryRecover?: (ctx: EndpointAttemptContext) => Promise<EndpointRecoverResult>;
   shouldDowngrade?: (ctx: EndpointAttemptContext) => boolean;
   onDowngrade?: (ctx: EndpointAttemptContext & { errText: string }) => void | Promise<void>;
@@ -113,13 +116,23 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
       ? buildUpstreamUrl(input.proxyUrl, request.path)
       : defaultTarget;
 
-    let response = input.dispatchRequest
-      ? await input.dispatchRequest(request, targetUrl)
-      : await fetch(targetUrl, await withSiteProxyRequestInit(targetUrl, {
-        method: 'POST',
-        headers: request.headers,
-        body: JSON.stringify(request.body),
-      }));
+    const attemptStartedAtMs = Date.now();
+    let response = await fetchWithObservedFirstByte(
+      async (signal) => (
+        input.dispatchRequest
+          ? await input.dispatchRequest(request, targetUrl, signal)
+          : await fetch(targetUrl, await withSiteProxyRequestInit(targetUrl, {
+            method: 'POST',
+            headers: request.headers,
+            body: JSON.stringify(request.body),
+            signal,
+          }))
+      ),
+      {
+        firstByteTimeoutMs: input.firstByteTimeoutMs,
+        startedAtMs: attemptStartedAtMs,
+      },
+    );
 
     if (response.ok) {
       await runEndpointFlowHook(input.onAttemptSuccess, {
@@ -147,6 +160,19 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
       rawErrText,
       recoverApplied: false,
     };
+
+    if (isObservedFirstByteTimeoutResponse(response) && endpointIndex + 1 < endpointCount) {
+      const errText = rawErrText.trim() || 'first byte timeout';
+      const timeoutContext = {
+        ...baseContext,
+        errText,
+      };
+      await runEndpointFlowHook(input.onAttemptFailure, timeoutContext, 'onAttemptFailure');
+      finalStatus = response.status || 408;
+      finalErrText = errText;
+      finalRawErrText = rawErrText;
+      continue;
+    }
 
     if (input.tryRecover) {
       const recovered = await input.tryRecover(baseContext);

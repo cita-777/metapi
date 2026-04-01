@@ -75,6 +75,8 @@ describe('stats proxy logs routes', () => {
         modelRequested: 'gpt-4o',
         modelActual: 'gpt-4o',
         status: 'success',
+        isStream: 1,
+        firstByteLatencyMs: 45,
         clientFamily: 'generic',
         clientAppId: 'cherry_studio',
         clientAppName: 'Cherry Studio',
@@ -92,6 +94,8 @@ describe('stats proxy logs routes', () => {
         modelRequested: 'gpt-4o-mini',
         modelActual: 'gpt-4o-mini',
         status: 'failed',
+        isStream: 0,
+        firstByteLatencyMs: 12,
         clientFamily: 'codex',
         promptTokens: 8,
         completionTokens: 2,
@@ -105,6 +109,8 @@ describe('stats proxy logs routes', () => {
         modelRequested: 'gpt-4.1',
         modelActual: 'gpt-4.1',
         status: 'retried',
+        isStream: 1,
+        firstByteLatencyMs: 30,
         promptTokens: 20,
         completionTokens: 4,
         totalTokens: 24,
@@ -117,6 +123,8 @@ describe('stats proxy logs routes', () => {
         modelRequested: 'claude-3-7-sonnet',
         modelActual: 'claude-3-7-sonnet',
         status: 'success',
+        isStream: 1,
+        firstByteLatencyMs: 88,
         promptTokens: 40,
         completionTokens: 10,
         totalTokens: 50,
@@ -163,6 +171,8 @@ describe('stats proxy logs routes', () => {
     expect(body.items[0]?.clientAppId).toBe(null);
     expect(body.items[0]?.clientAppName).toBe(null);
     expect(body.items[0]?.clientConfidence).toBe(null);
+    expect(body.items[0]?.isStream).toBe(false);
+    expect(body.items[0]?.firstByteLatencyMs).toBe(12);
     expect(body.items[0]).not.toHaveProperty('billingDetails');
     expect(body.clientOptions).toEqual([
       { value: 'family:codex', label: '协议 · Codex' },
@@ -204,6 +214,8 @@ describe('stats proxy logs routes', () => {
       modelRequested: 'gpt-5',
       modelActual: 'gpt-5',
       status: 'success',
+      isStream: 1,
+      firstByteLatencyMs: 64,
       clientFamily: 'codex',
       clientAppId: 'cherry_studio',
       clientAppName: 'Cherry Studio',
@@ -238,6 +250,8 @@ describe('stats proxy logs routes', () => {
       clientAppId: string | null;
       clientAppName: string | null;
       clientConfidence: string | null;
+      isStream: boolean | null;
+      firstByteLatencyMs: number | null;
       billingDetails: Record<string, unknown> | null;
     };
 
@@ -251,6 +265,8 @@ describe('stats proxy logs routes', () => {
     expect(body.clientAppId).toBe('cherry_studio');
     expect(body.clientAppName).toBe('Cherry Studio');
     expect(body.clientConfidence).toBe('exact');
+    expect(body.isStream).toBe(true);
+    expect(body.firstByteLatencyMs).toBe(64);
     expect(body.billingDetails).toMatchObject({
       breakdown: { totalCost: 0.12 },
       usage: { promptTokens: 100, completionTokens: 20 },

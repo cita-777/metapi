@@ -483,6 +483,10 @@ function mapProxyLogRow(
   const legacyMeta = parseProxyLogMessageMeta(typeof row.proxy_logs.errorMessage === 'string' ? row.proxy_logs.errorMessage : '');
   return {
     ...row.proxy_logs,
+    isStream: row.proxy_logs.isStream == null ? null : Boolean(row.proxy_logs.isStream),
+    firstByteLatencyMs: typeof row.proxy_logs.firstByteLatencyMs === 'number'
+      ? row.proxy_logs.firstByteLatencyMs
+      : null,
     ...(options?.includeBillingDetails
       ? { billingDetails: parseProxyLogBillingDetails(row.proxy_logs.billingDetails) }
       : {}),

@@ -37,6 +37,7 @@ import {
   unwrapGeminiCliPayload,
 } from '../../routes/proxy/geminiCliCompat.js';
 import { isCodexResponsesSurface } from '../cliProfiles/codexProfile.js';
+import { getObservedResponseMeta } from '../firstByteTimeout.js';
 import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
 import { runCodexHttpSessionTask } from '../runtime/codexHttpSessionQueue.js';
 import {
@@ -503,6 +504,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
         return executeEndpointFlow({
           siteUrl: siteApiBaseUrl,
           disableCrossProtocolFallback: config.disableCrossProtocolFallback,
+          firstByteTimeoutMs: Math.max(0, Math.trunc((config.proxyFirstByteTimeoutSec || 0) * 1000)),
           endpointCandidates,
           buildRequest: (endpoint) => buildEndpointRequest(endpoint),
           dispatchRequest,
@@ -631,6 +633,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
 
         const upstream = endpointResult.upstream;
         const successfulUpstreamPath = endpointResult.upstreamPath;
+        const firstByteLatencyMs = getObservedResponseMeta(upstream)?.firstByteLatencyMs ?? null;
         const finalizeStreamSuccess = async (
           parsedUsage: UsageSummary,
           latency: number,
@@ -645,6 +648,8 @@ export async function handleOpenAiResponsesSurfaceRequest(
               parsedUsage,
               upstreamUsagePresent,
               requestStartedAtMs: startTime,
+              isStream: true,
+              firstByteLatencyMs,
               latencyMs: latency,
               retryCount,
               upstreamPath: successfulUpstreamPath,
@@ -1081,6 +1086,8 @@ export async function handleOpenAiResponsesSurfaceRequest(
             parsedUsage,
             upstreamUsagePresent,
             requestStartedAtMs: startTime,
+            isStream: false,
+            firstByteLatencyMs,
             latencyMs: latency,
             retryCount,
             upstreamPath: successfulUpstreamPath,
@@ -1126,6 +1133,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
           status: endpointFailureStatus || 502,
           errText: err?.message || 'unknown error',
           rawErrText: err?.rawErrText || err?.message || 'unknown error',
+          isStream,
           latencyMs: Date.now() - startTime,
           retryCount,
         });
@@ -1150,6 +1158,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
 	          requestedModel,
             modelName,
             errorMessage: err?.message || 'network failure',
+            isStream,
             latencyMs: Date.now() - startTime,
             retryCount,
           });

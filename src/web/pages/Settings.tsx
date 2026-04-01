@@ -63,6 +63,7 @@ type RuntimeSettings = {
   proxySessionChannelConcurrencyLimit: number;
   proxySessionChannelQueueWaitMs: number;
   routingFallbackUnitCost: number;
+  proxyFirstByteTimeoutSec: number;
   routeFailureCooldownMaxValue: number;
   routeFailureCooldownMaxUnit: RouteCooldownUnit;
   routingWeights: RoutingWeights;
@@ -240,6 +241,7 @@ export default function Settings() {
     proxySessionChannelConcurrencyLimit: 2,
     proxySessionChannelQueueWaitMs: 1500,
     routingFallbackUnitCost: 1,
+    proxyFirstByteTimeoutSec: 0,
     routeFailureCooldownMaxValue: 30,
     routeFailureCooldownMaxUnit: 'day',
     routingWeights: defaultWeights,
@@ -480,6 +482,9 @@ export default function Settings() {
         routingFallbackUnitCost: Number(runtimeInfo.routingFallbackUnitCost) > 0
           ? Number(runtimeInfo.routingFallbackUnitCost)
           : 1,
+        proxyFirstByteTimeoutSec: Number(runtimeInfo.proxyFirstByteTimeoutSec) >= 0
+          ? Math.trunc(Number(runtimeInfo.proxyFirstByteTimeoutSec))
+          : 0,
         routeFailureCooldownMaxValue: routeCooldownInput.value,
         routeFailureCooldownMaxUnit: routeCooldownInput.unit,
         routingWeights: {
@@ -889,6 +894,9 @@ export default function Settings() {
       await api.updateRuntimeSettings({
         routingWeights: runtime.routingWeights,
         routingFallbackUnitCost: runtime.routingFallbackUnitCost,
+        proxyFirstByteTimeoutSec: Number.isFinite(runtime.proxyFirstByteTimeoutSec)
+          ? Math.max(0, Math.trunc(runtime.proxyFirstByteTimeoutSec))
+          : 0,
         tokenRouterFailureCooldownMaxSec: toRouteCooldownSeconds(
           runtime.routeFailureCooldownMaxValue,
           runtime.routeFailureCooldownMaxUnit,
@@ -1649,6 +1657,32 @@ export default function Settings() {
               </span>
             </span>
           </label>
+
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>
+              首字超时（无首包 / 首 token）
+            </div>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              aria-label="首字超时秒数"
+              value={runtime.proxyFirstByteTimeoutSec}
+              onChange={(e) => {
+                const nextValue = Number(e.target.value);
+                setRuntime((prev) => ({
+                  ...prev,
+                  proxyFirstByteTimeoutSec: Number.isFinite(nextValue) && nextValue >= 0
+                    ? Math.trunc(nextValue)
+                    : prev.proxyFirstByteTimeoutSec,
+                }));
+              }}
+              style={inputStyle}
+            />
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.7, marginTop: 6 }}>
+              `0` 表示关闭。只有在指定时间内完全没有任何首包 / 首 token 返回时才切换，已经开始输出的请求不会被这项超时打断。
+            </div>
+          </div>
 
           <div className={`anim-collapse ${showAdvancedRouting ? 'is-open' : ''}`.trim()}>
             <div className="anim-collapse-inner" style={{ paddingTop: 2 }}>

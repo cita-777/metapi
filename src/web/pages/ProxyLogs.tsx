@@ -265,6 +265,28 @@ function latencyBgColor(ms: number) {
   return 'color-mix(in srgb, var(--color-success) 12%, transparent)';
 }
 
+function firstByteColor(ms: number) {
+  if (ms >= 3000) return 'var(--color-danger)';
+  if (ms >= 1000) return 'var(--color-warning)';
+  return 'var(--color-primary)';
+}
+
+function firstByteBgColor(ms: number) {
+  if (ms >= 3000) return 'color-mix(in srgb, var(--color-danger) 12%, transparent)';
+  if (ms >= 1000) return 'color-mix(in srgb, var(--color-warning) 12%, transparent)';
+  return 'color-mix(in srgb, var(--color-primary) 12%, transparent)';
+}
+
+function formatStreamModeLabel(isStream: boolean | null | undefined) {
+  if (isStream == null) return null;
+  return isStream ? '流式' : '非流';
+}
+
+function formatFirstByteLabel(ms: number | null | undefined) {
+  if (!Number.isFinite(ms) || typeof ms !== 'number' || ms < 0) return null;
+  return `首字 ${formatLatency(ms)}`;
+}
+
 function formatCompactNumber(value: number, digits = 6) {
   if (!Number.isFinite(value)) return '0';
   const formatted = value.toFixed(digits).replace(/\.?0+$/, '');
@@ -1877,6 +1899,8 @@ export default function ProxyLogs() {
               const downstreamKeySummary = renderDownstreamKeySummary(detailLog);
               const isExpanded = expanded === log.id;
               const clientDisplay = resolveProxyLogClientDisplay(detailLog);
+              const streamModeLabel = formatStreamModeLabel(detailLog.isStream);
+              const firstByteLabel = formatFirstByteLabel(detailLog.firstByteLatencyMs);
 
               return (
                 <MobileCard
@@ -1911,6 +1935,24 @@ export default function ProxyLogs() {
                         {clientDisplay.secondary}
                       </span>
                     ) : null}
+                    {streamModeLabel ? (
+                      <span className="badge badge-muted" style={{ fontSize: 10 }}>
+                        {streamModeLabel}
+                      </span>
+                    ) : null}
+                    {firstByteLabel ? (
+                      <span
+                        className="badge"
+                        style={{
+                          fontSize: 10,
+                          color: firstByteColor(detailLog.firstByteLatencyMs ?? 0),
+                          background: firstByteBgColor(detailLog.firstByteLatencyMs ?? 0),
+                          borderColor: 'transparent',
+                        }}
+                      >
+                        {firstByteLabel}
+                      </span>
+                    ) : null}
                   </div>
                   <div className="mobile-summary-grid">
                     <div className="mobile-summary-metric">
@@ -1934,6 +1976,8 @@ export default function ProxyLogs() {
                     <div className="mobile-card-extra">
                       <MobileField label="时间" value={formatDateTimeLocal(log.createdAt)} />
                       <MobileField label="站点" value={<SiteBadgeLink siteId={siteIdByName.get(String(log.siteName || '').trim())} siteName={log.siteName} badgeStyle={{ fontSize: 11 }} />} />
+                      {streamModeLabel ? <MobileField label="模式" value={streamModeLabel} /> : null}
+                      {firstByteLabel ? <MobileField label="首字" value={firstByteLabel.replace(/^首字\s*/, '')} /> : null}
                       <MobileField label="重试" value={log.retryCount > 0 ? log.retryCount : 0} />
                       <MobileField label="用量来源" value={formatProxyLogUsageSource(detailLog.usageSource ?? pathMeta.usageSource) || '--'} />
                       {detailState?.loading && <div style={{ color: 'var(--color-text-muted)' }}>加载详情中...</div>}
@@ -1983,6 +2027,8 @@ export default function ProxyLogs() {
                 const billingDetailSummary = detail ? formatBillingDetailSummary(detailLog) : null;
                 const billingProcessLines = detail ? buildBillingProcessLines(detailLog) : [];
                 const downstreamKeySummary = renderDownstreamKeySummary(detailLog);
+                const streamModeLabel = formatStreamModeLabel(detailLog.isStream);
+                const firstByteLabel = formatFirstByteLabel(detailLog.firstByteLatencyMs);
 
                 return (
                   <React.Fragment key={log.id}>
@@ -2013,6 +2059,28 @@ export default function ProxyLogs() {
                           {downstreamKeySummary ? (
                             <div style={{ fontSize: 11, lineHeight: 1.45, color: 'var(--color-text-muted)' }}>
                               {downstreamKeySummary}
+                            </div>
+                          ) : null}
+                          {(streamModeLabel || firstByteLabel) ? (
+                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                              {streamModeLabel ? (
+                                <span className="badge badge-muted" style={{ fontSize: 10 }}>
+                                  {streamModeLabel}
+                                </span>
+                              ) : null}
+                              {firstByteLabel ? (
+                                <span
+                                  className="badge"
+                                  style={{
+                                    fontSize: 10,
+                                    color: firstByteColor(detailLog.firstByteLatencyMs ?? 0),
+                                    background: firstByteBgColor(detailLog.firstByteLatencyMs ?? 0),
+                                    borderColor: 'transparent',
+                                  }}
+                                >
+                                  {firstByteLabel}
+                                </span>
+                              ) : null}
                             </div>
                           ) : null}
                         </div>
@@ -2084,6 +2152,12 @@ export default function ProxyLogs() {
                                         <>{' -> '}实际模型: <strong style={{ color: 'var(--color-text-primary)' }}>{detailLog.modelActual}</strong></>
                                       )}
                                       ，状态: <strong style={{ color: detailLog.status === 'success' ? 'var(--color-success)' : 'var(--color-danger)' }}>{detailLog.status === 'success' ? '成功' : '失败'}</strong>
+                                      {streamModeLabel && (
+                                        <>，模式: <strong style={{ color: 'var(--color-text-primary)' }}>{streamModeLabel}</strong></>
+                                      )}
+                                      {firstByteLabel && (
+                                        <>，首字: <strong style={{ color: firstByteColor(detailLog.firstByteLatencyMs ?? 0) }}>{formatLatency(detailLog.firstByteLatencyMs ?? 0)}</strong></>
+                                      )}
                                       ，用时: <strong style={{ color: latencyColor(detailLog.latencyMs) }}>{formatLatency(detailLog.latencyMs)}</strong>
                                       {detail && (
                                         <>

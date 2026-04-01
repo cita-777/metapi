@@ -15,7 +15,7 @@ const MODEL_UNSUPPORTED_PATTERNS: RegExp[] = [
 ];
 
 export const RETRYABLE_TIMEOUT_PATTERNS: RegExp[] = [
-  /(request timed out|connection timed out|read timeout|\btimed out\b)/i,
+  /(request timed out|connection timed out|read timeout|first byte timeout|\btimed out\b)/i,
 ];
 
 const RETRYABLE_CHANNEL_LOCAL_PATTERNS: RegExp[] = [

@@ -1,4 +1,2 @@
-CREATE TABLE IF NOT EXISTS `site_api_endpoints` (`id` INT AUTO_INCREMENT NOT NULL PRIMARY KEY, `site_id` INT NOT NULL, `url` TEXT NOT NULL, `enabled` BOOLEAN DEFAULT true, `sort_order` INT DEFAULT 0, `cooldown_until` VARCHAR(191), `last_selected_at` VARCHAR(191), `last_failed_at` VARCHAR(191), `last_failure_reason` TEXT, `created_at` VARCHAR(191) DEFAULT (DATE_FORMAT(NOW(), '%Y-%m-%d %H:%i:%s')), `updated_at` VARCHAR(191) DEFAULT (DATE_FORMAT(NOW(), '%Y-%m-%d %H:%i:%s')), FOREIGN KEY (`site_id`) REFERENCES `sites`(`id`) ON DELETE CASCADE);
-CREATE UNIQUE INDEX `site_api_endpoints_site_url_unique` ON `site_api_endpoints` (`site_id`, `url`(191));
-CREATE INDEX `site_api_endpoints_site_cooldown_idx` ON `site_api_endpoints` (`site_id`, `cooldown_until`);
-CREATE INDEX `site_api_endpoints_site_enabled_sort_idx` ON `site_api_endpoints` (`site_id`, `enabled`, `sort_order`);
+ALTER TABLE `proxy_logs` ADD COLUMN `is_stream` BOOLEAN;
+ALTER TABLE `proxy_logs` ADD COLUMN `first_byte_latency_ms` INT;

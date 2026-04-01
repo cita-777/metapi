@@ -57,6 +57,7 @@ describe('Settings route cooldown cap', () => {
       logCleanupProgramLogsEnabled: true,
       logCleanupRetentionDays: 14,
       routingFallbackUnitCost: 1,
+      proxyFirstByteTimeoutSec: 0,
       routingWeights: {},
       tokenRouterFailureCooldownMaxSec: 30 * 24 * 60 * 60,
       adminIpAllowlist: [],
@@ -127,6 +128,7 @@ describe('Settings route cooldown cap', () => {
           usageWeight: 0.3,
         },
         routingFallbackUnitCost: 1,
+        proxyFirstByteTimeoutSec: 0,
         tokenRouterFailureCooldownMaxSec: 10,
         disableCrossProtocolFallback: false,
       });
@@ -146,6 +148,7 @@ describe('Settings route cooldown cap', () => {
       logCleanupProgramLogsEnabled: true,
       logCleanupRetentionDays: 14,
       routingFallbackUnitCost: 1,
+      proxyFirstByteTimeoutSec: 0,
       routingWeights: {},
       tokenRouterFailureCooldownMaxSec: 10,
       adminIpAllowlist: [],
@@ -177,6 +180,59 @@ describe('Settings route cooldown cap', () => {
 
       expect(cooldownInput.props.value).toBe(10);
       expect(cooldownUnitSelect.props.value).toBe('second');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('saves the first-byte timeout seconds alongside other routing runtime settings', async () => {
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ToastProvider>
+              <Settings />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const firstByteInput = root.root.find((node) => (
+        node.type === 'input'
+        && node.props.type === 'number'
+        && node.props['aria-label'] === '首字超时秒数'
+      ));
+
+      await act(async () => {
+        firstByteInput.props.onChange({ target: { value: '7' } });
+      });
+
+      const saveButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '保存路由策略'
+      ));
+
+      await act(async () => {
+        saveButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.updateRuntimeSettings).toHaveBeenCalledWith({
+        routingWeights: {
+          baseWeightFactor: 0.5,
+          valueScoreFactor: 0.5,
+          costWeight: 0.4,
+          balanceWeight: 0.3,
+          usageWeight: 0.3,
+        },
+        routingFallbackUnitCost: 1,
+        proxyFirstByteTimeoutSec: 7,
+        tokenRouterFailureCooldownMaxSec: 30 * 24 * 60 * 60,
+        disableCrossProtocolFallback: false,
+      });
     } finally {
       root?.unmount();
     }

@@ -65,6 +65,7 @@ describe('settings and auth events', () => {
     (config as any).proxyDebugRetentionHours = 24;
     (config as any).proxyDebugMaxBodyBytes = 262144;
     config.routingFallbackUnitCost = 1;
+    (config as any).proxyFirstByteTimeoutSec = 0;
     (config as any).tokenRouterFailureCooldownMaxSec = 30 * 24 * 60 * 60;
     (config as any).disableCrossProtocolFallback = false;
     (config as any).telegramEnabled = false;
@@ -506,6 +507,32 @@ describe('settings and auth events', () => {
 
     const saved = await db.select().from(schema.settings).where(eq(schema.settings.key, 'token_router_failure_cooldown_max_sec')).get();
     expect(saved?.value).toBe(JSON.stringify(thirtyDaysSec));
+  });
+
+  it('persists and returns first-byte timeout from runtime settings', async () => {
+    const updateResponse = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      payload: {
+        proxyFirstByteTimeoutSec: 7,
+      },
+    });
+
+    expect(updateResponse.statusCode).toBe(200);
+    const updated = updateResponse.json() as { proxyFirstByteTimeoutSec?: number };
+    expect(updated.proxyFirstByteTimeoutSec).toBe(7);
+    expect((config as any).proxyFirstByteTimeoutSec).toBe(7);
+
+    const saved = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_first_byte_timeout_sec')).get();
+    expect(saved?.value).toBe(JSON.stringify(7));
+
+    const getResponse = await app.inject({
+      method: 'GET',
+      url: '/api/settings/runtime',
+    });
+    expect(getResponse.statusCode).toBe(200);
+    const runtime = getResponse.json() as { proxyFirstByteTimeoutSec?: number };
+    expect(runtime.proxyFirstByteTimeoutSec).toBe(7);
   });
 
   it('persists and returns disable cross protocol fallback from runtime settings', async () => {

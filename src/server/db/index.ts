@@ -51,6 +51,7 @@ let pgPool: pg.Pool | null = null;
 let proxyLogBillingDetailsColumnAvailable: boolean | null = null;
 let proxyLogDownstreamApiKeyIdColumnAvailable: boolean | null = null;
 let proxyLogClientColumnsAvailable: boolean | null = null;
+let proxyLogStreamTimingColumnsAvailable: boolean | null = null;
 
 function buildMysqlPoolOptions(
   connectionString = config.dbUrl,
@@ -663,6 +664,21 @@ function ensureProxyLogClientSchema() {
   proxyLogClientColumnsAvailable = true;
 }
 
+function ensureProxyLogStreamTimingSchema() {
+  if (!tableExists('proxy_logs')) {
+    return;
+  }
+
+  if (!tableColumnExists('proxy_logs', 'is_stream')) {
+    execSqliteLegacyCompat('ALTER TABLE proxy_logs ADD COLUMN is_stream integer;');
+  }
+  if (!tableColumnExists('proxy_logs', 'first_byte_latency_ms')) {
+    execSqliteLegacyCompat('ALTER TABLE proxy_logs ADD COLUMN first_byte_latency_ms integer;');
+  }
+
+  proxyLogStreamTimingColumnsAvailable = true;
+}
+
 function normalizeSchemaErrorMessage(error: unknown): string {
   if (typeof error === 'object' && error && 'message' in error) {
     return String((error as { message?: unknown }).message || '');
@@ -988,10 +1004,106 @@ export async function ensureProxyLogClientColumns(): Promise<boolean> {
   }
 }
 
+export async function hasProxyLogStreamTimingColumns(): Promise<boolean> {
+  if (proxyLogStreamTimingColumnsAvailable !== null) {
+    return proxyLogStreamTimingColumnsAvailable;
+  }
+
+  const requiredColumns = ['is_stream', 'first_byte_latency_ms'];
+
+  if (runtimeDbDialect === 'sqlite') {
+    proxyLogStreamTimingColumnsAvailable = tableExists('proxy_logs')
+      && requiredColumns.every((columnName) => tableColumnExists('proxy_logs', columnName));
+    return proxyLogStreamTimingColumnsAvailable;
+  }
+
+  if (runtimeDbDialect === 'mysql') {
+    if (!mysqlPool) return false;
+    const [rows] = await mysqlPool.query(
+      'SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name IN (?, ?)',
+      ['proxy_logs', ...requiredColumns],
+    ) as [Array<{ column_name?: string }>, unknown];
+    const available = new Set(
+      Array.isArray(rows)
+        ? rows.map((row) => String(row?.column_name || '').trim().toLowerCase()).filter(Boolean)
+        : [],
+    );
+    proxyLogStreamTimingColumnsAvailable = requiredColumns.every((columnName) => available.has(columnName));
+    return proxyLogStreamTimingColumnsAvailable;
+  }
+
+  if (!pgPool) return false;
+  const result = await pgPool.query(
+    'SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 AND column_name = ANY($2::text[])',
+    ['proxy_logs', requiredColumns],
+  );
+  const available = new Set(
+    result.rows.map((row) => String((row as { column_name?: string }).column_name || '').trim().toLowerCase()).filter(Boolean),
+  );
+  proxyLogStreamTimingColumnsAvailable = requiredColumns.every((columnName) => available.has(columnName));
+  return proxyLogStreamTimingColumnsAvailable;
+}
+
+export async function ensureProxyLogStreamTimingColumns(): Promise<boolean> {
+  const requiredColumns = [
+    { name: 'is_stream', sqliteType: 'integer', mysqlType: 'BOOLEAN NULL', postgresType: 'BOOLEAN' },
+    { name: 'first_byte_latency_ms', sqliteType: 'integer', mysqlType: 'INT NULL', postgresType: 'INTEGER' },
+  ];
+
+  if (runtimeDbDialect === 'sqlite') {
+    ensureProxyLogStreamTimingSchema();
+    proxyLogStreamTimingColumnsAvailable = tableExists('proxy_logs')
+      && requiredColumns.every((column) => tableColumnExists('proxy_logs', column.name));
+    return proxyLogStreamTimingColumnsAvailable;
+  }
+
+  if (await hasProxyLogStreamTimingColumns()) {
+    return true;
+  }
+
+  try {
+    if (runtimeDbDialect === 'mysql') {
+      if (!mysqlPool) return false;
+      for (const column of requiredColumns) {
+        const [rows] = await mysqlPool.query('SHOW COLUMNS FROM `proxy_logs` LIKE ?', [column.name]);
+        if (Array.isArray(rows) && rows.length > 0) continue;
+        await executeLegacyCompat(
+          (statement) => mysqlPool!.query(statement).then(() => undefined),
+          `ALTER TABLE \`proxy_logs\` ADD COLUMN \`${column.name}\` ${column.mysqlType}`,
+        );
+      }
+    } else {
+      if (!pgPool) return false;
+      for (const column of requiredColumns) {
+        const result = await pgPool.query(
+          'SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2 LIMIT 1',
+          ['proxy_logs', column.name],
+        );
+        if (Number(result.rowCount || 0) > 0) continue;
+        await executeLegacyCompat(
+          (statement) => pgPool!.query(statement).then(() => undefined),
+          `ALTER TABLE "proxy_logs" ADD COLUMN "${column.name}" ${column.postgresType}`,
+        );
+      }
+    }
+    proxyLogStreamTimingColumnsAvailable = true;
+    return true;
+  } catch (error) {
+    if (isDuplicateColumnError(error)) {
+      proxyLogStreamTimingColumnsAvailable = await hasProxyLogStreamTimingColumns();
+      return proxyLogStreamTimingColumnsAvailable;
+    }
+    proxyLogStreamTimingColumnsAvailable = false;
+    console.warn('[db] failed to ensure proxy_logs stream timing columns', error);
+    return false;
+  }
+}
+
 function resetSchemaCapabilityCache() {
   proxyLogBillingDetailsColumnAvailable = null;
   proxyLogDownstreamApiKeyIdColumnAvailable = null;
   proxyLogClientColumnsAvailable = null;
+  proxyLogStreamTimingColumnsAvailable = null;
 }
 
 async function sqliteProxyQuery(sqlText: string, params: unknown[], method: SqlMethod) {

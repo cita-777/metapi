@@ -386,6 +386,7 @@ export type RuntimeSettingsPayload = {
   notifyCooldownSec?: number;
   adminIpAllowlist?: string[] | string;
   routingFallbackUnitCost?: number;
+  proxyFirstByteTimeoutSec?: number;
   tokenRouterFailureCooldownMaxSec?: number;
   routingWeights?: RuntimeRoutingWeightsPayload;
   proxyErrorKeywords?: string[] | string;
@@ -436,6 +437,8 @@ export type ProxyLogListItem = {
   modelActual: string;
   status: string;
   latencyMs: number;
+  isStream?: boolean | null;
+  firstByteLatencyMs?: number | null;
   totalTokens: number | null;
   retryCount: number;
   accountId?: number | null;

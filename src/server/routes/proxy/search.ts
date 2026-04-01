@@ -1,5 +1,6 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { fetch } from 'undici';
+import { config } from '../../config.js';
 import { tokenRouter } from '../../services/tokenRouter.js';
 import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertService.js';
 import { isTokenExpiredError } from '../../services/alertRules.js';
@@ -13,6 +14,7 @@ import { getProxyAuthContext } from '../../middleware/auth.js';
 import { buildUpstreamUrl } from './upstreamUrl.js';
 import { detectDownstreamClientContext, type DownstreamClientContext } from './downstreamClientContext.js';
 import { insertProxyLog } from '../../services/proxyLogStore.js';
+import { fetchWithObservedFirstByte, getObservedResponseMeta } from '../../proxy-core/firstByteTimeout.js';
 import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
 import {
@@ -71,6 +73,7 @@ export async function searchProxyRoute(app: FastifyInstance) {
       headers: request.headers as Record<string, unknown>,
       body,
     });
+    const firstByteTimeoutMs = Math.max(0, Math.trunc((config.proxyFirstByteTimeoutSec || 0) * 1000));
     const excludeChannelIds: number[] = [];
     let retryCount = 0;
 
@@ -104,25 +107,36 @@ export async function searchProxyRoute(app: FastifyInstance) {
       const startTime = Date.now();
 
       try {
-        const { upstream, text } = await runWithSiteApiEndpointPool(selected.site, async (target) => {
+        const { upstream, text, firstByteLatencyMs } = await runWithSiteApiEndpointPool(selected.site, async (target) => {
           const targetUrl = buildUpstreamUrl(target.baseUrl, '/v1/search');
-          const response = await fetch(targetUrl, withSiteRecordProxyRequestInit(selected.site, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${selected.tokenValue}`,
+          const response = await fetchWithObservedFirstByte(
+            async (signal) => fetch(targetUrl, withSiteRecordProxyRequestInit(selected.site, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${selected.tokenValue}`,
+              },
+              body: JSON.stringify(forwardBody),
+              signal,
+            }, getProxyUrlFromExtraConfig(selected.account.extraConfig))),
+            {
+              firstByteTimeoutMs,
+              startedAtMs: startTime,
             },
-            body: JSON.stringify(forwardBody),
-          }, getProxyUrlFromExtraConfig(selected.account.extraConfig)));
+          );
+          const observedFirstByteLatencyMs = getObservedResponseMeta(response)?.firstByteLatencyMs ?? null;
           const responseText = await response.text();
           if (!response.ok) {
             throw new SiteApiEndpointRequestError(responseText || 'unknown error', {
               status: response.status,
+              rawErrText: responseText || null,
+              firstByteLatencyMs: observedFirstByteLatencyMs,
             });
           }
           return {
             upstream: response,
             text: responseText,
+            firstByteLatencyMs: observedFirstByteLatencyMs,
           };
         });
 
@@ -134,11 +148,25 @@ export async function searchProxyRoute(app: FastifyInstance) {
           tokenRouter.recordSuccess(selected.channel.id, latency, 0, upstreamModel)
         ));
         recordDownstreamCostUsage(request, 0);
-        logProxy(selected, requestedModel, 'success', upstream.status, latency, null, retryCount, downstreamApiKeyId, clientContext, downstreamPath);
+        logProxy(
+          selected,
+          requestedModel,
+          'success',
+          upstream.status,
+          latency,
+          null,
+          retryCount,
+          downstreamApiKeyId,
+          clientContext,
+          downstreamPath,
+          false,
+          firstByteLatencyMs,
+        );
         return reply.code(upstream.status).send(data);
       } catch (error: any) {
         const status = error instanceof SiteApiEndpointRequestError ? (error.status || 0) : 0;
         const errorText = error?.message || 'network error';
+        const firstByteLatencyMs = error instanceof SiteApiEndpointRequestError ? error.firstByteLatencyMs : null;
         await recordTokenRouterEventBestEffort('record channel failure', () => tokenRouter.recordFailure(selected.channel.id, {
           status,
           errorText,
@@ -155,6 +183,8 @@ export async function searchProxyRoute(app: FastifyInstance) {
           downstreamApiKeyId,
           clientContext,
           downstreamPath,
+          false,
+          firstByteLatencyMs,
         );
         if (status > 0 && isTokenExpiredError({ status, message: errorText })) {
           await reportTokenExpired({
@@ -194,6 +224,8 @@ async function logProxy(
   downstreamApiKeyId: number | null = null,
   clientContext: DownstreamClientContext | null = null,
   downstreamPath = '/v1/search',
+  isStream = false,
+  firstByteLatencyMs: number | null = null,
 ) {
   try {
     const createdAt = formatUtcSqlDateTime(new Date());
@@ -206,6 +238,8 @@ async function logProxy(
       modelActual: selected.actualModel || modelRequested,
       status,
       httpStatus,
+      isStream,
+      firstByteLatencyMs,
       latencyMs,
       promptTokens: 0,
       completionTokens: 0,

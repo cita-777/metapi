@@ -52,6 +52,7 @@ import {
   ensureProxyLogClientColumns,
   ensureProxyLogDownstreamApiKeyIdColumn,
   ensureProxyLogBillingDetailsColumn,
+  ensureProxyLogStreamTimingColumns,
   ensureRouteGroupingCompatibilityColumns,
   ensureSiteCompatibilityColumns,
   runtimeDbDialect,
@@ -291,6 +292,11 @@ function applyRuntimeSettings(settingsMap: Map<string, string>) {
     config.routingFallbackUnitCost = Math.max(1e-6, routingFallbackUnitCost);
   }
 
+  const proxyFirstByteTimeoutSec = parseSettingFromMap<number>(settingsMap, 'proxy_first_byte_timeout_sec');
+  if (typeof proxyFirstByteTimeoutSec === 'number' && Number.isFinite(proxyFirstByteTimeoutSec) && proxyFirstByteTimeoutSec >= 0) {
+    config.proxyFirstByteTimeoutSec = Math.max(0, Math.trunc(proxyFirstByteTimeoutSec));
+  }
+
   const tokenRouterFailureCooldownMaxSec = parseSettingFromMap<number>(settingsMap, 'token_router_failure_cooldown_max_sec');
   const normalizedFailureCooldownMaxSec = normalizeTokenRouterFailureCooldownMaxSec(tokenRouterFailureCooldownMaxSec);
   if (normalizedFailureCooldownMaxSec != null) {
@@ -404,6 +410,7 @@ try {
   await ensureSiteCompatibilityColumns();
   await ensureRouteGroupingCompatibilityColumns();
   await ensureProxyFileCompatibilityColumns();
+  await ensureProxyLogStreamTimingColumns();
   await ensureProxyLogClientColumns();
   await ensureProxyLogDownstreamApiKeyIdColumn();
   const finalRows = await db.select().from(schema.settings).all();

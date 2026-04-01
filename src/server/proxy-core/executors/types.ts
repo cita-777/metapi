@@ -35,6 +35,7 @@ export type RuntimeDispatchInput = {
   siteUrl: string;
   request: ProxyRuntimeRequest;
   targetUrl?: string;
+  signal?: AbortSignal;
   buildInit: (requestUrl: string, request: ProxyRuntimeRequest) => Promise<UndiciRequestInit> | UndiciRequestInit;
 };
 
@@ -72,7 +73,13 @@ export async function performFetch(
   requestUrl = input.targetUrl || buildUpstreamUrl(input.siteUrl, request.path),
 ): Promise<RuntimeResponse> {
   const init = await input.buildInit(requestUrl, request);
-  return fetch(requestUrl, init);
+  const combinedSignal = input.signal && init.signal
+    ? AbortSignal.any([input.signal, init.signal as AbortSignal])
+    : (input.signal ?? init.signal);
+  return fetch(requestUrl, {
+    ...init,
+    signal: combinedSignal,
+  });
 }
 
 function hasZstdContentEncoding(contentEncoding: string | null): boolean {

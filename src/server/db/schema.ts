@@ -205,6 +205,8 @@ export const proxyLogs = sqliteTable('proxy_logs', {
   modelActual: text('model_actual'),
   status: text('status'), // 'success' | 'failed' | 'retried'
   httpStatus: integer('http_status'),
+  isStream: integer('is_stream', { mode: 'boolean' }),
+  firstByteLatencyMs: integer('first_byte_latency_ms'),
   latencyMs: integer('latency_ms'),
   promptTokens: integer('prompt_tokens'),
   completionTokens: integer('completion_tokens'),
