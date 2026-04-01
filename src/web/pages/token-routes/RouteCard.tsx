@@ -1,7 +1,6 @@
 import { memo, useState, type ReactNode } from 'react';
 import {
   DndContext,
-  DragOverlay,
   KeyboardSensor,
   PointerSensor,
   closestCenter,
@@ -42,13 +41,12 @@ import {
   isExplicitGroupRoute,
   resolveRouteTitle,
   resolveRouteIcon,
-  getPriorityTagStyle,
 } from './utils.js';
 import {
   buildPriorityBuckets,
 } from './priorityBuckets.js';
 import {
-  buildPriorityDragPreviewStyle,
+  buildPriorityRailNodeStyle,
   buildPriorityRailSections,
   createPriorityRailNewLayerId,
   isPriorityRailNewLayerId,
@@ -159,52 +157,6 @@ function PriorityRailNewLayerRow({
   );
 }
 
-function PriorityDragPreview({
-  channel,
-  displayPriority,
-  activeRowWidth,
-}: {
-  channel: RouteChannel;
-  displayPriority: number;
-  activeRowWidth?: number | null;
-}) {
-  return (
-    <div
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 8,
-        padding: '8px 12px',
-        borderRadius: 'var(--radius-md)',
-        border: '1px solid var(--color-border)',
-        background: 'var(--color-bg-card)',
-        boxShadow: 'var(--shadow-sm)',
-        color: 'var(--color-text-primary)',
-        fontSize: 12,
-        ...buildPriorityDragPreviewStyle(activeRowWidth),
-      }}
-    >
-      <span
-        className="badge"
-        style={{
-          fontSize: 10,
-          fontWeight: 700,
-          letterSpacing: 0.1,
-        }}
-      >
-        {`P${displayPriority}`}
-      </span>
-      <span style={{ fontWeight: 600 }}>
-        {channel.account?.username || `account-${channel.accountId}`}
-      </span>
-      <span className="badge badge-muted" style={{ fontSize: 10 }}>
-        {channel.site?.name || 'unknown'}
-      </span>
-    </div>
-  );
-}
-
 function RouteCardInner({
   route,
   brand,
@@ -281,14 +233,10 @@ function RouteCardInner({
   const priorityBuckets = buildPriorityBuckets(channels || []);
   const priorityRailSections = buildPriorityRailSections(channels || []);
   const [activeDragChannelId, setActiveDragChannelId] = useState<number | null>(null);
-  const [activeDragRowWidth, setActiveDragRowWidth] = useState<number | null>(null);
   const [dragOverId, setDragOverId] = useState<string | number | null>(null);
-  const activeDragChannel = activeDragChannelId == null
-    ? null
-    : (channels || []).find((channel) => channel.id === activeDragChannelId) || null;
-  const activeDragBucketIndex = activeDragChannel == null
+  const activeDragBucketIndex = activeDragChannelId == null
     ? -1
-    : priorityBuckets.findIndex((bucket) => bucket.channels.some((channel) => channel.id === activeDragChannel.id));
+    : priorityBuckets.findIndex((bucket) => bucket.channels.some((channel) => channel.id === activeDragChannelId));
   const hoveredBucketIndex = typeof dragOverId === 'number'
     ? priorityBuckets.findIndex((bucket) => bucket.channels.some((channel) => channel.id === dragOverId))
     : -1;
@@ -298,14 +246,12 @@ function RouteCardInner({
 
   const clearDragState = () => {
     setActiveDragChannelId(null);
-    setActiveDragRowWidth(null);
     setDragOverId(null);
   };
 
   const handleDragStart = (event: DragStartEvent) => {
     const nextId = Number(event.active.id);
     setActiveDragChannelId(Number.isFinite(nextId) ? nextId : null);
-    setActiveDragRowWidth(event.active.rect.current.initial?.width ?? null);
     setDragOverId(event.active.id);
   };
 
@@ -679,7 +625,7 @@ function RouteCardInner({
                   const hoveredExistingLayer = activeDragChannelId != null && hoveredBucketIndex === bucketIndex;
                   const hoveredCrossLayer = hoveredExistingLayer && activeDragBucketIndex !== bucketIndex;
                   const hoveredNewLayer = activeDragChannelId != null && hoveredNewLayerBucketIndex === bucketIndex;
-                  const railTone = getPriorityTagStyle(bucketIndex);
+                  const railNodeStyle = buildPriorityRailNodeStyle(bucketIndex, hoveredExistingLayer);
 
                   return (
                     <div
@@ -739,16 +685,12 @@ function RouteCardInner({
                                 minWidth: 72,
                                 padding: '6px 10px',
                                 borderRadius: 999,
-                                border: `1px solid ${hoveredExistingLayer ? 'var(--color-primary)' : 'color-mix(in srgb, currentColor 24%, transparent)'}`,
-                                background: hoveredExistingLayer
-                                  ? 'color-mix(in srgb, var(--color-primary) 10%, var(--color-bg))'
-                                  : railTone.background,
-                                color: hoveredExistingLayer ? 'var(--color-primary)' : railTone.color,
                                 fontSize: 11,
                                 fontWeight: 600,
                                 textAlign: 'center',
                                 lineHeight: 1.2,
                                 transition: 'all 0.16s ease',
+                                ...railNodeStyle,
                               }}
                             >
                               {railSection ? `P${bucketIndex} · ${railSection.channelCount}` : railLabel}
@@ -806,15 +748,6 @@ function RouteCardInner({
                 })}
               </div>
             </SortableContext>
-            <DragOverlay>
-              {activeDragChannel && !compact ? (
-                <PriorityDragPreview
-                  channel={activeDragChannel}
-                  displayPriority={Math.max(0, activeDragBucketIndex)}
-                  activeRowWidth={activeDragRowWidth}
-                />
-              ) : null}
-            </DragOverlay>
           </DndContext>
         </div>
       ) : (

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyPriorityRailDrop,
-  buildPriorityDragPreviewStyle,
+  buildPriorityRailNodeStyle,
   buildPriorityRailDragTargets,
   buildPriorityRailSections,
   createPriorityRailNewLayerId,
@@ -76,10 +76,14 @@ describe('priorityRail helpers', () => {
     ]);
   });
 
-  it('uses the active row width for drag preview alignment when available', () => {
-    expect(buildPriorityDragPreviewStyle(640)).toMatchObject({
-      width: 640,
-      maxWidth: 'calc(100vw - 32px)',
-    });
+  it('keeps priority color hierarchy even when a rail node is highlighted', () => {
+    const p0 = buildPriorityRailNodeStyle(0, false);
+    const p0Highlighted = buildPriorityRailNodeStyle(0, true);
+    const p1Highlighted = buildPriorityRailNodeStyle(1, true);
+
+    expect(p0.background).not.toBe('var(--color-bg)');
+    expect(p0Highlighted.background).not.toBe('var(--color-bg)');
+    expect(p0Highlighted.color).toBe('var(--color-primary)');
+    expect(p0Highlighted.background).not.toBe(p1Highlighted.background);
   });
 });

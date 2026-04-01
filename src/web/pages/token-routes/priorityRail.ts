@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react';
 import type { PriorityRailDragTarget, PriorityRailSection } from './types.js';
+import { getPriorityTagStyle } from './utils.js';
 
 type PriorityRailChannelLike = {
   id: number;
@@ -119,10 +120,14 @@ export function applyPriorityRailDrop<T extends PriorityRailChannelLike>(
   );
 }
 
-export function buildPriorityDragPreviewStyle(activeRowWidth?: number | null): CSSProperties {
-  const resolvedWidth = Number.isFinite(activeRowWidth ?? Number.NaN) ? activeRowWidth ?? undefined : undefined;
+export function buildPriorityRailNodeStyle(priority: number, highlighted: boolean): CSSProperties {
+  const tone = getPriorityTagStyle(priority);
+
   return {
-    width: resolvedWidth,
-    maxWidth: 'calc(100vw - 32px)',
+    border: `1px solid ${highlighted ? 'var(--color-primary)' : 'color-mix(in srgb, currentColor 24%, transparent)'}`,
+    background: highlighted
+      ? `color-mix(in srgb, ${tone.background} 78%, white)`
+      : tone.background,
+    color: highlighted ? 'var(--color-primary)' : tone.color,
   };
 }
