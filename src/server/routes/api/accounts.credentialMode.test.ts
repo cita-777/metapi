@@ -415,7 +415,8 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
       method: 'PUT',
       url: `/api/accounts/${account.id}`,
       payload: {
-        refreshToken: '',
+        refreshToken: null,
+        tokenExpiresAt: null,
       },
     });
     expect(clearResponse.statusCode).toBe(200);
@@ -425,6 +426,54 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
       sub2apiAuth?: { refreshToken?: string; tokenExpiresAt?: number };
     };
     expect(parsedCleared.sub2apiAuth).toBeUndefined();
+  });
+
+  it('accepts nullable optional fields from the edit panel payload', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Editable Site',
+      url: 'https://editable.example.com',
+      platform: 'new-api',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'before-edit',
+      accessToken: 'access-token',
+      status: 'active',
+      unitCost: 25,
+      extraConfig: JSON.stringify({
+        proxyUrl: 'http://127.0.0.1:7890',
+      }),
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/accounts/${account.id}`,
+      payload: {
+        username: 'after-edit',
+        status: 'disabled',
+        checkinEnabled: false,
+        unitCost: null,
+        accessToken: 'access-token-updated',
+        apiToken: null,
+        isPinned: false,
+        refreshToken: null,
+        tokenExpiresAt: null,
+        proxyUrl: null,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const updated = await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();
+    expect(updated).toMatchObject({
+      username: 'after-edit',
+      status: 'disabled',
+      checkinEnabled: false,
+      unitCost: null,
+      accessToken: 'access-token-updated',
+      apiToken: null,
+      isPinned: false,
+    });
+    expect(JSON.parse(updated?.extraConfig || '{}')).not.toHaveProperty('proxyUrl');
   });
 
   it('does not refresh models for pin-only account edits', async () => {

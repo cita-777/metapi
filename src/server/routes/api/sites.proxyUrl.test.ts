@@ -215,6 +215,49 @@ describe('sites proxy settings', () => {
     expect(payload.useSystemProxy).toBe(true);
   });
 
+  it('clears optional editor fields when updating a site with empty strings', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'editable-site',
+        url: 'https://editable-site.example.com',
+        platform: 'new-api',
+        proxyUrl: 'http://127.0.0.1:8080',
+        useSystemProxy: true,
+        customHeaders: JSON.stringify({
+          'x-site-scope': 'internal',
+        }),
+        externalCheckinUrl: 'https://checkin.example.com/welfare',
+      },
+    });
+    expect(created.statusCode).toBe(200);
+    const site = created.json() as { id: number };
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${site.id}`,
+      payload: {
+        proxyUrl: '',
+        useSystemProxy: false,
+        customHeaders: '',
+        externalCheckinUrl: '',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const payload = response.json() as {
+      proxyUrl?: string | null;
+      useSystemProxy?: boolean;
+      customHeaders?: string | null;
+      externalCheckinUrl?: string | null;
+    };
+    expect(payload.proxyUrl).toBeNull();
+    expect(payload.useSystemProxy).toBe(false);
+    expect(payload.customHeaders).toBeNull();
+    expect(payload.externalCheckinUrl).toBeNull();
+  });
+
   it('returns a conflict response when updating a site to an existing platform and url', async () => {
     const first = await app.inject({
       method: 'POST',
