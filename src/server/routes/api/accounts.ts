@@ -498,15 +498,12 @@ export async function accountsRoutes(app: FastifyInstance) {
 
     return rows.map((r) => {
       const credentialMode = resolveStoredCredentialMode(r.accounts);
+      const capabilities = buildCapabilitiesForAccount(r.accounts);
       return {
         ...r.accounts,
         site: r.sites,
         credentialMode,
-        capabilities: buildCapabilitiesFromCredentialMode(
-          credentialMode,
-          hasSessionTokenValue(r.accounts.accessToken),
-          r.accounts.extraConfig,
-        ),
+        capabilities,
         todaySpend: Math.round((spendByAccount[r.accounts.id] || 0) * 1_000_000) / 1_000_000,
         todayReward: Math.round(estimateRewardWithTodayIncomeFallback({
           day: localDay,
@@ -519,11 +516,7 @@ export async function accountsRoutes(app: FastifyInstance) {
           accountStatus: r.accounts.status,
           siteStatus: r.sites.status,
           extraConfig: r.accounts.extraConfig,
-          sessionCapable: buildCapabilitiesFromCredentialMode(
-            credentialMode,
-            hasSessionTokenValue(r.accounts.accessToken),
-            r.accounts.extraConfig,
-          ).canRefreshBalance,
+          sessionCapable: capabilities.canRefreshBalance,
           hasDiscoveredModels: (modelCountByAccount[r.accounts.id] || 0) > 0,
         }),
       };

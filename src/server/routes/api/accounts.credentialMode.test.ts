@@ -276,6 +276,68 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
       });
     });
 
+  it('uses structured oauth columns when listing oauth account capabilities and runtime health', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Structured Codex Site',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'structured-oauth@example.com',
+      accessToken: 'oauth-access-token',
+      apiToken: null,
+      status: 'active',
+      checkinEnabled: false,
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-account-structured-123',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          email: 'structured-oauth@example.com',
+          planType: 'team',
+        },
+      }),
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'gpt-5.2-codex',
+      available: true,
+      checkedAt: '2026-04-01T12:00:00.000Z',
+    }).run();
+
+    const listResponse = await app.inject({
+      method: 'GET',
+      url: '/api/accounts',
+    });
+    expect(listResponse.statusCode).toBe(200);
+
+    const list = listResponse.json() as Array<{
+      id: number;
+      capabilities?: {
+        canCheckin?: boolean;
+        canRefreshBalance?: boolean;
+        proxyOnly?: boolean;
+      };
+      runtimeHealth?: {
+        state?: string;
+        reason?: string;
+      };
+    }>;
+    const item = list.find((entry) => entry.id === account.id);
+    expect(item?.capabilities).toMatchObject({
+      canCheckin: false,
+      canRefreshBalance: false,
+      proxyOnly: true,
+    });
+    expect(item?.runtimeHealth).toMatchObject({
+      state: 'healthy',
+      reason: '模型探测成功',
+    });
+  });
+
   it('stores managed refresh token for sub2api session account', async () => {
     verifyTokenMock.mockResolvedValueOnce({
       tokenType: 'session',
