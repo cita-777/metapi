@@ -152,6 +152,11 @@ function applyRuntimeSettings(settingsMap: Map<string, string>) {
   const systemProxyUrl = parseSettingFromMap<string>(settingsMap, 'system_proxy_url');
   if (typeof systemProxyUrl === 'string') config.systemProxyUrl = systemProxyUrl;
 
+  const modelAvailabilityProbeEnabled = parseSettingFromMap<boolean>(settingsMap, 'model_availability_probe_enabled');
+  if (typeof modelAvailabilityProbeEnabled === 'boolean') {
+    config.modelAvailabilityProbeEnabled = modelAvailabilityProbeEnabled;
+  }
+
   const codexUpstreamWebsocketEnabled = parseSettingFromMap<boolean>(settingsMap, 'codex_upstream_websocket_enabled');
   if (typeof codexUpstreamWebsocketEnabled === 'boolean') {
     config.codexUpstreamWebsocketEnabled = codexUpstreamWebsocketEnabled;

@@ -16,6 +16,7 @@ import {
   getBackgroundTask,
   getRunningTaskByDedupeKey,
   startBackgroundTask,
+  waitForBackgroundTaskCompletion,
 } from '../../services/backgroundTaskService.js';
 import { parseCheckinRewardAmount } from '../../services/checkinRewardParser.js';
 import { estimateRewardWithTodayIncomeFallback } from '../../services/todayIncomeRewardService.js';
@@ -50,20 +51,6 @@ function parseBooleanFlag(raw?: string): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
-}
-
-async function waitForBackgroundTaskCompletion(taskId: string) {
-  while (true) {
-    const task = getBackgroundTask(taskId);
-    if (!task) return null;
-    if (task.status !== 'pending' && task.status !== 'running') {
-      return task;
-    }
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, 25);
-      timer.unref?.();
-    });
-  }
 }
 
 const MODELS_MARKETPLACE_BASE_TTL_MS = 15_000;

@@ -77,6 +77,15 @@ function resolveProbeTokenValue(row: {
   return fallbackApiToken || null;
 }
 
+function isProviderDirectedCooldown(row: {
+  route_channels: typeof schema.routeChannels.$inferSelect;
+}): boolean {
+  return !!row.route_channels.cooldownUntil
+    && (row.route_channels.failCount ?? 0) <= 0
+    && (row.route_channels.consecutiveFailCount ?? 0) <= 0
+    && (row.route_channels.cooldownLevel ?? 0) <= 0;
+}
+
 async function mapWithConcurrency<T>(
   items: T[],
   concurrency: number,
@@ -113,6 +122,7 @@ async function loadCoolingProbeCandidates(nowIso: string): Promise<RecoveryProbe
     .all();
 
   return rows.flatMap((row) => {
+    if (isProviderDirectedCooldown(row)) return [];
     const modelName = resolveProbeModelName(row);
     const tokenValue = resolveProbeTokenValue(row);
     if (!modelName || !tokenValue) return [];
@@ -177,6 +187,23 @@ function shouldProbeCandidate(candidate: RecoveryProbeCandidate, nowMs: number):
   return (nowMs - lastStartedAt) >= resolveRecoveryProbeWindowMs(candidate.source);
 }
 
+function compareRecoveryProbeCandidatePriority(left: RecoveryProbeCandidate, right: RecoveryProbeCandidate): number {
+  const leftKey = buildRecoveryProbeKey(left.channelId, left.modelName);
+  const rightKey = buildRecoveryProbeKey(right.channelId, right.modelName);
+  const leftLastStartedAt = recoveryProbeLastStartedAtByKey.get(leftKey);
+  const rightLastStartedAt = recoveryProbeLastStartedAtByKey.get(rightKey);
+
+  if (leftLastStartedAt == null && rightLastStartedAt == null) {
+    return left.channelId - right.channelId;
+  }
+  if (leftLastStartedAt == null) return -1;
+  if (rightLastStartedAt == null) return 1;
+  if (leftLastStartedAt !== rightLastStartedAt) {
+    return leftLastStartedAt - rightLastStartedAt;
+  }
+  return left.channelId - right.channelId;
+}
+
 async function runRecoveryProbeCandidate(candidate: RecoveryProbeCandidate, nowMs: number): Promise<void> {
   const key = buildRecoveryProbeKey(candidate.channelId, candidate.modelName);
   recoveryProbeInFlightKeys.add(key);
@@ -223,6 +250,7 @@ export async function runChannelRecoveryProbeSweep(nowMs = Date.now()): Promise<
     ]);
     const dueCandidates = merged
       .filter((candidate) => shouldProbeCandidate(candidate, nowMs))
+      .sort(compareRecoveryProbeCandidatePriority)
       .slice(0, CHANNEL_RECOVERY_MAX_BATCH);
     if (dueCandidates.length <= 0) return;
 

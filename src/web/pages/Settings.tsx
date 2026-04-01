@@ -8,6 +8,7 @@ import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import ModernSelect from '../components/ModernSelect.js';
 import DownstreamApiKeyModal from './settings/DownstreamApiKeyModal.js';
 import FactoryResetModal from './settings/FactoryResetModal.js';
+import ModelAvailabilityProbeConfirmModal from './settings/ModelAvailabilityProbeConfirmModal.js';
 import RouteSelectorModal from './settings/RouteSelectorModal.js';
 import UpdateCenterSection from './settings/UpdateCenterSection.js';
 import {
@@ -28,6 +29,7 @@ import { generateDownstreamSkKey } from './helpers/generateDownstreamSkKey.js';
 const PROXY_TOKEN_PREFIX = 'sk-';
 const FACTORY_RESET_ADMIN_TOKEN = 'change-me-admin-token';
 const FACTORY_RESET_CONFIRM_SECONDS = 3;
+const MODEL_AVAILABILITY_PROBE_CONFIRM_TEXT = '我确认我使用的中转站全部允许批量测活，如因开启此功能被中转站封号，自行负责。';
 const SECONDS_PER_DAY = 24 * 60 * 60;
 const ROUTE_COOLDOWN_UNIT_OPTIONS = [
   { value: 'second', label: '秒', multiplierSec: 1 },
@@ -58,6 +60,7 @@ type RuntimeSettings = {
   logCleanupUsageLogsEnabled: boolean;
   logCleanupProgramLogsEnabled: boolean;
   logCleanupRetentionDays: number;
+  modelAvailabilityProbeEnabled: boolean;
   codexUpstreamWebsocketEnabled: boolean;
   disableCrossProtocolFallback: boolean;
   proxySessionChannelConcurrencyLimit: number;
@@ -235,6 +238,7 @@ export default function Settings() {
     logCleanupUsageLogsEnabled: false,
     logCleanupProgramLogsEnabled: false,
     logCleanupRetentionDays: 30,
+    modelAvailabilityProbeEnabled: false,
     codexUpstreamWebsocketEnabled: false,
     disableCrossProtocolFallback: false,
     proxySessionChannelConcurrencyLimit: 2,
@@ -255,6 +259,7 @@ export default function Settings() {
   const [testingCheckin, setTestingCheckin] = useState(false);
   const [savingToken, setSavingToken] = useState(false);
   const [savingSystemProxy, setSavingSystemProxy] = useState(false);
+  const [savingModelAvailabilityProbe, setSavingModelAvailabilityProbe] = useState(false);
   const [savingProxyTransport, setSavingProxyTransport] = useState(false);
   const [testingSystemProxy, setTestingSystemProxy] = useState(false);
   const [systemProxyTestState, setSystemProxyTestState] = useState<SystemProxyTestState>(null);
@@ -300,6 +305,10 @@ export default function Settings() {
   const downstreamModalPresence = useAnimatedVisibility(downstreamModalOpen, 220);
   const [selectorOpen, setSelectorOpen] = useState(false);
   const selectorModalPresence = useAnimatedVisibility(selectorOpen, 220);
+  const [modelAvailabilityProbeConfirmOpen, setModelAvailabilityProbeConfirmOpen] = useState(false);
+  const modelAvailabilityProbeConfirmPresence = useAnimatedVisibility(modelAvailabilityProbeConfirmOpen, 220);
+  const [modelAvailabilityProbeConfirmationInput, setModelAvailabilityProbeConfirmationInput] = useState('');
+  const [savedModelAvailabilityProbeEnabled, setSavedModelAvailabilityProbeEnabled] = useState(false);
   const [factoryResetOpen, setFactoryResetOpen] = useState(false);
   const factoryResetPresence = useAnimatedVisibility(factoryResetOpen, 220);
   const [factoryResetting, setFactoryResetting] = useState(false);
@@ -376,6 +385,12 @@ export default function Settings() {
       database: defaults.database,
     }));
   }, [migrationDialect]);
+
+  useEffect(() => {
+    if (!modelAvailabilityProbeConfirmOpen) {
+      setModelAvailabilityProbeConfirmationInput('');
+    }
+  }, [modelAvailabilityProbeConfirmOpen]);
 
   useEffect(() => {
     if (!factoryResetOpen) {
@@ -469,6 +484,7 @@ export default function Settings() {
         logCleanupRetentionDays: Number(runtimeInfo.logCleanupRetentionDays) >= 1
           ? Math.trunc(Number(runtimeInfo.logCleanupRetentionDays))
           : 30,
+        modelAvailabilityProbeEnabled: !!runtimeInfo.modelAvailabilityProbeEnabled,
         codexUpstreamWebsocketEnabled: !!runtimeInfo.codexUpstreamWebsocketEnabled,
         disableCrossProtocolFallback: !!runtimeInfo.disableCrossProtocolFallback,
         proxySessionChannelConcurrencyLimit: Number(runtimeInfo.proxySessionChannelConcurrencyLimit) >= 0
@@ -499,6 +515,7 @@ export default function Settings() {
         globalBlockedBrands: Array.isArray(runtimeInfo.globalBlockedBrands) ? runtimeInfo.globalBlockedBrands : [],
         globalAllowedModels: Array.isArray(runtimeInfo.globalAllowedModels) ? runtimeInfo.globalAllowedModels : [],
       });
+      setSavedModelAvailabilityProbeEnabled(!!runtimeInfo.modelAvailabilityProbeEnabled);
       setBlockedBrands(Array.isArray(runtimeInfo.globalBlockedBrands) ? runtimeInfo.globalBlockedBrands : []);
       setAllowedModels(Array.isArray(runtimeInfo.globalAllowedModels) ? runtimeInfo.globalAllowedModels : []);
       setProxyErrorKeywordsText(
@@ -644,6 +661,42 @@ export default function Settings() {
     } finally {
       setSavingSystemProxy(false);
     }
+  };
+
+  const persistModelAvailabilityProbeSetting = async (enabled: boolean) => {
+    setSavingModelAvailabilityProbe(true);
+    try {
+      const res = await api.updateRuntimeSettings({
+        modelAvailabilityProbeEnabled: enabled,
+      });
+      const nextEnabled = typeof res?.modelAvailabilityProbeEnabled === 'boolean'
+        ? res.modelAvailabilityProbeEnabled
+        : enabled;
+      setRuntime((prev) => ({
+        ...prev,
+        modelAvailabilityProbeEnabled: nextEnabled,
+      }));
+      setSavedModelAvailabilityProbeEnabled(nextEnabled);
+      setModelAvailabilityProbeConfirmOpen(false);
+      setModelAvailabilityProbeConfirmationInput('');
+      toast.success(nextEnabled ? '批量测活已开启' : '批量测活已关闭');
+    } catch (err: any) {
+      toast.error(err?.message || '保存失败');
+    } finally {
+      setSavingModelAvailabilityProbe(false);
+    }
+  };
+
+  const saveModelAvailabilityProbeSettings = async () => {
+    if (runtime.modelAvailabilityProbeEnabled === savedModelAvailabilityProbeEnabled) {
+      toast.info('批量测活设置未变化');
+      return;
+    }
+    if (runtime.modelAvailabilityProbeEnabled) {
+      setModelAvailabilityProbeConfirmOpen(true);
+      return;
+    }
+    await persistModelAvailabilityProbeSetting(false);
   };
 
   const saveProxyTransportSettings = async () => {
@@ -1007,6 +1060,16 @@ export default function Settings() {
   const closeFactoryResetModal = () => {
     if (factoryResetting) return;
     setFactoryResetOpen(false);
+  };
+
+  const closeModelAvailabilityProbeConfirmModal = () => {
+    if (savingModelAvailabilityProbe) return;
+    setModelAvailabilityProbeConfirmOpen(false);
+  };
+
+  const handleConfirmModelAvailabilityProbe = async () => {
+    if (modelAvailabilityProbeConfirmationInput.trim() !== MODEL_AVAILABILITY_PROBE_CONFIRM_TEXT) return;
+    await persistModelAvailabilityProbeSetting(true);
   };
 
   const handleFactoryReset = async () => {
@@ -1413,6 +1476,32 @@ export default function Settings() {
           <div>
             <button onClick={saveProxyTransportSettings} disabled={savingProxyTransport} className="btn btn-primary">
               {savingProxyTransport ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存传输与并发'}
+            </button>
+          </div>
+        </div>
+
+        <div className="card animate-slide-up stagger-4" style={{ padding: 20, border: '1px solid color-mix(in srgb, var(--color-danger) 24%, var(--color-border))' }}>
+          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8, color: 'var(--color-danger)' }}>批量测活</div>
+          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12, lineHeight: 1.8 }}>
+            默认关闭。开启后，metapi 会在后台定时对活跃账号模型发送最小化探测请求，用来校正“/models 能看到但实际不可用”的假阳性。
+          </div>
+          <div style={{ padding: 12, borderRadius: 'var(--radius-sm)', background: 'var(--color-danger-bg)', color: 'var(--color-danger)', fontSize: 12, lineHeight: 1.8, marginBottom: 12 }}>
+            只有在你确认自己使用的中转站明确允许批量测活时才应该开启。若上游不允许，这类探测可能带来封号或风控风险。
+          </div>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 12 }}>
+            <input
+              type="checkbox"
+              checked={runtime.modelAvailabilityProbeEnabled}
+              onChange={(e) => setRuntime((prev) => ({ ...prev, modelAvailabilityProbeEnabled: e.target.checked }))}
+            />
+            允许 metapi 后台主动批量测活
+          </label>
+          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.7, marginBottom: 12 }}>
+            当前状态：{savedModelAvailabilityProbeEnabled ? '已启用' : '已关闭'}。首次开启必须手动输入确认语句。
+          </div>
+          <div>
+            <button onClick={saveModelAvailabilityProbeSettings} disabled={savingModelAvailabilityProbe} className="btn btn-primary">
+              {savingModelAvailabilityProbe ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存批量测活设置'}
             </button>
           </div>
         </div>
@@ -2107,6 +2196,15 @@ export default function Settings() {
         adminToken={FACTORY_RESET_ADMIN_TOKEN}
         onClose={closeFactoryResetModal}
         onConfirm={handleFactoryReset}
+      />
+      <ModelAvailabilityProbeConfirmModal
+        presence={modelAvailabilityProbeConfirmPresence}
+        confirmText={MODEL_AVAILABILITY_PROBE_CONFIRM_TEXT}
+        confirmationInput={modelAvailabilityProbeConfirmationInput}
+        saving={savingModelAvailabilityProbe}
+        onConfirmationInputChange={setModelAvailabilityProbeConfirmationInput}
+        onClose={closeModelAvailabilityProbeConfirmModal}
+        onConfirm={handleConfirmModelAvailabilityProbe}
       />
       <RouteSelectorModal
         presence={selectorModalPresence}

@@ -8,6 +8,7 @@ const buildModelAvailabilityProbeTaskDedupeKeyMock = vi.fn();
 const queueModelAvailabilityProbeTaskMock = vi.fn();
 const getBackgroundTaskMock = vi.fn();
 const getRunningTaskByDedupeKeyMock = vi.fn();
+const waitForBackgroundTaskCompletionMock = vi.fn();
 
 vi.mock('../../services/modelAvailabilityProbeService.js', async () => {
   const actual = await vi.importActual<typeof import('../../services/modelAvailabilityProbeService.js')>('../../services/modelAvailabilityProbeService.js');
@@ -24,6 +25,7 @@ vi.mock('../../services/backgroundTaskService.js', async () => {
     ...actual,
     getBackgroundTask: (...args: unknown[]) => getBackgroundTaskMock(...args),
     getRunningTaskByDedupeKey: (...args: unknown[]) => getRunningTaskByDedupeKeyMock(...args),
+    waitForBackgroundTaskCompletion: (...args: unknown[]) => waitForBackgroundTaskCompletionMock(...args),
   };
 });
 
@@ -48,6 +50,7 @@ describe('/api/models/probe', () => {
     queueModelAvailabilityProbeTaskMock.mockReset();
     getBackgroundTaskMock.mockReset();
     getRunningTaskByDedupeKeyMock.mockReset();
+    waitForBackgroundTaskCompletionMock.mockReset();
   });
 
   afterAll(async () => {
@@ -112,12 +115,7 @@ describe('/api/models/probe', () => {
         },
       },
     };
-    getBackgroundTaskMock
-      .mockReturnValueOnce({
-        id: 'task-7',
-        status: 'running',
-      })
-      .mockImplementation(() => completedTask);
+    waitForBackgroundTaskCompletionMock.mockResolvedValue(completedTask);
 
     const response = await app.inject({
       method: 'POST',
@@ -130,6 +128,7 @@ describe('/api/models/probe', () => {
 
     expect(response.statusCode).toBe(200);
     expect(queueModelAvailabilityProbeTaskMock).not.toHaveBeenCalled();
+    expect(waitForBackgroundTaskCompletionMock).toHaveBeenCalledWith('task-7');
     expect(response.json()).toMatchObject({
       success: true,
       reused: true,
