@@ -2,7 +2,16 @@ export type SiteInitializationPresetId =
   | 'codingplan-openai'
   | 'codingplan-claude'
   | 'zhipu-coding-plan-openai'
-  | 'zhipu-coding-plan-claude';
+  | 'zhipu-coding-plan-claude'
+  | 'deepseek-openai'
+  | 'deepseek-claude'
+  | 'moonshot-openai'
+  | 'moonshot-claude'
+  | 'minimax-openai'
+  | 'minimax-claude'
+  | 'modelscope-openai'
+  | 'modelscope-claude'
+  | 'doubao-coding-openai';
 export type SiteInitializationPreset = {
   id: SiteInitializationPresetId;
   label: string;

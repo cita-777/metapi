@@ -113,4 +113,67 @@ describe('Accounts CodingPlan initialization', () => {
       root?.unmount();
     }
   });
+
+  it('preloads vendor-specific recommendations for new code presets such as DeepSeek', async () => {
+    apiMock.getSites.mockResolvedValue([
+      { id: 11, name: 'DeepSeek Official', url: 'https://api.deepseek.com/v1', platform: 'openai', status: 'active' },
+    ]);
+    apiMock.addAccount.mockResolvedValue({
+      id: 19,
+      siteId: 11,
+      tokenType: 'apikey',
+      queued: false,
+    });
+
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/accounts?segment=apikey&create=1&siteId=11&initPreset=deepseek-openai']}>
+            <ToastProvider>
+              <Accounts />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const rendered = JSON.stringify(root.toJSON());
+      expect(rendered).toContain('DeepSeek / OpenAI');
+      expect(rendered).toContain('deepseek-chat');
+      expect(rendered).toContain('deepseek-reasoner');
+
+      const tokenInput = root.root.find((node) => (
+        node.type === 'textarea'
+        && node.props.placeholder === '粘贴 API Key'
+      ));
+      const addButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).includes('添加连接')
+      ));
+
+      await act(async () => {
+        tokenInput.props.onChange({ target: { value: 'sk-deepseek-demo' } });
+      });
+
+      await act(async () => {
+        await addButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.addAccount).toHaveBeenCalledWith(expect.objectContaining({
+        siteId: 11,
+        accessToken: 'sk-deepseek-demo',
+        credentialMode: 'apikey',
+        skipModelFetch: true,
+      }));
+      expect(apiMock.addAccountAvailableModels).toHaveBeenCalledWith(
+        19,
+        ['deepseek-chat', 'deepseek-reasoner'],
+      );
+    } finally {
+      root?.unmount();
+    }
+  });
 });

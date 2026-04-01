@@ -27,6 +27,12 @@ function normalizePathname(pathname) {
   return normalized;
 }
 
+function matchesHostAndPaths(url, hostname, paths) {
+  const parsed = parseUrlCandidate(url);
+  if (!parsed) return false;
+  return parsed.hostname === hostname && paths.includes(normalizePathname(parsed.pathname));
+}
+
 const CODINGPLAN_RECOMMENDED_MODELS = Object.freeze([
   'qwen3-coder-plus',
   'qwen3-coder-next',
@@ -39,6 +45,35 @@ const ZHIPU_CODING_PLAN_RECOMMENDED_MODELS = Object.freeze([
   'glm-4.6',
   'glm-4.5',
   'glm-4.5-air',
+]);
+
+const DEEPSEEK_RECOMMENDED_MODELS = Object.freeze([
+  'deepseek-chat',
+  'deepseek-reasoner',
+]);
+
+const MOONSHOT_RECOMMENDED_MODELS = Object.freeze([
+  'kimi-k2.5',
+  'kimi-k2',
+  'kimi-k2-thinking',
+]);
+
+const MINIMAX_RECOMMENDED_MODELS = Object.freeze([
+  'MiniMax-M2.7',
+  'MiniMax-M2.5',
+  'MiniMax-M2.1',
+]);
+
+const MODELSCOPE_RECOMMENDED_MODELS = Object.freeze([
+  'Qwen/Qwen3-32B',
+  'Qwen/Qwen2.5-Coder-32B-Instruct',
+  'deepseek-ai/DeepSeek-V3.2',
+]);
+
+const DOUBAO_CODING_RECOMMENDED_MODELS = Object.freeze([
+  'ark-code-latest',
+  'doubao-seed-2.0-code',
+  'doubao-seed-2.0-pro',
 ]);
 
 const SITE_INITIALIZATION_PRESETS = Object.freeze([
@@ -54,10 +89,7 @@ const SITE_INITIALIZATION_PRESETS = Object.freeze([
     recommendedModels: CODINGPLAN_RECOMMENDED_MODELS,
     docsUrl: 'https://help.aliyun.com/zh/model-studio/coding-plan-faq',
     matches(url) {
-      const parsed = parseUrlCandidate(url);
-      if (!parsed) return false;
-      return parsed.hostname === 'coding.dashscope.aliyuncs.com'
-        && normalizePathname(parsed.pathname) === '/v1';
+      return matchesHostAndPaths(url, 'coding.dashscope.aliyuncs.com', ['/v1']);
     },
   }),
   Object.freeze({
@@ -72,11 +104,7 @@ const SITE_INITIALIZATION_PRESETS = Object.freeze([
     recommendedModels: CODINGPLAN_RECOMMENDED_MODELS,
     docsUrl: 'https://help.aliyun.com/zh/model-studio/coding-plan-faq',
     matches(url) {
-      const parsed = parseUrlCandidate(url);
-      if (!parsed) return false;
-      const pathname = normalizePathname(parsed.pathname);
-      return parsed.hostname === 'coding.dashscope.aliyuncs.com'
-        && (pathname === '/apps/anthropic' || pathname.startsWith('/apps/anthropic/'));
+      return matchesHostAndPaths(url, 'coding.dashscope.aliyuncs.com', ['/apps/anthropic']);
     },
   }),
   Object.freeze({
@@ -91,10 +119,7 @@ const SITE_INITIALIZATION_PRESETS = Object.freeze([
     recommendedModels: ZHIPU_CODING_PLAN_RECOMMENDED_MODELS,
     docsUrl: 'https://docs.bigmodel.cn/cn/coding-plan/faq',
     matches(url) {
-      const parsed = parseUrlCandidate(url);
-      if (!parsed) return false;
-      return parsed.hostname === 'open.bigmodel.cn'
-        && normalizePathname(parsed.pathname) === '/api/coding/paas/v4';
+      return matchesHostAndPaths(url, 'open.bigmodel.cn', ['/api/coding/paas/v4']);
     },
   }),
   Object.freeze({
@@ -110,6 +135,141 @@ const SITE_INITIALIZATION_PRESETS = Object.freeze([
     docsUrl: 'https://docs.bigmodel.cn/cn/coding-plan/faq',
     matches() {
       return false;
+    },
+  }),
+  Object.freeze({
+    id: 'deepseek-openai',
+    label: 'DeepSeek / OpenAI',
+    providerLabel: 'DeepSeek',
+    description: '适合 DeepSeek 官方 OpenAI 兼容入口，建议直接添加 API Key，并优先补入官方常用编程模型。',
+    platform: 'openai',
+    defaultUrl: 'https://api.deepseek.com/v1',
+    initialSegment: 'apikey',
+    recommendedSkipModelFetch: true,
+    recommendedModels: DEEPSEEK_RECOMMENDED_MODELS,
+    docsUrl: 'https://api-docs.deepseek.com/',
+    matches(url) {
+      return matchesHostAndPaths(url, 'api.deepseek.com', ['/', '/v1']);
+    },
+  }),
+  Object.freeze({
+    id: 'deepseek-claude',
+    label: 'DeepSeek / Claude',
+    providerLabel: 'DeepSeek',
+    description: '适合 DeepSeek 官方 Anthropic 兼容入口，便于 Claude Code 一类工具直接接入。',
+    platform: 'claude',
+    defaultUrl: 'https://api.deepseek.com/anthropic',
+    initialSegment: 'apikey',
+    recommendedSkipModelFetch: true,
+    recommendedModels: DEEPSEEK_RECOMMENDED_MODELS,
+    docsUrl: 'https://api-docs.deepseek.com/guides/anthropic_api',
+    matches(url) {
+      return matchesHostAndPaths(url, 'api.deepseek.com', ['/anthropic']);
+    },
+  }),
+  Object.freeze({
+    id: 'moonshot-openai',
+    label: 'Moonshot(Kimi) / OpenAI',
+    providerLabel: 'Moonshot / Kimi',
+    description: '适合 Moonshot 官方 OpenAI 兼容入口，推荐优先使用 Kimi 系列编程与 Agent 模型。',
+    platform: 'openai',
+    defaultUrl: 'https://api.moonshot.cn/v1',
+    initialSegment: 'apikey',
+    recommendedSkipModelFetch: true,
+    recommendedModels: MOONSHOT_RECOMMENDED_MODELS,
+    docsUrl: 'https://platform.moonshot.cn/',
+    matches(url) {
+      return matchesHostAndPaths(url, 'api.moonshot.cn', ['/', '/v1']);
+    },
+  }),
+  Object.freeze({
+    id: 'moonshot-claude',
+    label: 'Moonshot(Kimi) / Claude',
+    providerLabel: 'Moonshot / Kimi',
+    description: '适合 Moonshot 官方 Anthropic 兼容入口，便于 Claude Code 与同类工具接入 Kimi。',
+    platform: 'claude',
+    defaultUrl: 'https://api.moonshot.cn/anthropic',
+    initialSegment: 'apikey',
+    recommendedSkipModelFetch: true,
+    recommendedModels: MOONSHOT_RECOMMENDED_MODELS,
+    docsUrl: 'https://platform.moonshot.cn/blog/posts/kimi-k2-0905',
+    matches(url) {
+      return matchesHostAndPaths(url, 'api.moonshot.cn', ['/anthropic']);
+    },
+  }),
+  Object.freeze({
+    id: 'minimax-openai',
+    label: 'MiniMax / OpenAI',
+    providerLabel: 'MiniMax',
+    description: '适合 MiniMax 官方 OpenAI 兼容入口，建议直接添加 API Key 后补入常用 M2 编程模型。',
+    platform: 'openai',
+    defaultUrl: 'https://api.minimaxi.com/v1',
+    initialSegment: 'apikey',
+    recommendedSkipModelFetch: true,
+    recommendedModels: MINIMAX_RECOMMENDED_MODELS,
+    docsUrl: 'https://platform.minimaxi.com/docs/api-reference/api-overview',
+    matches(url) {
+      return matchesHostAndPaths(url, 'api.minimaxi.com', ['/', '/v1']);
+    },
+  }),
+  Object.freeze({
+    id: 'minimax-claude',
+    label: 'MiniMax / Claude',
+    providerLabel: 'MiniMax',
+    description: '适合 MiniMax 官方 Anthropic 兼容入口，适配 Claude Code 等编程工具场景。',
+    platform: 'claude',
+    defaultUrl: 'https://api.minimaxi.com/anthropic',
+    initialSegment: 'apikey',
+    recommendedSkipModelFetch: true,
+    recommendedModels: MINIMAX_RECOMMENDED_MODELS,
+    docsUrl: 'https://platform.minimaxi.com/docs/api-reference/text-anthropic-api',
+    matches(url) {
+      return matchesHostAndPaths(url, 'api.minimaxi.com', ['/anthropic']);
+    },
+  }),
+  Object.freeze({
+    id: 'modelscope-openai',
+    label: 'ModelScope / OpenAI',
+    providerLabel: 'ModelScope',
+    description: '适合 ModelScope API-Inference 的 OpenAI 兼容入口，适合直接接入常用开源编程模型。',
+    platform: 'openai',
+    defaultUrl: 'https://api-inference.modelscope.cn/v1',
+    initialSegment: 'apikey',
+    recommendedSkipModelFetch: true,
+    recommendedModels: MODELSCOPE_RECOMMENDED_MODELS,
+    docsUrl: 'https://www.modelscope.cn/docs/model-service/API-Inference/intro',
+    matches(url) {
+      return matchesHostAndPaths(url, 'api-inference.modelscope.cn', ['/v1']);
+    },
+  }),
+  Object.freeze({
+    id: 'modelscope-claude',
+    label: 'ModelScope / Claude',
+    providerLabel: 'ModelScope',
+    description: '适合 ModelScope API-Inference 的 Claude 兼容入口，便于接入 Claude Code 一类工具。',
+    platform: 'claude',
+    defaultUrl: 'https://api-inference.modelscope.cn',
+    initialSegment: 'apikey',
+    recommendedSkipModelFetch: true,
+    recommendedModels: MODELSCOPE_RECOMMENDED_MODELS,
+    docsUrl: 'https://www.modelscope.cn/docs/model-service/API-Inference/intro',
+    matches(url) {
+      return matchesHostAndPaths(url, 'api-inference.modelscope.cn', ['/']);
+    },
+  }),
+  Object.freeze({
+    id: 'doubao-coding-openai',
+    label: '豆包 Coding Plan / OpenAI',
+    providerLabel: '豆包 Coding Plan',
+    description: '适合火山方舟 Coding Plan 的 OpenAI 兼容入口，推荐优先使用 ark-code 与豆包编程模型。',
+    platform: 'openai',
+    defaultUrl: 'https://ark.cn-beijing.volces.com/api/coding/v3',
+    initialSegment: 'apikey',
+    recommendedSkipModelFetch: true,
+    recommendedModels: DOUBAO_CODING_RECOMMENDED_MODELS,
+    docsUrl: 'https://www.volcengine.com/docs/82379/2205646?lang=zh',
+    matches(url) {
+      return matchesHostAndPaths(url, 'ark.cn-beijing.volces.com', ['/api/coding/v3']);
     },
   }),
 ]);

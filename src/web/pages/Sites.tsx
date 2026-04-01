@@ -28,6 +28,7 @@ import {
   type SiteForm,
 } from './helpers/sitesEditor.js';
 import {
+  detectSiteInitializationPreset,
   getSiteInitializationPreset,
   listSiteInitializationPresets,
 } from '../../shared/siteInitializationPresets.js';
@@ -388,7 +389,7 @@ export default function Sites() {
   const openEdit = (site: SiteRow) => {
     setEditor({ mode: 'edit', editingSiteId: site.id });
     setForm(siteFormFromSite(site));
-    setSelectedInitializationPresetId(null);
+    setSelectedInitializationPresetId(detectSiteInitializationPreset(site.url, site.platform)?.id || null);
     scrollToEditorTop();
     // Load disabled models and discovered models independently so a best-effort
     // availability fetch cannot wipe the existing disabled-model state.
