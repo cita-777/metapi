@@ -2,7 +2,7 @@ import { FastifyInstance, FastifyReply } from 'fastify';
 import { db, schema } from '../../db/index.js';
 import { and, eq } from 'drizzle-orm';
 import { detectSite } from '../../services/siteDetector.js';
-import { invalidateSiteProxyCache, parseSiteProxyUrlInput } from '../../services/siteProxy.js';
+import { invalidateSiteProxyCache, normalizeSiteUrl, parseSiteProxyUrlInput } from '../../services/siteProxy.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { invalidateTokenRouterCache } from '../../services/tokenRouter.js';
 import { parseSiteCustomHeadersInput } from '../../services/siteCustomHeaders.js';
@@ -90,8 +90,10 @@ type ErrorLike = {
   cause?: unknown;
 };
 
-function normalizeSiteUrl(url: string): string {
-  return url.replace(/\/+$/, '');
+function normalizeOptionalPlatform(value: string | undefined): string | null {
+  if (value === undefined) return null;
+  const normalized = value.trim();
+  return normalized || null;
 }
 
 function getErrorChain(error: unknown): ErrorLike[] {
@@ -347,14 +349,14 @@ export async function sitesRoutes(app: FastifyInstance) {
     const maxSortOrder = existingSites.reduce((max, site) => Math.max(max, site.sortOrder || 0), -1);
     const normalizedUrl = normalizeSiteUrl(url);
 
-    let detectedPlatform = platform;
+    let detectedPlatform = normalizeOptionalPlatform(platform);
     let responseInitializationPresetId: string | null = explicitInitializationPreset?.id || null;
     if (!detectedPlatform) {
       if (explicitInitializationPreset) {
         detectedPlatform = explicitInitializationPreset.platform;
       } else {
         const detected = await detectSite(url);
-        detectedPlatform = detected?.platform;
+        detectedPlatform = detected?.platform ?? null;
         responseInitializationPresetId = detected?.initializationPresetId || null;
       }
     }
@@ -458,7 +460,12 @@ export async function sitesRoutes(app: FastifyInstance) {
     }
 
     const nextUrl = body.url !== undefined ? normalizeSiteUrl(body.url) : existingSite.url;
-    const nextPlatform = body.platform !== undefined ? body.platform : existingSite.platform;
+    const nextPlatform = body.platform !== undefined
+      ? normalizeOptionalPlatform(body.platform)
+      : existingSite.platform;
+    if (body.platform !== undefined && !nextPlatform) {
+      return reply.code(400).send({ error: 'Invalid platform. Expected non-empty string.' });
+    }
     const siteIdentityChanged = nextUrl !== existingSite.url || nextPlatform !== existingSite.platform;
     if (siteIdentityChanged) {
       const siteRows = await db.select({
@@ -474,7 +481,7 @@ export async function sitesRoutes(app: FastifyInstance) {
 
     if (body.name !== undefined) updates.name = body.name;
     if (body.url !== undefined) updates.url = nextUrl;
-    if (body.platform !== undefined) updates.platform = body.platform;
+    if (body.platform !== undefined) updates.platform = nextPlatform;
     if (normalizedProxyUrl.present) updates.proxyUrl = normalizedProxyUrl.proxyUrl;
     if (body.useSystemProxy !== undefined) updates.useSystemProxy = normalizedUseSystemProxy;
     if (normalizedCustomHeaders.present) updates.customHeaders = normalizedCustomHeaders.customHeaders;

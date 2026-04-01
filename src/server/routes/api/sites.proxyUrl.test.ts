@@ -96,6 +96,32 @@ describe('sites proxy settings', () => {
     expect((duplicate.json() as { error?: string }).error).toContain('already exists');
   });
 
+  it('normalizes platform before conflict checks when creating a site', async () => {
+    const first = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'existing-site',
+        url: 'https://duplicate-site.example.com/',
+        platform: 'new-api',
+      },
+    });
+    expect(first.statusCode).toBe(200);
+
+    const duplicate = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'duplicate-site',
+        url: 'https://duplicate-site.example.com',
+        platform: '  new-api  ',
+      },
+    });
+
+    expect(duplicate.statusCode).toBe(409);
+    expect((duplicate.json() as { error?: string }).error).toContain('already exists');
+  });
+
   it('rejects invalid useSystemProxy flag', async () => {
     const response = await app.inject({
       method: 'POST',
@@ -226,6 +252,31 @@ describe('sites proxy settings', () => {
     expect((response.json() as { error?: string }).error).toContain('already exists');
   });
 
+  it('rejects blank platform updates instead of persisting an empty platform', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'editable-site',
+        url: 'https://editable-site.example.com',
+        platform: 'new-api',
+      },
+    });
+    expect(created.statusCode).toBe(200);
+    const site = created.json() as { id: number };
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${site.id}`,
+      payload: {
+        platform: '   ',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { error?: string }).error).toContain('platform');
+  });
+
   it('rejects invalid custom headers json', async () => {
     const response = await app.inject({
       method: 'POST',
@@ -304,7 +355,7 @@ describe('sites proxy settings', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/sites',
-      payload: null,
+      payload: [],
     });
 
     expect(response.statusCode).toBe(400);
@@ -327,7 +378,7 @@ describe('sites proxy settings', () => {
     const response = await app.inject({
       method: 'PUT',
       url: `/api/sites/${site.id}`,
-      payload: null,
+      payload: [],
     });
 
     expect(response.statusCode).toBe(400);
@@ -366,6 +417,19 @@ describe('sites proxy settings', () => {
       platform: 'openai',
       initializationPresetId: 'codingplan-openai',
     });
+  });
+
+  it('rejects empty detect payload urls at the route boundary', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites/detect',
+      payload: {
+        url: '   ',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { error?: string }).error).toContain('url');
   });
 
   it('does not force CodingPlan preset metadata when the user explicitly chooses generic openai', async () => {

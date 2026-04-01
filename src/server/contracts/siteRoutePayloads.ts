@@ -6,7 +6,7 @@ const unknownField = z.unknown().optional();
 const siteCreatePayloadSchema = z.object({
   name: requiredTrimmedString,
   url: requiredTrimmedString,
-  platform: z.string().optional(),
+  platform: z.string().trim().optional(),
   initializationPresetId: z.union([z.string(), z.null()]).optional(),
   proxyUrl: unknownField,
   useSystemProxy: unknownField,
@@ -21,7 +21,7 @@ const siteCreatePayloadSchema = z.object({
 const siteUpdatePayloadSchema = z.object({
   name: requiredTrimmedString.optional(),
   url: requiredTrimmedString.optional(),
-  platform: z.string().optional(),
+  platform: requiredTrimmedString.optional(),
   proxyUrl: unknownField,
   useSystemProxy: unknownField,
   customHeaders: unknownField,
@@ -42,7 +42,7 @@ const siteDisabledModelsPayloadSchema = z.object({
 }).passthrough();
 
 const siteDetectPayloadSchema = z.object({
-  url: z.string(),
+  url: requiredTrimmedString,
 }).passthrough();
 
 export type SiteBatchPayload = z.output<typeof siteBatchPayloadSchema>;
@@ -52,7 +52,9 @@ export type SiteDisabledModelsPayload = z.output<typeof siteDisabledModelsPayloa
 export type SiteUpdatePayload = z.output<typeof siteUpdatePayloadSchema>;
 
 function normalizeSitePayloadInput(input: unknown): unknown {
-  return input === undefined ? {} : input;
+  if (input === undefined) return {};
+  if (input && typeof input === 'object' && !Array.isArray(input)) return input;
+  return null;
 }
 
 function formatSitePayloadError(error: z.ZodError): string {
@@ -81,7 +83,7 @@ function formatSitePayloadError(error: z.ZodError): string {
 
 export function parseSiteCreatePayload(input: unknown):
 { success: true; data: SiteCreatePayload } | { success: false; error: string } {
-  const result = siteCreatePayloadSchema.safeParse(input);
+  const result = siteCreatePayloadSchema.safeParse(normalizeSitePayloadInput(input));
   if (!result.success) {
     return {
       success: false,
@@ -96,7 +98,7 @@ export function parseSiteCreatePayload(input: unknown):
 
 export function parseSiteUpdatePayload(input: unknown):
 { success: true; data: SiteUpdatePayload } | { success: false; error: string } {
-  const result = siteUpdatePayloadSchema.safeParse(input);
+  const result = siteUpdatePayloadSchema.safeParse(normalizeSitePayloadInput(input));
   if (!result.success) {
     return {
       success: false,

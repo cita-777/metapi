@@ -574,7 +574,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({
       success: false,
-      message: 'Invalid channels. Expected channel array.',
+      message: 'Invalid channels[].accountId. Expected positive number.',
     });
   });
 

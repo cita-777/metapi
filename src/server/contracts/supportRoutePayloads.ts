@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+const updateCenterVersionSourceSchema = z.enum(['docker-hub-tag', 'github-release']);
+
 const authChangePayloadSchema = z.object({
   oldToken: z.string().optional(),
   newToken: z.string().optional(),
@@ -32,11 +34,11 @@ const updateCenterConfigPayloadSchema = z.object({
   imageRepository: z.string().optional(),
   githubReleasesEnabled: z.boolean().optional(),
   dockerHubTagsEnabled: z.boolean().optional(),
-  defaultDeploySource: z.string().optional(),
+  defaultDeploySource: updateCenterVersionSourceSchema.optional(),
 }).passthrough();
 
 const updateCenterDeployPayloadSchema = z.object({
-  source: z.string().optional(),
+  source: updateCenterVersionSourceSchema.optional(),
   targetVersion: z.string().optional(),
   targetTag: z.string().optional(),
   targetDigest: z.string().optional(),
@@ -111,10 +113,10 @@ function formatSupportRoutePayloadError(error: z.ZodError): string {
     return 'Invalid dockerHubTagsEnabled. Expected boolean.';
   }
   if (firstPath === 'defaultDeploySource') {
-    return 'Invalid defaultDeploySource. Expected string.';
+    return 'Invalid defaultDeploySource. Expected docker-hub-tag/github-release.';
   }
   if (firstPath === 'source') {
-    return 'Invalid source. Expected string.';
+    return 'Invalid source. Expected docker-hub-tag/github-release.';
   }
   if (firstPath === 'targetVersion') {
     return 'Invalid targetVersion. Expected string.';

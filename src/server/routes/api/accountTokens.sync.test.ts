@@ -588,6 +588,30 @@ describe('account tokens sync routes with site status', () => {
     });
   });
 
+  it('returns the refreshed default state after creating the first manual token', async () => {
+    const { account } = await seedAccount({ siteStatus: 'active' });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/account-tokens',
+      payload: {
+        accountId: account.id,
+        name: 'manual-default',
+        token: 'sk-manual-default-token',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      success: true,
+      token: expect.objectContaining({
+        name: 'manual-default',
+        isDefault: true,
+        enabled: true,
+      }),
+    });
+  });
+
   it('creates token via upstream api and syncs into local store when manual token is omitted', async () => {
     const { account, site } = await seedAccount({ siteStatus: 'active' });
     createApiTokenMock.mockResolvedValue(true);
@@ -938,6 +962,43 @@ describe('account tokens sync routes with site status', () => {
       enabled: true,
     });
     expect((latest as any)?.valueStatus).toBe('ready');
+  });
+
+  it('returns the refreshed default state after promoting an existing token to default', async () => {
+    const { account } = await seedAccount({ siteStatus: 'active' });
+    await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default-token',
+      token: 'sk-default-token',
+      source: 'manual',
+      enabled: true,
+      isDefault: true,
+    }).run();
+    const secondary = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'secondary-token',
+      token: 'sk-secondary-token',
+      source: 'manual',
+      enabled: true,
+      isDefault: false,
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/account-tokens/${secondary.id}`,
+      payload: {
+        isDefault: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      success: true,
+      token: expect.objectContaining({
+        id: secondary.id,
+        isDefault: true,
+      }),
+    });
   });
 
   it('rejects non-string name payload when updating account token', async () => {

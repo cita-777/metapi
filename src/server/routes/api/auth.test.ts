@@ -13,10 +13,12 @@ describe('auth routes', () => {
   let schema: DbModule['schema'];
   let config: ConfigModule['config'];
   let dataDir = '';
+  let originalDataDir: string | undefined;
   let originalAuthToken = '';
 
   beforeAll(async () => {
     dataDir = mkdtempSync(join(tmpdir(), 'metapi-auth-routes-'));
+    originalDataDir = process.env.DATA_DIR;
     process.env.DATA_DIR = dataDir;
 
     await import('../../db/migrate.js');
@@ -41,7 +43,8 @@ describe('auth routes', () => {
   afterAll(async () => {
     config.authToken = originalAuthToken;
     await app.close();
-    delete process.env.DATA_DIR;
+    if (originalDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = originalDataDir;
   });
 
   it('rejects malformed auth change payloads at the route boundary', async () => {

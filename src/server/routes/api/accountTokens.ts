@@ -527,7 +527,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       if (createdId <= 0) {
         return reply.code(500).send({ success: false, message: '创建令牌失败' });
       }
-      const created = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, createdId)).get();
+      let created = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, createdId)).get();
       if (!created) {
         return reply.code(500).send({ success: false, message: '创建令牌失败' });
       }
@@ -538,6 +538,10 @@ export async function accountTokensRoutes(app: FastifyInstance) {
         await setDefaultToken(created.id);
       }
       const coverageRefresh = await refreshCoverageForAccounts([body.accountId]);
+      created = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, created.id)).get();
+      if (!created) {
+        return reply.code(500).send({ success: false, message: '创建令牌失败' });
+      }
       return { success: true, token: created, coverageRefresh };
     }
 
@@ -818,19 +822,24 @@ export async function accountTokensRoutes(app: FastifyInstance) {
 
     await db.update(schema.accountTokens).set(updates).where(eq(schema.accountTokens.id, tokenId)).run();
 
-    const latest = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, tokenId)).get();
+    let latest = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, tokenId)).get();
     if (!latest) {
       return reply.code(500).send({ success: false, message: '更新失败' });
     }
 
     if (body.isDefault === true && isUsableAccountToken(latest)) {
-      setDefaultToken(tokenId);
+      await setDefaultToken(tokenId);
     } else if (latest.isDefault && isUsableAccountToken(latest)) {
-      setDefaultToken(tokenId);
+      await setDefaultToken(tokenId);
     } else if (existing.isDefault && !isUsableAccountToken(latest)) {
-      repairDefaultToken(existing.accountId);
+      await repairDefaultToken(existing.accountId);
     } else if (body.isDefault === false && existing.isDefault) {
-      repairDefaultToken(existing.accountId);
+      await repairDefaultToken(existing.accountId);
+    }
+
+    latest = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, tokenId)).get();
+    if (!latest) {
+      return reply.code(500).send({ success: false, message: '更新失败' });
     }
 
     return { success: true, token: latest };

@@ -95,7 +95,7 @@ type UndiciConnectOptions = {
   httpSocket?: Socket;
 };
 
-function normalizeSiteUrl(value: string): string {
+export function normalizeSiteUrl(value: string): string {
   const trimmed = (value || '').trim();
   if (!trimmed) return '';
 

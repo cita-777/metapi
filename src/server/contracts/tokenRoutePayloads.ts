@@ -13,7 +13,7 @@ const routeChannelBatchCreatePayloadSchema = z.object({
     accountId: z.number().int().positive(),
     tokenId: z.union([z.number().int().positive(), z.null()]).optional(),
     sourceModel: z.string().optional(),
-  }).passthrough()).optional(),
+  }).passthrough()).min(1),
 }).passthrough();
 
 const routeChannelUpdatePayloadSchema = z.object({
@@ -70,7 +70,7 @@ function normalizeTokenRoutePayloadInput(input: unknown): unknown {
 
 function formatTokenRoutePayloadError(error: z.ZodError): string {
   const firstIssue = error.issues[0];
-  const [firstPath, secondPath] = firstIssue?.path ?? [];
+  const [firstPath, secondPath, thirdPath] = firstIssue?.path ?? [];
   if (!firstPath) {
     return '请求体必须是对象';
   }
@@ -101,9 +101,6 @@ function formatTokenRoutePayloadError(error: z.ZodError): string {
   if (firstPath === 'ids') {
     return 'Invalid ids. Expected number[].';
   }
-  if (firstPath === 'channels') {
-    return 'Invalid channels. Expected channel array.';
-  }
   if (firstPath === 'action') {
     return 'Invalid action. Expected string.';
   }
@@ -128,14 +125,17 @@ function formatTokenRoutePayloadError(error: z.ZodError): string {
   if (firstPath === 'wait') {
     return 'Invalid wait. Expected boolean.';
   }
-  if (firstPath === 'channels' && secondPath === 'accountId') {
+  if (firstPath === 'channels' && thirdPath === 'accountId') {
     return 'Invalid channels[].accountId. Expected positive number.';
   }
-  if (firstPath === 'channels' && secondPath === 'tokenId') {
+  if (firstPath === 'channels' && thirdPath === 'tokenId') {
     return 'Invalid channels[].tokenId. Expected positive number or null.';
   }
-  if (firstPath === 'channels' && secondPath === 'sourceModel') {
+  if (firstPath === 'channels' && thirdPath === 'sourceModel') {
     return 'Invalid channels[].sourceModel. Expected string.';
+  }
+  if (firstPath === 'channels') {
+    return 'Invalid channels. Expected channel array.';
   }
   return 'Invalid token route payload.';
 }

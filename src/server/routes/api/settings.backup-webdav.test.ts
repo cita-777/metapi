@@ -84,32 +84,33 @@ describe('settings backup webdav api', () => {
   it('exports current backup to webdav through settings route', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     fetchSpy.mockResolvedValue(new Response(null, { status: 201 }));
+    try {
+      await db.insert(schema.settings).values({
+        key: 'backup_webdav_config_v1',
+        value: JSON.stringify({
+          enabled: true,
+          fileUrl: 'https://dav.example.com/backups/metapi.json',
+          username: 'alice',
+          password: 'secret-pass',
+          exportType: 'all',
+          autoSyncEnabled: false,
+          autoSyncCron: '0 * * * *',
+        }),
+      }).run();
 
-    await db.insert(schema.settings).values({
-      key: 'backup_webdav_config_v1',
-      value: JSON.stringify({
-        enabled: true,
-        fileUrl: 'https://dav.example.com/backups/metapi.json',
-        username: 'alice',
-        password: 'secret-pass',
-        exportType: 'all',
-        autoSyncEnabled: false,
-        autoSyncCron: '0 * * * *',
-      }),
-    }).run();
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/settings/backup/webdav/export',
+      });
 
-    const response = await app.inject({
-      method: 'POST',
-      url: '/api/settings/backup/webdav/export',
-    });
-
-    expect(response.statusCode).toBe(200);
-    const body = response.json() as { success?: boolean; fileUrl?: string };
-    expect(body.success).toBe(true);
-    expect(body.fileUrl).toBe('https://dav.example.com/backups/metapi.json');
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-
-    fetchSpy.mockRestore();
+      expect(response.statusCode).toBe(200);
+      const body = response.json() as { success?: boolean; fileUrl?: string };
+      expect(body.success).toBe(true);
+      expect(body.fileUrl).toBe('https://dav.example.com/backups/metapi.json');
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
   it('rejects invalid exportType payload when saving webdav config', async () => {
@@ -130,32 +131,33 @@ describe('settings backup webdav api', () => {
   it('rejects invalid export body type instead of silently falling back', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     fetchSpy.mockResolvedValue(new Response(null, { status: 201 }));
+    try {
+      await db.insert(schema.settings).values({
+        key: 'backup_webdav_config_v1',
+        value: JSON.stringify({
+          enabled: true,
+          fileUrl: 'https://dav.example.com/backups/metapi.json',
+          username: 'alice',
+          password: 'secret-pass',
+          exportType: 'all',
+          autoSyncEnabled: false,
+          autoSyncCron: '0 * * * *',
+        }),
+      }).run();
 
-    await db.insert(schema.settings).values({
-      key: 'backup_webdav_config_v1',
-      value: JSON.stringify({
-        enabled: true,
-        fileUrl: 'https://dav.example.com/backups/metapi.json',
-        username: 'alice',
-        password: 'secret-pass',
-        exportType: 'all',
-        autoSyncEnabled: false,
-        autoSyncCron: '0 * * * *',
-      }),
-    }).run();
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/settings/backup/webdav/export',
+        payload: {
+          type: 123,
+        },
+      });
 
-    const response = await app.inject({
-      method: 'POST',
-      url: '/api/settings/backup/webdav/export',
-      payload: {
-        type: 123,
-      },
-    });
-
-    expect(response.statusCode).toBe(400);
-    expect((response.json() as { message?: string }).message).toContain('type');
-    expect(fetchSpy).not.toHaveBeenCalled();
-
-    fetchSpy.mockRestore();
+      expect(response.statusCode).toBe(400);
+      expect((response.json() as { message?: string }).message).toContain('type');
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });

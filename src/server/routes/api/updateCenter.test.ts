@@ -297,6 +297,34 @@ describe('update center routes', () => {
     });
   });
 
+  it('rejects invalid update-center source enums at the route boundary', async () => {
+    const invalidConfigResponse = await app.inject({
+      method: 'PUT',
+      url: '/api/update-center/config',
+      payload: {
+        defaultDeploySource: 'nightly',
+      },
+    });
+    expect(invalidConfigResponse.statusCode).toBe(400);
+    expect(invalidConfigResponse.json()).toMatchObject({
+      success: false,
+      message: 'Invalid defaultDeploySource. Expected docker-hub-tag/github-release.',
+    });
+
+    const invalidDeployResponse = await app.inject({
+      method: 'POST',
+      url: '/api/update-center/deploy',
+      payload: {
+        source: 'nightly',
+      },
+    });
+    expect(invalidDeployResponse.statusCode).toBe(400);
+    expect(invalidDeployResponse.json()).toMatchObject({
+      success: false,
+      message: 'Invalid source. Expected docker-hub-tag/github-release.',
+    });
+  });
+
   it('uses the shared config helper token when request-time env lookup is unavailable', async () => {
     fetchLatestStableGitHubReleaseMock.mockResolvedValue({
       source: 'github-release',

@@ -786,10 +786,6 @@ export async function tokensRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: '显式群组不支持直接维护通道' });
     }
 
-    if (!body?.channels || !Array.isArray(body.channels) || body.channels.length === 0) {
-      return reply.code(400).send({ success: false, message: 'channels 必须是非空数组' });
-    }
-
     const existingChannels = await db.select().from(schema.routeChannels)
       .where(eq(schema.routeChannels.routeId, routeId))
       .all();
@@ -806,11 +802,6 @@ export async function tokensRoutes(app: FastifyInstance) {
     const errors: string[] = [];
 
     for (const item of body.channels) {
-      if (!item?.accountId || typeof item.accountId !== 'number') {
-        errors.push('无效的 accountId');
-        continue;
-      }
-
       const sourceModel = typeof item.sourceModel === 'string'
         ? item.sourceModel.trim()
         : (isExactModelPattern(route.modelPattern) ? route.modelPattern.trim() : '');
