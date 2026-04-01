@@ -25,6 +25,31 @@ export default function SiteCreatedModal({
     || (apiKeyFirst
       ? '该平台更适合直接通过 Base URL + API Key 接入，后续再补模型初始化。'
       : '接下来您可以继续补充登录连接或 API Key。');
+  const actionButtons = apiKeyFirst
+    ? [
+      {
+        choice: 'apikey' as const,
+        className: 'btn btn-primary btn-block',
+        label: '添加 API Key（推荐）',
+      },
+      {
+        choice: 'session' as const,
+        className: 'btn btn-outline btn-block',
+        label: '添加账号（用户名密码登录）',
+      },
+    ]
+    : [
+      {
+        choice: 'session' as const,
+        className: 'btn btn-primary btn-block',
+        label: '添加账号（用户名密码登录）',
+      },
+      {
+        choice: 'apikey' as const,
+        className: 'btn btn-outline btn-block',
+        label: '添加 API Key',
+      },
+    ];
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -85,29 +110,15 @@ export default function SiteCreatedModal({
         )}
 
         <div className="modal-action" style={{ flexDirection: 'column', gap: 12 }}>
-          {apiKeyFirst ? (
+          {actionButtons.map((action) => (
             <button
-              className="btn btn-primary btn-block"
-              onClick={() => onChoice('apikey')}
+              key={action.choice}
+              className={action.className}
+              onClick={() => onChoice(action.choice)}
             >
-              添加 API Key（推荐）
+              {action.label}
             </button>
-          ) : (
-            <button
-              className="btn btn-primary btn-block"
-              onClick={() => onChoice('session')}
-            >
-              添加账号（用户名密码登录）
-            </button>
-          )}
-          {!apiKeyFirst && (
-            <button
-              className="btn btn-outline btn-block"
-              onClick={() => onChoice('apikey')}
-            >
-              添加 API Key
-            </button>
-          )}
+          ))}
           <button
             className="btn btn-ghost btn-block"
             onClick={() => onChoice('later')}
