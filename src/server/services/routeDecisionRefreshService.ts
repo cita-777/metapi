@@ -65,7 +65,7 @@ export async function refreshAllRouteDecisionSnapshots(options: RefreshOptions =
     const matchingRoutes = routes.filter((route) => (
       isExactModelPattern(route.modelPattern) && matchesModelPattern(model, route.modelPattern)
     ));
-    const snapshotWrites = [];
+    const snapshotWrites: Array<{ routeId: number; snapshot: unknown }> = [];
     for (const route of matchingRoutes) {
       if (options.refreshPricingCatalog) {
         await tokenRouter.refreshPricingReferenceCostsForRoute(route.id, model, { refreshedKeys });
