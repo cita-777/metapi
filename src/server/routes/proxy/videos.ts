@@ -1,7 +1,6 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { fetch } from 'undici';
 import { tokenRouter } from '../../services/tokenRouter.js';
-import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertService.js';
 import { isTokenExpiredError } from '../../services/alertRules.js';
 import { estimateProxyCost } from '../../services/modelPricingService.js';
@@ -15,9 +14,17 @@ import {
   deleteProxyVideoTaskByPublicId,
   getProxyVideoTaskByPublicId,
   refreshProxyVideoTaskSnapshot,
+  resolveProxyVideoTaskSite,
   saveProxyVideoTask,
 } from '../../services/proxyVideoTaskStore.js';
-import { canRetryProxyChannel, getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
+import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
+import {
+  buildForcedChannelUnavailableMessage,
+  canRetryChannelSelection,
+  getTesterForcedChannelId,
+  selectProxyChannelForAttempt,
+} from '../../proxy-core/channelSelection.js';
+import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
 
 function rewriteVideoResponsePublicId(payload: unknown, publicId: string): unknown {
   if (!payload || typeof payload !== 'object') return payload;
@@ -47,84 +54,76 @@ export async function videosProxyRoute(app: FastifyInstance) {
     if (!await ensureModelAllowedForDownstreamKey(request, reply, requestedModel)) return;
 
     const downstreamPolicy = getDownstreamRoutingPolicy(request);
+    const forcedChannelId = getTesterForcedChannelId({
+      headers: request.headers as Record<string, unknown>,
+      clientIp: request.ip,
+    });
     const excludeChannelIds: number[] = [];
     let retryCount = 0;
 
     while (retryCount <= getProxyMaxChannelRetries()) {
-      let selected = retryCount === 0
-        ? await tokenRouter.selectChannel(requestedModel, downstreamPolicy)
-        : await tokenRouter.selectNextChannel(requestedModel, excludeChannelIds, downstreamPolicy);
-
-      if (!selected && retryCount === 0) {
-        await routeRefreshWorkflow.refreshModelsAndRebuildRoutes();
-        selected = await tokenRouter.selectChannel(requestedModel, downstreamPolicy);
-      }
+      const selected = await selectProxyChannelForAttempt({
+        requestedModel,
+        downstreamPolicy,
+        excludeChannelIds,
+        retryCount,
+        forcedChannelId,
+      });
 
       if (!selected) {
+        const noChannelMessage = buildForcedChannelUnavailableMessage(forcedChannelId);
         await reportProxyAllFailed({
           model: requestedModel,
-          reason: 'No available channels after retries',
+          reason: forcedChannelId ? noChannelMessage : 'No available channels after retries',
         });
         return reply.code(503).send({
-          error: { message: 'No available channels for this model', type: 'server_error' },
+          error: { message: noChannelMessage, type: 'server_error' },
         });
       }
 
       excludeChannelIds.push(selected.channel.id);
-      const targetUrl = buildUpstreamUrl(selected.site.url, '/v1/videos');
       const upstreamModel = selected.actualModel || requestedModel;
       const startTime = Date.now();
 
       try {
-        const accountProxy = getProxyUrlFromExtraConfig(selected.account.extraConfig);
-        const requestInit = multipartForm
-          ? withSiteRecordProxyRequestInit(selected.site, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${selected.tokenValue}`,
-            },
-            body: cloneFormDataWithOverrides(multipartForm, {
-              model: upstreamModel,
-            }) as any,
-          }, accountProxy)
-          : withSiteRecordProxyRequestInit(selected.site, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${selected.tokenValue}`,
-            },
-            body: JSON.stringify({
-              ...(jsonBody || {}),
-              model: upstreamModel,
-            }),
-          }, accountProxy);
-
-        const upstream = await fetch(targetUrl, requestInit);
-        const text = await upstream.text();
-        if (!upstream.ok) {
-          await recordTokenRouterEventBestEffort('record channel failure', () => tokenRouter.recordFailure(selected.channel.id, {
-            status: upstream.status,
-            errorText: text,
-            modelName: upstreamModel,
-          }));
-          if (isTokenExpiredError({ status: upstream.status, message: text })) {
-            await reportTokenExpired({
-              accountId: selected.account.id,
-              username: selected.account.username,
-              siteName: selected.site.name,
-              detail: `HTTP ${upstream.status}`,
+        const { upstream, text, baseUrl } = await runWithSiteApiEndpointPool(selected.site, async (target) => {
+          const targetUrl = buildUpstreamUrl(target.baseUrl, '/v1/videos');
+          const accountProxy = getProxyUrlFromExtraConfig(selected.account.extraConfig);
+          const requestInit = multipartForm
+            ? withSiteRecordProxyRequestInit(selected.site, {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${selected.tokenValue}`,
+              },
+              body: cloneFormDataWithOverrides(multipartForm, {
+                model: upstreamModel,
+              }) as any,
+            }, accountProxy)
+            : withSiteRecordProxyRequestInit(selected.site, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${selected.tokenValue}`,
+              },
+              body: JSON.stringify({
+                ...(jsonBody || {}),
+                model: upstreamModel,
+              }),
+            }, accountProxy);
+          const response = await fetch(targetUrl, requestInit);
+          const responseText = await response.text();
+          if (!response.ok) {
+            throw new SiteApiEndpointRequestError(responseText || 'unknown error', {
+              status: response.status,
+              rawErrText: responseText || null,
             });
           }
-          if (shouldRetryProxyRequest(upstream.status, text) && canRetryProxyChannel(retryCount)) {
-            retryCount += 1;
-            continue;
-          }
-          await reportProxyAllFailed({
-            model: requestedModel,
-            reason: `upstream returned HTTP ${upstream.status}`,
-          });
-          return reply.code(upstream.status).send({ error: { message: text, type: 'upstream_error' } });
-        }
+          return {
+            baseUrl: target.baseUrl,
+            upstream: response,
+            text: responseText,
+          };
+        });
 
         let data: any = {};
         try { data = JSON.parse(text); } catch { data = {}; }
@@ -137,7 +136,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
 
         const mapping = await saveProxyVideoTask({
           upstreamVideoId,
-          siteUrl: selected.site.url,
+          siteUrl: baseUrl,
           tokenValue: selected.tokenValue,
           requestedModel,
           actualModel: upstreamModel,
@@ -165,21 +164,34 @@ export async function videosProxyRoute(app: FastifyInstance) {
         recordDownstreamCostUsage(request, estimatedCost);
         return reply.code(upstream.status).send(rewriteVideoResponsePublicId(data, mapping.publicId));
       } catch (error: any) {
+        const status = error instanceof SiteApiEndpointRequestError ? (error.status || 0) : 0;
+        const errorText = error?.message || 'network failure';
         await recordTokenRouterEventBestEffort('record channel failure', () => tokenRouter.recordFailure(selected.channel.id, {
-          status: 0,
-          errorText: error?.message || 'network failure',
+          status,
+          errorText,
           modelName: upstreamModel,
         }));
-        if (canRetryProxyChannel(retryCount)) {
+        if (status > 0 && isTokenExpiredError({ status, message: errorText })) {
+          await reportTokenExpired({
+            accountId: selected.account.id,
+            username: selected.account.username,
+            siteName: selected.site.name,
+            detail: `HTTP ${status}`,
+          });
+        }
+        if ((status > 0 ? shouldRetryProxyRequest(status, errorText) : true) && canRetryChannelSelection(retryCount, forcedChannelId)) {
           retryCount += 1;
           continue;
         }
         await reportProxyAllFailed({
           model: requestedModel,
-          reason: error?.message || 'network failure',
+          reason: errorText || 'network failure',
         });
-        return reply.code(502).send({
-          error: { message: error?.message || 'network failure', type: 'upstream_error' },
+        return reply.code(status || 502).send({
+          error: {
+            message: status > 0 ? errorText : `Upstream error: ${errorText}`,
+            type: 'upstream_error',
+          },
         });
       }
     }
@@ -193,13 +205,15 @@ export async function videosProxyRoute(app: FastifyInstance) {
       });
     }
 
-    const targetUrl = buildUpstreamUrl(mapping.siteUrl, `/v1/videos/${encodeURIComponent(mapping.upstreamVideoId)}`);
-    const upstream = await fetch(targetUrl, await withSiteProxyRequestInit(targetUrl, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${mapping.tokenValue}`,
-      },
-    }));
+    let upstream: Awaited<ReturnType<typeof fetch>>;
+    try {
+      ({ upstream } = await requestMappedVideoTaskUpstream(mapping, 'GET'));
+    } catch (error) {
+      if (isSiteApiEndpointFailure(error)) {
+        return sendVideoTaskEndpointFailure(reply, error);
+      }
+      throw error;
+    }
     const text = await upstream.text();
     try {
       const data = JSON.parse(text);
@@ -224,13 +238,15 @@ export async function videosProxyRoute(app: FastifyInstance) {
       });
     }
 
-    const targetUrl = buildUpstreamUrl(mapping.siteUrl, `/v1/videos/${encodeURIComponent(mapping.upstreamVideoId)}`);
-    const upstream = await fetch(targetUrl, await withSiteProxyRequestInit(targetUrl, {
-      method: 'DELETE',
-      headers: {
-        Authorization: `Bearer ${mapping.tokenValue}`,
-      },
-    }));
+    let upstream: Awaited<ReturnType<typeof fetch>>;
+    try {
+      ({ upstream } = await requestMappedVideoTaskUpstream(mapping, 'DELETE'));
+    } catch (error) {
+      if (isSiteApiEndpointFailure(error)) {
+        return sendVideoTaskEndpointFailure(reply, error);
+      }
+      throw error;
+    }
     if (upstream.ok) {
       await deleteProxyVideoTaskByPublicId(mapping.publicId);
       return reply.code(upstream.status).send();
@@ -241,6 +257,63 @@ export async function videosProxyRoute(app: FastifyInstance) {
       error: { message: text || 'Upstream delete failed', type: 'upstream_error' },
     });
   });
+}
+
+async function requestMappedVideoTaskUpstream(
+  mapping: NonNullable<Awaited<ReturnType<typeof getProxyVideoTaskByPublicId>>>,
+  method: 'GET' | 'DELETE',
+): Promise<{ upstream: Awaited<ReturnType<typeof fetch>> }> {
+  const buildRequest = async (baseUrl: string) => {
+    const targetUrl = buildUpstreamUrl(baseUrl, `/v1/videos/${encodeURIComponent(mapping.upstreamVideoId)}`);
+    const upstream = await fetch(targetUrl, await withSiteProxyRequestInit(targetUrl, {
+      method,
+      headers: {
+        Authorization: `Bearer ${mapping.tokenValue}`,
+      },
+    }));
+    if (!upstream.ok) {
+      const errorText = await upstream.clone().text().catch(() => '');
+      if (shouldRetryProxyRequest(upstream.status, errorText || `HTTP ${upstream.status}`)) {
+        throw new SiteApiEndpointRequestError(errorText || `HTTP ${upstream.status}`, {
+          status: upstream.status,
+          rawErrText: errorText || null,
+        });
+      }
+    }
+    return { upstream };
+  };
+
+  const site = await resolveProxyVideoTaskSite(mapping.accountId);
+  if (site) {
+    return runWithSiteApiEndpointPool(site, (target) => buildRequest(target.baseUrl));
+  }
+
+  return buildRequest(mapping.siteUrl);
+}
+
+function isSiteApiEndpointFailure(error: unknown): error is SiteApiEndpointRequestError {
+  return error instanceof SiteApiEndpointRequestError
+    || (typeof error === 'object' && error !== null && (error as { name?: unknown }).name === 'SiteApiEndpointRequestError');
+}
+
+function sendVideoTaskEndpointFailure(
+  reply: FastifyReply,
+  error: { status?: number | null; rawErrText?: string | null; message?: string | null },
+) {
+  const status = typeof error.status === 'number' && error.status > 0 ? error.status : 502;
+  const rawText = (typeof error.rawErrText === 'string' && error.rawErrText.trim())
+    ? error.rawErrText
+    : (typeof error.message === 'string' ? error.message.trim() : '');
+  if (!rawText) {
+    return reply.code(status).send({
+      error: { message: 'Upstream request failed', type: 'upstream_error' },
+    });
+  }
+  try {
+    return reply.code(status).send(JSON.parse(rawText));
+  } catch {
+    return reply.code(status).type('text/plain').send(rawText);
+  }
 }
 
 async function recordTokenRouterEventBestEffort(

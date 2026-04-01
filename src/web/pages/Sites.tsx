@@ -20,13 +20,21 @@ import { shouldIgnoreRowSelectionClick } from './helpers/rowSelection.js';
 import { resolveInitialConnectionSegment } from './helpers/defaultConnectionSegment.js';
 import {
   buildSiteSaveAction,
+  emptySiteApiEndpoint,
   emptySiteCustomHeader,
   emptySiteForm,
+  serializeSiteApiEndpoints,
   serializeSiteCustomHeaders,
   siteFormFromSite,
   type SiteEditorState,
+  type SiteApiEndpointField,
   type SiteForm,
 } from './helpers/sitesEditor.js';
+import {
+  detectSiteInitializationPreset,
+  getSiteInitializationPreset,
+  listSiteInitializationPresets,
+} from '../../shared/siteInitializationPresets.js';
 
 type SiteSubscriptionSummary = {
   activeCount: number;
@@ -54,10 +62,31 @@ type SiteRow = {
   totalBalance?: number;
   subscriptionSummary?: SiteSubscriptionSummary | null;
   createdAt?: string;
+  apiEndpoints?: Array<{
+    id?: number;
+    url: string;
+    enabled?: boolean;
+    sortOrder?: number;
+    cooldownUntil?: string | null;
+    lastFailureReason?: string | null;
+  }>;
 };
 
 function hasConfiguredCustomHeaders(customHeaders?: string | null): boolean {
   return typeof customHeaders === 'string' && customHeaders.trim().length > 0;
+}
+
+function getConfiguredSiteApiEndpoints(site?: Pick<SiteRow, 'apiEndpoints'> | null) {
+  return Array.isArray(site?.apiEndpoints)
+    ? site.apiEndpoints.filter((item) => typeof item?.url === 'string' && item.url.trim())
+    : [];
+}
+
+function buildSiteApiEndpointSummary(site?: Pick<SiteRow, 'apiEndpoints'> | null): string {
+  const endpoints = getConfiguredSiteApiEndpoints(site);
+  if (endpoints.length <= 0) return '跟随主站点 URL';
+  const enabledCount = endpoints.filter((item) => item.enabled !== false).length;
+  return `${enabledCount}/${endpoints.length} 条启用`;
 }
 
 function formatUsd(value?: number | null): string {
@@ -176,18 +205,18 @@ const platformColors: Record<string, string> = {
 
 const SITE_PLATFORM_OPTIONS = [
   { value: '', label: '平台类型（可自动检测）' },
-  { value: 'new-api', label: 'new-api' },
-  { value: 'one-api', label: 'one-api' },
-  { value: 'anyrouter', label: 'anyrouter' },
-  { value: 'veloera', label: 'veloera' },
-  { value: 'one-hub', label: 'one-hub' },
-  { value: 'done-hub', label: 'done-hub' },
-  { value: 'sub2api', label: 'sub2api' },
-  { value: 'openai', label: 'openai' },
-  { value: 'codex', label: 'codex' },
-  { value: 'claude', label: 'claude' },
-  { value: 'gemini', label: 'gemini' },
-  { value: 'cliproxyapi', label: 'cliproxyapi' },
+  { value: 'new-api', label: 'new-api', description: '聚合面板，适合多渠道统一管理' },
+  { value: 'one-api', label: 'one-api', description: '经典聚合面板，常见于通用 OpenAI 中转' },
+  { value: 'anyrouter', label: 'anyrouter', description: 'any大善人今天还能用吗' },
+  { value: 'veloera', label: 'veloera', description: 'Veloera 兼容站点，常见于聚合代理场景' },
+  { value: 'one-hub', label: 'one-hub', description: '聚合面板，偏向多账号统一管理' },
+  { value: 'done-hub', label: 'done-hub', description: '聚合面板，适合统一转发与管理' },
+  { value: 'sub2api', label: 'sub2api', description: '订阅式中转面板，可同步套餐与余额信息' },
+  { value: 'openai', label: 'openai', description: '通用 OpenAI 兼容接口，手填 Base URL 即可' },
+  { value: 'codex', label: 'codex', description: 'Codex OAuth / Session 优先入口' },
+  { value: 'claude', label: 'claude', description: '通用 Claude / Anthropic 兼容接口' },
+  { value: 'gemini', label: 'gemini', description: '通用 Gemini / Google AI 兼容接口' },
+  { value: 'cliproxyapi', label: 'cliproxyapi', description: 'CPA接入口' },
 ];
 
 export default function Sites() {
@@ -198,7 +227,27 @@ export default function Sites() {
   const [sortMode, setSortMode] = useState<SortMode>('custom');
   const [highlightSiteId, setHighlightSiteId] = useState<number | null>(null);
   const [editor, setEditor] = useState<SiteEditorState | null>(null);
-  const [form, setForm] = useState<SiteForm>(emptySiteForm());
+  const apiEndpointDraftIdRef = useRef(0);
+  const createApiEndpointDraftId = () => {
+    apiEndpointDraftIdRef.current += 1;
+    return `site-api-endpoint-draft-${apiEndpointDraftIdRef.current}`;
+  };
+  const createEmptyApiEndpointRow = (): SiteApiEndpointField => ({
+    ...emptySiteApiEndpoint(),
+    draftId: createApiEndpointDraftId(),
+  });
+  const hydrateSiteForm = (value: SiteForm): SiteForm => {
+    const sourceRows = value.apiEndpoints.length > 0 ? value.apiEndpoints : [createEmptyApiEndpointRow()];
+    return {
+      ...value,
+      apiEndpoints: sourceRows.map((endpoint) => ({
+        ...endpoint,
+        draftId: endpoint.draftId || createApiEndpointDraftId(),
+      })),
+    };
+  };
+  const createEmptySiteForm = (): SiteForm => hydrateSiteForm(emptySiteForm());
+  const [form, setForm] = useState<SiteForm>(() => createEmptySiteForm());
   const [detecting, setDetecting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<number | null>(null);
@@ -211,7 +260,9 @@ export default function Sites() {
     id: number;
     name: string;
     platform?: string | null;
+    initializationPresetId?: string | null;
   } | null>(null);
+  const [selectedInitializationPresetId, setSelectedInitializationPresetId] = useState<string | null>(null);
   const isMobile = useIsMobile();
   const [showMobileTools, setShowMobileTools] = useState(false);
   const [batchActionLoading, setBatchActionLoading] = useState(false);
@@ -232,6 +283,11 @@ export default function Sites() {
   const [disabledModelsSaving, setDisabledModelsSaving] = useState(false);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [disabledModelSearch, setDisabledModelSearch] = useState('');
+  const initializationPresetOptions = useMemo(() => listSiteInitializationPresets(), []);
+  const selectedInitializationPreset = useMemo(
+    () => getSiteInitializationPreset(selectedInitializationPresetId),
+    [selectedInitializationPresetId],
+  );
 
   const disabledModelSet = useMemo(() => new Set(disabledModels), [disabledModels]);
 
@@ -298,14 +354,28 @@ export default function Sites() {
 
   const platformOptions = useMemo(() => {
     const current = form.platform.trim();
-    if (!current || SITE_PLATFORM_OPTIONS.some((option) => option.value === current)) {
-      return SITE_PLATFORM_OPTIONS;
-    }
+    const genericOptions = (!current || SITE_PLATFORM_OPTIONS.some((option) => option.value === current))
+      ? SITE_PLATFORM_OPTIONS
+      : [
+        ...SITE_PLATFORM_OPTIONS,
+        { value: current, label: `${current}（当前值）` },
+      ];
+    const presetOptions = initializationPresetOptions.map((preset) => ({
+      value: `preset:${preset.id}`,
+      label: preset.label,
+      description: [
+        preset.defaultUrl ? '自动填充官方地址' : '',
+        preset.recommendedSkipModelFetch ? 'API Key 优先初始化' : '',
+      ].filter(Boolean).join(' · '),
+    }));
     return [
-      ...SITE_PLATFORM_OPTIONS,
-      { value: current, label: `${current}（当前值）` },
+      genericOptions[0]!,
+      ...presetOptions,
+      ...genericOptions.slice(1),
     ];
-  }, [form.platform]);
+  }, [form.platform, initializationPresetOptions]);
+  const activeInitializationPreset = selectedInitializationPreset;
+  const platformSelectValue = selectedInitializationPreset ? `preset:${selectedInitializationPreset.id}` : form.platform;
 
   useEffect(() => {
     return () => {
@@ -338,7 +408,8 @@ export default function Sites() {
 
   const closeEditor = () => {
     setEditor(null);
-    setForm(emptySiteForm());
+    setForm(createEmptySiteForm());
+    setSelectedInitializationPresetId(null);
   };
 
   const scrollToEditorTop = () => {
@@ -354,13 +425,15 @@ export default function Sites() {
       return;
     }
     setEditor({ mode: 'add' });
-    setForm(emptySiteForm());
+    setForm(createEmptySiteForm());
+    setSelectedInitializationPresetId(null);
     scrollToEditorTop();
   };
 
   const openEdit = (site: SiteRow) => {
     setEditor({ mode: 'edit', editingSiteId: site.id });
-    setForm(siteFormFromSite(site));
+    setForm(hydrateSiteForm(siteFormFromSite(site)));
+    setSelectedInitializationPresetId(detectSiteInitializationPreset(site.url, site.platform)?.id || null);
     scrollToEditorTop();
     // Load disabled models and discovered models independently so a best-effort
     // availability fetch cannot wipe the existing disabled-model state.
@@ -442,14 +515,21 @@ export default function Sites() {
       toast.error(serializedCustomHeaders.error || '自定义请求头格式不正确');
       return;
     }
+    const serializedApiEndpoints = serializeSiteApiEndpoints(form.apiEndpoints);
+    if (!serializedApiEndpoints.valid) {
+      toast.error(serializedApiEndpoints.error || 'AI 请求地址格式不正确');
+      return;
+    }
 
     const payload = {
       name: form.name.trim(),
       url: form.url.trim(),
       externalCheckinUrl: form.externalCheckinUrl.trim(),
       platform: form.platform.trim(),
+      initializationPresetId: selectedInitializationPresetId,
       proxyUrl: form.proxyUrl.trim(),
       useSystemProxy: !!form.useSystemProxy,
+      apiEndpoints: serializedApiEndpoints.apiEndpoints,
       customHeaders: serializedCustomHeaders.customHeaders,
       globalWeight: Number(parsedGlobalWeight.toFixed(3)),
     };
@@ -466,14 +546,18 @@ export default function Sites() {
         toast.success(`站点 "${payload.name}" 已添加`);
         const createdSiteId = Number(created?.id) || 0;
         if (createdSiteId > 0) {
-          // 所有平台都弹出选择Modal，让用户决定下一步
           const createdPlatform = typeof created?.platform === 'string' && created.platform.trim()
             ? created.platform.trim()
             : payload.platform;
+          const returnedPreset = getSiteInitializationPreset(created?.initializationPresetId);
+          const fallbackPreset = selectedInitializationPreset && selectedInitializationPreset.platform === createdPlatform
+            ? selectedInitializationPreset
+            : null;
           setCreatedSiteForChoice({
             id: createdSiteId,
             name: payload.name,
             platform: createdPlatform,
+            initializationPresetId: returnedPreset?.id || fallbackPreset?.id || null,
           });
         }
       } else {
@@ -517,6 +601,48 @@ export default function Sites() {
     });
   };
 
+  const updateApiEndpointRow = (index: number, patch: Partial<SiteApiEndpointField>) => {
+    setForm((prev) => ({
+      ...prev,
+      apiEndpoints: prev.apiEndpoints.map((item, itemIndex) => (
+        itemIndex === index
+          ? { ...item, ...patch }
+          : item
+      )),
+    }));
+  };
+
+  const addApiEndpointRow = () => {
+    setForm((prev) => ({
+      ...prev,
+      apiEndpoints: [...prev.apiEndpoints, createEmptyApiEndpointRow()],
+    }));
+  };
+
+  const removeApiEndpointRow = (index: number) => {
+    setForm((prev) => {
+      const nextEndpoints = prev.apiEndpoints.filter((_, itemIndex) => itemIndex !== index);
+      return {
+        ...prev,
+        apiEndpoints: nextEndpoints.length > 0 ? nextEndpoints : [createEmptyApiEndpointRow()],
+      };
+    });
+  };
+
+  const moveApiEndpointRow = (index: number, direction: 'up' | 'down') => {
+    setForm((prev) => {
+      const targetIndex = direction === 'up' ? index - 1 : index + 1;
+      if (targetIndex < 0 || targetIndex >= prev.apiEndpoints.length) return prev;
+      const nextEndpoints = [...prev.apiEndpoints];
+      const [current] = nextEndpoints.splice(index, 1);
+      nextEndpoints.splice(targetIndex, 0, current);
+      return {
+        ...prev,
+        apiEndpoints: nextEndpoints,
+      };
+    });
+  };
+
   const handleSiteCreatedChoice = (choice: 'session' | 'apikey' | 'later') => {
     if (!createdSiteForChoice) return;
 
@@ -526,6 +652,9 @@ export default function Sites() {
       create: '1',
       siteId: String(siteId),
     });
+    if (createdSiteForChoice.initializationPresetId) {
+      params.set('initPreset', createdSiteForChoice.initializationPresetId);
+    }
 
     if (choice === 'session') {
       // codex平台使用OAuth流程
@@ -557,8 +686,19 @@ export default function Sites() {
     try {
       const result = await api.detectSite(form.url.trim());
       if (result?.platform) {
+        const detectedPreset = getSiteInitializationPreset(result?.initializationPresetId);
         setForm((prev) => ({ ...prev, platform: result.platform }));
-        toast.success(`检测到平台: ${result.platform}`);
+        setSelectedInitializationPresetId((current) => {
+          if (detectedPreset) return detectedPreset.id;
+          const activePreset = getSiteInitializationPreset(current);
+          if (activePreset && activePreset.platform !== result.platform) return null;
+          return current;
+        });
+        toast.success(
+          detectedPreset
+            ? `检测到平台: ${result.platform}（${detectedPreset.label}）`
+            : `检测到平台: ${result.platform}`,
+        );
       } else {
         toast.error(result?.error || '无法识别平台类型');
       }
@@ -832,7 +972,11 @@ export default function Sites() {
       {createdSiteForChoice && (
         <SiteCreatedModal
           siteName={createdSiteForChoice.name}
-          platform={createdSiteForChoice.platform}
+          initializationPresetId={createdSiteForChoice.initializationPresetId}
+          initialSegment={
+            getSiteInitializationPreset(createdSiteForChoice.initializationPresetId)?.initialSegment
+            || resolveInitialConnectionSegment(createdSiteForChoice.platform)
+          }
           onChoice={handleSiteCreatedChoice}
           onClose={() => {
             setCreatedSiteForChoice(null);
@@ -883,7 +1027,8 @@ export default function Sites() {
             />
             <div style={{ display: 'flex', gap: 8, flexDirection: isMobile ? 'column' : 'row' }}>
               <input
-                placeholder="站点 URL (例如 https://api.example.com)"
+                data-testid="site-primary-url-input"
+                placeholder="站点 URL（面板/登录/签到地址，如 https://nih.cc）"
                 value={form.url}
                 onChange={(e) => setForm((prev) => ({ ...prev, url: e.target.value }))}
                 onBlur={() => {
@@ -904,15 +1049,35 @@ export default function Sites() {
             </div>
             <div
               style={{
-                border: `1px solid ${form.platform.trim() ? 'color-mix(in srgb, var(--color-success) 48%, transparent)' : 'var(--color-border)'}`,
+                border: `1px solid ${form.platform.trim() ? 'color-mix(in srgb, var(--color-primary) 28%, var(--color-border))' : 'var(--color-border)'}`,
                 borderRadius: 'var(--radius-sm)',
-                background: form.platform.trim() ? 'color-mix(in srgb, var(--color-success) 10%, var(--color-bg))' : 'var(--color-bg)',
-                transition: 'all 0.2s',
+                background: 'var(--color-bg)',
+                boxShadow: form.platform.trim() ? '0 0 0 2px color-mix(in srgb, var(--color-primary) 10%, transparent)' : 'none',
+                transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
               }}
             >
               <ModernSelect
-                value={form.platform}
-                onChange={(value) => setForm((prev) => ({ ...prev, platform: value }))}
+                value={platformSelectValue}
+                onChange={(value) => {
+                  if (value.startsWith('preset:')) {
+                    const preset = getSiteInitializationPreset(value.slice('preset:'.length));
+                    if (!preset) return;
+                    setSelectedInitializationPresetId(preset.id);
+                    setForm((prev) => {
+                      const currentUrl = prev.url.trim();
+                      const shouldFillDefaultUrl = !currentUrl
+                        || (activeInitializationPreset?.defaultUrl && currentUrl === activeInitializationPreset.defaultUrl);
+                      return {
+                        ...prev,
+                        platform: preset.platform,
+                        url: shouldFillDefaultUrl && preset.defaultUrl ? preset.defaultUrl : prev.url,
+                      };
+                    });
+                    return;
+                  }
+                  setForm((prev) => ({ ...prev, platform: value }));
+                  setSelectedInitializationPresetId(null);
+                }}
                 options={platformOptions}
                 placeholder="平台类型（可自动检测）"
               />
@@ -924,6 +1089,112 @@ export default function Sites() {
               style={formInputStyle}
             />
           </ResponsiveFormGrid>
+          {activeInitializationPreset && (
+            <div className="alert alert-info animate-scale-in">
+              <div className="alert-title">已应用官方预设 · {activeInitializationPreset.label}</div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.7 }}>
+                <div>{activeInitializationPreset.description}</div>
+                {form.url.trim() === activeInitializationPreset.defaultUrl && (
+                  <div>当前已自动填入官方地址；如需走自建网关，也可以直接改 URL。</div>
+                )}
+                <div>推荐模型：{activeInitializationPreset.recommendedModels.join(' / ')}</div>
+              </div>
+            </div>
+          )}
+          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
+            主站点 URL 用于登录、签到、面板接口和系统访问令牌管理；如果 AI 请求地址和主站点不同，请在下面的 AI 请求地址池里填写。
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 10,
+              padding: 12,
+              border: '1px solid var(--color-border)',
+              borderRadius: 'var(--radius-sm)',
+              background: 'color-mix(in srgb, var(--color-surface) 82%, transparent)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>
+                AI 请求地址池
+              </div>
+              <button
+                type="button"
+                onClick={addApiEndpointRow}
+                className="btn btn-ghost"
+                style={{ border: '1px solid var(--color-border)' }}
+              >
+                + 添加 AI 地址
+              </button>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.7 }}>
+              这里只用于 `/v1/*`、模型发现和 API Key 验证。不填时默认跟随主站点 URL；多条地址会按列表顺序参与轮询，禁用的地址不会参与调度。
+            </div>
+            {form.apiEndpoints.map((endpoint, index) => (
+              <div
+                key={endpoint.draftId || `site-api-endpoint-draft-${index}`}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                  padding: 10,
+                  border: '1px solid var(--color-border-light)',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'var(--color-bg)',
+                }}
+              >
+                <div style={{ display: 'flex', gap: 8, flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'stretch' : 'center' }}>
+                  <input
+                    placeholder="AI 请求地址（如 https://api.nih.cc）"
+                    value={endpoint.url}
+                    onChange={(e) => updateApiEndpointRow(index, { url: e.target.value })}
+                    style={{ ...formInputStyle, flex: 1, fontFamily: 'var(--font-mono)' }}
+                  />
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+                    <input
+                      type="checkbox"
+                      checked={endpoint.enabled !== false}
+                      onChange={(e) => updateApiEndpointRow(index, { enabled: e.target.checked })}
+                    />
+                    启用
+                  </label>
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 11, color: 'var(--color-text-muted)' }}>
+                    <span>顺序 #{index + 1}</span>
+                    {endpoint.cooldownUntil ? <span>冷却至 {formatDateTimeLocal(endpoint.cooldownUntil)}</span> : null}
+                    {endpoint.lastFailureReason ? <span>最近失败: {endpoint.lastFailureReason}</span> : null}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      onClick={() => moveApiEndpointRow(index, 'up')}
+                      disabled={index === 0}
+                      className="btn btn-link btn-link-muted"
+                    >
+                      上移
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => moveApiEndpointRow(index, 'down')}
+                      disabled={index >= form.apiEndpoints.length - 1}
+                      className="btn btn-link btn-link-muted"
+                    >
+                      下移
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeApiEndpointRow(index)}
+                      className="btn btn-link btn-link-danger"
+                    >
+                      删除
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
           <div
             style={{
               display: 'flex',
@@ -1134,7 +1405,7 @@ export default function Sites() {
                 style={formInputStyle}
               />
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-                填写后优先使用站点代理；留空则使用系统代理或直连(取决于设置开关状态)。
+                这里只是 HTTP/SOCKS 代理地址，不是上游 AI API 地址。填写后优先使用站点代理；留空则使用系统代理或直连(取决于设置开关状态)。
               </div>
             </div>
             <label style={{
@@ -1285,6 +1556,29 @@ export default function Sites() {
                           ) : '-'}
                         />
                         <MobileField
+                          label="AI 请求地址"
+                          stacked
+                          value={(
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                              <span>{buildSiteApiEndpointSummary(site)}</span>
+                              {getConfiguredSiteApiEndpoints(site).map((endpoint, endpointIndex) => (
+                                <span
+                                  key={`mobile-site-endpoint-${site.id}-${endpoint.id ?? endpointIndex}`}
+                                  style={{
+                                    fontSize: 11,
+                                    fontFamily: 'var(--font-mono)',
+                                    color: endpoint.enabled === false ? 'var(--color-text-muted)' : 'var(--color-text-secondary)',
+                                    wordBreak: 'break-all',
+                                  }}
+                                >
+                                  {endpoint.url}
+                                  {endpoint.enabled === false ? '（已禁用）' : ''}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        />
+                        <MobileField
                           label="系统代理"
                           value={(
                             <span className={`badge ${site.useSystemProxy ? 'badge-info' : 'badge-muted'}`} style={{ fontSize: 11 }}>
@@ -1421,6 +1715,9 @@ export default function Sites() {
                             自定义头
                           </span>
                         ) : null}
+                        <span className={`badge ${getConfiguredSiteApiEndpoints(site).length > 0 ? 'badge-warning' : 'badge-muted'}`} style={{ fontSize: 11 }}>
+                          AI 地址: {buildSiteApiEndpointSummary(site)}
+                        </span>
                       </div>
                     </td>
                     <td className="sites-url-cell" style={{ maxWidth: 300 }}>

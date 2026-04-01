@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
+import { insertAndGetById } from '../db/insertHelpers.js';
 import { getCredentialModeFromExtraConfig, mergeAccountExtraConfig } from './accountExtraConfig.js';
 
 export type SiteApiKeyMigrationSummary = {
@@ -58,26 +59,26 @@ export async function migrateSiteApiKeysToAccounts(): Promise<SiteApiKeyMigratio
     if (targetAccount) {
       summary.deduped += 1;
     } else {
-      const inserted = await db.insert(schema.accounts).values({
-        siteId: site.id,
-        username: null,
-        accessToken: '',
-        apiToken: siteApiKey,
-        checkinEnabled: false,
-        status: 'active',
-        extraConfig: mergeAccountExtraConfig(undefined, { credentialMode: 'apikey' }),
-        isPinned: false,
-        sortOrder: nextSortOrder,
-      }).run();
-      const accountId = Number(inserted.lastInsertRowid || 0);
-      if (accountId > 0) {
-        targetAccount = await db.select().from(schema.accounts).where(eq(schema.accounts.id, accountId)).get() || null;
-        if (targetAccount) {
-          accounts.push(targetAccount);
-          nextSortOrder += 1;
-          summary.migrated += 1;
-        }
-      }
+      targetAccount = await insertAndGetById<typeof schema.accounts.$inferSelect>({
+        table: schema.accounts,
+        idColumn: schema.accounts.id,
+        values: {
+          siteId: site.id,
+          username: null,
+          accessToken: '',
+          apiToken: siteApiKey,
+          checkinEnabled: false,
+          status: 'active',
+          extraConfig: mergeAccountExtraConfig(undefined, { credentialMode: 'apikey' }),
+          isPinned: false,
+          sortOrder: nextSortOrder,
+        },
+        insertErrorMessage: 'failed to create migrated site account',
+        loadErrorMessage: 'failed to create migrated site account',
+      });
+      accounts.push(targetAccount);
+      nextSortOrder += 1;
+      summary.migrated += 1;
     }
 
     if (targetAccount) {

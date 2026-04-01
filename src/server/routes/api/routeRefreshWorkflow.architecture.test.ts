@@ -10,22 +10,33 @@ function expectNoDirectModelServiceRouteRefresh(source: string): void {
   expect(source).not.toMatch(/import\s*\{[^}]*\brebuildTokenRoutesFromAvailability\b[^}]*\}\s*from\s*['"][^'"]*modelService\.js['"]/m);
 }
 
+function expectImportsRouteRefreshWorkflow(source: string): void {
+  expect(source).toMatch(
+    /import\s+\*\s+as\s+routeRefreshWorkflow\s+from\s+['"][^'"]*routeRefreshWorkflow\.js['"]/m,
+  );
+}
+
+function expectCallsSelectProxyChannelForAttempt(source: string): void {
+  expect(source).toMatch(/\bselectProxyChannelForAttempt\s*\(/);
+}
+
+function expectCallsRebuildRoutesOnly(source: string): void {
+  expect(source).toMatch(/\brouteRefreshWorkflow\.rebuildRoutesOnly\s*\(/);
+}
+
 describe('route refresh workflow architecture boundaries', () => {
   it('keeps api controllers on the shared route refresh workflow instead of modelService', () => {
     const tokensSource = readSource('./tokens.ts');
     const settingsSource = readSource('./settings.ts');
     const statsSource = readSource('./stats.ts');
 
-    expect(tokensSource).toContain("from '../../services/routeRefreshWorkflow.js'");
-    expect(tokensSource).not.toContain("from '../../services/modelService.js'");
+    for (const source of [tokensSource, settingsSource, statsSource]) {
+      expectImportsRouteRefreshWorkflow(source);
+      expectNoDirectModelServiceRouteRefresh(source);
+    }
 
-    expect(settingsSource).toContain("from '../../services/routeRefreshWorkflow.js'");
-    expect(settingsSource).not.toContain("from '../../services/modelService.js'");
-
-    expect(statsSource).toContain("from '../../services/routeRefreshWorkflow.js'");
-    expectNoDirectModelServiceRouteRefresh(statsSource);
-    expect(tokensSource).toContain('const rebuild = await routeRefreshWorkflow.rebuildRoutesOnly();');
-    expect(statsSource).toContain('const rebuild = await routeRefreshWorkflow.rebuildRoutesOnly();');
+    expectCallsRebuildRoutesOnly(tokensSource);
+    expectCallsRebuildRoutesOnly(statsSource);
   });
 
   it('keeps proxy fallback refreshes and scheduler hooks on the route refresh workflow', () => {
@@ -39,6 +50,12 @@ describe('route refresh workflow architecture boundaries', () => {
     const oauthServiceSource = readSource('../../services/oauth/service.ts');
     const sharedSurfaceSource = readSource('../../proxy-core/surfaces/sharedSurface.ts');
     const geminiSurfaceSource = readSource('../../proxy-core/surfaces/geminiSurface.ts');
+    const channelSelectionSource = readSource('../../proxy-core/channelSelection.ts');
+
+    for (const source of [schedulerSource, oauthServiceSource, channelSelectionSource]) {
+      expectImportsRouteRefreshWorkflow(source);
+      expectNoDirectModelServiceRouteRefresh(source);
+    }
 
     for (const source of [
       completionsSource,
@@ -47,13 +64,24 @@ describe('route refresh workflow architecture boundaries', () => {
       modelsRouteSource,
       searchSource,
       videosSource,
-      schedulerSource,
-      oauthServiceSource,
       sharedSurfaceSource,
       geminiSurfaceSource,
     ]) {
-      expect(source).toContain('routeRefreshWorkflow');
       expectNoDirectModelServiceRouteRefresh(source);
     }
+
+    for (const source of [
+      completionsSource,
+      embeddingsSource,
+      imagesSource,
+      searchSource,
+      videosSource,
+      sharedSurfaceSource,
+    ]) {
+      expectCallsSelectProxyChannelForAttempt(source);
+    }
+
+    expect(geminiSurfaceSource).toMatch(/\bselectGeminiChannel\s*\(/);
+    expect(geminiSurfaceSource).toMatch(/\bselectNextGeminiProbeChannel\s*\(/);
   });
 });

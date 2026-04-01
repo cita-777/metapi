@@ -1,6 +1,7 @@
 ﻿import { FastifyInstance } from 'fastify';
 import { and, eq, inArray } from 'drizzle-orm';
 import { db, schema } from '../../db/index.js';
+import { requireInsertedRowId } from '../../db/insertHelpers.js';
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import {
   ACCOUNT_TOKEN_VALUE_STATUS_READY,
@@ -12,14 +13,29 @@ import {
   type RouteRoutingStrategy,
 } from '../../services/routeRoutingStrategy.js';
 import { invalidateTokenRouterCache, matchesModelPattern, tokenRouter } from '../../services/tokenRouter.js';
-import { startBackgroundTask } from '../../services/backgroundTaskService.js';
+import { appendBackgroundTaskLog, startBackgroundTask } from '../../services/backgroundTaskService.js';
 import {
   clearRouteDecisionSnapshot,
   clearRouteDecisionSnapshots,
   parseRouteDecisionSnapshot,
   saveRouteDecisionSnapshots,
 } from '../../services/routeDecisionSnapshotStore.js';
+import { clearRouteCooldown } from '../../services/routeCooldownService.js';
+import {
+  refreshAllRouteDecisionSnapshots,
+  ROUTE_DECISION_REFRESH_DEDUPE_KEY,
+  ROUTE_DECISION_REFRESH_TASK_TYPE,
+} from '../../services/routeDecisionRefreshService.js';
 import { normalizeTokenRouteMode, type RouteMode } from '../../../shared/tokenRouteContract.js';
+import {
+  parseRouteChannelBatchCreatePayload,
+  parseRouteChannelCreatePayload,
+  parseRouteChannelUpdatePayload,
+  parseRouteRebuildPayload,
+  parseTokenRouteBatchPayload,
+  parseTokenRouteCreatePayload,
+  parseTokenRouteUpdatePayload,
+} from '../../contracts/tokenRoutePayloads.js';
 
 function isExactModelPattern(modelPattern: string): boolean {
   const normalized = modelPattern.trim();
@@ -759,10 +775,24 @@ export async function tokensRoutes(app: FastifyInstance) {
     return channelsByRoute.get(routeId) || [];
   });
 
-  // Batch add channels to a route
-  app.post<{ Params: { id: string }; Body: { channels: Array<{ accountId: number; tokenId?: number; sourceModel?: string }> } }>('/api/routes/:id/channels/batch', async (request, reply) => {
+  app.post<{ Params: { id: string } }>('/api/routes/:id/cooldown/clear', async (request, reply) => {
     const routeId = parseInt(request.params.id, 10);
-    const body = request.body;
+    const result = await clearRouteCooldown(routeId);
+    if (!result) {
+      return reply.code(404).send({ success: false, message: '路由不存在' });
+    }
+    return result;
+  });
+
+  // Batch add channels to a route
+  app.post<{ Params: { id: string }; Body: unknown }>('/api/routes/:id/channels/batch', async (request, reply) => {
+    const parsedBody = parseRouteChannelBatchCreatePayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ success: false, message: parsedBody.error });
+    }
+
+    const routeId = parseInt(request.params.id, 10);
+    const body = parsedBody.data;
 
     const route = await getRouteWithSources(routeId);
     if (!route) {
@@ -770,10 +800,6 @@ export async function tokensRoutes(app: FastifyInstance) {
     }
     if (isExplicitGroupRoute(route)) {
       return reply.code(400).send({ success: false, message: '显式群组不支持直接维护通道' });
-    }
-
-    if (!body?.channels || !Array.isArray(body.channels) || body.channels.length === 0) {
-      return reply.code(400).send({ success: false, message: 'channels 必须是非空数组' });
     }
 
     const existingChannels = await db.select().from(schema.routeChannels)
@@ -792,11 +818,6 @@ export async function tokensRoutes(app: FastifyInstance) {
     const errors: string[] = [];
 
     for (const item of body.channels) {
-      if (!item?.accountId || typeof item.accountId !== 'number') {
-        errors.push('无效的 accountId');
-        continue;
-      }
-
       const sourceModel = typeof item.sourceModel === 'string'
         ? item.sourceModel.trim()
         : (isExactModelPattern(route.modelPattern) ? route.modelPattern.trim() : '');
@@ -954,9 +975,53 @@ export async function tokensRoutes(app: FastifyInstance) {
     return { success: true, decisions };
   });
 
+  app.post('/api/routes/decision/refresh', async (_request, reply) => {
+    let taskId = '';
+    const { task, reused } = startBackgroundTask(
+      {
+        type: ROUTE_DECISION_REFRESH_TASK_TYPE,
+        title: '刷新路由选中概率',
+        dedupeKey: ROUTE_DECISION_REFRESH_DEDUPE_KEY,
+        successMessage: (currentTask) => {
+          const result = currentTask.result as { exactModelCount?: number; wildcardRouteCount?: number } | null;
+          const exactModelCount = result?.exactModelCount ?? 0;
+          const wildcardRouteCount = result?.wildcardRouteCount ?? 0;
+          return `路由选中概率刷新完成：精确模型 ${exactModelCount}，通配符路由 ${wildcardRouteCount}`;
+        },
+        failureMessage: (currentTask) => `路由选中概率刷新失败：${currentTask.error || 'unknown error'}`,
+      },
+      async () => {
+        await Promise.resolve();
+        return await refreshAllRouteDecisionSnapshots({
+          refreshPricingCatalog: true,
+          onProgress: (message) => {
+            appendBackgroundTaskLog(taskId, message);
+          },
+        });
+      },
+    );
+    taskId = task.id;
+
+    return reply.code(202).send({
+      success: true,
+      queued: true,
+      reused,
+      jobId: task.id,
+      status: task.status,
+      message: reused
+        ? '路由选中概率刷新任务执行中，可稍后返回查看'
+        : '已开始后台刷新路由选中概率，可稍后返回查看',
+    });
+  });
+
   // Create a route
-  app.post<{ Body: { routeMode?: string; modelPattern?: string; displayName?: string; displayIcon?: string; modelMapping?: string; routingStrategy?: string; enabled?: boolean; sourceRouteIds?: number[] } }>('/api/routes', async (request, reply) => {
-    const body = request.body;
+  app.post<{ Body: unknown }>('/api/routes', async (request, reply) => {
+    const parsedBody = parseTokenRouteCreatePayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ success: false, message: parsedBody.error });
+    }
+
+    const body = parsedBody.data;
     const routeMode = normalizeRouteMode(body.routeMode);
     const displayName = typeof body.displayName === 'string' ? body.displayName.trim() : '';
     const sourceRouteIds = normalizeSourceRouteIdsInput(body.sourceRouteIds);
@@ -986,10 +1051,7 @@ export async function tokensRoutes(app: FastifyInstance) {
       routingStrategy: normalizedRoutingStrategy,
       enabled: body.enabled ?? true,
     }).run();
-    const routeId = Number(insertedRoute.lastInsertRowid || 0);
-    if (routeId <= 0) {
-      return { success: false, message: '创建路由失败' };
-    }
+    const routeId = requireInsertedRowId(insertedRoute, '创建路由失败');
     const route = await getRouteWithSources(routeId);
     if (!route) {
       return { success: false, message: '创建路由失败' };
@@ -1014,9 +1076,14 @@ export async function tokensRoutes(app: FastifyInstance) {
   });
 
   // Update a route
-  app.put<{ Params: { id: string }; Body: any }>('/api/routes/:id', async (request, reply) => {
+  app.put<{ Params: { id: string }; Body: unknown }>('/api/routes/:id', async (request, reply) => {
+    const parsedBody = parseTokenRouteUpdatePayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ success: false, message: parsedBody.error });
+    }
+
     const id = parseInt(request.params.id, 10);
-    const body = request.body as Record<string, unknown>;
+    const body = parsedBody.data;
     const existingRoute = await getRouteWithSources(id);
     if (!existingRoute) {
       return reply.code(404).send({ success: false, message: '路由不存在' });
@@ -1113,11 +1180,12 @@ export async function tokensRoutes(app: FastifyInstance) {
 
 
   // Batch update routes (enable/disable)
-  app.post<{ Body: { ids: number[]; action: 'enable' | 'disable' } }>('/api/routes/batch', async (request, reply) => {
-    const body = request.body;
-    if (!body || typeof body !== 'object') {
-      return reply.code(400).send({ success: false, message: '请求体必须是对象' });
+  app.post<{ Body: unknown }>('/api/routes/batch', async (request, reply) => {
+    const parsedBody = parseTokenRouteBatchPayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ success: false, message: parsedBody.error });
     }
+    const body = parsedBody.data;
     const action = body.action;
     if (action !== 'enable' && action !== 'disable') {
       return reply.code(400).send({ success: false, message: 'action 必须是 enable 或 disable' });
@@ -1154,9 +1222,14 @@ export async function tokensRoutes(app: FastifyInstance) {
     return { success: true, updatedCount: Number(updateResult?.changes || 0) };
   });
   // Add a channel to a route
-  app.post<{ Params: { id: string }; Body: { accountId: number; tokenId?: number; sourceModel?: string; priority?: number; weight?: number } }>('/api/routes/:id/channels', async (request, reply) => {
+  app.post<{ Params: { id: string }; Body: unknown }>('/api/routes/:id/channels', async (request, reply) => {
+    const parsedBody = parseRouteChannelCreatePayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ success: false, message: parsedBody.error });
+    }
+
     const routeId = parseInt(request.params.id, 10);
-    const body = request.body;
+    const body = parsedBody.data;
 
     const route = await getRouteWithSources(routeId);
     if (!route) {
@@ -1199,10 +1272,7 @@ export async function tokensRoutes(app: FastifyInstance) {
       priority: body.priority ?? 0,
       weight: body.weight ?? 10,
     }).run();
-    const channelId = Number(insertedChannel.lastInsertRowid || 0);
-    if (channelId <= 0) {
-      return reply.code(500).send({ success: false, message: '创建通道失败' });
-    }
+    const channelId = requireInsertedRowId(insertedChannel, '创建通道失败');
     const created = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, channelId)).get();
     if (!created) {
       return reply.code(500).send({ success: false, message: '创建通道失败' });
@@ -1247,9 +1317,14 @@ export async function tokensRoutes(app: FastifyInstance) {
   });
 
   // Update a channel
-  app.put<{ Params: { channelId: string }; Body: any }>('/api/channels/:channelId', async (request, reply) => {
+  app.put<{ Params: { channelId: string }; Body: unknown }>('/api/channels/:channelId', async (request, reply) => {
+    const parsedBody = parseRouteChannelUpdatePayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ success: false, message: parsedBody.error });
+    }
+
     const channelId = parseInt(request.params.channelId, 10);
-    const body = request.body as Record<string, unknown>;
+    const body = parsedBody.data;
 
     const channel = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, channelId)).get();
     if (!channel) {
@@ -1282,9 +1357,10 @@ export async function tokensRoutes(app: FastifyInstance) {
       else updates.sourceModel = String(body.sourceModel).trim() || null;
     }
 
-    for (const key of ['priority', 'weight', 'enabled', 'tokenId']) {
-      if (body[key] !== undefined) updates[key] = body[key];
-    }
+    if (body.priority !== undefined) updates.priority = body.priority;
+    if (body.weight !== undefined) updates.weight = body.weight;
+    if (body.enabled !== undefined) updates.enabled = body.enabled;
+    if (body.tokenId !== undefined) updates.tokenId = body.tokenId;
 
     await db.update(schema.routeChannels).set(updates).where(eq(schema.routeChannels.id, channelId)).run();
     await clearRouteDecisionSnapshot(channel.routeId);
@@ -1307,14 +1383,19 @@ export async function tokensRoutes(app: FastifyInstance) {
   });
 
   // Rebuild routes/channels from model availability.
-  app.post<{ Body?: { refreshModels?: boolean; wait?: boolean } }>('/api/routes/rebuild', async (request, reply) => {
-    const body = (request.body || {}) as { refreshModels?: boolean };
+  app.post<{ Body: unknown }>('/api/routes/rebuild', async (request, reply) => {
+    const parsedBody = parseRouteRebuildPayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ success: false, message: parsedBody.error });
+    }
+
+    const body = parsedBody.data;
     if (body.refreshModels === false) {
       const rebuild = await routeRefreshWorkflow.rebuildRoutesOnly();
       return { success: true, rebuild };
     }
 
-    if ((request.body as { wait?: boolean } | undefined)?.wait) {
+    if (body.wait) {
       const result = await routeRefreshWorkflow.refreshModelsAndRebuildRoutes();
       return { success: true, ...result };
     }

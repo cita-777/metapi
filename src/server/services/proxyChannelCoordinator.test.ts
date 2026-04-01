@@ -64,6 +64,22 @@ describe('proxyChannelCoordinator', () => {
     expect(proxyChannelCoordinator.getStickyChannelId(key)).toBeNull();
   });
 
+  it('treats structured oauth providers as session-scoped even when extraConfig omits oauth.provider', () => {
+    const key = proxyChannelCoordinator.buildStickySessionKey({
+      clientKind: 'codex',
+      sessionId: 'turn-oauth-structured',
+      requestedModel: 'gpt-5.2',
+      downstreamPath: '/v1/responses',
+      downstreamApiKeyId: 9,
+    });
+
+    proxyChannelCoordinator.bindStickyChannel(key, 42, {
+      oauthProvider: 'codex',
+      extraConfig: JSON.stringify({ credentialMode: 'session' }),
+    });
+    expect(proxyChannelCoordinator.getStickyChannelId(key)).toBe(42);
+  });
+
   it('queues requests behind the active lease and grants the next waiter after release', async () => {
     const first = await proxyChannelCoordinator.acquireChannelLease({
       channelId: 11,

@@ -3,6 +3,11 @@ import { randomUUID } from 'node:crypto';
 import { fetch, File as UndiciFile, FormData as UndiciFormData } from 'undici';
 import { config } from '../../config.js';
 import { readRuntimeResponseText } from '../../proxy-core/executors/types.js';
+import {
+  normalizeForcedChannelId,
+  TESTER_FORCED_CHANNEL_HEADER,
+  TESTER_REQUEST_HEADER,
+} from '../../proxy-core/channelSelection.js';
 
 type UndiciRequestInit = Parameters<typeof fetch>[1];
 
@@ -14,6 +19,7 @@ type TestChatRequestBody = {
   messages?: TestChatMessage[];
   targetFormat?: TestTargetFormat;
   stream?: boolean;
+  forcedChannelId?: number;
   temperature?: number;
   top_p?: number;
   max_tokens?: number;
@@ -27,6 +33,7 @@ type ValidatedTestChatPayload = {
   messages: TestChatMessage[];
   targetFormat: TestTargetFormat;
   stream?: boolean;
+  forcedChannelId?: number | null;
   temperature?: number;
   top_p?: number;
   max_tokens?: number;
@@ -52,6 +59,7 @@ type ProxyTestEnvelope = {
   stream?: boolean;
   jobMode?: boolean;
   rawMode?: boolean;
+  forcedChannelId?: number | null;
   jsonBody?: unknown;
   rawJsonText?: string;
   multipartFields?: Record<string, string>;
@@ -65,6 +73,7 @@ type ValidatedProxyTestEnvelope = {
   stream: boolean;
   jobMode: boolean;
   rawMode: boolean;
+  forcedChannelId?: number | null;
   jsonBody?: unknown;
   rawJsonText?: string;
   multipartFields?: Record<string, string>;
@@ -162,19 +171,25 @@ function validateLegacyPayload(
     return null;
   }
 
+  if (body.targetFormat === 'gemini') {
+    reply.code(400).send({
+      error: 'targetFormat=gemini is not supported on legacy /api/test/chat routes; use the proxy tester Gemini path instead',
+    });
+    return null;
+  }
+
   const targetFormat: TestTargetFormat = body.targetFormat === 'claude'
     ? 'claude'
     : body.targetFormat === 'responses'
       ? 'responses'
-      : body.targetFormat === 'gemini'
-        ? 'gemini'
-        : 'openai';
+      : 'openai';
 
   return {
     model: body.model,
     messages: body.messages,
     targetFormat,
     stream: body.stream,
+    forcedChannelId: normalizeForcedChannelId(body.forcedChannelId),
     temperature: body.temperature,
     top_p: body.top_p,
     max_tokens: body.max_tokens,
@@ -289,6 +304,7 @@ function convertLegacyPayloadToEnvelope(
       stream: forceStream,
       jobMode: false,
       rawMode: false,
+      forcedChannelId: payload.forcedChannelId ?? null,
       jsonBody: convertOpenAiPayloadToClaudeBody(payload, forceStream),
     };
   }
@@ -301,6 +317,7 @@ function convertLegacyPayloadToEnvelope(
       stream: forceStream,
       jobMode: false,
       rawMode: false,
+      forcedChannelId: payload.forcedChannelId ?? null,
       jsonBody: convertOpenAiPayloadToResponsesBody(payload, forceStream),
     };
   }
@@ -312,9 +329,29 @@ function convertLegacyPayloadToEnvelope(
     stream: forceStream,
     jobMode: false,
     rawMode: false,
+    forcedChannelId: payload.forcedChannelId ?? null,
     jsonBody: {
-      ...payload,
+      model: payload.model,
+      messages: payload.messages,
       stream: forceStream,
+      ...(typeof payload.temperature === 'number' && Number.isFinite(payload.temperature)
+        ? { temperature: payload.temperature }
+        : {}),
+      ...(typeof payload.top_p === 'number' && Number.isFinite(payload.top_p)
+        ? { top_p: payload.top_p }
+        : {}),
+      ...(typeof payload.max_tokens === 'number' && Number.isFinite(payload.max_tokens)
+        ? { max_tokens: payload.max_tokens }
+        : {}),
+      ...(typeof payload.frequency_penalty === 'number' && Number.isFinite(payload.frequency_penalty)
+        ? { frequency_penalty: payload.frequency_penalty }
+        : {}),
+      ...(typeof payload.presence_penalty === 'number' && Number.isFinite(payload.presence_penalty)
+        ? { presence_penalty: payload.presence_penalty }
+        : {}),
+      ...(typeof payload.seed === 'number' && Number.isFinite(payload.seed)
+        ? { seed: payload.seed }
+        : {}),
     },
   };
 }
@@ -356,6 +393,7 @@ function validateProxyEnvelope(
     stream: body.stream === true,
     jobMode: body.jobMode === true,
     rawMode: body.rawMode === true,
+    forcedChannelId: normalizeForcedChannelId(body.forcedChannelId),
   };
 
   if (requestKind === 'json') {
@@ -472,6 +510,10 @@ async function buildUpstreamRequestInit(
   forceStream: boolean,
 ): Promise<UndiciRequestInit> {
   const headers: Record<string, string> = createDefaultHeadersForPath(envelope.path);
+  headers[TESTER_REQUEST_HEADER] = '1';
+  if (typeof envelope.forcedChannelId === 'number' && envelope.forcedChannelId > 0) {
+    headers[TESTER_FORCED_CHANNEL_HEADER] = String(envelope.forcedChannelId);
+  }
 
   if (envelope.requestKind === 'json') {
     headers['Content-Type'] = 'application/json';

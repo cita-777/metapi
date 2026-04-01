@@ -256,6 +256,75 @@ describe('update center routes', () => {
     });
   });
 
+  it('rejects malformed config, deploy, and rollback payloads at the route boundary', async () => {
+    const invalidConfigResponse = await app.inject({
+      method: 'PUT',
+      url: '/api/update-center/config',
+      payload: {
+        enabled: 'false',
+      },
+    });
+    expect(invalidConfigResponse.statusCode).toBe(400);
+    expect(invalidConfigResponse.json()).toMatchObject({
+      success: false,
+      message: 'Invalid enabled. Expected boolean.',
+    });
+
+    const invalidDeployResponse = await app.inject({
+      method: 'POST',
+      url: '/api/update-center/deploy',
+      payload: {
+        targetTag: 123,
+      },
+    });
+    expect(invalidDeployResponse.statusCode).toBe(400);
+    expect(invalidDeployResponse.json()).toMatchObject({
+      success: false,
+      message: 'Invalid targetTag. Expected string.',
+    });
+
+    const invalidRollbackResponse = await app.inject({
+      method: 'POST',
+      url: '/api/update-center/rollback',
+      payload: {
+        targetRevision: 123,
+      },
+    });
+    expect(invalidRollbackResponse.statusCode).toBe(400);
+    expect(invalidRollbackResponse.json()).toMatchObject({
+      success: false,
+      message: 'Invalid targetRevision. Expected string.',
+    });
+  });
+
+  it('rejects invalid update-center source enums at the route boundary', async () => {
+    const invalidConfigResponse = await app.inject({
+      method: 'PUT',
+      url: '/api/update-center/config',
+      payload: {
+        defaultDeploySource: 'nightly',
+      },
+    });
+    expect(invalidConfigResponse.statusCode).toBe(400);
+    expect(invalidConfigResponse.json()).toMatchObject({
+      success: false,
+      message: 'Invalid defaultDeploySource. Expected docker-hub-tag/github-release.',
+    });
+
+    const invalidDeployResponse = await app.inject({
+      method: 'POST',
+      url: '/api/update-center/deploy',
+      payload: {
+        source: 'nightly',
+      },
+    });
+    expect(invalidDeployResponse.statusCode).toBe(400);
+    expect(invalidDeployResponse.json()).toMatchObject({
+      success: false,
+      message: 'Invalid source. Expected docker-hub-tag/github-release.',
+    });
+  });
+
   it('uses the shared config helper token when request-time env lookup is unavailable', async () => {
     fetchLatestStableGitHubReleaseMock.mockResolvedValue({
       source: 'github-release',

@@ -96,6 +96,32 @@ describe('sites proxy settings', () => {
     expect((duplicate.json() as { error?: string }).error).toContain('already exists');
   });
 
+  it('normalizes platform before conflict checks when creating a site', async () => {
+    const first = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'existing-site',
+        url: 'https://duplicate-site.example.com/',
+        platform: 'new-api',
+      },
+    });
+    expect(first.statusCode).toBe(200);
+
+    const duplicate = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'duplicate-site',
+        url: 'https://duplicate-site.example.com',
+        platform: '  new-api  ',
+      },
+    });
+
+    expect(duplicate.statusCode).toBe(409);
+    expect((duplicate.json() as { error?: string }).error).toContain('already exists');
+  });
+
   it('rejects invalid useSystemProxy flag', async () => {
     const response = await app.inject({
       method: 'POST',
@@ -226,6 +252,31 @@ describe('sites proxy settings', () => {
     expect((response.json() as { error?: string }).error).toContain('already exists');
   });
 
+  it('rejects blank platform updates instead of persisting an empty platform', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'editable-site',
+        url: 'https://editable-site.example.com',
+        platform: 'new-api',
+      },
+    });
+    expect(created.statusCode).toBe(200);
+    const site = created.json() as { id: number };
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${site.id}`,
+      payload: {
+        platform: '   ',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { error?: string }).error).toContain('platform');
+  });
+
   it('rejects invalid custom headers json', async () => {
     const response = await app.inject({
       method: 'POST',
@@ -258,5 +309,287 @@ describe('sites proxy settings', () => {
 
     expect(response.statusCode).toBe(400);
     expect((response.json() as { error?: string }).error).toContain('must use a string value');
+  });
+
+  it('rejects create payloads whose name is not a string', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 123,
+        url: 'https://typed-site.example.com',
+        platform: 'new-api',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { error?: string }).error).toContain('Invalid name');
+  });
+
+  it('rejects update payloads whose url is not a string', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'typed-site',
+        url: 'https://typed-site.example.com',
+        platform: 'new-api',
+      },
+    });
+    expect(created.statusCode).toBe(200);
+    const site = created.json() as { id: number };
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${site.id}`,
+      payload: {
+        url: 123,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { error?: string }).error).toContain('Invalid url');
+  });
+
+  it('rejects create payloads that are not objects', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: [],
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { error?: string }).error).toContain('Invalid site payload');
+  });
+
+  it('rejects update payloads that are not objects', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'typed-site',
+        url: 'https://typed-site.example.com',
+        platform: 'new-api',
+      },
+    });
+    expect(created.statusCode).toBe(200);
+    const site = created.json() as { id: number };
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${site.id}`,
+      payload: [],
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { error?: string }).error).toContain('Invalid site payload');
+  });
+
+  it('detects Aliyun CodingPlan endpoints with initialization preset metadata', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites/detect',
+      payload: {
+        url: 'https://coding.dashscope.aliyuncs.com/v1',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      platform: 'openai',
+      initializationPresetId: 'codingplan-openai',
+    });
+  });
+
+  it('creates CodingPlan sites without explicit platform by using preset-backed detection', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'Aliyun CodingPlan',
+        url: 'https://coding.dashscope.aliyuncs.com/v1',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      name: 'Aliyun CodingPlan',
+      platform: 'openai',
+      initializationPresetId: 'codingplan-openai',
+    });
+  });
+
+  it('rejects empty detect payload urls at the route boundary', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites/detect',
+      payload: {
+        url: '   ',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { error?: string }).error).toContain('url');
+  });
+
+  it('does not force CodingPlan preset metadata when the user explicitly chooses generic openai', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'Aliyun Generic OpenAI',
+        url: 'https://coding.dashscope.aliyuncs.com/v1',
+        platform: 'openai',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      name: 'Aliyun Generic OpenAI',
+      platform: 'openai',
+    });
+    expect(response.json()).not.toHaveProperty('initializationPresetId');
+  });
+
+  it('preserves explicit preset metadata even when the preset uses a custom gateway url', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'Aliyun CodingPlan Gateway',
+        url: 'https://gateway.example.com/coding/v1',
+        platform: 'openai',
+        initializationPresetId: 'codingplan-openai',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      name: 'Aliyun CodingPlan Gateway',
+      platform: 'openai',
+      initializationPresetId: 'codingplan-openai',
+    });
+  });
+
+  it('canonicalizes create payload url and platform before persistence and conflict checks', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'Aliyun Generic OpenAI',
+        url: ' coding.dashscope.aliyuncs.com/v1/ ',
+        platform: ' OPENAI ',
+      },
+    });
+
+    expect(created.statusCode).toBe(200);
+    expect(created.json()).toMatchObject({
+      name: 'Aliyun Generic OpenAI',
+      url: 'https://coding.dashscope.aliyuncs.com/v1',
+      platform: 'openai',
+    });
+
+    const duplicate = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'Aliyun Generic OpenAI Duplicate',
+        url: 'https://coding.dashscope.aliyuncs.com/v1',
+        platform: 'openai',
+      },
+    });
+
+    expect(duplicate.statusCode).toBe(409);
+    expect((duplicate.json() as { error?: string }).error).toContain('already exists');
+  });
+
+  it('canonicalizes update payload url and platform before saving', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'Update Canonicalization',
+        url: 'https://update-canonicalization.example.com',
+        platform: 'new-api',
+      },
+    });
+    expect(created.statusCode).toBe(200);
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${(created.json() as { id: number }).id}`,
+      payload: {
+        url: ' coding.dashscope.aliyuncs.com/v1/ ',
+        platform: ' OPENAI ',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      url: 'https://coding.dashscope.aliyuncs.com/v1',
+      platform: 'openai',
+    });
+  });
+
+  it('detects Zhipu Coding Plan OpenAI endpoint with initialization preset metadata', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites/detect',
+      payload: {
+        url: 'https://open.bigmodel.cn/api/coding/paas/v4',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      platform: 'openai',
+      initializationPresetId: 'zhipu-coding-plan-openai',
+    });
+  });
+
+  it('detects additional vendor-specific code endpoints with initialization preset metadata', async () => {
+    const cases = [
+      { url: 'https://api.deepseek.com/v1', platform: 'openai', initializationPresetId: 'deepseek-openai' },
+      { url: 'https://api.deepseek.com/anthropic', platform: 'claude', initializationPresetId: 'deepseek-claude' },
+      { url: 'https://api.moonshot.cn/v1', platform: 'openai', initializationPresetId: 'moonshot-openai' },
+      { url: 'https://api.moonshot.cn/anthropic', platform: 'claude', initializationPresetId: 'moonshot-claude' },
+      { url: 'https://api.minimaxi.com/v1', platform: 'openai', initializationPresetId: 'minimax-openai' },
+      { url: 'https://api.minimaxi.com/anthropic', platform: 'claude', initializationPresetId: 'minimax-claude' },
+      { url: 'https://api-inference.modelscope.cn/v1', platform: 'openai', initializationPresetId: 'modelscope-openai' },
+      { url: 'https://api-inference.modelscope.cn', platform: 'claude', initializationPresetId: 'modelscope-claude' },
+      { url: 'https://ark.cn-beijing.volces.com/api/coding/v3', platform: 'openai', initializationPresetId: 'doubao-coding-openai' },
+    ];
+
+    for (const testCase of cases) {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/sites/detect',
+        payload: { url: testCase.url },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        platform: testCase.platform,
+        initializationPresetId: testCase.initializationPresetId,
+      });
+    }
+  });
+
+  it('creates Doubao Coding Plan sites without explicit platform by using preset-backed detection', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'Doubao Coding Plan',
+        url: 'https://ark.cn-beijing.volces.com/api/coding/v3',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      name: 'Doubao Coding Plan',
+      platform: 'openai',
+      initializationPresetId: 'doubao-coding-openai',
+    });
   });
 });

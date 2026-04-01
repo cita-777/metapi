@@ -13,10 +13,12 @@ describe('TokenRouter runtime cache', () => {
   let schema: DbModule['schema'];
   let TokenRouter: TokenRouterModule['TokenRouter'];
   let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'];
+  let isChannelRecentlyFailed: TokenRouterModule['isChannelRecentlyFailed'];
   let resetSiteRuntimeHealthState: TokenRouterModule['resetSiteRuntimeHealthState'];
   let config: ConfigModule['config'];
   let dataDir = '';
   let originalCacheTtlMs = 0;
+  let originalFailureCooldownMaxSec = 0;
 
   beforeAll(async () => {
     dataDir = mkdtempSync(join(tmpdir(), 'metapi-token-router-cache-'));
@@ -30,9 +32,11 @@ describe('TokenRouter runtime cache', () => {
     schema = dbModule.schema;
     TokenRouter = tokenRouterModule.TokenRouter;
     invalidateTokenRouterCache = tokenRouterModule.invalidateTokenRouterCache;
+    isChannelRecentlyFailed = tokenRouterModule.isChannelRecentlyFailed;
     resetSiteRuntimeHealthState = tokenRouterModule.resetSiteRuntimeHealthState;
     config = configModule.config;
     originalCacheTtlMs = config.tokenRouterCacheTtlMs;
+    originalFailureCooldownMaxSec = config.tokenRouterFailureCooldownMaxSec;
   });
 
   beforeEach(async () => {
@@ -43,12 +47,14 @@ describe('TokenRouter runtime cache', () => {
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
     config.tokenRouterCacheTtlMs = 60_000;
+    config.tokenRouterFailureCooldownMaxSec = originalFailureCooldownMaxSec;
     invalidateTokenRouterCache();
     resetSiteRuntimeHealthState();
   });
 
   afterAll(() => {
     config.tokenRouterCacheTtlMs = originalCacheTtlMs;
+    config.tokenRouterFailureCooldownMaxSec = originalFailureCooldownMaxSec;
     invalidateTokenRouterCache();
     resetSiteRuntimeHealthState();
     delete process.env.DATA_DIR;
@@ -173,6 +179,73 @@ describe('TokenRouter runtime cache', () => {
     const thirdCooldownMs = Date.parse(String(thirdRecord?.cooldownUntil || '')) - thirdStartedAt;
     expect(thirdCooldownMs).toBeGreaterThanOrEqual(25_000);
     expect(thirdCooldownMs).toBeLessThanOrEqual(35_000);
+  });
+
+  it('caps generic failure cooldowns at the configured maximum', async () => {
+    config.tokenRouterFailureCooldownMaxSec = 20;
+
+    const site = await db.insert(schema.sites).values({
+      name: 'capped-cooldown-site',
+      url: 'https://capped-cooldown.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'capped-cooldown-user',
+      accessToken: 'capped-cooldown-access-token',
+      apiToken: 'capped-cooldown-api-token',
+      status: 'active',
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'capped-cooldown-token',
+      token: 'sk-capped-cooldown-token',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4o-mini',
+      routingStrategy: 'weighted',
+      enabled: true,
+    }).returning().get();
+
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: token.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+
+    await router.recordFailure(channel.id);
+    await router.recordFailure(channel.id);
+
+    const startedAt = Date.now();
+    await router.recordFailure(channel.id);
+
+    const record = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.id, channel.id))
+      .get();
+    const cooldownMs = Date.parse(String(record?.cooldownUntil || '')) - startedAt;
+
+    expect(cooldownMs).toBeGreaterThanOrEqual(17_000);
+    expect(cooldownMs).toBeLessThanOrEqual(23_000);
+    const recentFailureCheckAt = Date.now();
+    expect(isChannelRecentlyFailed({
+      failCount: 3,
+      lastFailAt: new Date(recentFailureCheckAt - 19_000).toISOString(),
+    }, recentFailureCheckAt)).toBe(true);
+    expect(isChannelRecentlyFailed({
+      failCount: 3,
+      lastFailAt: new Date(recentFailureCheckAt - 21_000).toISOString(),
+    }, recentFailureCheckAt)).toBe(false);
   });
 
   it('uses codex oauth reset hints for usage-limit cooldowns', async () => {
@@ -774,5 +847,61 @@ describe('TokenRouter runtime cache', () => {
     expect(current?.consecutiveFailCount).toBe(0);
     expect(current?.cooldownLevel).toBe(0);
     expect(current?.cooldownUntil).toBeNull();
+  });
+
+  it('caps weighted cooldowns before Date overflow for heavily failed channels', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'weighted-cooldown-cap-site',
+      url: 'https://weighted-cooldown-cap.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'weighted-cooldown-cap-user',
+      accessToken: 'weighted-cooldown-cap-access-token',
+      apiToken: 'weighted-cooldown-cap-api-token',
+      status: 'active',
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'weighted-cooldown-cap-token',
+      token: 'sk-weighted-cooldown-cap-token',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.4',
+      routingStrategy: 'weighted',
+      enabled: true,
+    }).returning().get();
+
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: token.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      failCount: 57,
+    }).returning().get();
+
+    // Weighted routes previously let Fibonacci backoff grow beyond the Date range.
+    const router = new TokenRouter();
+
+    const startedAt = Date.now();
+    await router.recordFailure(channel.id);
+    const current = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.id, channel.id))
+      .get();
+    const cooldownMs = Date.parse(String(current?.cooldownUntil || '')) - startedAt;
+
+    expect(current?.failCount).toBe(58);
+    expect(Number.isFinite(Date.parse(String(current?.cooldownUntil || '')))).toBe(true);
+    expect(cooldownMs).toBeGreaterThanOrEqual((30 * 24 * 60 * 60 - 5) * 1000);
+    expect(cooldownMs).toBeLessThanOrEqual((30 * 24 * 60 * 60 + 5) * 1000);
   });
 });

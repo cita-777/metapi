@@ -82,6 +82,11 @@ type ParsedReleaseValues = {
   imageDigest: string | null;
 };
 
+type ParsedRuntimePodState = {
+  imageDigest: string | null;
+  allPodsReady: boolean;
+};
+
 async function runCommand(input: RunCommandInput): Promise<RunCommandResult> {
   return await new Promise<RunCommandResult>((resolve, reject) => {
     const child = spawn(input.command, input.args, {
@@ -172,12 +177,14 @@ function parseReleaseValues(stdout: string): ParsedReleaseValues {
   }
 }
 
-function parseRuntimeImageDigest(stdout: string): string | null {
+function parseRuntimePodState(stdout: string): ParsedRuntimePodState {
   try {
     const payload = JSON.parse(stdout || '{}') as {
       items?: Array<{
         status?: {
+          phase?: string | null;
           containerStatuses?: Array<{
+            ready?: boolean | null;
             imageID?: string | null;
             image?: string | null;
           }>;
@@ -185,18 +192,42 @@ function parseRuntimeImageDigest(stdout: string): string | null {
       }>;
     };
 
+    let imageDigest: string | null = null;
+    const items = payload.items || [];
+    if (items.length <= 0) {
+      return {
+        imageDigest: null,
+        allPodsReady: false,
+      };
+    }
+
+    let allPodsReady = true;
+
     for (const item of payload.items || []) {
-      for (const status of item.status?.containerStatuses || []) {
+      const phase = String(item.status?.phase || '').trim().toLowerCase();
+      const containerStatuses = item.status?.containerStatuses || [];
+      if (phase !== 'running' || containerStatuses.length <= 0 || containerStatuses.some((status) => status.ready !== true)) {
+        allPodsReady = false;
+      }
+
+      for (const status of containerStatuses) {
         const candidate = `${status.imageID || ''} ${status.image || ''}`;
         const match = candidate.match(/(sha256:[a-f0-9]{64})/i);
-        if (match?.[1]) {
-          return match[1].toLowerCase();
+        if (!imageDigest && match?.[1]) {
+          imageDigest = match[1].toLowerCase();
         }
       }
     }
-    return null;
+
+    return {
+      imageDigest,
+      allPodsReady,
+    };
   } catch {
-    return null;
+    return {
+      imageDigest: null,
+      allPodsReady: false,
+    };
   }
 }
 
@@ -388,8 +419,9 @@ export async function getUpdateHelperStatus(
     };
   };
   const currentValues = parseReleaseValues(values.stdout);
-  const runtimeDigest = parseRuntimeImageDigest(pods.stdout);
+  const runtimeState = parseRuntimePodState(pods.stdout);
   const historyRows = parseHistoryRows(history.stdout).slice(0, 5);
+  const releaseStatus = String(statusPayload.info?.status || '').trim().toLowerCase();
 
   const historyEntries: UpdateHelperHistoryEntry[] = [];
   for (const row of historyRows) {
@@ -426,8 +458,8 @@ export async function getUpdateHelperStatus(
     revision: statusPayload.version === undefined || statusPayload.version === null ? null : String(statusPayload.version),
     imageRepository: currentValues.imageRepository,
     imageTag: currentValues.imageTag,
-    imageDigest: runtimeDigest || currentValues.imageDigest,
-    healthy: String(statusPayload.info?.status || '').toLowerCase() === 'deployed',
+    imageDigest: runtimeState.imageDigest || currentValues.imageDigest,
+    healthy: releaseStatus === 'deployed' || (releaseStatus === 'failed' && runtimeState.allPodsReady),
     history: historyEntries,
   };
 }

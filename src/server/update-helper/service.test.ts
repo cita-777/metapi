@@ -351,4 +351,78 @@ describe('update helper service', () => {
       ],
     });
   });
+
+  it('treats ready workloads as healthy even when the latest helm revision is marked failed', async () => {
+    const status = await getUpdateHelperStatus(
+      {
+        namespace: 'ai',
+        releaseName: 'metapi',
+      },
+      {
+        runCommand: async ({ command, args }) => {
+          if (command === 'helm' && args[0] === 'status') {
+            return {
+              stdout: JSON.stringify({
+                version: 22,
+                info: {
+                  status: 'failed',
+                  description: 'Upgrade "metapi" failed: context deadline exceeded',
+                },
+              }),
+            };
+          }
+          if (command === 'helm' && args[0] === 'get') {
+            return {
+              stdout: JSON.stringify({
+                image: {
+                  repository: '1467078763/metapi',
+                  tag: 'latest',
+                  digest: 'sha256:1523dfcbaca146b8a64a3a022878165027900ee4cb396a45e474aa7a969dacb1',
+                },
+              }),
+            };
+          }
+          if (command === 'helm' && args[0] === 'history') {
+            return {
+              stdout: JSON.stringify([
+                { revision: '21', updated: '2026-03-31T14:07:40.115551823Z', status: 'deployed', description: 'Rollback to 17' },
+                { revision: '22', updated: '2026-03-31T14:13:24.726024175Z', status: 'failed', description: 'Upgrade "metapi" failed: context deadline exceeded' },
+              ]),
+            };
+          }
+          if (command === 'kubectl' && args[0] === 'get') {
+            return {
+              stdout: JSON.stringify({
+                items: [
+                  {
+                    status: {
+                      phase: 'Running',
+                      containerStatuses: [
+                        {
+                          ready: true,
+                          imageID: 'docker-pullable://1467078763/metapi@sha256:1523dfcbaca146b8a64a3a022878165027900ee4cb396a45e474aa7a969dacb1',
+                        },
+                      ],
+                    },
+                  },
+                ],
+              }),
+            };
+          }
+          throw new Error('unexpected command');
+        },
+      },
+    );
+
+    expect(status).toMatchObject({
+      ok: true,
+      releaseName: 'metapi',
+      namespace: 'ai',
+      revision: '22',
+      imageRepository: '1467078763/metapi',
+      imageTag: 'latest',
+      imageDigest: 'sha256:1523dfcbaca146b8a64a3a022878165027900ee4cb396a45e474aa7a969dacb1',
+      healthy: true,
+    });
+  });
 });

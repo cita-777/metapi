@@ -18,6 +18,7 @@ import {
   buildSearchRequestEnvelope,
   buildVideoCreateRequestEnvelope,
   buildVideoInspectRequestEnvelope,
+  attachForcedChannelToEnvelope,
   countConversationTurns,
   collectModelTesterModelNames,
   createLoadingAssistantMessage,
@@ -82,6 +83,11 @@ type UploadState = {
 };
 
 type ConversationFileState = ConversationDraftFile;
+type ForcedChannelOption = {
+  value: string;
+  label: string;
+  description?: string;
+};
 
 const POLL_INTERVAL_MS = 1200;
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -659,6 +665,11 @@ export default function ModelTester() {
   const [inputs, setInputs] = useState<ModelTesterInputs>(DEFAULT_INPUTS);
   const [modeState, setModeState] = useState<ModelTesterModeState>(DEFAULT_MODE_STATE);
   const [parameterEnabled, setParameterEnabled] = useState<ParameterEnabled>(DEFAULT_PARAMETER_ENABLED);
+  const [forcedChannelId, setForcedChannelId] = useState<number | null>(null);
+  const [forcedChannelOptions, setForcedChannelOptions] = useState<ForcedChannelOption[]>([]);
+  const [loadingForcedChannels, setLoadingForcedChannels] = useState(false);
+  const [forcedChannelHint, setForcedChannelHint] = useState('');
+  const [forcedChannelHydrationReady, setForcedChannelHydrationReady] = useState(false);
 
   const [sending, setSending] = useState(false);
   const [loadingModels, setLoadingModels] = useState(true);
@@ -759,6 +770,7 @@ export default function ModelTester() {
     setParameterEnabled(restored.parameterEnabled);
     setPendingPayload(restored.pendingPayload);
     setPendingJobId(restored.pendingJobId || null);
+    setForcedChannelId(restored.forcedChannelId ?? null);
     setCustomRequestMode(restored.customRequestMode);
     setCustomRequestBody(restored.customRequestBody);
     setShowDebugPanel(restored.showDebugPanel);
@@ -817,12 +829,79 @@ export default function ModelTester() {
         pushDebug('error', '获取模型列表失败。');
       } finally {
         setLoadingModels(false);
+        setForcedChannelHydrationReady(true);
       }
     };
 
     void fetchModels();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!forcedChannelHydrationReady) return;
+
+    if (!inputs.model) {
+      setForcedChannelOptions([]);
+      setForcedChannelHint('');
+      setForcedChannelId(null);
+      return;
+    }
+
+    if (customRequestMode) {
+      setForcedChannelOptions([]);
+      setForcedChannelHint('自定义请求模式下固定通道不可用。');
+      setForcedChannelId(null);
+      return;
+    }
+
+    if (inputs.mode === 'videos.inspect') {
+      setForcedChannelOptions([]);
+      setForcedChannelHint('视频查询/删除不会重新选路，不能固定通道。');
+      setForcedChannelId(null);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingForcedChannels(true);
+    setForcedChannelHint('');
+
+    void api.getRouteDecision(inputs.model)
+      .then((result) => {
+        if (cancelled) return;
+        const candidates = Array.isArray((result as any)?.decision?.candidates)
+          ? (result as any).decision.candidates as Array<Record<string, unknown>>
+          : [];
+        const nextOptions = candidates
+          .filter((candidate) => candidate?.eligible === true && typeof candidate?.channelId === 'number')
+          .map((candidate) => ({
+            value: String(candidate.channelId),
+            label: `${candidate.username || `account-${candidate.accountId || 'unknown'}`} @ ${candidate.siteName || 'unknown'} / ${candidate.tokenName || 'default'} (P${candidate.priority ?? 0})`,
+            description: typeof candidate.reason === 'string' && candidate.reason.trim().length > 0
+              ? candidate.reason
+              : undefined,
+          }));
+        setForcedChannelOptions(nextOptions);
+        if (nextOptions.length === 0) {
+          setForcedChannelHint('当前模型暂无可固定通道。');
+        }
+        if (typeof forcedChannelId === 'number' && !nextOptions.some((option) => option.value === String(forcedChannelId))) {
+          setForcedChannelId(null);
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setForcedChannelOptions([]);
+        setForcedChannelHint('加载固定通道候选失败。');
+        setForcedChannelId(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingForcedChannels(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [customRequestMode, forcedChannelHydrationReady, inputs.mode, inputs.model]);
 
   useEffect(() => {
     if (!inputs.model) return;
@@ -845,6 +924,7 @@ export default function ModelTester() {
       },
       pendingPayload,
       pendingJobId,
+      forcedChannelId,
       customRequestMode,
       customRequestBody,
       showDebugPanel,
@@ -854,6 +934,7 @@ export default function ModelTester() {
     activeDebugTab,
     customRequestBody,
     customRequestMode,
+    forcedChannelId,
     input,
     inputs,
     messages,
@@ -1158,6 +1239,19 @@ export default function ModelTester() {
     };
   }, [buildApiPayload, buildClaudeBodyFromMessages, buildConversationMessagesWithSystem, buildResponsesBodyFromMessages, customRequestBody, customRequestMode, inputs, parameterEnabled]);
 
+  const forcedChannelSelectOptions = useMemo<ForcedChannelOption[]>(() => [
+    {
+      value: '__auto__',
+      label: '自动选路（默认）',
+      description: '按当前路由正常选择通道',
+    },
+    ...forcedChannelOptions,
+  ], [forcedChannelOptions]);
+
+  const attachEnvelopeForcedChannel = useCallback((envelope: ProxyTestEnvelope) => (
+    attachForcedChannelToEnvelope(envelope, forcedChannelId)
+  ), [forcedChannelId]);
+
   const buildModeProxyEnvelope = useCallback((): ProxyTestEnvelope | null => {
     if (inputs.mode === 'embeddings') {
       const trimmed = embeddingInputText.trim();
@@ -1298,7 +1392,8 @@ export default function ModelTester() {
 
   const previewPayload = useMemo(() => {
     if (inputs.mode !== 'conversation') {
-      return buildModeProxyEnvelope();
+      const envelope = buildModeProxyEnvelope();
+      return envelope ? attachEnvelopeForcedChannel(envelope) : null;
     }
     if (customRequestMode) {
       const raw = customRequestBody.trim();
@@ -1310,10 +1405,10 @@ export default function ModelTester() {
       }
     }
     if (inputs.protocol === 'gemini') {
-      return buildConversationProxyEnvelope(messages);
+      return attachEnvelopeForcedChannel(buildConversationProxyEnvelope(messages));
     }
-    return buildApiPayload(buildConversationMessagesWithSystem(messages), inputs, parameterEnabled);
-  }, [buildConversationMessagesWithSystem, buildConversationProxyEnvelope, buildModeProxyEnvelope, customRequestBody, customRequestMode, inputs, messages, parameterEnabled]);
+    return attachEnvelopeForcedChannel(buildApiPayload(buildConversationMessagesWithSystem(messages), inputs, parameterEnabled));
+  }, [attachEnvelopeForcedChannel, buildConversationMessagesWithSystem, buildConversationProxyEnvelope, buildModeProxyEnvelope, customRequestBody, customRequestMode, inputs, messages, parameterEnabled]);
 
   useEffect(() => {
     setDebugPreview(formatJson(previewPayload));
@@ -1737,39 +1832,43 @@ export default function ModelTester() {
     payload: TestChatPayload,
     options?: { syncedCustomBody?: string },
   ) => {
+    const effectivePayload = attachEnvelopeForcedChannel(payload);
     setMessages(nextMessages);
     if (options?.syncedCustomBody !== undefined) {
       setCustomRequestBody(options.syncedCustomBody);
     }
     setError('');
-    setPendingPayload(payload);
-    setDebugRequest(formatJson(payload));
+    setPendingPayload(effectivePayload);
+    setDebugRequest(formatJson(effectivePayload));
     setDebugResponse('');
     setActiveDebugTab(DEBUG_TABS.REQUEST);
     setDebugTimestamp(new Date().toISOString());
 
-    if (payload.stream) {
-      await startStream(payload);
+    if (effectivePayload.stream) {
+      await startStream(effectivePayload);
     } else {
-      await startChatJob(payload);
+      await startChatJob(effectivePayload);
     }
-  }, [startChatJob, startStream]);
+  }, [attachEnvelopeForcedChannel, startChatJob, startStream]);
 
   const dispatchProxyEnvelope = useCallback(async (envelope: ProxyTestEnvelope, nextMessages?: ChatMessage[]) => {
+    const effectiveEnvelope = attachEnvelopeForcedChannel(envelope);
     setError('');
-    setDebugRequest(formatJson(envelope.rawMode ? { path: envelope.path, rawJsonText: envelope.rawJsonText } : envelope));
+    setDebugRequest(formatJson(effectiveEnvelope.rawMode
+      ? { path: effectiveEnvelope.path, rawJsonText: effectiveEnvelope.rawJsonText, forcedChannelId: effectiveEnvelope.forcedChannelId }
+      : effectiveEnvelope));
     setDebugResponse('');
     setActiveDebugTab(DEBUG_TABS.REQUEST);
     setDebugTimestamp(new Date().toISOString());
 
-    if (envelope.stream && nextMessages) {
-      await startProxyStream(envelope, nextMessages);
+    if (effectiveEnvelope.stream && nextMessages) {
+      await startProxyStream(effectiveEnvelope, nextMessages);
       return;
     }
 
     setSending(true);
     try {
-      const result = await api.proxyTest(envelope);
+      const result = await api.proxyTest(effectiveEnvelope);
       setDebugResponse(formatJson(result));
       setActiveDebugTab(DEBUG_TABS.RESPONSE);
       setNonConversationResult(result);
@@ -1779,7 +1878,7 @@ export default function ModelTester() {
       }
 
       setError('');
-      pushDebug('info', `代理请求成功：${envelope.path}`);
+      pushDebug('info', `代理请求成功：${effectiveEnvelope.path}`);
     } catch (requestError: any) {
       const message = requestError?.message || '请求失败';
       if (nextMessages) {
@@ -1792,7 +1891,7 @@ export default function ModelTester() {
     } finally {
       setSending(false);
     }
-  }, [pushDebug, startProxyStream]);
+  }, [attachEnvelopeForcedChannel, pushDebug, startProxyStream]);
 
   const buildPayloadWithMessages = useCallback((nextMessages: ChatMessage[]): {
     payload: TestChatPayload | null;
@@ -2377,6 +2476,34 @@ export default function ModelTester() {
             />
             <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>
               对话模式下可模拟 OpenAI / Responses / Claude / Gemini Native。
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6, fontWeight: 600 }}>
+              固定通道
+            </div>
+            <ModernSelect
+              value={typeof forcedChannelId === 'number' ? String(forcedChannelId) : '__auto__'}
+              onChange={(next) => {
+                if (!next || next === '__auto__') {
+                  setForcedChannelId(null);
+                  return;
+                }
+                const parsed = Number.parseInt(next, 10);
+                setForcedChannelId(Number.isFinite(parsed) && parsed > 0 ? parsed : null);
+              }}
+              options={forcedChannelSelectOptions}
+              placeholder={loadingForcedChannels ? '加载通道中...' : '自动选路（默认）'}
+              disabled={customRequestMode || inputs.mode === 'videos.inspect' || loadingForcedChannels}
+              emptyLabel="当前模型暂无可固定通道"
+              menuMaxHeight={300}
+            />
+            <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>
+              {forcedChannelHint
+                || (typeof forcedChannelId === 'number'
+                  ? `已固定到通道 #${forcedChannelId}，失败不会自动切换。`
+                  : '默认自动选路；如需单独排查，可固定到一个候选通道。')}
             </div>
           </div>
 

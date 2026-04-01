@@ -89,6 +89,18 @@ export async function getProxyVideoTaskByPublicId(publicId: string): Promise<Pro
   };
 }
 
+export async function resolveProxyVideoTaskSite(accountId: number | null): Promise<typeof schema.sites.$inferSelect | null> {
+  if (!Number.isFinite(accountId) || !accountId || accountId <= 0) {
+    return null;
+  }
+  const row = await db.select()
+    .from(schema.accounts)
+    .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+    .where(eq(schema.accounts.id, accountId))
+    .get();
+  return row?.sites ?? null;
+}
+
 export async function deleteProxyVideoTaskByPublicId(publicId: string): Promise<void> {
   await db.delete(schema.proxyVideoTasks)
     .where(eq(schema.proxyVideoTasks.publicId, publicId))

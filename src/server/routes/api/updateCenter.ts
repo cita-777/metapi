@@ -31,6 +31,11 @@ import {
   UPDATE_CENTER_DEPLOY_DEDUPE_KEY,
   UPDATE_CENTER_DEPLOY_TASK_TYPE,
 } from '../../services/updateCenterTaskConstants.js';
+import {
+  parseUpdateCenterConfigPayload,
+  parseUpdateCenterDeployPayload,
+  parseUpdateCenterRollbackPayload,
+} from '../../contracts/supportRoutePayloads.js';
 
 type DeployBody = {
   source?: UpdateCenterVersionSource;
@@ -84,8 +89,13 @@ export async function updateCenterRoutes(app: FastifyInstance) {
     return (await refreshUpdateCenterStatusCache()).status;
   });
 
-  app.put<{ Body: UpdateCenterConfig }>('/api/update-center/config', async (request) => {
-    const next = normalizeUpdateCenterConfig(request.body || getDefaultUpdateCenterConfig());
+  app.put<{ Body: unknown }>('/api/update-center/config', async (request, reply) => {
+    const parsedBody = parseUpdateCenterConfigPayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ success: false, message: parsedBody.error });
+    }
+
+    const next = normalizeUpdateCenterConfig(parsedBody.data || getDefaultUpdateCenterConfig());
     const saved = await saveUpdateCenterConfig(next);
     return {
       success: true,
@@ -93,7 +103,16 @@ export async function updateCenterRoutes(app: FastifyInstance) {
     };
   });
 
-  app.post<{ Body: DeployBody }>('/api/update-center/deploy', async (request, reply) => {
+  app.post<{ Body: unknown }>('/api/update-center/deploy', async (request, reply) => {
+    const parsedBody = parseUpdateCenterDeployPayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({
+        success: false,
+        message: parsedBody.error,
+      });
+    }
+
+    const body = parsedBody.data;
     const config = await loadUpdateCenterConfig();
     try {
       assertDeployableConfig(config);
@@ -105,13 +124,13 @@ export async function updateCenterRoutes(app: FastifyInstance) {
     }
     const helperToken = getUpdateCenterHelperToken();
 
-    const source = request.body?.source === 'docker-hub-tag'
+    const source = body.source === 'docker-hub-tag'
       ? 'docker-hub-tag'
-      : request.body?.source === 'github-release'
+      : body.source === 'github-release'
         ? 'github-release'
         : config.defaultDeploySource;
-    const targetTag = String(request.body?.targetTag || request.body?.targetVersion || '').trim();
-    const targetDigest = normalizeUpdateCenterTargetDigest(request.body?.targetDigest);
+    const targetTag = String(body.targetTag || body.targetVersion || '').trim();
+    const targetDigest = normalizeUpdateCenterTargetDigest(body.targetDigest);
     if (!targetTag) {
       return reply.code(400).send({
         success: false,
@@ -175,7 +194,16 @@ export async function updateCenterRoutes(app: FastifyInstance) {
     });
   });
 
-  app.post<{ Body: RollbackBody }>('/api/update-center/rollback', async (request, reply) => {
+  app.post<{ Body: unknown }>('/api/update-center/rollback', async (request, reply) => {
+    const parsedBody = parseUpdateCenterRollbackPayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({
+        success: false,
+        message: parsedBody.error,
+      });
+    }
+
+    const body = parsedBody.data;
     const config = await loadUpdateCenterConfig();
     try {
       assertHelperConfig(config);
@@ -186,7 +214,7 @@ export async function updateCenterRoutes(app: FastifyInstance) {
       });
     }
 
-    const targetRevision = String(request.body?.targetRevision || '').trim();
+    const targetRevision = String(body.targetRevision || '').trim();
     if (!targetRevision) {
       return reply.code(400).send({
         success: false,

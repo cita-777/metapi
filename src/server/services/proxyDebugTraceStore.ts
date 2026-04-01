@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, lt } from 'drizzle-orm';
 import { config } from '../config.js';
 import { db, schema } from '../db/index.js';
+import { requireInsertedRowId } from '../db/insertHelpers.js';
 import { formatUtcSqlDateTime } from './localTimeService.js';
 
 type HeadersLike = Headers | Record<string, unknown> | null | undefined;
@@ -193,7 +194,7 @@ export async function createProxyDebugTrace(input: {
   }).run();
 
   return {
-    id: Number(inserted.lastInsertRowid || 0),
+    id: requireInsertedRowId(inserted, 'failed to create proxy debug trace'),
     createdAt: now,
   };
 }
@@ -309,7 +310,7 @@ export async function insertProxyDebugAttempt(input: {
   }).run();
 
   return {
-    id: Number(inserted.lastInsertRowid || 0),
+    id: requireInsertedRowId(inserted, 'failed to create proxy debug attempt'),
     createdAt: now,
   };
 }

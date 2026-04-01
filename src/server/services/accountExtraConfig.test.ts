@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildStoredSub2ApiSubscriptionSummary,
   getCredentialModeFromExtraConfig,
+  hasOauthProvider,
   getPlatformUserIdFromExtraConfig,
   getProxyUrlFromExtraConfig,
   getSub2ApiAuthFromExtraConfig,
@@ -143,6 +144,24 @@ describe('accountExtraConfig', () => {
       apiToken: 'sk-default',
       extraConfig: JSON.stringify({ credentialMode: 'session' }),
     })).toBe(true);
+  });
+
+  it('recognizes structured oauth provider columns even when extraConfig omits oauth.provider', () => {
+    const structuredOauthAccount = {
+      oauthProvider: 'codex',
+      accessToken: 'oauth-access-token',
+      apiToken: null,
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          email: 'oauth-user@example.com',
+        },
+      }),
+    };
+
+    expect(hasOauthProvider(structuredOauthAccount)).toBe(true);
+    expect(supportsDirectAccountRoutingConnection(structuredOauthAccount)).toBe(true);
+    expect(requiresManagedAccountTokens(structuredOauthAccount)).toBe(false);
   });
 
   it('parses stored sub2api subscription summary from extra config', () => {

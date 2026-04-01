@@ -1,6 +1,7 @@
 ﻿import { FastifyInstance } from 'fastify';
 import { and, eq } from 'drizzle-orm';
 import { db, schema } from '../../db/index.js';
+import { insertAndGetById } from '../../db/insertHelpers.js';
 import {
   ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING,
   ACCOUNT_TOKEN_VALUE_STATUS_READY,
@@ -24,6 +25,12 @@ import {
   convergeAccountMutation,
   refreshAccountCoverageBatch,
 } from '../../services/accountMutationWorkflow.js';
+import {
+  parseAccountTokenBatchPayload,
+  parseAccountTokenCreatePayload,
+  parseAccountTokenSyncAllPayload,
+  parseAccountTokenUpdatePayload,
+} from '../../contracts/accountTokensRoutePayloads.js';
 
 type AccountWithSiteRow = {
   accounts: typeof schema.accounts.$inferSelect;
@@ -469,22 +476,13 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     return listTokensWithRelations(Number.isFinite(accountId as number) ? accountId : undefined);
   });
 
-  app.post<{ Body: {
-    accountId: number;
-    name?: string;
-    token?: string;
-    enabled?: boolean;
-    isDefault?: boolean;
-    source?: string;
-    group?: string;
-    unlimitedQuota?: boolean | string;
-    remainQuota?: number | string;
-    expiredTime?: number | string;
-    allowIps?: string;
-    modelLimitsEnabled?: boolean | string;
-    modelLimits?: string;
-  } }>('/api/account-tokens', async (request, reply) => {
-    const body = request.body;
+  app.post<{ Body: unknown }>('/api/account-tokens', async (request, reply) => {
+    const parsedBody = parseAccountTokenCreatePayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ success: false, message: parsedBody.error });
+    }
+
+    const body = parsedBody.data;
     const row = await db.select()
       .from(schema.accounts)
       .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
@@ -514,26 +512,24 @@ export async function accountTokensRoutes(app: FastifyInstance) {
         ? (body.isDefault ?? false)
         : false;
 
-      const inserted = await db.insert(schema.accountTokens).values({
-        accountId: body.accountId,
-        name: (body.name || '').trim() || (existing.length === 0 ? 'default' : `token-${existing.length + 1}`),
-        token: tokenValue,
-        tokenGroup: (body.group || '').trim() || null,
-        valueStatus,
-        source: body.source || 'manual',
-        enabled,
-        isDefault,
-        createdAt: now,
-        updatedAt: now,
-      }).run();
-      const createdId = Number(inserted.lastInsertRowid || 0);
-      if (createdId <= 0) {
-        return reply.code(500).send({ success: false, message: '创建令牌失败' });
-      }
-      const created = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, createdId)).get();
-      if (!created) {
-        return reply.code(500).send({ success: false, message: '创建令牌失败' });
-      }
+      let created = await insertAndGetById<typeof schema.accountTokens.$inferSelect>({
+        table: schema.accountTokens,
+        idColumn: schema.accountTokens.id,
+        values: {
+          accountId: body.accountId,
+          name: (body.name || '').trim() || (existing.length === 0 ? 'default' : `token-${existing.length + 1}`),
+          token: tokenValue,
+          tokenGroup: (body.group || '').trim() || null,
+          valueStatus,
+          source: body.source || 'manual',
+          enabled,
+          isDefault,
+          createdAt: now,
+          updatedAt: now,
+        },
+        insertErrorMessage: '创建令牌失败',
+        loadErrorMessage: '创建令牌失败',
+      });
 
       if (valueStatus === ACCOUNT_TOKEN_VALUE_STATUS_READY && (body.isDefault || (existing.length === 0 && enabled))) {
         await setDefaultToken(created.id);
@@ -541,6 +537,10 @@ export async function accountTokensRoutes(app: FastifyInstance) {
         await setDefaultToken(created.id);
       }
       const coverageRefresh = await refreshCoverageForAccounts([body.accountId]);
+      created = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, created.id)).get();
+      if (!created) {
+        return reply.code(500).send({ success: false, message: '创建令牌失败' });
+      }
       return { success: true, token: created, coverageRefresh };
     }
 
@@ -690,9 +690,14 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     return { success: true };
   };
 
-  app.post<{ Body?: { ids?: number[]; action?: string } }>('/api/account-tokens/batch', async (request, reply) => {
-    const ids = normalizeBatchIds(request.body?.ids);
-    const action = String(request.body?.action || '').trim();
+  app.post<{ Body: unknown }>('/api/account-tokens/batch', async (request, reply) => {
+    const parsedBody = parseAccountTokenBatchPayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ message: parsedBody.error });
+    }
+
+    const ids = normalizeBatchIds(parsedBody.data.ids);
+    const action = String(parsedBody.data.action || '').trim();
     if (ids.length === 0) {
       return reply.code(400).send({ message: 'ids is required' });
     }
@@ -757,7 +762,12 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     };
   });
 
-  app.put<{ Params: { id: string }; Body: { name?: string; token?: string; group?: string; enabled?: boolean; isDefault?: boolean; source?: string } }>('/api/account-tokens/:id', async (request, reply) => {
+  app.put<{ Params: { id: string }; Body: unknown }>('/api/account-tokens/:id', async (request, reply) => {
+    const parsedBody = parseAccountTokenUpdatePayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ success: false, message: parsedBody.error });
+    }
+
     const tokenId = Number.parseInt(request.params.id, 10);
     if (Number.isNaN(tokenId)) {
       return reply.code(400).send({ success: false, message: '令牌 ID 无效' });
@@ -776,7 +786,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: 'API Key 连接不支持管理账号令牌' });
     }
 
-    const body = request.body;
+    const body = parsedBody.data;
     const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
     let nextValueStatus = resolveAccountTokenValueStatus(existing);
 
@@ -811,19 +821,24 @@ export async function accountTokensRoutes(app: FastifyInstance) {
 
     await db.update(schema.accountTokens).set(updates).where(eq(schema.accountTokens.id, tokenId)).run();
 
-    const latest = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, tokenId)).get();
+    let latest = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, tokenId)).get();
     if (!latest) {
       return reply.code(500).send({ success: false, message: '更新失败' });
     }
 
     if (body.isDefault === true && isUsableAccountToken(latest)) {
-      setDefaultToken(tokenId);
+      await setDefaultToken(tokenId);
     } else if (latest.isDefault && isUsableAccountToken(latest)) {
-      setDefaultToken(tokenId);
+      await setDefaultToken(tokenId);
     } else if (existing.isDefault && !isUsableAccountToken(latest)) {
-      repairDefaultToken(existing.accountId);
+      await repairDefaultToken(existing.accountId);
     } else if (body.isDefault === false && existing.isDefault) {
-      repairDefaultToken(existing.accountId);
+      await repairDefaultToken(existing.accountId);
+    }
+
+    latest = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, tokenId)).get();
+    if (!latest) {
+      return reply.code(500).send({ success: false, message: '更新失败' });
     }
 
     return { success: true, token: latest };
@@ -982,8 +997,13 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     return { success: true, ...result, coverageRefresh };
   });
 
-  app.post<{ Body?: { wait?: boolean } }>('/api/account-tokens/sync-all', async (request, reply) => {
-    if (request.body?.wait) {
+  app.post<{ Body: unknown }>('/api/account-tokens/sync-all', async (request, reply) => {
+    const parsedBody = parseAccountTokenSyncAllPayload(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ success: false, message: parsedBody.error });
+    }
+
+    if (parsedBody.data.wait) {
       const syncResult = await executeSyncAllAccountTokens();
       return { success: true, ...syncResult };
     }

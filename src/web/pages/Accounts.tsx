@@ -28,6 +28,7 @@ import { tr } from '../i18n.js';
 import { buildCustomReorderUpdates, sortItemsForDisplay, type SortMode } from './helpers/listSorting.js';
 import { shouldIgnoreRowSelectionClick } from './helpers/rowSelection.js';
 import { SITE_DOCS_URL } from '../docsLink.js';
+import { getSiteInitializationPreset } from '../../shared/siteInitializationPresets.js';
 
 type ConnectionsSegment = 'session' | 'apikey' | 'tokens';
 
@@ -88,6 +89,8 @@ export default function Accounts() {
   const [addMode, setAddMode] = useState<'token' | 'login'>('token');
   const [loginForm, setLoginForm] = useState(createLoginForm);
   const [tokenForm, setTokenForm] = useState(() => createTokenForm('session'));
+  const [createIntentPresetId, setCreateIntentPresetId] = useState<string | null>(null);
+  const [applyCreatePresetModels, setApplyCreatePresetModels] = useState(false);
   const [verifyResult, setVerifyResult] = useState<any>(null);
   const [verifying, setVerifying] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -187,11 +190,17 @@ export default function Accounts() {
   );
   const isSub2ApiSelected = (selectedTokenSite?.platform || '').toLowerCase() === 'sub2api';
   const activeAddCredentialMode = activeSegment === 'apikey' ? 'apikey' : 'session';
+  const createIntentPreset = useMemo(
+    () => getSiteInitializationPreset(createIntentPresetId),
+    [createIntentPresetId],
+  );
 
   const resetAddForms = (credentialMode: 'session' | 'apikey' = activeAddCredentialMode) => {
     setAddMode('token');
     setLoginForm(createLoginForm());
     setTokenForm(createTokenForm(credentialMode));
+    setCreateIntentPresetId(null);
+    setApplyCreatePresetModels(false);
     setVerifyResult(null);
   };
 
@@ -254,18 +263,23 @@ export default function Accounts() {
     if (!shouldOpenCreate || !requestedSiteId) return;
 
     const credentialMode = activeSegment === 'apikey' ? 'apikey' : 'session';
+    const initializationPreset = getSiteInitializationPreset(params.get('initPreset'));
     setShowAdd(true);
     setAddMode('token');
     setVerifyResult(null);
+    setCreateIntentPresetId(initializationPreset?.id || null);
+    setApplyCreatePresetModels(Boolean(initializationPreset?.recommendedModels?.length));
     setLoginForm(createLoginForm());
     setTokenForm({
       ...createTokenForm(credentialMode),
       siteId: requestedSiteId,
+      skipModelFetch: credentialMode === 'apikey' && initializationPreset?.recommendedSkipModelFetch === true,
     });
 
     params.delete('create');
     params.delete('siteId');
     params.delete('from');
+    params.delete('initPreset');
     const nextSearch = params.toString();
     navigate(
       {
@@ -343,6 +357,7 @@ export default function Accounts() {
       return;
     }
     const credentialMode = activeSegment === 'apikey' ? 'apikey' : 'session';
+    const initializationPreset = createIntentPreset;
     setSaving(true);
     try {
       const result = await api.addAccount({
@@ -359,6 +374,24 @@ export default function Accounts() {
         credentialMode,
         skipModelFetch: tokenForm.skipModelFetch,
       });
+      let seededRecommendedModels = false;
+      const recommendedModels = initializationPreset?.recommendedModels || [];
+      const createdAccountId = Number(result?.id) || 0;
+      const shouldSeedRecommendedModels = (
+        credentialMode === 'apikey'
+        && tokenForm.skipModelFetch
+        && applyCreatePresetModels
+        && recommendedModels.length > 0
+        && createdAccountId > 0
+      );
+      if (shouldSeedRecommendedModels) {
+        try {
+          await api.addAccountAvailableModels(createdAccountId, recommendedModels);
+          seededRecommendedModels = true;
+        } catch (seedErr: any) {
+          toast.error(seedErr?.message || '连接已添加，但推荐模型补录失败');
+        }
+      }
       closeAddPanel();
       if (result.queued) {
         toast.info(result.message || '账号已添加，后台正在同步初始化信息。');
@@ -370,6 +403,9 @@ export default function Accounts() {
         if (result.apiTokenFound) parts.push('API Key 已自动获取');
         const extra = parts.length ? `（${parts.join('，')}）` : '';
         toast.success(`账号已添加${extra}`);
+      }
+      if (seededRecommendedModels) {
+        toast.success(`已补入 ${recommendedModels.length} 个推荐模型并重建路由`);
       }
       load();
     } catch (e: any) {
@@ -1330,12 +1366,39 @@ export default function Accounts() {
                 <div className="info-tip">
                   API Key 连接只用于代理转发，不会自动派生账号令牌。系统会按站点平台能力自动引导到 Session 或 API Key 创建流程。
                 </div>
+                {createIntentPreset && (
+                  <div className="alert alert-info animate-scale-in">
+                    <div className="alert-title">{createIntentPreset.label}</div>
+                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4, lineHeight: 1.8 }}>
+                      <div>{createIntentPreset.description}</div>
+                      <div>推荐模型：{createIntentPreset.recommendedModels.join(' / ')}</div>
+                      {createIntentPreset.recommendedSkipModelFetch && (
+                        <div>建议直接跳过模型验证，先保存 Base URL + Key，再补入推荐模型完成初始化。</div>
+                      )}
+                    </div>
+                    {createIntentPreset.recommendedModels.length > 0 && (
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', marginTop: 8 }}>
+                        <input
+                          type="checkbox"
+                          checked={applyCreatePresetModels}
+                          onChange={(e) => setApplyCreatePresetModels(e.target.checked)}
+                          style={{ width: 14, height: 14 }}
+                        />
+                        <span>添加后自动补入推荐模型并重建路由</span>
+                      </label>
+                    )}
+                  </div>
+                )}
                 <ModernSelect
                   value={String(tokenForm.siteId || 0)}
                   onChange={(nextValue) => {
                     const nextSiteId = Number.parseInt(nextValue, 10) || 0;
                     setTokenForm((f) => ({ ...f, siteId: nextSiteId, credentialMode: 'apikey' }));
                     setVerifyResult(null);
+                    if (createIntentPresetId && nextSiteId !== tokenForm.siteId) {
+                      setCreateIntentPresetId(null);
+                      setApplyCreatePresetModels(false);
+                    }
                   }}
                   options={siteSelectOptions}
                   placeholder="选择站点"

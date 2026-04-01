@@ -126,6 +126,7 @@ export type MissingTokenGroupRouteSiteActionItem = {
 export type SortableChannelRowProps = {
   channel: RouteChannel;
   displayPriority?: number;
+  showPriorityBadge?: boolean;
   decisionCandidate?: RouteDecisionCandidate;
   isExactRoute: boolean;
   loadingDecision: boolean;
@@ -152,3 +153,21 @@ export type GroupRouteItem = {
   channelCount: number;
   sourceRouteCount: number;
 };
+
+export type PriorityRailSection = {
+  priority: number;
+  channelCount: number;
+  channelIds: number[];
+};
+
+export type PriorityRailDragTarget =
+  | {
+    kind: 'existing_layer';
+    priority: number;
+    highlighted: boolean;
+  }
+  | {
+    kind: 'new_layer';
+    priority: number;
+    highlighted: boolean;
+  };

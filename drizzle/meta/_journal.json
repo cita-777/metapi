@@ -120,6 +120,13 @@
       "when": 1774692431588,
       "tag": "0017_proxy_debug_traces",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1774959227309,
+      "tag": "0018_site_api_endpoints",
+      "breakpoints": true
     }
   ]
 }

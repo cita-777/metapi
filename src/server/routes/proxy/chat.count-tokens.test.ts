@@ -60,6 +60,7 @@ vi.mock('../../services/modelPricingService.js', () => ({
 vi.mock('../../services/proxyRetryPolicy.js', () => ({
   shouldRetryProxyRequest: () => false,
   shouldAbortSameSiteEndpointFallback: () => false,
+  RETRYABLE_TIMEOUT_PATTERNS: [/(request timed out|connection timed out|read timeout|\btimed out\b)/i],
 }));
 
 vi.mock('../../services/proxyUsageFallbackService.js', () => ({
@@ -86,12 +87,33 @@ vi.mock('../../services/oauth/quota.js', () => ({
 vi.mock('../../db/index.js', () => ({
   db: {
     insert: (arg: any) => dbInsertMock(arg),
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          orderBy: () => ({
+            all: async () => [],
+          }),
+        }),
+      }),
+    }),
+    update: () => ({
+      set: () => ({
+        where: () => ({
+          run: async () => undefined,
+        }),
+      }),
+    }),
   },
   hasProxyLogBillingDetailsColumn: async () => false,
   hasProxyLogClientColumns: async () => false,
   hasProxyLogDownstreamApiKeyIdColumn: async () => false,
   schema: {
     proxyLogs: {},
+    siteApiEndpoints: {
+      id: {},
+      siteId: {},
+      sortOrder: {},
+    },
   },
 }));
 
@@ -148,7 +170,9 @@ describe('claude count_tokens proxy route', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    if (app) {
+      await app.close();
+    }
   });
 
   it('forwards /v1/messages/count_tokens to the claude count_tokens upstream path', async () => {

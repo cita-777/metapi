@@ -1,3 +1,5 @@
+import { stripTrailingSlashes } from '../urlNormalization.js';
+
 export type TitleHintPlatform =
   | 'anyrouter'
   | 'done-hub'
@@ -34,7 +36,7 @@ function normalizeBaseUrl(url: string): string {
     const parsed = new URL(trimmed);
     return `${parsed.protocol}//${parsed.host}`;
   } catch {
-    return trimmed.replace(/\/+$/, '');
+    return stripTrailingSlashes(trimmed);
   }
 }
 

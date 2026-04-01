@@ -1308,6 +1308,76 @@
         }
       }
     },
+    "site_api_endpoints": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "site_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "url": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "enabled": {
+          "logicalType": "boolean",
+          "notNull": false,
+          "defaultValue": "true",
+          "primaryKey": false
+        },
+        "sort_order": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "cooldown_until": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_selected_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_failed_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_failure_reason": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
     "site_disabled_models": {
       "columns": {
         "id": {
@@ -1968,6 +2038,34 @@
       "unique": true
     },
     {
+      "name": "site_api_endpoints_site_cooldown_idx",
+      "table": "site_api_endpoints",
+      "columns": [
+        "site_id",
+        "cooldown_until"
+      ],
+      "unique": false
+    },
+    {
+      "name": "site_api_endpoints_site_enabled_sort_idx",
+      "table": "site_api_endpoints",
+      "columns": [
+        "site_id",
+        "enabled",
+        "sort_order"
+      ],
+      "unique": false
+    },
+    {
+      "name": "site_api_endpoints_site_url_unique",
+      "table": "site_api_endpoints",
+      "columns": [
+        "site_id",
+        "url"
+      ],
+      "unique": true
+    },
+    {
       "name": "site_disabled_models_site_id_idx",
       "table": "site_disabled_models",
       "columns": [
@@ -2104,6 +2202,14 @@
       "columns": [
         "site_id",
         "source_key"
+      ]
+    },
+    {
+      "name": "site_api_endpoints_site_url_unique",
+      "table": "site_api_endpoints",
+      "columns": [
+        "site_id",
+        "url"
       ]
     },
     {
@@ -2244,6 +2350,17 @@
     },
     {
       "table": "site_announcements",
+      "columns": [
+        "site_id"
+      ],
+      "referencedTable": "sites",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "site_api_endpoints",
       "columns": [
         "site_id"
       ],

@@ -89,4 +89,20 @@ describe('sites batch routes', () => {
     expect(response.statusCode).toBe(400);
     expect((response.json() as { message?: string }).message).toContain('action');
   });
+
+  it('rejects non-number site ids at the route boundary', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites/batch',
+      payload: {
+        ids: ['1'],
+        action: 'enable',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      message: 'Invalid ids. Expected number[].',
+    });
+  });
 });

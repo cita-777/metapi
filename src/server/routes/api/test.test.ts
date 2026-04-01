@@ -182,4 +182,24 @@ describe('/api/test proxy tester routes', () => {
       max_output_tokens: 4096,
     });
   });
+
+  it('rejects gemini on legacy /api/test/chat wrapper until a native mapping exists', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/test/chat',
+      payload: {
+        model: 'gemini-2.5-flash',
+        targetFormat: 'gemini',
+        messages: [
+          { role: 'user', content: 'hello' },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      error: 'targetFormat=gemini is not supported on legacy /api/test/chat routes; use the proxy tester Gemini path instead',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

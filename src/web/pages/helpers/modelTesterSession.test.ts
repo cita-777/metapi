@@ -13,6 +13,7 @@ import {
   buildGeminiNativeConversationProxyEnvelope,
   buildRawProxyRequestEnvelope,
   buildSearchRequestEnvelope,
+  attachForcedChannelToEnvelope,
   collectModelTesterModelNames,
   countConversationTurns,
   createConversationUserMessage,
@@ -74,9 +75,11 @@ describe('modelTesterSession', () => {
         stream: false,
         jobMode: false,
         rawMode: false,
+        forcedChannelId: 44,
         jsonBody: { model: '__search', query: 'hello', max_results: 7 },
       },
       pendingJobId: 'job-1',
+      forcedChannelId: 44,
       customRequestMode: true,
       customRequestBody: '{"model":"gemini-2.5-pro","contents":[]}',
       showDebugPanel: true,
@@ -184,6 +187,29 @@ describe('modelTesterSession', () => {
         max_tokens: 200,
         frequency_penalty: 0.2,
         seed: 42,
+      },
+    });
+  });
+
+  it('attaches a forced channel id to tester envelopes without mutating the request body', () => {
+    const base = buildEmbeddingsRequestEnvelope('hello', {
+      ...DEFAULT_INPUTS,
+      model: 'text-embedding-3-small',
+    });
+
+    const payload = attachForcedChannelToEnvelope(base, 42);
+
+    expect(payload).toEqual({
+      method: 'POST',
+      path: '/v1/embeddings',
+      requestKind: 'json',
+      stream: false,
+      jobMode: false,
+      rawMode: false,
+      forcedChannelId: 42,
+      jsonBody: {
+        model: 'text-embedding-3-small',
+        input: 'hello',
       },
     });
   });

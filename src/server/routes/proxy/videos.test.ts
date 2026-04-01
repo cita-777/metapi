@@ -10,10 +10,13 @@ const refreshModelsAndRebuildRoutesMock = vi.fn();
 const reportProxyAllFailedMock = vi.fn();
 const reportTokenExpiredMock = vi.fn();
 const estimateProxyCostMock = vi.fn(async () => 0);
+const shouldRetryProxyRequestMock = vi.fn();
 const saveProxyVideoTaskMock = vi.fn();
 const getProxyVideoTaskByPublicIdMock = vi.fn();
 const deleteProxyVideoTaskByPublicIdMock = vi.fn();
 const refreshProxyVideoTaskSnapshotMock = vi.fn();
+const resolveProxyVideoTaskSiteMock = vi.fn();
+let siteApiEndpointRows: Array<Record<string, unknown>> = [];
 
 vi.mock('undici', async () => {
   const actual = await vi.importActual<typeof import('undici')>('undici');
@@ -50,8 +53,9 @@ vi.mock('../../services/modelPricingService.js', () => ({
 }));
 
 vi.mock('../../services/proxyRetryPolicy.js', () => ({
-  shouldRetryProxyRequest: () => false,
   shouldAbortSameSiteEndpointFallback: () => false,
+  shouldRetryProxyRequest: (...args: unknown[]) => shouldRetryProxyRequestMock(...args),
+  RETRYABLE_TIMEOUT_PATTERNS: [/(request timed out|connection timed out|read timeout|\btimed out\b)/i],
 }));
 
 vi.mock('../../services/proxyVideoTaskStore.js', () => ({
@@ -59,6 +63,35 @@ vi.mock('../../services/proxyVideoTaskStore.js', () => ({
   getProxyVideoTaskByPublicId: (...args: unknown[]) => getProxyVideoTaskByPublicIdMock(...args),
   deleteProxyVideoTaskByPublicId: (...args: unknown[]) => deleteProxyVideoTaskByPublicIdMock(...args),
   refreshProxyVideoTaskSnapshot: (...args: unknown[]) => refreshProxyVideoTaskSnapshotMock(...args),
+  resolveProxyVideoTaskSite: (...args: unknown[]) => resolveProxyVideoTaskSiteMock(...args),
+}));
+
+vi.mock('../../db/index.js', () => ({
+  db: {
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          orderBy: () => ({
+            all: async () => siteApiEndpointRows,
+          }),
+        }),
+      }),
+    }),
+    update: () => ({
+      set: () => ({
+        where: () => ({
+          run: async () => undefined,
+        }),
+      }),
+    }),
+  },
+  schema: {
+    siteApiEndpoints: {
+      id: {},
+      siteId: {},
+      sortOrder: {},
+    },
+  },
 }));
 
 describe('/v1/videos routes', () => {
@@ -94,10 +127,14 @@ describe('/v1/videos routes', () => {
     reportProxyAllFailedMock.mockReset();
     reportTokenExpiredMock.mockReset();
     estimateProxyCostMock.mockClear();
+    shouldRetryProxyRequestMock.mockReset();
     saveProxyVideoTaskMock.mockReset();
     getProxyVideoTaskByPublicIdMock.mockReset();
     deleteProxyVideoTaskByPublicIdMock.mockReset();
     refreshProxyVideoTaskSnapshotMock.mockReset();
+    resolveProxyVideoTaskSiteMock.mockReset();
+    siteApiEndpointRows = [];
+    shouldRetryProxyRequestMock.mockReturnValue(false);
 
     selectChannelMock.mockReturnValue({
       channel: { id: 11, routeId: 22 },
@@ -111,7 +148,9 @@ describe('/v1/videos routes', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    if (app) {
+      await app.close();
+    }
   });
 
   it('creates an upstream video task and stores a local public id mapping', async () => {
@@ -190,7 +229,55 @@ describe('/v1/videos routes', () => {
     });
   });
 
+  it('stores the selected api endpoint base url for split-host video tasks', async () => {
+    siteApiEndpointRows = [
+      {
+        id: 91,
+        siteId: 44,
+        url: 'https://api-videos.example.com',
+        enabled: true,
+        sortOrder: 0,
+      },
+    ];
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'demo-site', url: 'https://panel.example.com', platform: 'openai' },
+      account: { id: 33, username: 'demo-user' },
+      tokenName: 'default',
+      tokenValue: 'sk-demo',
+      actualModel: 'sora-2',
+    });
+    saveProxyVideoTaskMock.mockResolvedValue({
+      publicId: 'vid_local_split',
+      upstreamVideoId: 'vid_upstream_split',
+    });
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'vid_upstream_split',
+      object: 'video',
+      status: 'queued',
+      model: 'sora-2',
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/videos',
+      payload: {
+        model: 'sora-2',
+        prompt: 'split-host create',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(saveProxyVideoTaskMock).toHaveBeenCalledWith(expect.objectContaining({
+      siteUrl: 'https://api-videos.example.com',
+    }));
+  });
+
   it('resolves local video ids back to the upstream task on GET', async () => {
+    resolveProxyVideoTaskSiteMock.mockResolvedValue(null);
     getProxyVideoTaskByPublicIdMock.mockResolvedValue({
       publicId: 'vid_local_123',
       upstreamVideoId: 'vid_upstream_123',
@@ -229,6 +316,116 @@ describe('/v1/videos routes', () => {
     });
   });
 
+  it('re-resolves account-backed video tasks through the site api endpoint pool on GET', async () => {
+    siteApiEndpointRows = [
+      {
+        id: 91,
+        siteId: 44,
+        url: 'https://api-videos.example.com',
+        enabled: true,
+        sortOrder: 0,
+      },
+    ];
+    resolveProxyVideoTaskSiteMock.mockResolvedValue({
+      id: 44,
+      name: 'demo-site',
+      url: 'https://panel.example.com',
+      platform: 'openai',
+    });
+    getProxyVideoTaskByPublicIdMock.mockResolvedValue({
+      publicId: 'vid_local_456',
+      upstreamVideoId: 'vid_upstream_456',
+      siteUrl: 'https://panel.example.com',
+      tokenValue: 'sk-demo',
+      accountId: 33,
+    });
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'vid_upstream_456',
+      object: 'video',
+      status: 'queued',
+      model: 'sora-2',
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/videos/vid_local_456',
+    });
+
+    expect(response.statusCode).toBe(200);
+    const [targetUrl] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(targetUrl).toBe('https://api-videos.example.com/v1/videos/vid_upstream_456');
+  });
+
+  it('uses the persisted api base url when the backing site can no longer be resolved', async () => {
+    resolveProxyVideoTaskSiteMock.mockResolvedValue(null);
+    getProxyVideoTaskByPublicIdMock.mockResolvedValue({
+      publicId: 'vid_local_fallback',
+      upstreamVideoId: 'vid_upstream_fallback',
+      siteUrl: 'https://api-fallback.example.com',
+      tokenValue: 'sk-demo',
+      accountId: 33,
+    });
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'vid_upstream_fallback',
+      object: 'video',
+      status: 'running',
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/videos/vid_local_fallback',
+    });
+
+    expect(response.statusCode).toBe(200);
+    const [targetUrl] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(targetUrl).toBe('https://api-fallback.example.com/v1/videos/vid_upstream_fallback');
+  });
+
+  it('preserves retryable upstream failures after mapped GET retries exhaust', async () => {
+    shouldRetryProxyRequestMock.mockReturnValue(true);
+    siteApiEndpointRows = [
+      {
+        id: 91,
+        siteId: 44,
+        url: 'https://api-videos.example.com',
+        enabled: true,
+        sortOrder: 0,
+      },
+    ];
+    resolveProxyVideoTaskSiteMock.mockResolvedValue({
+      id: 44,
+      name: 'demo-site',
+      url: 'https://panel.example.com',
+      platform: 'openai',
+    });
+    getProxyVideoTaskByPublicIdMock.mockResolvedValue({
+      publicId: 'vid_local_retry_get',
+      upstreamVideoId: 'vid_upstream_retry_get',
+      siteUrl: 'https://api-videos.example.com',
+      tokenValue: 'sk-demo',
+      accountId: 33,
+    });
+    fetchMock.mockResolvedValue(new Response('temporary unavailable', {
+      status: 502,
+      headers: { 'content-type': 'text/plain' },
+    }));
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/videos/vid_local_retry_get',
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.headers['content-type']).toContain('text/plain');
+    expect(response.body).toBe('temporary unavailable');
+  });
+
   it('deletes the upstream task and local mapping on DELETE', async () => {
     getProxyVideoTaskByPublicIdMock.mockResolvedValue({
       publicId: 'vid_local_123',
@@ -245,5 +442,44 @@ describe('/v1/videos routes', () => {
 
     expect(response.statusCode).toBe(204);
     expect(deleteProxyVideoTaskByPublicIdMock).toHaveBeenCalledWith('vid_local_123');
+  });
+
+  it('preserves retryable upstream failures after mapped DELETE retries exhaust', async () => {
+    shouldRetryProxyRequestMock.mockReturnValue(true);
+    siteApiEndpointRows = [
+      {
+        id: 91,
+        siteId: 44,
+        url: 'https://api-videos.example.com',
+        enabled: true,
+        sortOrder: 0,
+      },
+    ];
+    resolveProxyVideoTaskSiteMock.mockResolvedValue({
+      id: 44,
+      name: 'demo-site',
+      url: 'https://panel.example.com',
+      platform: 'openai',
+    });
+    getProxyVideoTaskByPublicIdMock.mockResolvedValue({
+      publicId: 'vid_local_retry_delete',
+      upstreamVideoId: 'vid_upstream_retry_delete',
+      siteUrl: 'https://api-videos.example.com',
+      tokenValue: 'sk-demo',
+      accountId: 33,
+    });
+    fetchMock.mockResolvedValue(new Response('temporary unavailable', {
+      status: 502,
+      headers: { 'content-type': 'text/plain' },
+    }));
+
+    const response = await app.inject({
+      method: 'DELETE',
+      url: '/v1/videos/vid_local_retry_delete',
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.headers['content-type']).toContain('text/plain');
+    expect(response.body).toBe('temporary unavailable');
   });
 });

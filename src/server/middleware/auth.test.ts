@@ -15,4 +15,15 @@ describe('auth middleware IP helpers', () => {
     expect(isIpAllowed('203.0.113.8', ['203.0.113.9'])).toBe(false);
     expect(isIpAllowed('203.0.113.9', ['203.0.113.9'])).toBe(true);
   });
+
+  it('matches ipv4 CIDR ranges in the allowlist', () => {
+    expect(isIpAllowed('8.8.8.8', ['8.8.8.0/24'])).toBe(true);
+    expect(isIpAllowed('8.8.9.8', ['8.8.8.0/24'])).toBe(false);
+    expect(isIpAllowed('8.8.8.8', ['8.8.0.0/16'])).toBe(true);
+  });
+
+  it('ignores malformed CIDR entries instead of matching unexpectedly', () => {
+    expect(isIpAllowed('8.8.8.8', ['8.8.8.0/99'])).toBe(false);
+    expect(isIpAllowed('8.8.8.8', ['not-an-ip/24'])).toBe(false);
+  });
 });

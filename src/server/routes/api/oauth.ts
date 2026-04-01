@@ -12,6 +12,11 @@ import {
   submitOauthManualCallback,
 } from '../../services/oauth/service.js';
 import { parseSiteProxyUrlInput } from '../../services/siteProxy.js';
+import {
+  parseOauthConnectionRebindPayload,
+  parseOauthManualCallbackPayload,
+  parseOauthStartPayload,
+} from '../../contracts/supportRoutePayloads.js';
 
 const limitOauthProviderRead = createRateLimitGuard({
   bucket: 'oauth-provider-read',
@@ -111,21 +116,27 @@ export async function oauthRoutes(app: FastifyInstance) {
     providers: listOauthProviders(),
   }));
 
-  app.post<{ Params: { provider: string }; Body: { accountId?: number; projectId?: string; proxyUrl?: string | null } }>(
+  app.post<{ Params: { provider: string }; Body: unknown }>(
     '/api/oauth/providers/:provider/start',
     { preHandler: [limitOauthStart] },
     async (request, reply) => {
-      const rebindAccountId = request.body?.accountId === undefined
+      const parsedBody = parseOauthStartPayload(request.body);
+      if (!parsedBody.success) {
+        return reply.code(400).send({ message: parsedBody.error });
+      }
+
+      const body = parsedBody.data;
+      const rebindAccountId = body.accountId === undefined
         ? undefined
-        : parsePositiveInteger(request.body.accountId);
-      if (request.body?.accountId !== undefined && rebindAccountId === null) {
+        : parsePositiveInteger(body.accountId);
+      if (body.accountId !== undefined && rebindAccountId === null) {
         return reply.code(400).send({ message: 'invalid account id' });
       }
-      const projectId = parseOptionalProjectId(request.body?.projectId);
-      if (request.body?.projectId !== undefined && projectId === null) {
+      const projectId = parseOptionalProjectId(body.projectId);
+      if (body.projectId !== undefined && projectId === null) {
         return reply.code(400).send({ message: 'invalid project id' });
       }
-      const normalizedProxyUrl = parseSiteProxyUrlInput(request.body?.proxyUrl);
+      const normalizedProxyUrl = parseSiteProxyUrlInput(body.proxyUrl);
       if (normalizedProxyUrl.present && !normalizedProxyUrl.valid) {
         return reply.code(400).send({ message: 'invalid proxy url' });
       }
@@ -156,12 +167,17 @@ export async function oauthRoutes(app: FastifyInstance) {
     },
   );
 
-  app.post<{ Params: { state: string }; Body: { callbackUrl?: string } }>(
+  app.post<{ Params: { state: string }; Body: unknown }>(
     '/api/oauth/sessions/:state/manual-callback',
     { preHandler: [limitOauthSessionMutate] },
     async (request, reply) => {
-      const callbackUrl = typeof request.body?.callbackUrl === 'string'
-        ? request.body.callbackUrl.trim()
+      const parsedBody = parseOauthManualCallbackPayload(request.body);
+      if (!parsedBody.success) {
+        return reply.code(400).send({ message: parsedBody.error });
+      }
+
+      const callbackUrl = typeof parsedBody.data.callbackUrl === 'string'
+        ? parsedBody.data.callbackUrl.trim()
         : '';
       if (!callbackUrl) {
         return reply.code(400).send({ message: 'invalid oauth callback url' });
@@ -209,15 +225,20 @@ export async function oauthRoutes(app: FastifyInstance) {
     },
   );
 
-  app.post<{ Params: { accountId: string }; Body?: { proxyUrl?: string | null } }>(
+  app.post<{ Params: { accountId: string }; Body: unknown }>(
     '/api/oauth/connections/:accountId/rebind',
     { preHandler: [limitOauthConnectionMutate] },
     async (request, reply) => {
+      const parsedBody = parseOauthConnectionRebindPayload(request.body);
+      if (!parsedBody.success) {
+        return reply.code(400).send({ message: parsedBody.error });
+      }
+
       const accountId = parsePositiveInteger(request.params.accountId);
       if (accountId === null) {
         return reply.code(400).send({ message: 'invalid account id' });
       }
-      const normalizedProxyUrl = parseSiteProxyUrlInput(request.body?.proxyUrl);
+      const normalizedProxyUrl = parseSiteProxyUrlInput(parsedBody.data.proxyUrl);
       if (normalizedProxyUrl.present && !normalizedProxyUrl.valid) {
         return reply.code(400).send({ message: 'invalid proxy url' });
       }

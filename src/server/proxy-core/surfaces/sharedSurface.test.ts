@@ -207,10 +207,63 @@ describe('selectSurfaceChannelForAttempt', () => {
     expect(clearStickyChannelMock).not.toHaveBeenCalled();
   });
 
-  it('clears stale sticky bindings and falls back to regular selection when the preferred channel is unavailable', async () => {
+  it('uses the forced tester channel before sticky or automatic selection', async () => {
+    const selected = { channel: { id: 88 } };
+    selectPreferredChannelMock.mockResolvedValueOnce(selected);
+
+    const { selectSurfaceChannelForAttempt } = await import('./sharedSurface.js');
+    const result = await selectSurfaceChannelForAttempt({
+      requestedModel: 'gpt-5.2',
+      downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
+      excludeChannelIds: [],
+      retryCount: 0,
+      stickySessionKey: 'sticky-session',
+      forcedChannelId: 88,
+    });
+
+    expect(result).toBe(selected);
+    expect(selectPreferredChannelMock).toHaveBeenCalledWith(
+      'gpt-5.2',
+      88,
+      EMPTY_DOWNSTREAM_ROUTING_POLICY,
+      [],
+    );
+    expect(getStickyChannelIdMock).not.toHaveBeenCalled();
+    expect(selectChannelMock).not.toHaveBeenCalled();
+    expect(selectNextChannelMock).not.toHaveBeenCalled();
+    expect(refreshModelsAndRebuildRoutesMock).not.toHaveBeenCalled();
+  });
+
+  it('does not refresh or fall back when the forced tester channel is unavailable', async () => {
+    selectPreferredChannelMock.mockResolvedValueOnce(null);
+
+    const { selectSurfaceChannelForAttempt } = await import('./sharedSurface.js');
+    const result = await selectSurfaceChannelForAttempt({
+      requestedModel: 'gpt-5.2',
+      downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
+      excludeChannelIds: [],
+      retryCount: 0,
+      forcedChannelId: 91,
+    });
+
+    expect(result).toBeNull();
+    expect(selectPreferredChannelMock).toHaveBeenCalledWith(
+      'gpt-5.2',
+      91,
+      EMPTY_DOWNSTREAM_ROUTING_POLICY,
+      [],
+    );
+    expect(selectChannelMock).not.toHaveBeenCalled();
+    expect(selectNextChannelMock).not.toHaveBeenCalled();
+    expect(refreshModelsAndRebuildRoutesMock).not.toHaveBeenCalled();
+  });
+
+  it('refreshes and retries the sticky preferred channel before clearing a stale binding', async () => {
     const selected = { channel: { id: 22 } };
     getStickyChannelIdMock.mockReturnValueOnce(55);
-    selectPreferredChannelMock.mockResolvedValueOnce(null);
+    selectPreferredChannelMock
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null);
     selectChannelMock.mockResolvedValueOnce(selected);
 
     const { selectSurfaceChannelForAttempt } = await import('./sharedSurface.js');
@@ -223,8 +276,33 @@ describe('selectSurfaceChannelForAttempt', () => {
     });
 
     expect(result).toBe(selected);
+    expect(refreshModelsAndRebuildRoutesMock).toHaveBeenCalledTimes(1);
+    expect(selectPreferredChannelMock).toHaveBeenCalledTimes(2);
     expect(clearStickyChannelMock).toHaveBeenCalledWith('sticky-session', 55);
     expect(selectChannelMock).toHaveBeenCalledWith('gpt-5.2', EMPTY_DOWNSTREAM_ROUTING_POLICY);
+  });
+
+  it('keeps the sticky binding when route refresh recovers the preferred channel', async () => {
+    const selected = { channel: { id: 55 } };
+    getStickyChannelIdMock.mockReturnValueOnce(55);
+    selectPreferredChannelMock
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(selected);
+
+    const { selectSurfaceChannelForAttempt } = await import('./sharedSurface.js');
+    const result = await selectSurfaceChannelForAttempt({
+      requestedModel: 'gpt-5.2',
+      downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
+      excludeChannelIds: [],
+      retryCount: 0,
+      stickySessionKey: 'sticky-session',
+    });
+
+    expect(result).toBe(selected);
+    expect(refreshModelsAndRebuildRoutesMock).toHaveBeenCalledTimes(1);
+    expect(selectPreferredChannelMock).toHaveBeenCalledTimes(2);
+    expect(clearStickyChannelMock).not.toHaveBeenCalled();
+    expect(selectChannelMock).not.toHaveBeenCalled();
   });
 
   it('logs refresh failures and still retries selection once on the first attempt', async () => {

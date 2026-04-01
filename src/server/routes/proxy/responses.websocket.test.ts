@@ -2,7 +2,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { createServer, type Server } from 'node:http';
 import { AddressInfo } from 'node:net';
 import WebSocket, { WebSocketServer } from 'ws';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../../config.js';
 import { resetCodexSessionResponseStore } from '../../proxy-core/runtime/codexSessionResponseStore.js';
 
@@ -23,6 +23,7 @@ const resolveProxyUsageWithSelfLogFallbackMock = vi.fn(async ({ usage }: any) =>
   estimatedCostFromQuota: 0,
   recoveredFromSelfLog: false,
 }));
+const trackedClientSockets = new Set<WebSocket>();
 const dbInsertMock = vi.fn((_arg?: any) => ({
   values: () => ({
     run: () => undefined,
@@ -82,6 +83,7 @@ vi.mock('../../services/modelPricingService.js', () => ({
 vi.mock('../../services/proxyRetryPolicy.js', () => ({
   shouldRetryProxyRequest: () => false,
   shouldAbortSameSiteEndpointFallback: () => false,
+  RETRYABLE_TIMEOUT_PATTERNS: [/(request timed out|connection timed out|read timeout|\btimed out\b)/i],
 }));
 
 vi.mock('../../services/proxyUsageFallbackService.js', () => ({
@@ -95,12 +97,33 @@ vi.mock('../../services/oauth/quota.js', () => ({
 vi.mock('../../db/index.js', () => ({
   db: {
     insert: (arg: any) => dbInsertMock(arg),
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          orderBy: () => ({
+            all: async () => [],
+          }),
+        }),
+      }),
+    }),
+    update: () => ({
+      set: () => ({
+        where: () => ({
+          run: async () => undefined,
+        }),
+      }),
+    }),
   },
   hasProxyLogBillingDetailsColumn: async () => false,
   hasProxyLogClientColumns: async () => false,
   hasProxyLogDownstreamApiKeyIdColumn: async () => false,
   schema: {
     proxyLogs: {},
+    siteApiEndpoints: {
+      id: {},
+      siteId: {},
+      sortOrder: {},
+    },
   },
 }));
 
@@ -238,16 +261,26 @@ function createDeferred<T>() {
 }
 
 function createClientSocket(baseUrl: string, headers: Record<string, string> = {}) {
-  return new WebSocket(`${baseUrl}/v1/responses`, {
+  const socket = new WebSocket(`${baseUrl}/v1/responses`, {
     headers: {
       Authorization: 'Bearer sk-global-proxy-token',
       ...headers,
     },
   });
+  trackedClientSockets.add(socket);
+  socket.once('close', () => {
+    trackedClientSockets.delete(socket);
+  });
+  return socket;
 }
 
 function createClientSocketForPath(path: string, headers: Record<string, string> = {}) {
-  return new WebSocket(path, { headers });
+  const socket = new WebSocket(path, { headers });
+  trackedClientSockets.add(socket);
+  socket.once('close', () => {
+    trackedClientSockets.delete(socket);
+  });
+  return socket;
 }
 
 describe('responses websocket transport', () => {
@@ -256,6 +289,7 @@ describe('responses websocket transport', () => {
   let app: FastifyInstance;
   let baseUrl: string;
   let upstreamServer: WebSocketServer;
+  let upstreamSockets: Set<WebSocket>;
   let upstreamSiteUrl: string;
   let upstreamConnectionCount: number;
   let upstreamUpgradeHeaders: Record<string, string>;
@@ -276,7 +310,12 @@ describe('responses websocket transport', () => {
     baseUrl = `ws://127.0.0.1:${address.port}`;
 
     upstreamServer = new WebSocketServer({ port: 0 });
+    upstreamSockets = new Set();
     upstreamServer.on('connection', (socket, request) => {
+      upstreamSockets.add(socket);
+      socket.once('close', () => {
+        upstreamSockets.delete(socket);
+      });
       upstreamConnectionCount += 1;
       upstreamUpgradeHeaders = Object.fromEntries(
         Object.entries(request.headers)
@@ -371,11 +410,38 @@ describe('responses websocket transport', () => {
     };
   });
 
+  afterEach(() => {
+    for (const socket of trackedClientSockets) {
+      try {
+        socket.terminate();
+      } catch {}
+    }
+    trackedClientSockets.clear();
+  });
+
   afterAll(async () => {
     (config as any).codexUpstreamWebsocketEnabled = originalCodexUpstreamWebsocketEnabled;
-    await new Promise<void>((resolve) => rejectedUpgradeServer.close(() => resolve()));
-    await new Promise<void>((resolve) => upstreamServer.close(() => resolve()));
-    await app.close();
+    for (const socket of trackedClientSockets) {
+      try {
+        socket.terminate();
+      } catch {}
+    }
+    trackedClientSockets.clear();
+    for (const socket of upstreamSockets || []) {
+      try {
+        socket.terminate();
+      } catch {}
+    }
+    upstreamSockets?.clear();
+    if (rejectedUpgradeServer) {
+      await new Promise<void>((resolve) => rejectedUpgradeServer.close(() => resolve()));
+    }
+    if (upstreamServer) {
+      await new Promise<void>((resolve) => upstreamServer.close(() => resolve()));
+    }
+    if (app) {
+      await app.close();
+    }
   });
 
   it('accepts response.create over GET /v1/responses websocket and forwards streamed responses events', async () => {

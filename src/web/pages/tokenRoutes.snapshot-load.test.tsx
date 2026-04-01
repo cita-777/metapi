@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, create, type ReactTestInstance } from 'react-test-renderer';
+import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
 import TokenRoutes from './TokenRoutes.js';
@@ -113,7 +113,7 @@ describe('TokenRoutes cached snapshot load', () => {
   });
 
   it('shows cached probabilities immediately from getRoutes snapshot data', async () => {
-    let root!: WebTestRenderer;
+    let root!: ReactTestRenderer;
     try {
       await act(async () => {
         root = create(
@@ -125,6 +125,8 @@ describe('TokenRoutes cached snapshot load', () => {
         );
       });
       await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('已缓存');
 
       // Expand the route card to see channel details with probability
       const expandBtn = root.root.find((node) =>
@@ -138,6 +140,40 @@ describe('TokenRoutes cached snapshot load', () => {
       const text = collectText(root.root);
       expect(text).toContain('88.8%');
       expect(text).toContain('cached-user');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('keeps showing the cached snapshot marker after revisiting the page', async () => {
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+      expect(collectText(root.root)).toContain('已缓存');
+
+      root.unmount();
+
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('已缓存');
     } finally {
       root?.unmount();
     }

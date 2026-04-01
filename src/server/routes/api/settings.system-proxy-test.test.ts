@@ -103,6 +103,32 @@ describe('settings system proxy test route', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('rejects array payloads for system proxy test', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/settings/system-proxy/test',
+      payload: [],
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { message?: string }).message).toContain('settings payload');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects non-string proxyUrl payloads for system proxy test', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/settings/system-proxy/test',
+      payload: {
+        proxyUrl: 123,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { message?: string }).message).toContain('string');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('returns 502 when the proxy probe request fails', async () => {
     fetchMock.mockRejectedValue(new TypeError('fetch failed', {
       cause: new Error('connect ECONNREFUSED 127.0.0.1:7890'),

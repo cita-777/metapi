@@ -65,6 +65,7 @@ describe('settings and auth events', () => {
     (config as any).proxyDebugRetentionHours = 24;
     (config as any).proxyDebugMaxBodyBytes = 262144;
     config.routingFallbackUnitCost = 1;
+    (config as any).tokenRouterFailureCooldownMaxSec = 30 * 24 * 60 * 60;
     (config as any).disableCrossProtocolFallback = false;
     (config as any).telegramEnabled = false;
     (config as any).telegramApiBaseUrl = 'https://api.telegram.org';
@@ -278,6 +279,21 @@ describe('settings and auth events', () => {
     expect(body.message).toContain('Webhook URL');
   });
 
+  it('rejects non-boolean webhookEnabled payloads instead of coercing them', async () => {
+    (config as any).webhookEnabled = false;
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      payload: {
+        webhookEnabled: 'false',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { message?: string }).message).toContain('Webhook 开关');
+    expect(config.webhookEnabled).toBe(false);
+  });
+
   it('rejects telegram config when bot token is missing but telegram is enabled', async () => {
     const response = await app.inject({
       method: 'PUT',
@@ -405,6 +421,20 @@ describe('settings and auth events', () => {
     expect(runtime.telegramUseSystemProxy).toBe(true);
   });
 
+  it('rejects non-boolean telegram use system proxy payloads instead of coercing them', async () => {
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      payload: {
+        telegramUseSystemProxy: 'false',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { message?: string }).message).toContain('Telegram 使用系统代理');
+    expect((config as any).telegramUseSystemProxy).toBe(false);
+  });
+
   it('persists and returns routing fallback unit cost from runtime settings', async () => {
     const updateResponse = await app.inject({
       method: 'PUT',
@@ -430,6 +460,52 @@ describe('settings and auth events', () => {
     expect(getResponse.statusCode).toBe(200);
     const runtime = getResponse.json() as { routingFallbackUnitCost?: number };
     expect(runtime.routingFallbackUnitCost).toBe(0.25);
+  });
+
+  it('persists and returns token router failure cooldown cap from runtime settings', async () => {
+    const updateResponse = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      payload: {
+        tokenRouterFailureCooldownMaxSec: 2 * 24 * 60 * 60,
+      },
+    });
+
+    expect(updateResponse.statusCode).toBe(200);
+    const updated = updateResponse.json() as { tokenRouterFailureCooldownMaxSec?: number };
+    expect(updated.tokenRouterFailureCooldownMaxSec).toBe(2 * 24 * 60 * 60);
+    expect((config as any).tokenRouterFailureCooldownMaxSec).toBe(2 * 24 * 60 * 60);
+
+    const saved = await db.select().from(schema.settings).where(eq(schema.settings.key, 'token_router_failure_cooldown_max_sec')).get();
+    expect(saved?.value).toBe(JSON.stringify(2 * 24 * 60 * 60));
+
+    const getResponse = await app.inject({
+      method: 'GET',
+      url: '/api/settings/runtime',
+    });
+    expect(getResponse.statusCode).toBe(200);
+    const runtime = getResponse.json() as { tokenRouterFailureCooldownMaxSec?: number };
+    expect(runtime.tokenRouterFailureCooldownMaxSec).toBe(2 * 24 * 60 * 60);
+  });
+
+  it('clamps token router failure cooldown cap to the supported ceiling', async () => {
+    const ninetyDaysSec = 90 * 24 * 60 * 60;
+    const thirtyDaysSec = 30 * 24 * 60 * 60;
+    const updateResponse = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      payload: {
+        tokenRouterFailureCooldownMaxSec: ninetyDaysSec,
+      },
+    });
+
+    expect(updateResponse.statusCode).toBe(200);
+    const updated = updateResponse.json() as { tokenRouterFailureCooldownMaxSec?: number };
+    expect(updated.tokenRouterFailureCooldownMaxSec).toBe(thirtyDaysSec);
+    expect((config as any).tokenRouterFailureCooldownMaxSec).toBe(thirtyDaysSec);
+
+    const saved = await db.select().from(schema.settings).where(eq(schema.settings.key, 'token_router_failure_cooldown_max_sec')).get();
+    expect(saved?.value).toBe(JSON.stringify(thirtyDaysSec));
   });
 
   it('persists and returns disable cross protocol fallback from runtime settings', async () => {
@@ -680,6 +756,56 @@ describe('settings and auth events', () => {
 
     const saved = await db.select().from(schema.settings).where(eq(schema.settings.key, 'admin_ip_allowlist')).get();
     expect(saved?.value).toBe(JSON.stringify(['198.51.100.10', '198.51.100.11']));
+  });
+
+  it('allows allowlist update when current request IP is covered by a CIDR range', async () => {
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      remoteAddress: '198.51.100.10',
+      payload: {
+        adminIpAllowlist: ['198.51.100.0/24'],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as { adminIpAllowlist?: string[] };
+    expect(body.adminIpAllowlist).toEqual(['198.51.100.0/24']);
+
+    const saved = await db.select().from(schema.settings).where(eq(schema.settings.key, 'admin_ip_allowlist')).get();
+    expect(saved?.value).toBe(JSON.stringify(['198.51.100.0/24']));
+  });
+
+  it('rejects allowlist update when current request IP is outside the CIDR range', async () => {
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      remoteAddress: '198.51.100.10',
+      payload: {
+        adminIpAllowlist: ['198.51.101.0/24'],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    const body = response.json() as { message?: string };
+    expect(body.message).toContain('白名单');
+    expect(body.message).toContain('198.51.100.10');
+  });
+
+  it('rejects allowlist update when it contains malformed CIDR entries', async () => {
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      remoteAddress: '198.51.100.10',
+      payload: {
+        adminIpAllowlist: ['198.51.100.0/99'],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    const body = response.json() as { message?: string };
+    expect(body.message).toContain('IP 白名单');
+    expect(body.message).toContain('198.51.100.0/99');
   });
 
   it('appends event when admin auth token changes', async () => {

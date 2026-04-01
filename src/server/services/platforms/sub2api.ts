@@ -9,9 +9,10 @@ import {
   type SiteAnnouncement,
   UserInfo,
 } from './base.js';
+import { stripTrailingSlashes } from '../urlNormalization.js';
 
 function normalizeBaseUrl(baseUrl: string): string {
-  return (baseUrl || '').replace(/\/+$/, '');
+  return stripTrailingSlashes(baseUrl || '');
 }
 
 /**

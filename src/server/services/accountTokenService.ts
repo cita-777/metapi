@@ -1,5 +1,6 @@
 ﻿import { and, eq, ne } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
+import { getInsertedRowId } from '../db/insertHelpers.js';
 import { getCredentialModeFromExtraConfig } from './accountExtraConfig.js';
 
 type UpstreamApiToken = {
@@ -215,8 +216,8 @@ export async function ensureDefaultTokenForAccount(
         updatedAt: now,
       })
       .run();
-    const insertedId = Number(inserted.lastInsertRowid || 0);
-    target = insertedId > 0
+    const insertedId = getInsertedRowId(inserted);
+    target = insertedId != null
       ? (await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, insertedId)).get()) ?? null
       : null;
     if (!target) return null;
@@ -448,8 +449,8 @@ export async function syncTokensFromUpstream(accountId: number, upstreamTokens: 
         updatedAt: now,
       })
       .run();
-    const insertedId = Number(inserted.lastInsertRowid || 0);
-    if (insertedId <= 0) continue;
+    const insertedId = getInsertedRowId(inserted);
+    if (insertedId == null) continue;
     const createdRow = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, insertedId)).get();
     if (!createdRow) continue;
 
@@ -506,4 +507,3 @@ export async function listTokensWithRelations(accountId?: number) {
     };
     });
 }
-

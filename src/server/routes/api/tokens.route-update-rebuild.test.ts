@@ -434,6 +434,150 @@ describe('PUT /api/routes/:id route rebuild', () => {
     });
   });
 
+  it('rejects non-string displayName when creating explicit-group routes', async () => {
+    const sourceRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'claude-opus-4-5',
+      enabled: true,
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/routes',
+      payload: {
+        routeMode: 'explicit_group',
+        displayName: 123,
+        sourceRouteIds: [sourceRoute.id],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      success: false,
+      message: 'Invalid displayName. Expected string or null.',
+    });
+  });
+
+  it('rejects non-number sourceRouteIds when creating explicit-group routes', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/routes',
+      payload: {
+        routeMode: 'explicit_group',
+        displayName: 'claude-opus-4-6',
+        sourceRouteIds: ['1'],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      success: false,
+      message: 'Invalid sourceRouteIds. Expected number[].',
+    });
+  });
+
+  it('rejects non-boolean enabled when updating routes', async () => {
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4o',
+      enabled: true,
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/routes/${route.id}`,
+      payload: {
+        enabled: 'false',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      success: false,
+      message: 'Invalid enabled. Expected boolean.',
+    });
+  });
+
+  it('rejects non-number accountId when adding route channels', async () => {
+    const seeded = await seedAccountWithToken('gpt-4o-mini');
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4o-mini',
+      enabled: true,
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/routes/${route.id}/channels`,
+      payload: {
+        accountId: String(seeded.account.id),
+        tokenId: seeded.token.id,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      success: false,
+      message: 'Invalid accountId. Expected positive number.',
+    });
+  });
+
+  it('rejects non-boolean enabled when updating channels', async () => {
+    const seeded = await seedAccountWithToken('gpt-4o-mini');
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4o-mini',
+      enabled: true,
+    }).returning().get();
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: seeded.account.id,
+      tokenId: seeded.token.id,
+      sourceModel: 'gpt-4o-mini',
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      manualOverride: false,
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/channels/${channel.id}`,
+      payload: {
+        enabled: 'false',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      success: false,
+      message: 'Invalid enabled. Expected boolean.',
+    });
+  });
+
+  it('rejects non-number accountId when batch-adding route channels', async () => {
+    const seeded = await seedAccountWithToken('gpt-4o-mini');
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4o-mini',
+      enabled: true,
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/routes/${route.id}/channels/batch`,
+      payload: {
+        channels: [
+          {
+            accountId: String(seeded.account.id),
+            tokenId: seeded.token.id,
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      success: false,
+      message: 'Invalid channels[].accountId. Expected positive number.',
+    });
+  });
+
   it('prefers an exact route over a colliding explicit-group display name', async () => {
     const exactCandidate = await seedAccountWithToken('claude-opus-4-6');
     const groupedCandidate = await seedAccountWithToken('claude-opus-4-5');

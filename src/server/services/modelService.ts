@@ -1,5 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
+import { getInsertedRowId } from '../db/insertHelpers.js';
 import { getAdapter } from './platforms/index.js';
 import {
   ACCOUNT_TOKEN_VALUE_STATUS_READY,
@@ -25,6 +26,7 @@ import { withAccountProxyOverride } from './siteProxy.js';
 import { isCodexPlatform } from './oauth/codexAccount.js';
 import { buildStoredOauthStateFromAccount, getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { refreshOauthAccessTokenSingleflight } from './oauth/refreshSingleflight.js';
+import { requireSiteApiBaseUrl } from './siteApiEndpointService.js';
 import {
   discoverAntigravityModelsFromCloud,
   discoverClaudeModelsFromCloud,
@@ -774,6 +776,30 @@ export async function refreshModelsForAccount(
     }
   }
 
+  let aiBaseUrl: string;
+  try {
+    aiBaseUrl = await requireSiteApiBaseUrl(site);
+  } catch (err) {
+    const rawMessage = (err as { message?: string })?.message || '模型获取失败';
+    const errorCode = classifyModelDiscoveryError(rawMessage);
+    const errorMessage = rawMessage;
+    await setAccountRuntimeHealth(account.id, {
+      state: 'unhealthy',
+      reason: errorMessage,
+      source: 'model-discovery',
+      checkedAt: new Date().toISOString(),
+    });
+    await restorePreviousAvailability();
+    return buildFailedRefreshResult({
+      accountId,
+      errorCode,
+      errorMessage,
+      tokenScanned: 0,
+      discoveredByCredential: false,
+      discoveredApiToken: !!discoveredApiToken,
+    });
+  }
+
   const accountModels = new Map<string, string>();   // lowercase key → original name (first-wins)
   const modelLatency = new Map<string, number | null>();
   let scannedTokenCount = 0;
@@ -812,7 +838,7 @@ export async function refreshModelsForAccount(
       models = normalizeModels(
         await withTimeout(
           () => withAccountProxyOverride(accountProxyUrl,
-            () => adapter.getModels(site.url, credential, platformUserId)),
+            () => adapter.getModels(aiBaseUrl, credential, platformUserId)),
           MODEL_DISCOVERY_TIMEOUT_MS,
           `model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
         ),
@@ -840,7 +866,7 @@ export async function refreshModelsForAccount(
       models = normalizeModels(
         await withTimeout(
           () => withAccountProxyOverride(accountProxyUrl,
-            () => adapter.getModels(site.url, token.token, platformUserId)),
+            () => adapter.getModels(aiBaseUrl, token.token, platformUserId)),
           MODEL_DISCOVERY_TIMEOUT_MS,
           `model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
         ),
@@ -1032,8 +1058,8 @@ export async function rebuildTokenRoutesFromAvailability() {
         modelPattern: modelName,
         enabled: true,
       }).run();
-      const insertedId = Number(inserted.lastInsertRowid || 0);
-      route = insertedId > 0
+      const insertedId = getInsertedRowId(inserted);
+      route = insertedId != null
         ? await db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, insertedId)).get()
         : undefined;
       if (!route) continue;
@@ -1060,8 +1086,8 @@ export async function rebuildTokenRoutesFromAvailability() {
         enabled: true,
         manualOverride: false,
       }).run();
-      const insertedId = Number(inserted.lastInsertRowid || 0);
-      if (insertedId <= 0) continue;
+      const insertedId = getInsertedRowId(inserted);
+      if (insertedId == null) continue;
       const created = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, insertedId)).get();
       if (!created) continue;
       channels.push(created);

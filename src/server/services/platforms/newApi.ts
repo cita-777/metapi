@@ -549,6 +549,15 @@ export class NewApiAdapter extends BasePlatformAdapter {
     return '';
   }
 
+  private isHtmlJsonParseErrorMessage(message?: string | null): boolean {
+    if (!message) return false;
+    const text = message.toLowerCase();
+    return (
+      text.includes("unexpected token '<'")
+      || (text.includes('not valid json') && (text.includes('<html') || text.includes('<script')))
+    );
+  }
+
   private isShieldChallenge(contentType: string, text: string): boolean {
     const ct = (contentType || '').toLowerCase();
     if (ct.includes('text/html') && /var\s+arg1\s*=|acw_sc__v2|cdn_sec_tc|<script/i.test(text)) {
@@ -627,6 +636,72 @@ export class NewApiAdapter extends BasePlatformAdapter {
       text.includes('未登录') ||
       text.includes('未提供')
     );
+  }
+
+  private isMissingCheckinEndpointMessage(message?: string | null): boolean {
+    if (!message) return false;
+    const text = message.toLowerCase();
+    return (
+      text.includes('invalid url (post /api/user/checkin)') ||
+      (text.includes('http 404') && text.includes('/api/user/checkin')) ||
+      text.includes('checkin endpoint not found') ||
+      text.includes('check-in is not supported') ||
+      text.includes('checkin is not supported') ||
+      text.includes('does not support checkin') ||
+      text.includes('not support checkin')
+    );
+  }
+
+  private isCookieSessionFailureMessage(message?: string | null): boolean {
+    if (!message) return false;
+    const text = message.toLowerCase();
+    return (
+      text.includes('access token') ||
+      text.includes('unauthorized') ||
+      text.includes('forbidden') ||
+      text.includes('new-api-user') ||
+      text.includes('user id') ||
+      text.includes('invalid token') ||
+      text.includes('expired') ||
+      text.includes('无权') ||
+      text.includes('未登录') ||
+      text.includes('未提供') ||
+      text.includes('未授权') ||
+      text.includes('not login') ||
+      text.includes('not logged')
+    );
+  }
+
+  private async detectCookieSessionFailureMessage(
+    baseUrl: string,
+    accessToken: string,
+    candidateUserIds: Array<number | null | undefined>,
+  ): Promise<string | null> {
+    let failureMessage: string | null = null;
+    const rememberFailure = (message: string) => {
+      if (failureMessage) return;
+      const text = message.trim();
+      if (!this.isCookieSessionFailureMessage(text)) return;
+      failureMessage = text;
+    };
+
+    const uniqueCandidateUserIds = Array.from(new Set(
+      candidateUserIds.filter((value): value is number => typeof value === 'number' && value > 0),
+    ));
+
+    if (uniqueCandidateUserIds.length === 0) {
+      await this.fetchUserSelfByCookie(baseUrl, accessToken, undefined, rememberFailure);
+      return failureMessage;
+    }
+
+    for (const userId of uniqueCandidateUserIds) {
+      await this.fetchUserSelfByCookie(baseUrl, accessToken, userId, rememberFailure);
+      if (failureMessage) {
+        return failureMessage;
+      }
+    }
+
+    return failureMessage;
   }
 
   private async fetchJsonRawWithCookie<T>(
@@ -1078,6 +1153,17 @@ export class NewApiAdapter extends BasePlatformAdapter {
       if (retriedCookieResult) return retriedCookieResult;
     }
 
+    if (this.isMissingCheckinEndpointMessage(firstFailureMessage)) {
+      const cookieSessionFailureMessage = await this.detectCookieSessionFailureMessage(
+        baseUrl,
+        accessToken,
+        [resolvedUserId, alternateCookieUserId],
+      );
+      if (cookieSessionFailureMessage) {
+        return { success: false, message: cookieSessionFailureMessage };
+      }
+    }
+
     return { success: false, message: firstFailureMessage || 'checkin failed' };
   }
 
@@ -1085,10 +1171,15 @@ export class NewApiAdapter extends BasePlatformAdapter {
     const resolvedUserId = platformUserId || await this.discoverUserId(baseUrl, accessToken);
     let failureMessage: string | null = null;
     const rememberFailure = (message?: string | null) => {
-      if (failureMessage) return;
       const text = typeof message === 'string' ? message.trim() : '';
       if (!text) return;
-      failureMessage = text;
+      if (!failureMessage) {
+        failureMessage = text;
+        return;
+      }
+      if (this.isHtmlJsonParseErrorMessage(failureMessage) && !this.isHtmlJsonParseErrorMessage(text)) {
+        failureMessage = text;
+      }
     };
 
     try {

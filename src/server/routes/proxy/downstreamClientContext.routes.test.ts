@@ -59,6 +59,7 @@ vi.mock('../../services/modelPricingService.js', () => ({
 vi.mock('../../services/proxyRetryPolicy.js', () => ({
   shouldRetryProxyRequest: () => false,
   shouldAbortSameSiteEndpointFallback: () => false,
+  RETRYABLE_TIMEOUT_PATTERNS: [/(request timed out|connection timed out|read timeout|\btimed out\b)/i],
 }));
 
 vi.mock('../../services/proxyUsageFallbackService.js', () => ({
@@ -68,9 +69,30 @@ vi.mock('../../services/proxyUsageFallbackService.js', () => ({
 vi.mock('../../db/index.js', () => ({
   db: {
     insert: (arg: any) => dbInsertMock(arg),
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          orderBy: () => ({
+            all: async () => [],
+          }),
+        }),
+      }),
+    }),
+    update: () => ({
+      set: () => ({
+        where: () => ({
+          run: async () => undefined,
+        }),
+      }),
+    }),
   },
   schema: {
     proxyLogs: {},
+    siteApiEndpoints: {
+      id: {},
+      siteId: {},
+      sortOrder: {},
+    },
   },
   hasProxyLogBillingDetailsColumn: async () => false,
   hasProxyLogClientColumns: async () => false,
@@ -117,7 +139,9 @@ describe('downstream client context route logging', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    if (app) {
+      await app.close();
+    }
   });
 
   it('includes Codex client and session metadata in /v1/responses failure logs', async () => {

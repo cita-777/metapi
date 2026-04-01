@@ -1,7 +1,11 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
-import { buildFastifyOptions, config } from './config.js';
+import {
+  buildFastifyOptions,
+  config,
+  normalizeTokenRouterFailureCooldownMaxSec,
+} from './config.js';
 import { normalizePayloadRulesConfig } from './services/payloadRules.js';
 import { authMiddleware } from './middleware/auth.js';
 import { sitesRoutes } from './routes/api/sites.js';
@@ -293,6 +297,12 @@ function applyRuntimeSettings(settingsMap: Map<string, string>) {
   const routingFallbackUnitCost = parseSettingFromMap<number>(settingsMap, 'routing_fallback_unit_cost');
   if (typeof routingFallbackUnitCost === 'number' && Number.isFinite(routingFallbackUnitCost) && routingFallbackUnitCost > 0) {
     config.routingFallbackUnitCost = Math.max(1e-6, routingFallbackUnitCost);
+  }
+
+  const tokenRouterFailureCooldownMaxSec = parseSettingFromMap<number>(settingsMap, 'token_router_failure_cooldown_max_sec');
+  const normalizedFailureCooldownMaxSec = normalizeTokenRouterFailureCooldownMaxSec(tokenRouterFailureCooldownMaxSec);
+  if (normalizedFailureCooldownMaxSec != null) {
+    config.tokenRouterFailureCooldownMaxSec = normalizedFailureCooldownMaxSec;
   }
 
   const webhookUrl = parseSettingFromMap<string>(settingsMap, 'webhook_url');

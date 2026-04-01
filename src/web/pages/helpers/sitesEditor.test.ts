@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildSiteSaveAction,
+  emptySiteApiEndpoint,
   emptySiteCustomHeader,
   emptySiteForm,
+  serializeSiteApiEndpoints,
   serializeSiteCustomHeaders,
   siteFormFromSite,
 } from './sitesEditor.js';
@@ -17,6 +19,10 @@ describe('buildSiteSaveAction', () => {
         externalCheckinUrl: 'https://checkin.a.example.com',
         platform: 'new-api',
         proxyUrl: 'socks5://127.0.0.1:1080',
+        apiEndpoints: [
+          { url: 'https://api-a.example.com', enabled: true, sortOrder: 0 },
+          { url: 'https://api-b.example.com', enabled: false, sortOrder: 1 },
+        ],
         customHeaders: '{"x-site-token":"alpha"}',
         useSystemProxy: false,
         globalWeight: 1.2,
@@ -31,6 +37,10 @@ describe('buildSiteSaveAction', () => {
         externalCheckinUrl: 'https://checkin.a.example.com',
         platform: 'new-api',
         proxyUrl: 'socks5://127.0.0.1:1080',
+        apiEndpoints: [
+          { url: 'https://api-a.example.com', enabled: true, sortOrder: 0 },
+          { url: 'https://api-b.example.com', enabled: false, sortOrder: 1 },
+        ],
         customHeaders: '{"x-site-token":"alpha"}',
         useSystemProxy: false,
         globalWeight: 1.2,
@@ -48,6 +58,7 @@ describe('buildSiteSaveAction', () => {
         platform: 'one-api',
         proxyUrl: '',
         useSystemProxy: true,
+        apiEndpoints: [],
         customHeaders: '',
         globalWeight: 0.8,
       },
@@ -63,6 +74,7 @@ describe('buildSiteSaveAction', () => {
         platform: 'one-api',
         proxyUrl: '',
         useSystemProxy: true,
+        apiEndpoints: [],
         customHeaders: '',
         globalWeight: 0.8,
       },
@@ -80,6 +92,7 @@ describe('buildSiteSaveAction', () => {
           platform: '',
           proxyUrl: '',
           useSystemProxy: false,
+          apiEndpoints: [],
           customHeaders: '',
           globalWeight: 1,
         },
@@ -94,6 +107,14 @@ describe('buildSiteSaveAction', () => {
       externalCheckinUrl: null,
       platform: 'new-api',
       proxyUrl: 'http://127.0.0.1:8080',
+      apiEndpoints: [
+        {
+          url: 'https://api.example.com',
+          enabled: false,
+          cooldownUntil: '2026-04-01T00:05:00.000Z',
+          lastFailureReason: 'HTTP 502',
+        },
+      ],
       customHeaders: '{"x-site-token":"alpha"}',
       globalWeight: 1,
       apiKey: 'sk-legacy-site-key',
@@ -101,11 +122,20 @@ describe('buildSiteSaveAction', () => {
 
     expect(emptySiteForm()).not.toHaveProperty('apiKey');
     expect(emptySiteForm().customHeaders).toEqual([emptySiteCustomHeader()]);
+    expect(emptySiteForm().apiEndpoints).toEqual([emptySiteApiEndpoint()]);
     expect(emptySiteForm().proxyUrl).toBe('');
     expect(siteFormFromSite(legacySite)).not.toHaveProperty('apiKey');
     expect(siteFormFromSite({
       proxyUrl: 'http://127.0.0.1:8080',
     }).proxyUrl).toBe('http://127.0.0.1:8080');
+    expect(siteFormFromSite(legacySite).apiEndpoints).toEqual([
+      {
+        url: 'https://api.example.com',
+        enabled: false,
+        cooldownUntil: '2026-04-01T00:05:00.000Z',
+        lastFailureReason: 'HTTP 502',
+      },
+    ]);
   });
 
   it('parses custom headers json into key value rows', () => {
@@ -137,6 +167,31 @@ describe('buildSiteSaveAction', () => {
       valid: false,
       customHeaders: '',
       error: '请求头 "authorization" 重复了',
+    });
+  });
+
+  it('serializes api endpoint rows into ordered payloads', () => {
+    expect(serializeSiteApiEndpoints([
+      { url: 'https://api-a.example.com/', enabled: true },
+      { url: 'https://api-b.example.com', enabled: false },
+      emptySiteApiEndpoint(),
+    ])).toEqual({
+      valid: true,
+      apiEndpoints: [
+        { url: 'https://api-a.example.com', enabled: true, sortOrder: 0 },
+        { url: 'https://api-b.example.com', enabled: false, sortOrder: 1 },
+      ],
+    });
+  });
+
+  it('rejects duplicate api endpoints after normalization', () => {
+    expect(serializeSiteApiEndpoints([
+      { url: 'https://api.example.com/', enabled: true },
+      { url: 'https://api.example.com', enabled: true },
+    ])).toEqual({
+      valid: false,
+      apiEndpoints: [],
+      error: 'AI 请求地址 "https://api.example.com" 重复了',
     });
   });
 });

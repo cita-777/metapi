@@ -73,6 +73,7 @@ describe('testRoutes proxy tester transport', () => {
         stream: false,
         jobMode: false,
         rawMode: true,
+        forcedChannelId: 77,
         rawJsonText: JSON.stringify({
           model: 'gpt-4o-mini',
           include: ['reasoning.encrypted_content'],
@@ -85,6 +86,10 @@ describe('testRoutes proxy tester transport', () => {
     expect(response.statusCode).toBe(200);
     const [url, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toMatch(/\/v1\/responses$/);
+    expect(requestInit.headers).toMatchObject({
+      'x-metapi-tester-request': '1',
+      'x-metapi-tester-forced-channel-id': '77',
+    });
     expect(JSON.parse(String(requestInit.body))).toEqual({
       model: 'gpt-4o-mini',
       include: ['reasoning.encrypted_content'],
@@ -109,6 +114,7 @@ describe('testRoutes proxy tester transport', () => {
       payload: {
         model: 'claude-3-7-sonnet',
         targetFormat: 'claude',
+        forcedChannelId: 55,
         messages: [
           { role: 'system', content: 'be concise' },
           { role: 'user', content: 'ping' },
@@ -119,6 +125,10 @@ describe('testRoutes proxy tester transport', () => {
     expect(response.statusCode).toBe(200);
     const [url, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toMatch(/\/v1\/messages$/);
+    expect(requestInit.headers).toMatchObject({
+      'x-metapi-tester-request': '1',
+      'x-metapi-tester-forced-channel-id': '55',
+    });
     expect(JSON.parse(String(requestInit.body))).toEqual({
       model: 'claude-3-7-sonnet',
       stream: false,

@@ -129,6 +129,54 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
     expect(parsedExtra.credentialMode).toBe('apikey');
   });
 
+  it('rejects malformed verify-token payloads at the route boundary', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/accounts/verify-token',
+      payload: {
+        siteId: '1',
+        accessToken: 'sk-fast-verify',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      success: false,
+      message: 'Invalid siteId. Expected positive number.',
+    });
+  });
+
+  it('rejects array payloads when adding account', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/accounts',
+      payload: [],
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { message?: string }).message).toContain('account payload');
+  });
+
+  it('rejects non-string accessToken when adding account', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Typed Site',
+      url: 'https://typed.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/accounts',
+      payload: {
+        siteId: site.id,
+        accessToken: 123,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { message?: string }).message).toContain('accessToken');
+  });
+
   it('marks apikey connection healthy in account list after model discovery succeeds', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'Healthy API Key Site',
@@ -227,6 +275,68 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
         proxyOnly: true,
       });
     });
+
+  it('uses structured oauth columns when listing oauth account capabilities and runtime health', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Structured Codex Site',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'structured-oauth@example.com',
+      accessToken: 'oauth-access-token',
+      apiToken: null,
+      status: 'active',
+      checkinEnabled: false,
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-account-structured-123',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          email: 'structured-oauth@example.com',
+          planType: 'team',
+        },
+      }),
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'gpt-5.2-codex',
+      available: true,
+      checkedAt: '2026-04-01T12:00:00.000Z',
+    }).run();
+
+    const listResponse = await app.inject({
+      method: 'GET',
+      url: '/api/accounts',
+    });
+    expect(listResponse.statusCode).toBe(200);
+
+    const list = listResponse.json() as Array<{
+      id: number;
+      capabilities?: {
+        canCheckin?: boolean;
+        canRefreshBalance?: boolean;
+        proxyOnly?: boolean;
+      };
+      runtimeHealth?: {
+        state?: string;
+        reason?: string;
+      };
+    }>;
+    const item = list.find((entry) => entry.id === account.id);
+    expect(item?.capabilities).toMatchObject({
+      canCheckin: false,
+      canRefreshBalance: false,
+      proxyOnly: true,
+    });
+    expect(item?.runtimeHealth).toMatchObject({
+      state: 'healthy',
+      reason: '模型探测成功',
+    });
+  });
 
   it('stores managed refresh token for sub2api session account', async () => {
     verifyTokenMock.mockResolvedValueOnce({
@@ -348,5 +458,53 @@ describe('accounts credential mode', { timeout: 15_000 }, () => {
     const updated = await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();
     expect(updated?.isPinned).toBe(true);
     expect(updated?.sortOrder).toBe(5);
+  });
+
+  it('rejects array payloads when updating account', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Update Site',
+      url: 'https://update.example.com',
+      platform: 'new-api',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'update-user',
+      accessToken: 'access-token',
+      status: 'active',
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/accounts/${account.id}`,
+      payload: [],
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { message?: string }).message).toContain('account payload');
+  });
+
+  it('rejects non-string username when updating account', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Update Site',
+      url: 'https://update.example.com',
+      platform: 'new-api',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'update-user',
+      accessToken: 'access-token',
+      status: 'active',
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/accounts/${account.id}`,
+      payload: {
+        username: 123,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { message?: string }).message).toContain('username');
   });
 });

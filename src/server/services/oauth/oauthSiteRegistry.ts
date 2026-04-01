@@ -1,5 +1,6 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { db, schema } from '../../db/index.js';
+import { insertAndGetById } from '../../db/insertHelpers.js';
 import { listOAuthProviderDefinitions, type OAuthProviderDefinition } from './providers.js';
 
 function isUniqueConstraintError(error: unknown): boolean {
@@ -26,16 +27,22 @@ export async function ensureOauthProviderSite(definition: OAuthProviderDefinitio
   if (existing) return existing;
 
   try {
-    return await db.insert(schema.sites).values({
-      name: definition.site.name,
-      url: definition.site.url,
-      platform: definition.site.platform,
-      status: 'active',
-      useSystemProxy: false,
-      isPinned: false,
-      globalWeight: 1,
-      sortOrder: await getNextSiteSortOrder(),
-    }).returning().get();
+    return await insertAndGetById<typeof schema.sites.$inferSelect>({
+      table: schema.sites,
+      idColumn: schema.sites.id,
+      values: {
+        name: definition.site.name,
+        url: definition.site.url,
+        platform: definition.site.platform,
+        status: 'active',
+        useSystemProxy: false,
+        isPinned: false,
+        globalWeight: 1,
+        sortOrder: await getNextSiteSortOrder(),
+      },
+      insertErrorMessage: `failed to create oauth provider site: ${definition.site.platform}`,
+      loadErrorMessage: `failed to load created oauth provider site: ${definition.site.platform}`,
+    });
   } catch (error) {
     if (!isUniqueConstraintError(error)) throw error;
     const recovered = await db.select().from(schema.sites).where(and(

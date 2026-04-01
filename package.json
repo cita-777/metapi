@@ -88,7 +88,8 @@
     "pg": "^8.16.3",
     "socks": "^2.8.7",
     "undici": "^6.24.1",
-    "ws": "^8.20.0"
+    "ws": "^8.20.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@electron/notarize": "^3.1.0",

@@ -1,5 +1,6 @@
 import { and, asc, eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
+import { requireInsertedRowId } from '../db/insertHelpers.js';
 import { getAdapter } from './platforms/index.js';
 import { sendNotification } from './notifyService.js';
 import { formatUtcSqlDateTime } from './localTimeService.js';
@@ -130,7 +131,11 @@ export async function syncSiteAnnouncements(options?: { siteId?: number | null }
           sourceKey: announcement.sourceKey,
           firstSeenAt: seenAt,
           ...patch,
-        }).returning().get();
+        }).run();
+        const announcementId = requireInsertedRowId(
+          inserted,
+          `failed to create site announcement for site ${site.id}`,
+        );
         result.inserted += 1;
 
         const title = `站点公告：${site.name}`;
@@ -140,7 +145,7 @@ export async function syncSiteAnnouncements(options?: { siteId?: number | null }
           title,
           message,
           level: announcement.level,
-          relatedId: inserted.id,
+          relatedId: announcementId,
           relatedType: 'site_announcement',
           createdAt: seenAt,
         }).run();

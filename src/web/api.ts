@@ -232,6 +232,7 @@ type TestChatRequestPayload = {
   messages: Array<{ role: string; content: string }>;
   targetFormat?: 'openai' | 'claude' | 'responses' | 'gemini';
   stream?: boolean;
+  forcedChannelId?: number | null;
   temperature?: number;
   top_p?: number;
   max_tokens?: number;
@@ -257,6 +258,7 @@ export type ProxyTestRequestEnvelope = {
   stream?: boolean;
   jobMode?: boolean;
   rawMode?: boolean;
+  forcedChannelId?: number | null;
   jsonBody?: unknown;
   rawJsonText?: string;
   multipartFields?: Record<string, string>;
@@ -384,6 +386,7 @@ export type RuntimeSettingsPayload = {
   notifyCooldownSec?: number;
   adminIpAllowlist?: string[] | string;
   routingFallbackUnitCost?: number;
+  tokenRouterFailureCooldownMaxSec?: number;
   routingWeights?: RuntimeRoutingWeightsPayload;
   proxyErrorKeywords?: string[] | string;
   proxyEmptyContentFailEnabled?: boolean;
@@ -715,6 +718,7 @@ export const api = {
   addRoute: (data: any) => request('/api/routes', { method: 'POST', body: JSON.stringify(data) }),
   updateRoute: (id: number, data: any) => request(`/api/routes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteRoute: (id: number) => request(`/api/routes/${id}`, { method: 'DELETE' }),
+  clearRouteCooldown: (id: number) => request(`/api/routes/${id}/cooldown/clear`, { method: 'POST' }),
   batchUpdateRoutes: (data: { ids: number[]; action: 'enable' | 'disable' }) =>
     request('/api/routes/batch', { method: 'POST', body: JSON.stringify(data) }),
   addChannel: (routeId: number, data: any) => request(`/api/routes/${routeId}/channels`, { method: 'POST', body: JSON.stringify(data) }),
@@ -726,6 +730,10 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({ refreshModels, ...(wait ? { wait: true } : {}) }),
     timeoutMs: wait ? 150_000 : 30_000,
+  }),
+  refreshRouteDecisionSnapshots: () => request('/api/routes/decision/refresh', {
+    method: 'POST',
+    body: JSON.stringify({}),
   }),
   getRouteDecision: (model: string) => request(`/api/routes/decision?model=${encodeURIComponent(model)}`),
   getRouteDecisionsBatch: (models: string[], options?: { refreshPricingCatalog?: boolean; persistSnapshots?: boolean }) => request('/api/routes/decision/batch', {
