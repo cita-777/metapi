@@ -91,9 +91,15 @@ type ErrorLike = {
   cause?: unknown;
 };
 
-function normalizeOptionalPlatform(value: string | undefined): string | null {
+function normalizeCanonicalSiteUrl(value: string): string {
+  const trimmed = value.trim();
+  const withScheme = trimmed.includes('://') ? trimmed : `https://${trimmed}`;
+  return normalizeSiteUrl(withScheme);
+}
+
+function normalizeSitePlatform(value: string | undefined): string | null {
   if (value === undefined) return null;
-  const normalized = value.trim();
+  const normalized = value.trim().toLowerCase();
   return normalized || null;
 }
 
@@ -348,15 +354,15 @@ export async function sitesRoutes(app: FastifyInstance) {
 
     const existingSites = await db.select().from(schema.sites).all();
     const maxSortOrder = existingSites.reduce((max, site) => Math.max(max, site.sortOrder || 0), -1);
-    const normalizedUrl = normalizeSiteUrl(url);
-
-    let detectedPlatform = normalizeOptionalPlatform(platform);
+    const canonicalUrl = normalizeCanonicalSiteUrl(url);
+    const canonicalPlatform = normalizeSitePlatform(platform);
+    let detectedPlatform = canonicalPlatform;
     let responseInitializationPresetId: string | null = explicitInitializationPreset?.id || null;
     if (!detectedPlatform) {
       if (explicitInitializationPreset) {
         detectedPlatform = explicitInitializationPreset.platform;
       } else {
-        const detected = await detectSite(url);
+        const detected = await detectSite(canonicalUrl);
         detectedPlatform = detected?.platform ?? null;
         responseInitializationPresetId = detected?.initializationPresetId || null;
       }
@@ -367,9 +373,9 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (!detectedPlatform) {
       return { error: 'Could not detect platform. Please specify manually.' };
     }
-    const conflictingSite = findExistingSiteBinding(existingSites, detectedPlatform, normalizedUrl);
+    const conflictingSite = findExistingSiteBinding(existingSites, detectedPlatform, canonicalUrl);
     if (conflictingSite) {
-      return sendSiteBindingConflict(reply, detectedPlatform, normalizedUrl);
+      return sendSiteBindingConflict(reply, detectedPlatform, canonicalUrl);
     }
 
     let inserted;
@@ -379,7 +385,7 @@ export async function sitesRoutes(app: FastifyInstance) {
         idColumn: schema.sites.id,
         values: {
           name,
-          url: normalizedUrl,
+          url: canonicalUrl,
           platform: detectedPlatform,
           proxyUrl: normalizedProxyUrl.proxyUrl,
           useSystemProxy: normalizedUseSystemProxy ?? false,
@@ -395,7 +401,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       });
     } catch (error) {
       if (isSitesPlatformUrlConflict(error)) {
-        return sendSiteBindingConflict(reply, detectedPlatform, normalizedUrl);
+        return sendSiteBindingConflict(reply, detectedPlatform, canonicalUrl);
       }
       throw error;
     }
@@ -458,9 +464,10 @@ export async function sitesRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: normalizedCustomHeaders.error || 'Invalid customHeaders.' });
     }
 
-    const nextUrl = body.url !== undefined ? normalizeSiteUrl(body.url) : existingSite.url;
+    const canonicalPlatform = normalizeSitePlatform(body.platform);
+    const nextUrl = body.url !== undefined ? normalizeCanonicalSiteUrl(body.url) : existingSite.url;
     const nextPlatform = body.platform !== undefined
-      ? normalizeOptionalPlatform(body.platform)
+      ? canonicalPlatform
       : existingSite.platform;
     if (body.platform !== undefined && !nextPlatform) {
       return reply.code(400).send({ error: 'Invalid platform. Expected non-empty string.' });

@@ -471,6 +471,66 @@ describe('sites proxy settings', () => {
     });
   });
 
+  it('canonicalizes create payload url and platform before persistence and conflict checks', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'Aliyun Generic OpenAI',
+        url: ' coding.dashscope.aliyuncs.com/v1/ ',
+        platform: ' OPENAI ',
+      },
+    });
+
+    expect(created.statusCode).toBe(200);
+    expect(created.json()).toMatchObject({
+      name: 'Aliyun Generic OpenAI',
+      url: 'https://coding.dashscope.aliyuncs.com/v1',
+      platform: 'openai',
+    });
+
+    const duplicate = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'Aliyun Generic OpenAI Duplicate',
+        url: 'https://coding.dashscope.aliyuncs.com/v1',
+        platform: 'openai',
+      },
+    });
+
+    expect(duplicate.statusCode).toBe(409);
+    expect((duplicate.json() as { error?: string }).error).toContain('already exists');
+  });
+
+  it('canonicalizes update payload url and platform before saving', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'Update Canonicalization',
+        url: 'https://update-canonicalization.example.com',
+        platform: 'new-api',
+      },
+    });
+    expect(created.statusCode).toBe(200);
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${(created.json() as { id: number }).id}`,
+      payload: {
+        url: ' coding.dashscope.aliyuncs.com/v1/ ',
+        platform: ' OPENAI ',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      url: 'https://coding.dashscope.aliyuncs.com/v1',
+      platform: 'openai',
+    });
+  });
+
   it('detects Zhipu Coding Plan OpenAI endpoint with initialization preset metadata', async () => {
     const response = await app.inject({
       method: 'POST',
@@ -484,6 +544,52 @@ describe('sites proxy settings', () => {
     expect(response.json()).toMatchObject({
       platform: 'openai',
       initializationPresetId: 'zhipu-coding-plan-openai',
+    });
+  });
+
+  it('detects additional vendor-specific code endpoints with initialization preset metadata', async () => {
+    const cases = [
+      { url: 'https://api.deepseek.com/v1', platform: 'openai', initializationPresetId: 'deepseek-openai' },
+      { url: 'https://api.deepseek.com/anthropic', platform: 'claude', initializationPresetId: 'deepseek-claude' },
+      { url: 'https://api.moonshot.cn/v1', platform: 'openai', initializationPresetId: 'moonshot-openai' },
+      { url: 'https://api.moonshot.cn/anthropic', platform: 'claude', initializationPresetId: 'moonshot-claude' },
+      { url: 'https://api.minimaxi.com/v1', platform: 'openai', initializationPresetId: 'minimax-openai' },
+      { url: 'https://api.minimaxi.com/anthropic', platform: 'claude', initializationPresetId: 'minimax-claude' },
+      { url: 'https://api-inference.modelscope.cn/v1', platform: 'openai', initializationPresetId: 'modelscope-openai' },
+      { url: 'https://api-inference.modelscope.cn', platform: 'claude', initializationPresetId: 'modelscope-claude' },
+      { url: 'https://ark.cn-beijing.volces.com/api/coding/v3', platform: 'openai', initializationPresetId: 'doubao-coding-openai' },
+    ];
+
+    for (const testCase of cases) {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/sites/detect',
+        payload: { url: testCase.url },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        platform: testCase.platform,
+        initializationPresetId: testCase.initializationPresetId,
+      });
+    }
+  });
+
+  it('creates Doubao Coding Plan sites without explicit platform by using preset-backed detection', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'Doubao Coding Plan',
+        url: 'https://ark.cn-beijing.volces.com/api/coding/v3',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      name: 'Doubao Coding Plan',
+      platform: 'openai',
+      initializationPresetId: 'doubao-coding-openai',
     });
   });
 });
