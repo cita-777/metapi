@@ -1,5 +1,6 @@
 import { FastifyInstance, FastifyReply } from 'fastify';
 import { db, schema } from '../../db/index.js';
+import { insertAndGetById } from '../../db/insertHelpers.js';
 import { and, eq } from 'drizzle-orm';
 import { detectSite } from '../../services/siteDetector.js';
 import { invalidateSiteProxyCache, normalizeSiteUrl, parseSiteProxyUrlInput } from '../../services/siteProxy.js';
@@ -373,36 +374,34 @@ export async function sitesRoutes(app: FastifyInstance) {
 
     let inserted;
     try {
-      inserted = await db.insert(schema.sites).values({
-        name,
-        url: normalizedUrl,
-        platform: detectedPlatform,
-        proxyUrl: normalizedProxyUrl.proxyUrl,
-        useSystemProxy: normalizedUseSystemProxy ?? false,
-        customHeaders: normalizedCustomHeaders.customHeaders,
-        externalCheckinUrl: normalizedExternalCheckinUrl.url,
-        status: normalizedStatus ?? 'active',
-        isPinned: normalizedPinned ?? false,
-        sortOrder: normalizedSortOrder ?? (maxSortOrder + 1),
-        globalWeight: normalizedGlobalWeight ?? 1,
-      }).run();
+      inserted = await insertAndGetById<typeof schema.sites.$inferSelect>({
+        table: schema.sites,
+        idColumn: schema.sites.id,
+        values: {
+          name,
+          url: normalizedUrl,
+          platform: detectedPlatform,
+          proxyUrl: normalizedProxyUrl.proxyUrl,
+          useSystemProxy: normalizedUseSystemProxy ?? false,
+          customHeaders: normalizedCustomHeaders.customHeaders,
+          externalCheckinUrl: normalizedExternalCheckinUrl.url,
+          status: normalizedStatus ?? 'active',
+          isPinned: normalizedPinned ?? false,
+          sortOrder: normalizedSortOrder ?? (maxSortOrder + 1),
+          globalWeight: normalizedGlobalWeight ?? 1,
+        },
+        insertErrorMessage: 'Create site failed',
+        loadErrorMessage: 'Create site failed',
+      });
     } catch (error) {
       if (isSitesPlatformUrlConflict(error)) {
         return sendSiteBindingConflict(reply, detectedPlatform, normalizedUrl);
       }
       throw error;
     }
-    const siteId = Number(inserted.lastInsertRowid || 0);
-    if (siteId <= 0) {
-      return reply.code(500).send({ error: 'Create site failed' });
-    }
-    const result = await db.select().from(schema.sites).where(eq(schema.sites.id, siteId)).get();
-    if (!result) {
-      return reply.code(500).send({ error: 'Create site failed' });
-    }
     invalidateSiteCaches();
     return {
-      ...result,
+      ...inserted,
       ...(responseInitializationPresetId ? { initializationPresetId: responseInitializationPresetId } : {}),
     };
   });

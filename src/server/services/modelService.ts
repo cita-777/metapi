@@ -1,5 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
+import { getInsertedRowId } from '../db/insertHelpers.js';
 import { getAdapter } from './platforms/index.js';
 import {
   ACCOUNT_TOKEN_VALUE_STATUS_READY,
@@ -1032,8 +1033,8 @@ export async function rebuildTokenRoutesFromAvailability() {
         modelPattern: modelName,
         enabled: true,
       }).run();
-      const insertedId = Number(inserted.lastInsertRowid || 0);
-      route = insertedId > 0
+      const insertedId = getInsertedRowId(inserted);
+      route = insertedId != null
         ? await db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, insertedId)).get()
         : undefined;
       if (!route) continue;
@@ -1060,8 +1061,8 @@ export async function rebuildTokenRoutesFromAvailability() {
         enabled: true,
         manualOverride: false,
       }).run();
-      const insertedId = Number(inserted.lastInsertRowid || 0);
-      if (insertedId <= 0) continue;
+      const insertedId = getInsertedRowId(inserted);
+      if (insertedId == null) continue;
       const created = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, insertedId)).get();
       if (!created) continue;
       channels.push(created);

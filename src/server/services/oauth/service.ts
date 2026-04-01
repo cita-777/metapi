@@ -1,5 +1,6 @@
 import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { db, schema } from '../../db/index.js';
+import { insertAndGetById } from '../../db/insertHelpers.js';
 import { getProxyUrlFromExtraConfig, mergeAccountExtraConfig } from '../accountExtraConfig.js';
 import { refreshModelsForAccount } from '../modelService.js';
 import * as routeRefreshWorkflow from '../routeRefreshWorkflow.js';
@@ -255,20 +256,26 @@ async function upsertOauthAccount(input: {
     };
   }
 
-  const created = await db.insert(schema.accounts).values({
-    siteId: site.id,
-    username,
-    accessToken: input.exchange.accessToken,
-    apiToken: null,
-    checkinEnabled: false,
-    status: 'active',
-    oauthProvider: input.definition.metadata.provider,
-    oauthAccountKey: oauth.accountKey || oauth.accountId || null,
-    oauthProjectId: oauth.projectId || null,
-    extraConfig,
-    isPinned: false,
-    sortOrder: await getNextAccountSortOrder(),
-  }).returning().get();
+  const created = await insertAndGetById<typeof schema.accounts.$inferSelect>({
+    table: schema.accounts,
+    idColumn: schema.accounts.id,
+    values: {
+      siteId: site.id,
+      username,
+      accessToken: input.exchange.accessToken,
+      apiToken: null,
+      checkinEnabled: false,
+      status: 'active',
+      oauthProvider: input.definition.metadata.provider,
+      oauthAccountKey: oauth.accountKey || oauth.accountId || null,
+      oauthProjectId: oauth.projectId || null,
+      extraConfig,
+      isPinned: false,
+      sortOrder: await getNextAccountSortOrder(),
+    },
+    insertErrorMessage: `failed to create oauth account: ${input.definition.metadata.provider}`,
+    loadErrorMessage: `failed to load created oauth account: ${input.definition.metadata.provider}`,
+  });
   return { account: created, site, created: true, previousAccount: null };
 }
 

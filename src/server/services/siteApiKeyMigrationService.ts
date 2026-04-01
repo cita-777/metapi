@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
+import { getInsertedRowId } from '../db/insertHelpers.js';
 import { getCredentialModeFromExtraConfig, mergeAccountExtraConfig } from './accountExtraConfig.js';
 
 export type SiteApiKeyMigrationSummary = {
@@ -69,8 +70,8 @@ export async function migrateSiteApiKeysToAccounts(): Promise<SiteApiKeyMigratio
         isPinned: false,
         sortOrder: nextSortOrder,
       }).run();
-      const accountId = Number(inserted.lastInsertRowid || 0);
-      if (accountId > 0) {
+      const accountId = getInsertedRowId(inserted);
+      if (accountId != null) {
         targetAccount = await db.select().from(schema.accounts).where(eq(schema.accounts.id, accountId)).get() || null;
         if (targetAccount) {
           accounts.push(targetAccount);

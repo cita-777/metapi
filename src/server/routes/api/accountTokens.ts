@@ -1,6 +1,7 @@
 ﻿import { FastifyInstance } from 'fastify';
 import { and, eq } from 'drizzle-orm';
 import { db, schema } from '../../db/index.js';
+import { insertAndGetById } from '../../db/insertHelpers.js';
 import {
   ACCOUNT_TOKEN_VALUE_STATUS_MASKED_PENDING,
   ACCOUNT_TOKEN_VALUE_STATUS_READY,
@@ -511,26 +512,24 @@ export async function accountTokensRoutes(app: FastifyInstance) {
         ? (body.isDefault ?? false)
         : false;
 
-      const inserted = await db.insert(schema.accountTokens).values({
-        accountId: body.accountId,
-        name: (body.name || '').trim() || (existing.length === 0 ? 'default' : `token-${existing.length + 1}`),
-        token: tokenValue,
-        tokenGroup: (body.group || '').trim() || null,
-        valueStatus,
-        source: body.source || 'manual',
-        enabled,
-        isDefault,
-        createdAt: now,
-        updatedAt: now,
-      }).run();
-      const createdId = Number(inserted.lastInsertRowid || 0);
-      if (createdId <= 0) {
-        return reply.code(500).send({ success: false, message: '创建令牌失败' });
-      }
-      let created = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, createdId)).get();
-      if (!created) {
-        return reply.code(500).send({ success: false, message: '创建令牌失败' });
-      }
+      let created = await insertAndGetById<typeof schema.accountTokens.$inferSelect>({
+        table: schema.accountTokens,
+        idColumn: schema.accountTokens.id,
+        values: {
+          accountId: body.accountId,
+          name: (body.name || '').trim() || (existing.length === 0 ? 'default' : `token-${existing.length + 1}`),
+          token: tokenValue,
+          tokenGroup: (body.group || '').trim() || null,
+          valueStatus,
+          source: body.source || 'manual',
+          enabled,
+          isDefault,
+          createdAt: now,
+          updatedAt: now,
+        },
+        insertErrorMessage: '创建令牌失败',
+        loadErrorMessage: '创建令牌失败',
+      });
 
       if (valueStatus === ACCOUNT_TOKEN_VALUE_STATUS_READY && (body.isDefault || (existing.length === 0 && enabled))) {
         await setDefaultToken(created.id);

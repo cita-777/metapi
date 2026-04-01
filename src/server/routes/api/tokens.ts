@@ -1,6 +1,7 @@
 ﻿import { FastifyInstance } from 'fastify';
 import { and, eq, inArray } from 'drizzle-orm';
 import { db, schema } from '../../db/index.js';
+import { requireInsertedRowId } from '../../db/insertHelpers.js';
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import {
   ACCOUNT_TOKEN_VALUE_STATUS_READY,
@@ -996,10 +997,7 @@ export async function tokensRoutes(app: FastifyInstance) {
       routingStrategy: normalizedRoutingStrategy,
       enabled: body.enabled ?? true,
     }).run();
-    const routeId = Number(insertedRoute.lastInsertRowid || 0);
-    if (routeId <= 0) {
-      return { success: false, message: '创建路由失败' };
-    }
+    const routeId = requireInsertedRowId(insertedRoute, '创建路由失败');
     const route = await getRouteWithSources(routeId);
     if (!route) {
       return { success: false, message: '创建路由失败' };
@@ -1220,10 +1218,7 @@ export async function tokensRoutes(app: FastifyInstance) {
       priority: body.priority ?? 0,
       weight: body.weight ?? 10,
     }).run();
-    const channelId = Number(insertedChannel.lastInsertRowid || 0);
-    if (channelId <= 0) {
-      return reply.code(500).send({ success: false, message: '创建通道失败' });
-    }
+    const channelId = requireInsertedRowId(insertedChannel, '创建通道失败');
     const created = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, channelId)).get();
     if (!created) {
       return reply.code(500).send({ success: false, message: '创建通道失败' });
