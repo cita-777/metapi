@@ -14,6 +14,8 @@ const saveProxyVideoTaskMock = vi.fn();
 const getProxyVideoTaskByPublicIdMock = vi.fn();
 const deleteProxyVideoTaskByPublicIdMock = vi.fn();
 const refreshProxyVideoTaskSnapshotMock = vi.fn();
+const resolveProxyVideoTaskSiteMock = vi.fn();
+let siteApiEndpointRows: Array<Record<string, unknown>> = [];
 
 vi.mock('undici', async () => {
   const actual = await vi.importActual<typeof import('undici')>('undici');
@@ -59,6 +61,7 @@ vi.mock('../../services/proxyVideoTaskStore.js', () => ({
   getProxyVideoTaskByPublicId: (...args: unknown[]) => getProxyVideoTaskByPublicIdMock(...args),
   deleteProxyVideoTaskByPublicId: (...args: unknown[]) => deleteProxyVideoTaskByPublicIdMock(...args),
   refreshProxyVideoTaskSnapshot: (...args: unknown[]) => refreshProxyVideoTaskSnapshotMock(...args),
+  resolveProxyVideoTaskSite: (...args: unknown[]) => resolveProxyVideoTaskSiteMock(...args),
 }));
 
 vi.mock('../../db/index.js', () => ({
@@ -67,7 +70,7 @@ vi.mock('../../db/index.js', () => ({
       from: () => ({
         where: () => ({
           orderBy: () => ({
-            all: async () => [],
+            all: async () => siteApiEndpointRows,
           }),
         }),
       }),
@@ -126,6 +129,8 @@ describe('/v1/videos routes', () => {
     getProxyVideoTaskByPublicIdMock.mockReset();
     deleteProxyVideoTaskByPublicIdMock.mockReset();
     refreshProxyVideoTaskSnapshotMock.mockReset();
+    resolveProxyVideoTaskSiteMock.mockReset();
+    siteApiEndpointRows = [];
 
     selectChannelMock.mockReturnValue({
       channel: { id: 11, routeId: 22 },
@@ -221,6 +226,7 @@ describe('/v1/videos routes', () => {
   });
 
   it('resolves local video ids back to the upstream task on GET', async () => {
+    resolveProxyVideoTaskSiteMock.mockResolvedValue(null);
     getProxyVideoTaskByPublicIdMock.mockResolvedValue({
       publicId: 'vid_local_123',
       upstreamVideoId: 'vid_upstream_123',
@@ -257,6 +263,49 @@ describe('/v1/videos routes', () => {
       object: 'video',
       status: 'running',
     });
+  });
+
+  it('re-resolves account-backed video tasks through the site api endpoint pool on GET', async () => {
+    siteApiEndpointRows = [
+      {
+        id: 91,
+        siteId: 44,
+        url: 'https://api-videos.example.com',
+        enabled: true,
+        sortOrder: 0,
+      },
+    ];
+    resolveProxyVideoTaskSiteMock.mockResolvedValue({
+      id: 44,
+      name: 'demo-site',
+      url: 'https://panel.example.com',
+      platform: 'openai',
+    });
+    getProxyVideoTaskByPublicIdMock.mockResolvedValue({
+      publicId: 'vid_local_456',
+      upstreamVideoId: 'vid_upstream_456',
+      siteUrl: 'https://panel.example.com',
+      tokenValue: 'sk-demo',
+      accountId: 33,
+    });
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'vid_upstream_456',
+      object: 'video',
+      status: 'queued',
+      model: 'sora-2',
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/videos/vid_local_456',
+    });
+
+    expect(response.statusCode).toBe(200);
+    const [targetUrl] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(targetUrl).toBe('https://api-videos.example.com/v1/videos/vid_upstream_456');
   });
 
   it('deletes the upstream task and local mapping on DELETE', async () => {

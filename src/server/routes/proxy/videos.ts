@@ -14,6 +14,7 @@ import {
   deleteProxyVideoTaskByPublicId,
   getProxyVideoTaskByPublicId,
   refreshProxyVideoTaskSnapshot,
+  resolveProxyVideoTaskSite,
   saveProxyVideoTask,
 } from '../../services/proxyVideoTaskStore.js';
 import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
@@ -85,7 +86,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
       const startTime = Date.now();
 
       try {
-        const { upstream, text, siteApiBaseUrl } = await runWithSiteApiEndpointPool(selected.site, async (target) => {
+        const { upstream, text } = await runWithSiteApiEndpointPool(selected.site, async (target) => {
           const targetUrl = buildUpstreamUrl(target.baseUrl, '/v1/videos');
           const accountProxy = getProxyUrlFromExtraConfig(selected.account.extraConfig);
           const requestInit = multipartForm
@@ -119,7 +120,6 @@ export async function videosProxyRoute(app: FastifyInstance) {
           return {
             upstream: response,
             text: responseText,
-            siteApiBaseUrl: target.baseUrl,
           };
         });
 
@@ -134,7 +134,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
 
         const mapping = await saveProxyVideoTask({
           upstreamVideoId,
-          siteUrl: siteApiBaseUrl,
+          siteUrl: selected.site.url,
           tokenValue: selected.tokenValue,
           requestedModel,
           actualModel: upstreamModel,
@@ -203,13 +203,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
       });
     }
 
-    const targetUrl = buildUpstreamUrl(mapping.siteUrl, `/v1/videos/${encodeURIComponent(mapping.upstreamVideoId)}`);
-    const upstream = await fetch(targetUrl, await withSiteProxyRequestInit(targetUrl, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${mapping.tokenValue}`,
-      },
-    }));
+    const { upstream } = await requestMappedVideoTaskUpstream(mapping, 'GET');
     const text = await upstream.text();
     try {
       const data = JSON.parse(text);
@@ -234,13 +228,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
       });
     }
 
-    const targetUrl = buildUpstreamUrl(mapping.siteUrl, `/v1/videos/${encodeURIComponent(mapping.upstreamVideoId)}`);
-    const upstream = await fetch(targetUrl, await withSiteProxyRequestInit(targetUrl, {
-      method: 'DELETE',
-      headers: {
-        Authorization: `Bearer ${mapping.tokenValue}`,
-      },
-    }));
+    const { upstream } = await requestMappedVideoTaskUpstream(mapping, 'DELETE');
     if (upstream.ok) {
       await deleteProxyVideoTaskByPublicId(mapping.publicId);
       return reply.code(upstream.status).send();
@@ -251,6 +239,37 @@ export async function videosProxyRoute(app: FastifyInstance) {
       error: { message: text || 'Upstream delete failed', type: 'upstream_error' },
     });
   });
+}
+
+async function requestMappedVideoTaskUpstream(
+  mapping: NonNullable<Awaited<ReturnType<typeof getProxyVideoTaskByPublicId>>>,
+  method: 'GET' | 'DELETE',
+): Promise<{ upstream: Awaited<ReturnType<typeof fetch>> }> {
+  const buildRequest = async (baseUrl: string) => {
+    const targetUrl = buildUpstreamUrl(baseUrl, `/v1/videos/${encodeURIComponent(mapping.upstreamVideoId)}`);
+    const upstream = await fetch(targetUrl, await withSiteProxyRequestInit(targetUrl, {
+      method,
+      headers: {
+        Authorization: `Bearer ${mapping.tokenValue}`,
+      },
+    }));
+    if (!upstream.ok) {
+      const errorText = await upstream.clone().text().catch(() => '');
+      if (shouldRetryProxyRequest(upstream.status, errorText || `HTTP ${upstream.status}`)) {
+        throw new SiteApiEndpointRequestError(errorText || `HTTP ${upstream.status}`, {
+          status: upstream.status,
+        });
+      }
+    }
+    return { upstream };
+  };
+
+  const site = await resolveProxyVideoTaskSite(mapping.accountId);
+  if (site) {
+    return runWithSiteApiEndpointPool(site, (target) => buildRequest(target.baseUrl));
+  }
+
+  return buildRequest(mapping.siteUrl);
 }
 
 async function recordTokenRouterEventBestEffort(
