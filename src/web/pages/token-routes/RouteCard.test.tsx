@@ -213,5 +213,20 @@ describe('RouteCard', () => {
     expect(text).toContain('P1 · 1');
     expect(text).toContain('user_a');
     expect(text).toContain('user_b');
+
+    const p0RailNode = root.root.find((node) => (
+      node.type === 'div'
+      && collectText(node) === 'P0 · 1'
+      && node.props?.style?.borderRadius === 999
+    ));
+    const p1RailNode = root.root.find((node) => (
+      node.type === 'div'
+      && collectText(node) === 'P1 · 1'
+      && node.props?.style?.borderRadius === 999
+    ));
+
+    expect(p0RailNode.props.style.background).not.toBe('var(--color-bg)');
+    expect(p1RailNode.props.style.background).not.toBe('var(--color-bg)');
+    expect(p0RailNode.props.style.color).not.toBe(p1RailNode.props.style.color);
   });
 });

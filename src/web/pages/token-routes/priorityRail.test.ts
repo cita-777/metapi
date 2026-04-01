@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyPriorityRailDrop,
+  buildPriorityDragPreviewStyle,
   buildPriorityRailDragTargets,
   buildPriorityRailSections,
   createPriorityRailNewLayerId,
@@ -73,5 +74,12 @@ describe('priorityRail helpers', () => {
       { id: 12, priority: 1 },
       { id: 21, priority: 2 },
     ]);
+  });
+
+  it('uses the active row width for drag preview alignment when available', () => {
+    expect(buildPriorityDragPreviewStyle(640)).toMatchObject({
+      width: 640,
+      maxWidth: 'calc(100vw - 32px)',
+    });
   });
 });

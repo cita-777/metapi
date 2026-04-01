@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import type { PriorityRailDragTarget, PriorityRailSection } from './types.js';
 
 type PriorityRailChannelLike = {
@@ -116,4 +117,12 @@ export function applyPriorityRailDrop<T extends PriorityRailChannelLike>(
         : channel
     )),
   );
+}
+
+export function buildPriorityDragPreviewStyle(activeRowWidth?: number | null): CSSProperties {
+  const resolvedWidth = Number.isFinite(activeRowWidth ?? Number.NaN) ? activeRowWidth ?? undefined : undefined;
+  return {
+    width: resolvedWidth,
+    maxWidth: 'calc(100vw - 32px)',
+  };
 }
