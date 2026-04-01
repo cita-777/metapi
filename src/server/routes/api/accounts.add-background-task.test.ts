@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { waitForBackgroundTaskToReachTerminalState } from '../../test-fixtures/backgroundTaskTestUtils.js';
 
 const verifyTokenMock = vi.fn();
 const getApiTokensMock = vi.fn();
@@ -159,17 +160,16 @@ describe('accounts background initialization', () => {
 
       releaseTokens?.([{ name: 'default', value: 'sk-demo' }]);
 
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        const task = getBackgroundTask?.(body.jobId!);
-        if (task?.status === 'succeeded') break;
-        await new Promise((resolve) => setTimeout(resolve, 0));
-      }
+      const task = await waitForBackgroundTaskToReachTerminalState(
+        (taskId) => getBackgroundTask?.(taskId) ?? null,
+        body.jobId!,
+      );
 
       expect(syncTokensFromUpstreamMock).toHaveBeenCalledTimes(1);
       expect(refreshBalanceMock).toHaveBeenCalledTimes(1);
       expect(refreshModelsForAccountMock).toHaveBeenCalledTimes(1);
       expect(rebuildTokenRoutesFromAvailabilityMock).toHaveBeenCalledTimes(1);
-      expect(getBackgroundTask?.(body.jobId!)).toMatchObject({ status: 'succeeded' });
+      expect(task).toMatchObject({ status: 'succeeded' });
     } finally {
       releaseTokens?.([]);
       await responsePromise.catch(() => undefined);

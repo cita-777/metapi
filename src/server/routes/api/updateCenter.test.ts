@@ -4,6 +4,7 @@ import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { eq } from 'drizzle-orm';
+import { waitForBackgroundTaskToReachTerminalState } from '../../test-fixtures/backgroundTaskTestUtils.js';
 
 const {
   fetchLatestStableGitHubReleaseMock,
@@ -801,11 +802,11 @@ describe('update center routes', () => {
 
     const deployBody = deployResponse.json() as { task: { id: string } };
 
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      const task = getBackgroundTask?.(deployBody.task.id);
-      if (task?.status === 'succeeded') break;
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
+    const task = await waitForBackgroundTaskToReachTerminalState(
+      (taskId) => getBackgroundTask?.(taskId) ?? null,
+      deployBody.task.id,
+    );
+    expect(task).toMatchObject({ status: 'succeeded' });
 
     expect(getBackgroundTask?.(deployBody.task.id)?.logs).toEqual(expect.arrayContaining([
       expect.objectContaining({ message: 'Resolving target version' }),
