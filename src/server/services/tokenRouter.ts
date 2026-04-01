@@ -64,6 +64,9 @@ type SiteRuntimeHealthState = {
   latencyEmaMs: number | null;
   transientFailureStreak: number;
   lastTransientFailureAtMs: number | null;
+  recentSuccessCount: number;
+  recentFailureCount: number;
+  recentWindowUpdatedAtMs: number;
   breakerLevel: number;
   breakerUntilMs: number | null;
   lastUpdatedAtMs: number;
@@ -86,6 +89,12 @@ const SITE_RUNTIME_LATENCY_EMA_ALPHA = 0.3;
 const SITE_RUNTIME_BREAKER_STREAK_THRESHOLD = 3;
 const SITE_RUNTIME_BREAKER_LEVELS_MS = [0, 60_000, 5 * 60_000, 30 * 60 * 1000] as const;
 const SITE_TRANSIENT_STREAK_WINDOW_MS = 5 * 60 * 1000;
+const SITE_RECENT_OUTCOME_HALF_LIFE_MS = 30 * 60 * 1000;
+const SITE_RECENT_SUCCESS_CONFIDENCE_SAMPLES = 12;
+const SITE_RECENT_SUCCESS_PRIOR_SUCCESSES = 1;
+const SITE_RECENT_SUCCESS_PRIOR_FAILURES = 1;
+const SITE_RECENT_SUCCESS_FALLBACK_RATE = 0.5;
+const SITE_RECENT_MODEL_WEIGHT = 0.65;
 const SITE_HISTORICAL_HEALTH_MIN_MULTIPLIER = 0.45;
 const SITE_HISTORICAL_HEALTH_MAX_SAMPLE = 24;
 const SITE_HISTORICAL_LATENCY_BASELINE_MS = 2_000;
@@ -172,6 +181,9 @@ type SiteRuntimeHealthDetails = {
   globalBreakerOpen: boolean;
   modelBreakerOpen: boolean;
   modelKey: string;
+  recentSuccessRate: number;
+  recentSampleCount: number;
+  recentConfidence: number;
 };
 
 type WeightedSelectionMode = 'weighted' | 'stable_first';
@@ -181,14 +193,53 @@ type WeightedSelectionResult = {
   stableSiteCount: number;
 };
 
+type RecentOutcomeSnapshot = {
+  successCount: number;
+  failureCount: number;
+  sampleCount: number;
+  successRate: number;
+  confidence: number;
+};
+
+type StableFirstSitePoolState = {
+  siteId: number;
+  leader: RouteChannelCandidate;
+  effectiveSuccessRate: number;
+  trusted: boolean;
+  observationReason: string | null;
+};
+
+type StableFirstPoolPlan = {
+  primaryCandidates: RouteChannelCandidate[];
+  observationCandidates: RouteChannelCandidate[];
+  primarySiteIds: Set<number>;
+  observationSiteIds: Set<number>;
+  siteStateById: Map<number, StableFirstSitePoolState>;
+};
+
+type StableFirstObservationProgressState = {
+  requestCount: number;
+  lastObservationAtMs: number | null;
+};
+
 const siteRuntimeHealthStates = new Map<number, SiteRuntimeHealthState>();
 const siteModelRuntimeHealthStates = new Map<number, Map<string, SiteRuntimeHealthState>>();
 const stableFirstLastSelectedSiteByKey = new Map<string, number>();
 const MAX_STABLE_FIRST_ROTATION_KEYS = 1024;
+const stableFirstObservationProgressByKey = new Map<string, StableFirstObservationProgressState>();
+const stableFirstObservationSiteCooldownByKey = new Map<string, number>();
+const MAX_STABLE_FIRST_OBSERVATION_PROGRESS_KEYS = 1024;
+const MAX_STABLE_FIRST_OBSERVATION_SITE_COOLDOWN_KEYS = 4096;
 let siteRuntimeHealthLoaded = false;
 let siteRuntimeHealthLoadPromise: Promise<void> | null = null;
 let siteRuntimeHealthSaveTimer: ReturnType<typeof setTimeout> | null = null;
 let siteRuntimeHealthPersistInFlight: Promise<void> | null = null;
+
+const STABLE_FIRST_PRIMARY_SUCCESS_RATE_RATIO = 0.92;
+const STABLE_FIRST_TRUSTED_RECENT_CONFIDENCE = 0.5;
+const STABLE_FIRST_TRUSTED_HISTORICAL_CALLS = 8;
+const STABLE_FIRST_OBSERVATION_REQUEST_INTERVAL = 24;
+const STABLE_FIRST_OBSERVATION_SITE_COOLDOWN_MS = 30 * 60 * 1000;
 
 function rememberStableFirstSiteSelectionForKey(rotationKey: string, siteId: number): void {
   if (!rotationKey || !Number.isFinite(siteId) || siteId <= 0) return;
@@ -200,6 +251,40 @@ function rememberStableFirstSiteSelectionForKey(rotationKey: string, siteId: num
     const oldestKey = stableFirstLastSelectedSiteByKey.keys().next().value;
     if (!oldestKey) break;
     stableFirstLastSelectedSiteByKey.delete(oldestKey);
+  }
+}
+
+function rememberStableFirstObservationProgressForKey(
+  rotationKey: string,
+  state: StableFirstObservationProgressState,
+): void {
+  if (!rotationKey) return;
+  if (stableFirstObservationProgressByKey.has(rotationKey)) {
+    stableFirstObservationProgressByKey.delete(rotationKey);
+  }
+  stableFirstObservationProgressByKey.set(rotationKey, state);
+  while (stableFirstObservationProgressByKey.size > MAX_STABLE_FIRST_OBSERVATION_PROGRESS_KEYS) {
+    const oldestKey = stableFirstObservationProgressByKey.keys().next().value;
+    if (!oldestKey) break;
+    stableFirstObservationProgressByKey.delete(oldestKey);
+  }
+}
+
+function rememberStableFirstObservationSiteCooldown(
+  rotationKey: string,
+  siteId: number,
+  observedAtMs: number,
+): void {
+  if (!rotationKey || !Number.isFinite(siteId) || siteId <= 0) return;
+  const scopedKey = `${rotationKey}:${siteId}`;
+  if (stableFirstObservationSiteCooldownByKey.has(scopedKey)) {
+    stableFirstObservationSiteCooldownByKey.delete(scopedKey);
+  }
+  stableFirstObservationSiteCooldownByKey.set(scopedKey, observedAtMs);
+  while (stableFirstObservationSiteCooldownByKey.size > MAX_STABLE_FIRST_OBSERVATION_SITE_COOLDOWN_KEYS) {
+    const oldestKey = stableFirstObservationSiteCooldownByKey.keys().next().value;
+    if (!oldestKey) break;
+    stableFirstObservationSiteCooldownByKey.delete(oldestKey);
   }
 }
 
@@ -280,6 +365,79 @@ function readNullableTimestamp(value: unknown): number | null {
   const normalized = readFiniteInteger(value);
   if (normalized == null || normalized <= 0) return null;
   return normalized;
+}
+
+function decayRecentOutcomeCount(value: number, elapsedMs: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  if (elapsedMs <= 0) return value;
+  const decayFactor = Math.pow(0.5, elapsedMs / SITE_RECENT_OUTCOME_HALF_LIFE_MS);
+  return value * decayFactor;
+}
+
+function buildRecentOutcomeSnapshot(
+  successCount: number,
+  failureCount: number,
+): RecentOutcomeSnapshot {
+  const normalizedSuccessCount = Math.max(0, successCount);
+  const normalizedFailureCount = Math.max(0, failureCount);
+  const sampleCount = normalizedSuccessCount + normalizedFailureCount;
+  const successRate = (
+    normalizedSuccessCount + SITE_RECENT_SUCCESS_PRIOR_SUCCESSES
+  ) / (
+    sampleCount + SITE_RECENT_SUCCESS_PRIOR_SUCCESSES + SITE_RECENT_SUCCESS_PRIOR_FAILURES
+  );
+  return {
+    successCount: normalizedSuccessCount,
+    failureCount: normalizedFailureCount,
+    sampleCount,
+    successRate,
+    confidence: clampNumber(sampleCount / SITE_RECENT_SUCCESS_CONFIDENCE_SAMPLES, 0, 1),
+  };
+}
+
+function getRecentOutcomeSnapshot(state: SiteRuntimeHealthState | null | undefined, nowMs = Date.now()): RecentOutcomeSnapshot {
+  if (!state) {
+    return buildRecentOutcomeSnapshot(0, 0);
+  }
+  const updatedAtMs = Math.max(0, readFiniteInteger(state.recentWindowUpdatedAtMs) ?? state.lastUpdatedAtMs ?? nowMs);
+  const elapsedMs = Math.max(0, nowMs - updatedAtMs);
+  return buildRecentOutcomeSnapshot(
+    decayRecentOutcomeCount(state.recentSuccessCount, elapsedMs),
+    decayRecentOutcomeCount(state.recentFailureCount, elapsedMs),
+  );
+}
+
+function refreshRecentOutcomeWindow(state: SiteRuntimeHealthState, nowMs = Date.now()): void {
+  const snapshot = getRecentOutcomeSnapshot(state, nowMs);
+  state.recentSuccessCount = snapshot.successCount;
+  state.recentFailureCount = snapshot.failureCount;
+  state.recentWindowUpdatedAtMs = nowMs;
+}
+
+function blendRecentOutcomeSnapshots(
+  globalSnapshot: RecentOutcomeSnapshot,
+  modelSnapshot: RecentOutcomeSnapshot | null,
+): RecentOutcomeSnapshot {
+  if (!modelSnapshot || modelSnapshot.sampleCount <= 0) {
+    return globalSnapshot;
+  }
+  const modelWeight = SITE_RECENT_MODEL_WEIGHT;
+  const globalWeight = 1 - modelWeight;
+  return buildRecentOutcomeSnapshot(
+    (globalSnapshot.successCount * globalWeight) + (modelSnapshot.successCount * modelWeight),
+    (globalSnapshot.failureCount * globalWeight) + (modelSnapshot.failureCount * modelWeight),
+  );
+}
+
+function resolveStableFirstSuccessRate(
+  details: SiteRuntimeHealthDetails,
+  historicalSuccessRate: number | null | undefined,
+): number {
+  const fallbackRate = historicalSuccessRate ?? SITE_RECENT_SUCCESS_FALLBACK_RATE;
+  return (
+    (details.recentSuccessRate * details.recentConfidence)
+    + (fallbackRate * (1 - details.recentConfidence))
+  );
 }
 
 function resolveSiteRuntimeFailurePenalty(context: SiteRuntimeFailureContext = {}): number {
@@ -402,11 +560,15 @@ function hydrateSiteRuntimeHealthState(raw: unknown): SiteRuntimeHealthState | n
   if (!isRecord(raw)) return null;
 
   const lastUpdatedAtMs = readFiniteInteger(raw.lastUpdatedAtMs) ?? Date.now();
+  const recentWindowUpdatedAtMs = readFiniteInteger(raw.recentWindowUpdatedAtMs) ?? lastUpdatedAtMs;
   return {
     penaltyScore: Math.max(0, readFiniteNumber(raw.penaltyScore) ?? 0),
     latencyEmaMs: readFiniteNumber(raw.latencyEmaMs),
     transientFailureStreak: Math.max(0, readFiniteInteger(raw.transientFailureStreak) ?? 0),
     lastTransientFailureAtMs: readNullableTimestamp(raw.lastTransientFailureAtMs),
+    recentSuccessCount: Math.max(0, readFiniteNumber(raw.recentSuccessCount) ?? 0),
+    recentFailureCount: Math.max(0, readFiniteNumber(raw.recentFailureCount) ?? 0),
+    recentWindowUpdatedAtMs: Math.max(0, recentWindowUpdatedAtMs),
     breakerLevel: Math.max(0, readFiniteInteger(raw.breakerLevel) ?? 0),
     breakerUntilMs: readNullableTimestamp(raw.breakerUntilMs),
     lastUpdatedAtMs: Math.max(0, lastUpdatedAtMs),
@@ -421,6 +583,9 @@ function cloneSiteRuntimeHealthState(state: SiteRuntimeHealthState): SiteRuntime
     latencyEmaMs: state.latencyEmaMs,
     transientFailureStreak: state.transientFailureStreak,
     lastTransientFailureAtMs: state.lastTransientFailureAtMs,
+    recentSuccessCount: state.recentSuccessCount,
+    recentFailureCount: state.recentFailureCount,
+    recentWindowUpdatedAtMs: state.recentWindowUpdatedAtMs,
     breakerLevel: state.breakerLevel,
     breakerUntilMs: state.breakerUntilMs,
     lastUpdatedAtMs: state.lastUpdatedAtMs,
@@ -437,6 +602,9 @@ function getOrCreateRuntimeHealthState<K>(states: Map<K, SiteRuntimeHealthState>
       latencyEmaMs: null,
       transientFailureStreak: 0,
       lastTransientFailureAtMs: null,
+      recentSuccessCount: 0,
+      recentFailureCount: 0,
+      recentWindowUpdatedAtMs: nowMs,
       breakerLevel: 0,
       breakerUntilMs: null,
       lastUpdatedAtMs: nowMs,
@@ -509,6 +677,9 @@ function getSiteRuntimeHealthDetails(siteId: number, modelName?: string | null, 
   const modelState = modelKey ? getSiteModelRuntimeHealthState(siteId, modelKey) : null;
   const globalMultiplier = getRuntimeHealthMultiplier(globalState, nowMs);
   const modelMultiplier = modelState ? getRuntimeHealthMultiplier(modelState, nowMs) : 1;
+  const globalRecentSnapshot = getRecentOutcomeSnapshot(globalState, nowMs);
+  const modelRecentSnapshot = modelState ? getRecentOutcomeSnapshot(modelState, nowMs) : null;
+  const recentSnapshot = blendRecentOutcomeSnapshots(globalRecentSnapshot, modelRecentSnapshot);
   return {
     globalMultiplier,
     modelMultiplier,
@@ -520,10 +691,15 @@ function getSiteRuntimeHealthDetails(siteId: number, modelName?: string | null, 
     globalBreakerOpen: isRuntimeHealthBreakerOpen(globalState, nowMs),
     modelBreakerOpen: isRuntimeHealthBreakerOpen(modelState, nowMs),
     modelKey,
+    recentSuccessRate: recentSnapshot.successRate,
+    recentSampleCount: recentSnapshot.sampleCount,
+    recentConfidence: recentSnapshot.confidence,
   };
 }
 
 function applyRuntimeHealthFailure(state: SiteRuntimeHealthState, context: SiteRuntimeFailureContext = {}, nowMs = Date.now()): void {
+  refreshRecentOutcomeWindow(state, nowMs);
+  state.recentFailureCount += 1;
   state.penaltyScore += resolveSiteRuntimeFailurePenalty(context);
   if (isTransientSiteRuntimeFailure(context)) {
     const lastTransientFailureAtMs = state.lastTransientFailureAtMs;
@@ -549,6 +725,8 @@ function applyRuntimeHealthFailure(state: SiteRuntimeHealthState, context: SiteR
 }
 
 function applyRuntimeHealthSuccess(state: SiteRuntimeHealthState, latencyMs: number, nowMs = Date.now()): void {
+  refreshRecentOutcomeWindow(state, nowMs);
+  state.recentSuccessCount += 1;
   state.penaltyScore = Math.max(0, state.penaltyScore * 0.2 - 0.3);
   state.transientFailureStreak = 0;
   state.lastTransientFailureAtMs = null;
@@ -575,6 +753,7 @@ function shouldPersistSiteRuntimeHealthState(state: SiteRuntimeHealthState, nowM
 
   if (isRuntimeHealthBreakerOpen(state, nowMs)) return true;
   if (getDecayedSiteRuntimePenalty(state, nowMs) >= SITE_RUNTIME_HEALTH_PERSIST_MIN_PENALTY) return true;
+  if (getRecentOutcomeSnapshot(state, nowMs).sampleCount > 0.01) return true;
   if ((state.latencyEmaMs ?? 0) > 0) return true;
   return (nowMs - lastTouchedAtMs) <= SITE_RUNTIME_HEALTH_PERSIST_IDLE_TTL_MS;
 }
@@ -717,6 +896,8 @@ function recordSiteRuntimeSuccess(siteId: number, latencyMs: number, modelName?:
 export function resetSiteRuntimeHealthState(): void {
   siteRuntimeHealthStates.clear();
   siteModelRuntimeHealthStates.clear();
+  stableFirstObservationProgressByKey.clear();
+  stableFirstObservationSiteCooldownByKey.clear();
   siteRuntimeHealthLoaded = false;
   siteRuntimeHealthLoadPromise = null;
   if (siteRuntimeHealthSaveTimer) {
@@ -952,6 +1133,8 @@ export function invalidateTokenRouterCache(): void {
   };
   routeMatchCache.clear();
   stableFirstLastSelectedSiteByKey.clear();
+  stableFirstObservationProgressByKey.clear();
+  stableFirstObservationSiteCooldownByKey.clear();
 }
 
 function isSiteDisabled(status?: string | null): boolean {
@@ -1216,6 +1399,19 @@ function compareNullableTimeAsc(left?: string | null, right?: string | null): nu
   return leftMs - rightMs;
 }
 
+function compareStableFirstCandidateOrder(left: RouteChannelCandidate, right: RouteChannelCandidate): number {
+  const selectionOrder = compareNullableTimeAsc(
+    left.channel.lastSelectedAt || left.channel.lastUsedAt,
+    right.channel.lastSelectedAt || right.channel.lastUsedAt,
+  );
+  if (selectionOrder !== 0) return selectionOrder;
+
+  const usedOrder = compareNullableTimeAsc(left.channel.lastUsedAt, right.channel.lastUsedAt);
+  if (usedOrder !== 0) return usedOrder;
+
+  return (left.channel.id ?? 0) - (right.channel.id ?? 0);
+}
+
 function resolveChannelRuntimeLoadMultiplier(snapshot: ProxyChannelLoadSnapshot): number {
   if (!snapshot.sessionScoped || snapshot.concurrencyLimit <= 0) return 1;
 
@@ -1350,6 +1546,149 @@ function buildSiteHistoricalHealthMetrics(candidates: RouteChannelCandidate[]): 
   }
 
   return metrics;
+}
+
+function buildStableFirstPoolPlan(
+  candidates: RouteChannelCandidate[],
+  modelName: string | ((candidate: RouteChannelCandidate) => string),
+  nowMs = Date.now(),
+): StableFirstPoolPlan {
+  if (candidates.length <= 0) {
+    return {
+      primaryCandidates: [],
+      observationCandidates: [],
+      primarySiteIds: new Set<number>(),
+      observationSiteIds: new Set<number>(),
+      siteStateById: new Map<number, StableFirstSitePoolState>(),
+    };
+  }
+
+  const resolveModelName = typeof modelName === 'function'
+    ? modelName
+    : (() => modelName);
+  const historicalBySiteId = buildSiteHistoricalHealthMetrics(candidates);
+  const leaderBySiteId = new Map<number, RouteChannelCandidate>();
+  const siteStateById = new Map<number, StableFirstSitePoolState>();
+
+  for (const candidate of candidates) {
+    const siteId = candidate.site.id;
+    const currentLeader = leaderBySiteId.get(siteId);
+    if (!currentLeader || compareStableFirstCandidateOrder(candidate, currentLeader) < 0) {
+      leaderBySiteId.set(siteId, candidate);
+    }
+  }
+
+  for (const [siteId, leader] of leaderBySiteId.entries()) {
+    const healthDetails = getSiteRuntimeHealthDetails(siteId, resolveModelName(leader), nowMs);
+    const historical = historicalBySiteId.get(siteId);
+    const historicalTotalCalls = historical?.totalCalls ?? 0;
+    const effectiveSuccessRate = resolveStableFirstSuccessRate(healthDetails, historical?.successRate);
+    const trusted = (
+      healthDetails.recentConfidence >= STABLE_FIRST_TRUSTED_RECENT_CONFIDENCE
+      || historicalTotalCalls >= STABLE_FIRST_TRUSTED_HISTORICAL_CALLS
+    );
+    siteStateById.set(siteId, {
+      siteId,
+      leader,
+      effectiveSuccessRate,
+      trusted,
+      observationReason: null,
+    });
+  }
+
+  const allSiteStates = Array.from(siteStateById.values()).sort((left, right) => {
+    const rateDiff = right.effectiveSuccessRate - left.effectiveSuccessRate;
+    if (Math.abs(rateDiff) > 1e-9) return rateDiff > 0 ? 1 : -1;
+    return compareStableFirstCandidateOrder(left.leader, right.leader);
+  });
+  const trustedSiteStates = allSiteStates.filter((state) => state.trusted);
+  const leaderPool = trustedSiteStates.length > 0 ? trustedSiteStates : allSiteStates;
+
+  const primarySiteIds = new Set<number>();
+  const observationSiteIds = new Set<number>();
+  const bestRate = leaderPool[0]?.effectiveSuccessRate ?? 0;
+  const thresholdRate = bestRate > 0
+    ? (bestRate * STABLE_FIRST_PRIMARY_SUCCESS_RATE_RATIO)
+    : 0;
+
+  for (const state of allSiteStates) {
+    const inPrimary = leaderPool.length === 0
+      ? true
+      : (
+        leaderPool.some((leaderState) => leaderState.siteId === state.siteId)
+        && state.effectiveSuccessRate >= thresholdRate
+      );
+    if (inPrimary) {
+      primarySiteIds.add(state.siteId);
+      continue;
+    }
+    observationSiteIds.add(state.siteId);
+    state.observationReason = state.trusted
+      ? '观察池：近期成功率暂时落后，仅灰度真实流量会命中'
+      : '观察池：近期样本不足，仅灰度真实流量会命中';
+  }
+
+  if (primarySiteIds.size <= 0 && allSiteStates.length > 0) {
+    primarySiteIds.add(allSiteStates[0].siteId);
+    observationSiteIds.delete(allSiteStates[0].siteId);
+  }
+
+  return {
+    primaryCandidates: candidates.filter((candidate) => primarySiteIds.has(candidate.site.id)),
+    observationCandidates: candidates.filter((candidate) => observationSiteIds.has(candidate.site.id)),
+    primarySiteIds,
+    observationSiteIds,
+    siteStateById,
+  };
+}
+
+function shouldUseStableFirstObservationCandidate(
+  rotationKey: string,
+  observationCandidates: RouteChannelCandidate[],
+  nowMs = Date.now(),
+): boolean {
+  if (!rotationKey || observationCandidates.length <= 0) return false;
+  const state = stableFirstObservationProgressByKey.get(rotationKey) ?? {
+    requestCount: 0,
+    lastObservationAtMs: null,
+  };
+  if ((state.requestCount + 1) < STABLE_FIRST_OBSERVATION_REQUEST_INTERVAL) {
+    return false;
+  }
+  return observationCandidates.some((candidate) => {
+    const observedAtMs = stableFirstObservationSiteCooldownByKey.get(`${rotationKey}:${candidate.site.id}`) ?? null;
+    return observedAtMs == null || (nowMs - observedAtMs) >= STABLE_FIRST_OBSERVATION_SITE_COOLDOWN_MS;
+  });
+}
+
+function updateStableFirstObservationProgress(
+  rotationKey: string,
+  input: {
+    usedObservation: boolean;
+    selectedSiteId?: number | null;
+    nowMs?: number;
+  },
+): void {
+  if (!rotationKey) return;
+  const nowMs = input.nowMs ?? Date.now();
+  const previous = stableFirstObservationProgressByKey.get(rotationKey) ?? {
+    requestCount: 0,
+    lastObservationAtMs: null,
+  };
+  if (input.usedObservation) {
+    rememberStableFirstObservationProgressForKey(rotationKey, {
+      requestCount: 0,
+      lastObservationAtMs: nowMs,
+    });
+    if (typeof input.selectedSiteId === 'number' && input.selectedSiteId > 0) {
+      rememberStableFirstObservationSiteCooldown(rotationKey, input.selectedSiteId, nowMs);
+    }
+    return;
+  }
+  rememberStableFirstObservationProgressForKey(rotationKey, {
+    requestCount: Math.max(0, previous.requestCount) + 1,
+    lastObservationAtMs: previous.lastObservationAtMs,
+  });
 }
 
 function isExplicitTokenChannel(candidate: RouteChannelCandidate): boolean {
@@ -1666,23 +2005,60 @@ export class TokenRouter {
         }
       }
 
-      const weighted = this.calculateWeightedSelection(
+      const rotationKey = this.buildStableFirstRotationKey(match.route.id, requestedModel);
+      const poolPlan = buildStableFirstPoolPlan(
         filteredCandidates,
+        useChannelSourceModelForCost ? runtimeModelResolver : mappedModel,
+        nowMs,
+      );
+      const primaryWeighted = this.calculateWeightedSelection(
+        poolPlan.primaryCandidates,
         useChannelSourceModelForCost ? runtimeModelResolver : mappedModel,
         downstreamPolicy,
         nowMs,
         'stable_first',
-        this.buildStableFirstRotationKey(match.route.id, requestedModel),
+        rotationKey,
       );
-      for (const detail of weighted.details) {
+      const observationWeighted = poolPlan.observationCandidates.length > 0
+        ? this.calculateWeightedSelection(
+          poolPlan.observationCandidates,
+          useChannelSourceModelForCost ? runtimeModelResolver : mappedModel,
+          downstreamPolicy,
+          nowMs,
+          'stable_first',
+          `${rotationKey}:observe`,
+        )
+        : {
+          selected: null,
+          details: [],
+          stableSiteCount: 0,
+        };
+      const observationTrafficShare = poolPlan.observationCandidates.length > 0
+        ? (poolPlan.primaryCandidates.length > 0 ? (1 / STABLE_FIRST_OBSERVATION_REQUEST_INTERVAL) : 1)
+        : 0;
+      const primaryTrafficShare = Math.max(0, 1 - observationTrafficShare);
+
+      for (const detail of primaryWeighted.details) {
         const target = candidateMap.get(detail.candidate.channel.id);
         if (!target) continue;
-        target.probability = Number((detail.probability * 100).toFixed(2));
+        target.probability = Number((detail.probability * primaryTrafficShare * 100).toFixed(2));
         if (target.eligible && !target.avoidedByRecentFailure) {
-          target.reason = detail.reason;
+          target.reason = `主池：${detail.reason}`;
+        }
+      }
+      for (const detail of observationWeighted.details) {
+        const target = candidateMap.get(detail.candidate.channel.id);
+        if (!target) continue;
+        target.probability = Number((detail.probability * observationTrafficShare * 100).toFixed(2));
+        if (target.eligible && !target.avoidedByRecentFailure) {
+          const siteState = poolPlan.siteStateById.get(detail.candidate.site.id);
+          target.reason = poolPlan.observationSiteIds.has(detail.candidate.site.id)
+            ? `${siteState?.observationReason || '观察池'}；${detail.reason}`
+            : `观察池：${detail.reason}`;
         }
       }
 
+      const weighted = primaryWeighted.selected ? primaryWeighted : observationWeighted;
       if (!weighted.selected) {
         summary.push('本次未选出通道');
         return {
@@ -1697,10 +2073,16 @@ export class TokenRouter {
       }
 
       const summaryParts = [`稳定优先：可用 ${available.length}`];
-      if (weighted.stableSiteCount > 0) {
-        summaryParts.push(`稳定池站点 ${weighted.stableSiteCount}`);
+      if (poolPlan.primarySiteIds.size > 0) {
+        summaryParts.push(`主池站点 ${poolPlan.primarySiteIds.size}`);
       }
-      summaryParts.push('按配置顺序轮询站点');
+      if (poolPlan.observationSiteIds.size > 0) {
+        summaryParts.push(`观察池站点 ${poolPlan.observationSiteIds.size}`);
+      }
+      summaryParts.push('按近期成功率分层后按配置顺序轮询站点');
+      if (poolPlan.observationSiteIds.size > 0) {
+        summaryParts.push('观察池仅消耗少量真实请求灰度流量');
+      }
       if (breakerFiltered.avoided.length > 0) {
         const breakerSummaryLabel = breakerFiltered.avoided.some((item) => item.reason.includes('模型熔断'))
           ? '运行时熔断避让'
@@ -2147,22 +2529,43 @@ export class TokenRouter {
     if (routeStrategy === 'stable_first') {
       const breakerFiltered = filterSiteRuntimeBrokenCandidatesByModel(available, runtimeModelResolver, nowMs);
       const candidates = filterRecentlyFailedCandidates(breakerFiltered.candidates, nowMs);
-      const selected = this.stableFirstSelect(
+      const rotationKey = this.buildStableFirstRotationKey(match.route.id, requestedModel);
+      const poolPlan = buildStableFirstPoolPlan(
         candidates,
+        requestedByDisplayName ? runtimeModelResolver : mappedModel,
+        nowMs,
+      );
+      const shouldUseObservation = (
+        poolPlan.observationCandidates.length > 0
+        && (
+          poolPlan.primaryCandidates.length <= 0
+          || (
+            recordSelection
+            && shouldUseStableFirstObservationCandidate(rotationKey, poolPlan.observationCandidates, nowMs)
+          )
+        )
+      );
+      const selectionPool = shouldUseObservation
+        ? poolPlan.observationCandidates
+        : (poolPlan.primaryCandidates.length > 0 ? poolPlan.primaryCandidates : poolPlan.observationCandidates);
+      const selected = this.stableFirstSelect(
+        selectionPool,
         requestedByDisplayName ? runtimeModelResolver : mappedModel,
         downstreamPolicy,
         nowMs,
-        this.buildStableFirstRotationKey(match.route.id, requestedModel),
+        shouldUseObservation ? `${rotationKey}:observe` : rotationKey,
       );
       if (!selected) return null;
 
       const tokenValue = this.resolveChannelTokenValue(selected);
       if (!tokenValue) return null;
       if (recordSelection) {
-        rememberStableFirstSiteSelectionForKey(
-          this.buildStableFirstRotationKey(match.route.id, requestedModel),
-          selected.site.id,
-        );
+        rememberStableFirstSiteSelectionForKey(shouldUseObservation ? `${rotationKey}:observe` : rotationKey, selected.site.id);
+        updateStableFirstObservationProgress(rotationKey, {
+          usedObservation: shouldUseObservation,
+          selectedSiteId: selected.site.id,
+          nowMs,
+        });
         await this.recordChannelSelection(selected.channel.id);
       }
 
@@ -2415,16 +2818,7 @@ export class TokenRouter {
   }
 
   private compareStableFirstCandidates(left: RouteChannelCandidate, right: RouteChannelCandidate): number {
-    const selectionOrder = compareNullableTimeAsc(
-      left.channel.lastSelectedAt || left.channel.lastUsedAt,
-      right.channel.lastSelectedAt || right.channel.lastUsedAt,
-    );
-    if (selectionOrder !== 0) return selectionOrder;
-
-    const usedOrder = compareNullableTimeAsc(left.channel.lastUsedAt, right.channel.lastUsedAt);
-    if (usedOrder !== 0) return usedOrder;
-
-    return (left.channel.id ?? 0) - (right.channel.id ?? 0);
+    return compareStableFirstCandidateOrder(left, right);
   }
 
   private buildStableFirstRotationKey(routeId: number, requestedModel: string): string {
@@ -2510,18 +2904,6 @@ export class TokenRouter {
       };
     }
 
-    if (candidates.length === 1) {
-      return {
-        selected: candidates[0],
-        details: [{
-          candidate: candidates[0],
-          probability: 1,
-          reason: selectionMode === 'stable_first' ? '稳定优先（唯一可用候选）' : '唯一可用候选',
-        }],
-        stableSiteCount: 1,
-      };
-    }
-
     const { baseWeightFactor, valueScoreFactor, costWeight, balanceWeight, usageWeight } = config.routingWeights;
     const resolveModelName = typeof modelName === 'function'
       ? modelName
@@ -2565,6 +2947,19 @@ export class TokenRouter {
 
     const contributions = candidates.map((candidate, i) => {
       const siteChannels = Math.max(1, siteChannelCounts.get(candidate.site.id) || 1);
+      const runtimeMultiplier = runtimeHealthDetails[i]?.combinedMultiplier ?? 1;
+      const runtimeLoadMultiplier = resolveChannelRuntimeLoadMultiplier(channelLoadSnapshots[i]);
+      if (selectionMode === 'stable_first') {
+        const recentSuccessRate = resolveStableFirstSuccessRate(
+          runtimeHealthDetails[i],
+          siteHistoricalHealthMetrics.get(candidate.site.id)?.successRate,
+        );
+        let contribution = Math.max(1e-4, recentSuccessRate ** 2);
+        contribution *= runtimeMultiplier;
+        contribution *= runtimeLoadMultiplier;
+        return contribution / siteChannels;
+      }
+
       let contribution = baseContributions[i] / siteChannels;
       const downstreamSiteMultiplier = downstreamPolicy.siteWeightMultipliers[candidate.site.id] ?? 1;
       const normalizedDownstreamSiteMultiplier =
@@ -2580,9 +2975,9 @@ export class TokenRouter {
         contribution *= combinedSiteWeight;
       }
 
-      contribution *= runtimeHealthDetails[i]?.combinedMultiplier ?? 1;
+      contribution *= runtimeMultiplier;
       contribution *= siteHistoricalHealthMetrics.get(candidate.site.id)?.multiplier ?? 1;
-      contribution *= resolveChannelRuntimeLoadMultiplier(channelLoadSnapshots[i]);
+      contribution *= runtimeLoadMultiplier;
 
       // If upstream price is unknown and we are using fallback unit cost,
       // apply an explicit penalty so raising fallback cost meaningfully lowers probability.
@@ -2642,19 +3037,34 @@ export class TokenRouter {
         ? `${siteRuntimeDetail.combinedMultiplier.toFixed(2)}（站点=${siteRuntimeDetail.globalMultiplier.toFixed(2)}，模型=${siteRuntimeDetail.modelMultiplier.toFixed(2)}）`
         : `${siteRuntimeDetail.globalMultiplier.toFixed(2)}`;
       const runtimeLoadText = formatChannelRuntimeLoad(channelRuntimeLoad);
+      const recentSuccessRateText = `${(siteRuntimeDetail.recentSuccessRate * 100).toFixed(1)}%`;
+      const stableFirstSuccessRate = resolveStableFirstSuccessRate(siteRuntimeDetail, siteHistoricalHealth?.successRate);
+      const stableFirstSuccessRateText = `${(stableFirstSuccessRate * 100).toFixed(1)}%`;
       const stableSiteOrder = this.getStableFirstSiteOrder(candidates, candidate.site.id);
       const reasonPrefix = selectionMode === 'stable_first'
-        ? `稳定优先（综合评分第 ${rankByIndex.get(i) ?? 1} / ${candidates.length}`
-        : '按权重随机';
+        ? (
+          candidates.length === 1
+            ? '稳定优先（唯一可用候选'
+            : `稳定优先（综合评分第 ${rankByIndex.get(i) ?? 1} / ${candidates.length}`
+        )
+        : (
+          candidates.length === 1
+            ? '按权重随机（唯一可用候选'
+            : '按权重随机'
+        );
       const stablePoolText = selectionMode === 'stable_first'
-        ? `，轮询顺位=P${stableSiteOrder}，稳定池站点=${stableSiteIds.size}${stableSiteIds.has(candidate.site.id) ? '（在池中）' : '（池外）'}`
+        ? `，轮询顺位=P${stableSiteOrder}`
         : '';
       return {
         candidate,
         probability,
         reason: selectionMode === 'stable_first'
-          ? `${reasonPrefix}，W=${weight}，成本=${costSourceText}:${(cost?.unitCost || 1).toFixed(6)}，站点权重=${siteGlobalWeight.toFixed(2)}x下游倍率=${normalizedDownstreamSiteMultiplier.toFixed(2)}=${combinedSiteWeight.toFixed(2)}，运行时健康=${runtimeHealthText}，会话负载=${runtimeLoadText}，历史健康=${siteHistoricalMultiplier.toFixed(2)}（成功率=${historicalSuccessRateText}，均延迟=${historicalLatencyText}，样本=${siteHistoricalHealth?.totalCalls ?? 0}），同站点通道=${siteChannels}${stablePoolText}，评分占比≈${(probability * 100).toFixed(1)}%）`
-          : `按权重随机（W=${weight}，成本=${costSourceText}:${(cost?.unitCost || 1).toFixed(6)}，站点权重=${siteGlobalWeight.toFixed(2)}x下游倍率=${normalizedDownstreamSiteMultiplier.toFixed(2)}=${combinedSiteWeight.toFixed(2)}，运行时健康=${runtimeHealthText}，会话负载=${runtimeLoadText}，历史健康=${siteHistoricalMultiplier.toFixed(2)}（成功率=${historicalSuccessRateText}，均延迟=${historicalLatencyText}，样本=${siteHistoricalHealth?.totalCalls ?? 0}），同站点通道=${siteChannels}，概率≈${(probability * 100).toFixed(1)}%）`,
+          ? `${reasonPrefix}，近期成功率=${recentSuccessRateText}（样本=${siteRuntimeDetail.recentSampleCount.toFixed(2)}，置信=${siteRuntimeDetail.recentConfidence.toFixed(2)}），回退成功率=${historicalSuccessRateText}，综合近期成功率=${stableFirstSuccessRateText}，运行时健康=${runtimeHealthText}，会话负载=${runtimeLoadText}，同站点通道=${siteChannels}${stablePoolText}，评分占比≈${(probability * 100).toFixed(1)}%）`
+          : (
+            candidates.length === 1
+              ? `${reasonPrefix}，W=${weight}，成本=${costSourceText}:${(cost?.unitCost || 1).toFixed(6)}，站点权重=${siteGlobalWeight.toFixed(2)}x下游倍率=${normalizedDownstreamSiteMultiplier.toFixed(2)}=${combinedSiteWeight.toFixed(2)}，运行时健康=${runtimeHealthText}，会话负载=${runtimeLoadText}，历史健康=${siteHistoricalMultiplier.toFixed(2)}（成功率=${historicalSuccessRateText}，均延迟=${historicalLatencyText}，样本=${siteHistoricalHealth?.totalCalls ?? 0}），同站点通道=${siteChannels}，概率≈${(probability * 100).toFixed(1)}%）`
+              : `按权重随机（W=${weight}，成本=${costSourceText}:${(cost?.unitCost || 1).toFixed(6)}，站点权重=${siteGlobalWeight.toFixed(2)}x下游倍率=${normalizedDownstreamSiteMultiplier.toFixed(2)}=${combinedSiteWeight.toFixed(2)}，运行时健康=${runtimeHealthText}，会话负载=${runtimeLoadText}，历史健康=${siteHistoricalMultiplier.toFixed(2)}（成功率=${historicalSuccessRateText}，均延迟=${historicalLatencyText}，样本=${siteHistoricalHealth?.totalCalls ?? 0}），同站点通道=${siteChannels}，概率≈${(probability * 100).toFixed(1)}%）`
+          ),
       };
     });
 
