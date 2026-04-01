@@ -33,6 +33,13 @@ async function flushMicrotasks() {
   });
 }
 
+function findPrimarySiteUrlInput(root: ReactTestRenderer) {
+  return root.root.find((node) => (
+    node.type === 'input'
+    && node.props['data-testid'] === 'site-primary-url-input'
+  ));
+}
+
 function LocationProbe() {
   const location = useLocation();
   return <div>{`${location.pathname}${location.search}`}</div>;
@@ -78,7 +85,7 @@ async function createSiteAndClickModalChoice(
     const nameInput = root.root.find((node) => node.type === 'input' && node.props.placeholder === '站点名称');
     const urlInput = root.root.find((node) => (
       node.type === 'input'
-      && node.props.placeholder === '站点 URL (例如 https://api.example.com)'
+      && node.props['data-testid'] === 'site-primary-url-input'
     ));
     const selects = root.root.findAllByType(ModernSelect);
     const platformSelect = selects.at(-1);
@@ -307,10 +314,7 @@ describe('Sites create redirect', () => {
       });
       await flushMicrotasks();
 
-      const urlInput = root.root.find((node) => (
-        node.type === 'input'
-        && node.props.placeholder === '站点 URL (例如 https://api.example.com)'
-      ));
+      const urlInput = findPrimarySiteUrlInput(root);
       const selects = root.root.findAllByType(ModernSelect);
       const platformSelect = selects.at(-1);
 
@@ -363,10 +367,7 @@ describe('Sites create redirect', () => {
       });
       await flushMicrotasks();
 
-      const urlInput = root.root.find((node) => (
-        node.type === 'input'
-        && node.props.placeholder === '站点 URL (例如 https://api.example.com)'
-      ));
+      const urlInput = findPrimarySiteUrlInput(root);
       const platformSelect = root.root.findAllByType(ModernSelect).at(-1);
 
       await act(async () => {
@@ -419,10 +420,7 @@ describe('Sites create redirect', () => {
       });
       await flushMicrotasks();
 
-      const urlInput = root.root.find((node) => (
-        node.type === 'input'
-        && node.props.placeholder === '站点 URL (例如 https://api.example.com)'
-      ));
+      const urlInput = findPrimarySiteUrlInput(root);
 
       await act(async () => {
         urlInput.props.onChange({ target: { value: 'https://coding.dashscope.aliyuncs.com/v1' } });
@@ -531,10 +529,7 @@ describe('Sites create redirect', () => {
 
     // Fill form
     const nameInput = root.root.find((node) => node.type === 'input' && node.props.placeholder === '站点名称');
-    const urlInput = root.root.find((node) => (
-      node.type === 'input'
-      && node.props.placeholder === '站点 URL (例如 https://api.example.com)'
-    ));
+    const urlInput = findPrimarySiteUrlInput(root);
     const selects = root.root.findAllByType(ModernSelect);
     const platformSelect = selects.at(-1);
     const saveButton = root.root.find((node) => (
