@@ -171,13 +171,18 @@ function validateLegacyPayload(
     return null;
   }
 
+  if (body.targetFormat === 'gemini') {
+    reply.code(400).send({
+      error: 'targetFormat=gemini is not supported on legacy /api/test/chat routes; use the proxy tester Gemini path instead',
+    });
+    return null;
+  }
+
   const targetFormat: TestTargetFormat = body.targetFormat === 'claude'
     ? 'claude'
     : body.targetFormat === 'responses'
       ? 'responses'
-      : body.targetFormat === 'gemini'
-        ? 'gemini'
-        : 'openai';
+      : 'openai';
 
   return {
     model: body.model,
