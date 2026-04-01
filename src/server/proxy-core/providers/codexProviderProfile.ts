@@ -10,7 +10,7 @@ export const codexProviderProfile: ProviderProfile = {
   id: 'codex',
   prepareRequest(input: PrepareProviderRequestInput): PreparedProviderRequest {
     const isCodexOauth = asTrimmedString(input.oauthProvider).toLowerCase() === 'codex';
-    const websocketTransport = getInputHeader(input.baseHeaders, 'x-metapi-responses-websocket-transport') === '1';
+    const websocketTransport = input.responsesWebsocketTransport === true;
     const configuredUserAgent = isCodexOauth ? asTrimmedString(config.codexHeaderDefaults.userAgent) : '';
     const configuredBetaFeatures = (
       isCodexOauth && websocketTransport

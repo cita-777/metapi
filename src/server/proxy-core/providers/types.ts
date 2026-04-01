@@ -42,6 +42,7 @@ export type PrepareProviderRequestInput = {
   claudeHeaders?: Record<string, string>;
   codexSessionCacheKey?: string | null;
   codexExplicitSessionId?: string | null;
+  responsesWebsocketTransport?: boolean;
   body: Record<string, unknown>;
   action?: ProviderAction;
 };

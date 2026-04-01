@@ -669,6 +669,7 @@ export default function ModelTester() {
   const [forcedChannelOptions, setForcedChannelOptions] = useState<ForcedChannelOption[]>([]);
   const [loadingForcedChannels, setLoadingForcedChannels] = useState(false);
   const [forcedChannelHint, setForcedChannelHint] = useState('');
+  const [forcedChannelHydrationReady, setForcedChannelHydrationReady] = useState(false);
 
   const [sending, setSending] = useState(false);
   const [loadingModels, setLoadingModels] = useState(true);
@@ -828,6 +829,7 @@ export default function ModelTester() {
         pushDebug('error', '获取模型列表失败。');
       } finally {
         setLoadingModels(false);
+        setForcedChannelHydrationReady(true);
       }
     };
 
@@ -836,6 +838,8 @@ export default function ModelTester() {
   }, []);
 
   useEffect(() => {
+    if (!forcedChannelHydrationReady) return;
+
     if (!inputs.model) {
       setForcedChannelOptions([]);
       setForcedChannelHint('');
@@ -897,7 +901,7 @@ export default function ModelTester() {
     return () => {
       cancelled = true;
     };
-  }, [customRequestMode, inputs.mode, inputs.model]);
+  }, [customRequestMode, forcedChannelHydrationReady, inputs.mode, inputs.model]);
 
   useEffect(() => {
     if (!inputs.model) return;

@@ -36,7 +36,7 @@ function isLoopbackClientIp(value: string | null | undefined): boolean {
   return false;
 }
 
-function normalizeForcedChannelId(value: unknown): number | null {
+export function normalizeForcedChannelId(value: unknown): number | null {
   const numeric = typeof value === 'number'
     ? value
     : typeof value === 'string' && value.trim()

@@ -4,6 +4,7 @@ import { fetch, File as UndiciFile, FormData as UndiciFormData } from 'undici';
 import { config } from '../../config.js';
 import { readRuntimeResponseText } from '../../proxy-core/executors/types.js';
 import {
+  normalizeForcedChannelId,
   TESTER_FORCED_CHANNEL_HEADER,
   TESTER_REQUEST_HEADER,
 } from '../../proxy-core/channelSelection.js';
@@ -154,17 +155,6 @@ function normalizeProxyPath(value: unknown): string {
 
 function isAllowedProxyPath(path: string): boolean {
   return ALLOWED_PROXY_PATH_PATTERNS.some((pattern) => pattern.test(path));
-}
-
-function normalizeForcedChannelId(value: unknown): number | null {
-  const numeric = typeof value === 'number'
-    ? value
-    : typeof value === 'string' && value.trim()
-      ? Number(value.trim())
-      : NaN;
-  if (!Number.isFinite(numeric)) return null;
-  const normalized = Math.trunc(numeric);
-  return normalized > 0 ? normalized : null;
 }
 
 function validateLegacyPayload(

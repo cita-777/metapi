@@ -935,7 +935,7 @@ describe('buildUpstreamEndpointRequest', () => {
     expect(httpRequest.headers['x-codex-beta-features']).toBeUndefined();
   });
 
-  it('preserves internal websocket transport headers but blocks tester-only forced channel headers', () => {
+  it('uses internal websocket transport hints without forwarding internal metapi headers upstream', () => {
     (config as any).codexHeaderDefaults = {
       userAgent: 'codex-config-ua/1.0',
       betaFeatures: 'multi_agent',
