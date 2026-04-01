@@ -18,6 +18,18 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return isRecord(value) ? value : null;
 }
 
+function cloneJson<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => cloneJson(item)) as T;
+  }
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, cloneJson(item)]),
+    ) as T;
+  }
+  return value;
+}
+
 function toStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -375,11 +387,19 @@ function extractCitationsFromPayload(
 }
 
 export function extractChatUsageDetails(payload: Record<string, unknown>): OpenAiChatUsageDetails | undefined {
-  const usage = asRecord(payload.usage);
+  const usage = asRecord(payload.usage) ?? asRecord(asRecord(payload.response)?.usage);
   if (!usage) return undefined;
 
-  const promptDetails = toNumericRecord(usage.prompt_tokens_details ?? usage.promptTokensDetails);
-  const completionDetails = toNumericRecord(usage.completion_tokens_details ?? usage.completionTokensDetails);
+  const promptDetails = toNumericRecord(
+    usage.prompt_tokens_details
+    ?? usage.promptTokensDetails
+    ?? usage.input_tokens_details,
+  );
+  const completionDetails = toNumericRecord(
+    usage.completion_tokens_details
+    ?? usage.completionTokensDetails
+    ?? usage.output_tokens_details,
+  );
   if (!promptDetails && !completionDetails) return undefined;
 
   return {
@@ -416,9 +436,25 @@ export function mergeChatUsageDetails(
 }
 
 export function extractUsagePayload(payload: Record<string, unknown>): Record<string, unknown> | undefined {
-  const usage = asRecord(payload.usage);
+  const usage = asRecord(payload.usage) ?? asRecord(asRecord(payload.response)?.usage);
   if (!usage) return undefined;
-  return usage;
+  const mappedUsage = cloneJson(usage);
+
+  const promptTokens = mappedUsage.prompt_tokens ?? mappedUsage.input_tokens;
+  const completionTokens = mappedUsage.completion_tokens ?? mappedUsage.output_tokens;
+  if (promptTokens !== undefined) mappedUsage.prompt_tokens = promptTokens;
+  if (completionTokens !== undefined) mappedUsage.completion_tokens = completionTokens;
+  delete mappedUsage.input_tokens;
+  delete mappedUsage.output_tokens;
+
+  const promptDetails = mappedUsage.prompt_tokens_details ?? mappedUsage.input_tokens_details;
+  const completionDetails = mappedUsage.completion_tokens_details ?? mappedUsage.output_tokens_details;
+  if (promptDetails !== undefined) mappedUsage.prompt_tokens_details = cloneJson(promptDetails);
+  if (completionDetails !== undefined) mappedUsage.completion_tokens_details = cloneJson(completionDetails);
+  delete mappedUsage.input_tokens_details;
+  delete mappedUsage.output_tokens_details;
+
+  return mappedUsage;
 }
 
 export function extractChatResponseExtras(payload: unknown): Pick<

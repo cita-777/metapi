@@ -372,6 +372,37 @@ describe('openAiChatTransformer.outbound', () => {
 });
 
 describe('openAiChatTransformer.stream', () => {
+  it('serializes assistant starter chunks for tool-first responses streams', () => {
+    const context = openAiChatTransformer.createStreamContext('gpt-5');
+    const event = openAiChatTransformer.transformStreamEvent({
+      type: 'response.created',
+      response: {
+        id: 'resp-tool-start',
+        model: 'gpt-5',
+        created_at: 1706000000,
+        status: 'in_progress',
+        output: [],
+      },
+    }, context, 'gpt-5');
+
+    const payloads = parseSsePayloads(
+      openAiChatTransformer.serializeStreamEvent(event, context, createClaudeDownstreamContext()),
+    );
+
+    expect(payloads[0]).toMatchObject({
+      id: 'resp-tool-start',
+      model: 'gpt-5',
+      choices: [{
+        index: 0,
+        delta: {
+          role: 'assistant',
+          content: '',
+        },
+        finish_reason: null,
+      }],
+    });
+  });
+
   it('preserves annotations, citations, and usage payload on serialized stream chunks', () => {
     const context = openAiChatTransformer.createStreamContext('gpt-5');
     const event = openAiChatTransformer.transformStreamEvent({
@@ -414,6 +445,40 @@ describe('openAiChatTransformer.stream', () => {
     expect(((payloads[0] as any).choices[0] as any).delta.annotations).toEqual([
       { type: 'url_citation', url_citation: { url: 'https://a.example' } },
     ]);
+  });
+
+  it('maps nested responses usage into chat-completions usage chunks', () => {
+    const context = openAiChatTransformer.createStreamContext('gpt-5');
+    const event = openAiChatTransformer.transformStreamEvent({
+      type: 'response.completed',
+      response: {
+        id: 'resp-usage',
+        model: 'gpt-5',
+        status: 'completed',
+        output: [],
+        usage: {
+          input_tokens: 11,
+          output_tokens: 7,
+          total_tokens: 18,
+          input_tokens_details: { cached_tokens: 3 },
+          output_tokens_details: { reasoning_tokens: 2 },
+        },
+      },
+    }, context, 'gpt-5');
+
+    const payloads = parseSsePayloads(
+      openAiChatTransformer.serializeStreamEvent(event, context, createClaudeDownstreamContext()),
+    );
+
+    expect(payloads[0]).toMatchObject({
+      usage: {
+        prompt_tokens: 11,
+        completion_tokens: 7,
+        total_tokens: 18,
+        prompt_tokens_details: { cached_tokens: 3 },
+        completion_tokens_details: { reasoning_tokens: 2 },
+      },
+    });
   });
 
   it('serializes multi-choice stream chunks without collapsing choice-specific deltas', () => {
