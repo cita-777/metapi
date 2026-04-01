@@ -126,7 +126,7 @@ export function buildPriorityRailNodeStyle(priority: number, highlighted: boolea
   return {
     border: `1px solid ${highlighted ? 'var(--color-primary)' : 'color-mix(in srgb, currentColor 24%, transparent)'}`,
     background: highlighted
-      ? `color-mix(in srgb, ${tone.background} 78%, white)`
+      ? `color-mix(in srgb, ${tone.background} 78%, var(--color-bg))`
       : tone.background,
     color: highlighted ? 'var(--color-primary)' : tone.color,
   };

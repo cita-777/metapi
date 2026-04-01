@@ -82,7 +82,8 @@ describe('priorityRail helpers', () => {
     const p1Highlighted = buildPriorityRailNodeStyle(1, true);
 
     expect(p0.background).not.toBe('var(--color-bg)');
-    expect(p0Highlighted.background).not.toBe('var(--color-bg)');
+    expect(String(p0Highlighted.background)).toContain('var(--color-bg)');
+    expect(String(p0Highlighted.background)).not.toContain('white');
     expect(p0Highlighted.color).toBe('var(--color-primary)');
     expect(p0Highlighted.background).not.toBe(p1Highlighted.background);
   });
