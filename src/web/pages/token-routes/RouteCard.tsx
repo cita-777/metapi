@@ -1,10 +1,14 @@
 import { memo, useState, type ReactNode } from 'react';
 import {
   DndContext,
+  DragOverlay,
   KeyboardSensor,
   PointerSensor,
   closestCenter,
   type DragEndEvent,
+  type DragOverEvent,
+  type DragStartEvent,
+  useDroppable,
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
@@ -28,7 +32,6 @@ import type {
 } from './types.js';
 import type { RouteCandidateView, RouteTokenOption } from '../helpers/routeModelCandidatesIndex.js';
 import { SortableChannelRow } from './SortableChannelRow.js';
-import { SortableBucketSeparator } from './SortableBucketSeparator.js';
 import {
   getRouteRoutingStrategyLabel,
   normalizeRouteRoutingStrategyValue,
@@ -40,9 +43,13 @@ import {
   resolveRouteIcon,
 } from './utils.js';
 import {
-  buildPriorityBucketEditorItems,
   buildPriorityBuckets,
 } from './priorityBuckets.js';
+import {
+  buildPriorityRailSections,
+  createPriorityRailNewLayerId,
+  isPriorityRailNewLayerId,
+} from './priorityRail.js';
 
 type RouteCardProps = {
   route: RouteSummaryRow;
@@ -73,7 +80,6 @@ type RouteCardProps = {
   onDeleteChannel: (channelId: number, routeId: number) => void;
   onToggleChannelEnabled: (channelId: number, routeId: number, enabled: boolean) => void;
   onChannelDragEnd: (routeId: number, event: DragEndEvent) => void;
-  onSplitPriorityBucket: (routeId: number, channelId: number) => void;
   // Missing token hints
   missingTokenSiteItems: MissingTokenRouteSiteActionItem[];
   missingTokenGroupItems: MissingTokenGroupRouteSiteActionItem[];
@@ -95,6 +101,99 @@ function AnimatedCollapseSection({ open, children }: { open: boolean; children: 
       <div className="anim-collapse-inner">
         {children}
       </div>
+    </div>
+  );
+}
+
+function PriorityRailNewLayerRow({
+  id,
+  highlighted,
+}: {
+  id: string;
+  highlighted: boolean;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id });
+  const active = highlighted || isOver;
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '86px minmax(0, 1fr)',
+        gap: 12,
+        alignItems: 'center',
+      }}
+    >
+      <div
+        style={{
+          minWidth: 72,
+          padding: '6px 10px',
+          borderRadius: 999,
+          border: `1px dashed ${active ? 'var(--color-primary)' : 'var(--color-border)'}`,
+          background: active
+            ? 'color-mix(in srgb, var(--color-primary) 10%, var(--color-bg))'
+            : 'transparent',
+          color: active ? 'var(--color-primary)' : 'var(--color-text-muted)',
+          fontSize: 11,
+          fontWeight: 600,
+          textAlign: 'center',
+          lineHeight: 1.2,
+          transition: 'all 0.16s ease',
+        }}
+      >
+        {tr('放到新档位')}
+      </div>
+      <div
+        style={{
+          height: 0,
+          borderTop: `1px dashed ${active ? 'var(--color-primary)' : 'var(--color-border)'}`,
+          opacity: active ? 1 : 0.75,
+          transition: 'all 0.16s ease',
+        }}
+      />
+    </div>
+  );
+}
+
+function PriorityDragPreview({
+  channel,
+  displayPriority,
+}: {
+  channel: RouteChannel;
+  displayPriority: number;
+}) {
+  return (
+    <div
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '8px 12px',
+        borderRadius: 'var(--radius-md)',
+        border: '1px solid var(--color-border)',
+        background: 'var(--color-bg-card)',
+        boxShadow: 'var(--shadow-sm)',
+        color: 'var(--color-text-primary)',
+        fontSize: 12,
+      }}
+    >
+      <span
+        className="badge"
+        style={{
+          fontSize: 10,
+          fontWeight: 700,
+          letterSpacing: 0.1,
+        }}
+      >
+        {`P${displayPriority}`}
+      </span>
+      <span style={{ fontWeight: 600 }}>
+        {channel.account?.username || `account-${channel.accountId}`}
+      </span>
+      <span className="badge badge-muted" style={{ fontSize: 10 }}>
+        {channel.site?.name || 'unknown'}
+      </span>
     </div>
   );
 }
@@ -125,7 +224,6 @@ function RouteCardInner({
   onDeleteChannel,
   onToggleChannelEnabled,
   onChannelDragEnd,
-  onSplitPriorityBucket,
   missingTokenSiteItems,
   missingTokenGroupItems,
   onCreateTokenForMissing,
@@ -170,7 +268,41 @@ function RouteCardInner({
   );
 
   const priorityBuckets = buildPriorityBuckets(channels || []);
-  const bucketEditorItems = buildPriorityBucketEditorItems(channels || []);
+  const priorityRailSections = buildPriorityRailSections(channels || []);
+  const [activeDragChannelId, setActiveDragChannelId] = useState<number | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | number | null>(null);
+  const activeDragChannel = activeDragChannelId == null
+    ? null
+    : (channels || []).find((channel) => channel.id === activeDragChannelId) || null;
+  const activeDragBucketIndex = activeDragChannel == null
+    ? -1
+    : priorityBuckets.findIndex((bucket) => bucket.channels.some((channel) => channel.id === activeDragChannel.id));
+  const hoveredBucketIndex = typeof dragOverId === 'number'
+    ? priorityBuckets.findIndex((bucket) => bucket.channels.some((channel) => channel.id === dragOverId))
+    : -1;
+  const hoveredNewLayerBucketIndex = typeof dragOverId === 'string' && isPriorityRailNewLayerId(dragOverId)
+    ? priorityBuckets.findIndex((bucket) => createPriorityRailNewLayerId(bucket.priority) === dragOverId)
+    : -1;
+
+  const clearDragState = () => {
+    setActiveDragChannelId(null);
+    setDragOverId(null);
+  };
+
+  const handleDragStart = (event: DragStartEvent) => {
+    const nextId = Number(event.active.id);
+    setActiveDragChannelId(Number.isFinite(nextId) ? nextId : null);
+    setDragOverId(event.active.id);
+  };
+
+  const handleDragOver = (event: DragOverEvent) => {
+    setDragOverId(event.over?.id ?? null);
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    onChannelDragEnd(route.id, event);
+    clearDragState();
+  };
   const renderClearCooldownButton = () => {
     if (readOnlyRoute) return null;
     return (
@@ -489,98 +621,142 @@ function RouteCardInner({
         </div>
       ) : channels && channels.length > 0 ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(event) => onChannelDragEnd(route.id, event)}>
-            <SortableContext items={bucketEditorItems.map((item) => item.id)} strategy={verticalListSortingStrategy}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={handleDragStart}
+            onDragOver={handleDragOver}
+            onDragCancel={clearDragState}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext items={(channels || []).map((channel) => channel.id)} strategy={verticalListSortingStrategy}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: compact ? 10 : 12 }}>
                 {priorityBuckets.map((bucket, bucketIndex) => {
-                  const sourceModelCount = new Set(
-                    bucket.channels
-                      .map((channel) => (channel.sourceModel || '').trim())
-                      .filter(Boolean),
-                  ).size;
+                  const railSection = priorityRailSections[bucketIndex];
+                  const railLabel = `P${bucketIndex} · ${bucket.channels.length}`;
+                  const mobileRailLabel = `${railLabel} ${tr('通道')}`;
+                  const hoveredExistingLayer = activeDragChannelId != null && hoveredBucketIndex === bucketIndex;
+                  const hoveredCrossLayer = hoveredExistingLayer && activeDragBucketIndex !== bucketIndex;
+                  const hoveredNewLayer = activeDragChannelId != null && hoveredNewLayerBucketIndex === bucketIndex;
 
                   return (
-                    <div key={`${route.id}-priority-bucket-${bucket.priority}-${bucketIndex}`} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div
+                      key={`${route.id}-priority-bucket-${bucket.priority}-${bucketIndex}`}
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: compact ? 8 : 10,
+                      }}
+                    >
                       <div
-                        className="route-priority-bucket-header"
                         style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 8,
-                          flexWrap: 'wrap',
-                          padding: '4px 2px',
-                          fontSize: 12,
-                          color: 'var(--color-text-secondary)',
+                          display: compact ? 'flex' : 'grid',
+                          flexDirection: compact ? 'column' : undefined,
+                          gridTemplateColumns: compact ? undefined : '86px minmax(0, 1fr)',
+                          gap: compact ? 8 : 12,
+                          alignItems: compact ? 'stretch' : 'stretch',
                         }}
                       >
-                        <span className="badge badge-info" style={{ fontSize: 10 }}>
-                          {`P${bucketIndex}`}
-                        </span>
-                        <span>{`${bucket.channels.length} ${tr('通道')}`}</span>
-                        {!exactRoute && sourceModelCount > 0 ? (
-                          <span className="badge badge-muted" style={{ fontSize: 10 }}>
-                            {`${sourceModelCount} ${tr('来源模型')}`}
-                          </span>
-                        ) : null}
-                      </div>
-
-                      {bucket.channels.map((channel, channelIndex) => {
-                        const tokenOptions = candidateView.tokenOptionsByAccountId[channel.accountId] || [];
-                        const activeTokenId = channelTokenDraft[channel.id] ?? channel.tokenId ?? 0;
-                        return (
-                          <div key={channel.id} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                            <SortableChannelRow
-                              channel={channel}
-                              displayPriority={bucketIndex}
-                              decisionCandidate={decisionMap.get(channel.id)}
-                              isExactRoute={exactRoute}
-                              loadingDecision={loadingDecision}
-                              isSavingPriority={savingPriority}
-                              readOnly={readOnlyRoute}
-                              channelManagementDisabled={channelManagementDisabled}
-                              mobile={compact}
-                              tokenOptions={tokenOptions}
-                              activeTokenId={activeTokenId}
-                              isUpdatingToken={!!updatingChannel[channel.id]}
-                              onTokenDraftChange={onTokenDraftChange}
-                              onSaveToken={() => onSaveToken(route.id, channel.id, channel.accountId)}
-                              onDeleteChannel={() => onDeleteChannel(channel.id, route.id)}
-                              onToggleEnabled={(enabled) => onToggleChannelEnabled(channel.id, route.id, enabled)}
-                              onSiteBlockModel={channelManagementDisabled ? undefined : () => onSiteBlockModel(channel.id, route.id)}
-                            />
-                            {!readOnlyRoute && channelIndex < bucket.channels.length - 1 ? (
-                              <button
-                                type="button"
-                                className="btn btn-ghost"
-                                onClick={() => onSplitPriorityBucket(route.id, channel.id)}
-                                disabled={savingPriority}
-                                style={{
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  gap: 8,
-                                  border: '1px dashed var(--color-border)',
-                                  borderRadius: 999,
-                                  background: 'transparent',
-                                  color: 'var(--color-text-muted)',
-                                  padding: '2px 10px',
-                                  fontSize: 11,
-                                  alignSelf: 'center',
-                                }}
-                              >
-                                {`拆分为 P${bucketIndex + 1}`}
-                              </button>
+                        {compact ? (
+                          <div
+                            className="route-priority-bucket-header"
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 8,
+                              flexWrap: 'wrap',
+                              padding: '2px 2px 0',
+                              fontSize: 12,
+                              color: 'var(--color-text-secondary)',
+                            }}
+                          >
+                            <span
+                              style={{
+                                fontSize: 12,
+                                fontWeight: 600,
+                                color: 'var(--color-text-secondary)',
+                              }}
+                            >
+                              {mobileRailLabel}
+                            </span>
+                          </div>
+                        ) : (
+                          <div
+                            aria-hidden
+                            style={{
+                              width: 86,
+                              flexShrink: 0,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              paddingTop: 4,
+                            }}
+                          >
+                            <div
+                              style={{
+                                minWidth: 72,
+                                padding: '6px 10px',
+                                borderRadius: 999,
+                                border: `1px solid ${hoveredExistingLayer ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                                background: hoveredExistingLayer
+                                  ? 'color-mix(in srgb, var(--color-primary) 10%, var(--color-bg))'
+                                  : 'var(--color-bg)',
+                                color: hoveredExistingLayer ? 'var(--color-primary)' : 'var(--color-text-secondary)',
+                                fontSize: 11,
+                                fontWeight: 600,
+                                textAlign: 'center',
+                                lineHeight: 1.2,
+                                transition: 'all 0.16s ease',
+                              }}
+                            >
+                              {railSection ? `P${bucketIndex} · ${railSection.channelCount}` : railLabel}
+                            </div>
+                            {hoveredCrossLayer ? (
+                              <div style={{ marginTop: 6, fontSize: 11, color: 'var(--color-primary)', textAlign: 'center' }}>
+                                {`放到 P${bucketIndex}`}
+                              </div>
+                            ) : null}
+                            {bucketIndex < priorityBuckets.length - 1 ? (
+                              <div style={{ width: 1, flex: 1, marginTop: 8, background: 'var(--color-border)' }} />
                             ) : null}
                           </div>
-                        );
-                      })}
+                        )}
 
-                      {bucketIndex < priorityBuckets.length - 1 ? (
-                        <SortableBucketSeparator
-                          id={String(bucketEditorItems.find((item) => item.kind === 'separator' && item.id === `priority-separator:${bucketIndex}`)?.id || `priority-separator:${bucketIndex}`)}
-                          beforePriority={bucketIndex}
-                          afterPriority={bucketIndex + 1}
-                          isSavingPriority={savingPriority}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0, flex: 1 }}>
+                          {bucket.channels.map((channel) => {
+                            const tokenOptions = candidateView.tokenOptionsByAccountId[channel.accountId] || [];
+                            const activeTokenId = channelTokenDraft[channel.id] ?? channel.tokenId ?? 0;
+                            return (
+                              <SortableChannelRow
+                                key={channel.id}
+                                channel={channel}
+                                displayPriority={bucketIndex}
+                                showPriorityBadge={compact}
+                                decisionCandidate={decisionMap.get(channel.id)}
+                                isExactRoute={exactRoute}
+                                loadingDecision={loadingDecision}
+                                isSavingPriority={savingPriority}
+                                readOnly={readOnlyRoute}
+                                channelManagementDisabled={channelManagementDisabled}
+                                mobile={compact}
+                                tokenOptions={tokenOptions}
+                                activeTokenId={activeTokenId}
+                                isUpdatingToken={!!updatingChannel[channel.id]}
+                                onTokenDraftChange={onTokenDraftChange}
+                                onSaveToken={() => onSaveToken(route.id, channel.id, channel.accountId)}
+                                onDeleteChannel={() => onDeleteChannel(channel.id, route.id)}
+                                onToggleEnabled={(enabled) => onToggleChannelEnabled(channel.id, route.id, enabled)}
+                                onSiteBlockModel={channelManagementDisabled ? undefined : () => onSiteBlockModel(channel.id, route.id)}
+                              />
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {!compact && activeDragChannelId != null && !readOnlyRoute ? (
+                        <PriorityRailNewLayerRow
+                          id={createPriorityRailNewLayerId(bucket.priority)}
+                          highlighted={hoveredNewLayer}
                         />
                       ) : null}
                     </div>
@@ -588,6 +764,14 @@ function RouteCardInner({
                 })}
               </div>
             </SortableContext>
+            <DragOverlay>
+              {activeDragChannel && !compact ? (
+                <PriorityDragPreview
+                  channel={activeDragChannel}
+                  displayPriority={Math.max(0, activeDragBucketIndex)}
+                />
+              ) : null}
+            </DragOverlay>
           </DndContext>
         </div>
       ) : (

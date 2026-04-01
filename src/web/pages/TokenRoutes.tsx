@@ -57,7 +57,7 @@ import {
   inferEndpointTypesFromPlatform,
   getModelPatternError,
 } from './token-routes/utils.js';
-import { applyPriorityBucketDrag, splitPriorityBucketAfterChannel } from './token-routes/priorityBuckets.js';
+import { applyPriorityRailDrop, isPriorityRailNewLayerId } from './token-routes/priorityRail.js';
 import { useRouteChannels } from './token-routes/useRouteChannels.js';
 import RouteFilterBar, { type EnabledFilter } from './token-routes/RouteFilterBar.js';
 import ManualRoutePanel from './token-routes/ManualRoutePanel.js';
@@ -1004,7 +1004,18 @@ export default function TokenRoutes() {
     if (!route) return;
 
     const channels = channelsByRouteId[routeId] || [];
-    const reordered = applyPriorityBucketDrag(channels, active.id, over.id);
+    const activeChannel = channels.find((channel) => channel.id === Number(active.id));
+    if (!activeChannel) return;
+
+    const overIsNewLayer = isPriorityRailNewLayerId(over.id);
+    const targetChannel = overIsNewLayer
+      ? null
+      : channels.find((channel) => channel.id === Number(over.id));
+
+    if (!overIsNewLayer && !targetChannel) return;
+    if (!overIsNewLayer && (targetChannel?.priority ?? 0) === (activeChannel.priority ?? 0)) return;
+
+    const reordered = applyPriorityRailDrop(channels, Number(active.id), over.id);
     const changedChannels = reordered.filter((channel) => {
       const previous = channels.find((item) => item.id === channel.id);
       return (previous?.priority ?? 0) !== channel.priority;
@@ -1056,74 +1067,6 @@ export default function TokenRoutes() {
           }));
         } catch {
           // ignore route decision refresh failures after reorder
-        }
-      }
-    } catch (e: any) {
-      setChannels(routeId, previousChannels);
-      toast.error(e.message || '保存通道优先级失败，已回滚');
-    } finally {
-      setSavingPriorityByRoute((prev) => ({ ...prev, [routeId]: false }));
-    }
-  };
-
-  const handleSplitPriorityBucket = async (routeId: number, channelId: number) => {
-    if (savingPriorityByRoute[routeId]) return;
-
-    const route = routeSummaries.find((item) => item.id === routeId);
-    if (!route) return;
-
-    const channels = channelsByRouteId[routeId] || [];
-    const reordered = splitPriorityBucketAfterChannel(channels, channelId);
-    const changedChannels = reordered.filter((channel) => {
-      const previous = channels.find((item) => item.id === channel.id);
-      return (previous?.priority ?? 0) !== channel.priority;
-    });
-
-    if (changedChannels.length === 0) return;
-
-    if (isExplicitGroupRoute(route)) {
-      const changedSourceRouteIds = Array.from(new Set(
-        changedChannels
-          .map((channel) => channel.routeId)
-          .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0),
-      ));
-      if (changedSourceRouteIds.length > 0) {
-        const affectedGroups = routeSummaries.filter((candidate) => (
-          candidate.id !== route.id
-          && isExplicitGroupRoute(candidate)
-          && (candidate.sourceRouteIds || []).some((sourceRouteId) => changedSourceRouteIds.includes(sourceRouteId))
-        ));
-        if (affectedGroups.length > 0) {
-          const affectedNames = affectedGroups.map((candidate) => resolveRouteTitle(candidate));
-          const confirmFn = typeof globalThis.confirm === 'function' ? globalThis.confirm : null;
-          const confirmed = !confirmFn
-            || confirmFn(`当前群组的优先级桶会直接回写来源通道，并同步影响：${affectedNames.join('、')}。是否继续？`);
-          if (!confirmed) return;
-        }
-      }
-    }
-
-    const previousChannels = channels.map((channel) => ({ ...channel }));
-    setChannels(routeId, reordered);
-    setSavingPriorityByRoute((prev) => ({ ...prev, [routeId]: true }));
-
-    try {
-      await api.batchUpdateChannels(
-        reordered.map((channel) => ({
-          id: channel.id,
-          priority: channel.priority,
-        })),
-      );
-
-      if (route && isRouteExactModel(route)) {
-        try {
-          const res = await api.getRouteDecision(route.modelPattern);
-          setDecisionByRoute((prev) => ({
-            ...prev,
-            [routeId]: (res?.decision || null) as RouteDecision | null,
-          }));
-        } catch {
-          // ignore route decision refresh failures after split
         }
       }
     } catch (e: any) {
@@ -1760,7 +1703,6 @@ export default function TokenRoutes() {
                     onDeleteChannel={stableDeleteChannel}
                     onToggleChannelEnabled={stableToggleChannelEnabled}
                     onChannelDragEnd={stableChannelDragEnd}
-                    onSplitPriorityBucket={handleSplitPriorityBucket}
                     missingTokenSiteItems={getMissingTokenSiteItems(route.id)}
                     missingTokenGroupItems={getMissingTokenGroupItems(route.id)}
                     onCreateTokenForMissing={stableCreateTokenForMissing}
@@ -1801,7 +1743,6 @@ export default function TokenRoutes() {
               onDeleteChannel={stableDeleteChannel}
               onToggleChannelEnabled={stableToggleChannelEnabled}
               onChannelDragEnd={stableChannelDragEnd}
-              onSplitPriorityBucket={handleSplitPriorityBucket}
               missingTokenSiteItems={getMissingTokenSiteItems(route.id)}
               missingTokenGroupItems={getMissingTokenGroupItems(route.id)}
               onCreateTokenForMissing={stableCreateTokenForMissing}

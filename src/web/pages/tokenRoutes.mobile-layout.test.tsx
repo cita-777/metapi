@@ -170,6 +170,7 @@ describe('TokenRoutes mobile layout', () => {
       const expandedText = collectText(root!.root);
       expect(expandedText).toContain('路由策略');
       expect(expandedText).toContain('权重随机');
+      expect(expandedText).toContain('P0 · 1 通道');
       expect(expandedText).toContain('user_a');
       expect(expandedText).toContain('token-a');
     } finally {

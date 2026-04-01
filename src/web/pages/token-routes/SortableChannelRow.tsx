@@ -14,6 +14,7 @@ import { getChannelDecisionState, getPriorityTagStyle, getProbabilityColor } fro
 export function SortableChannelRow({
   channel,
   displayPriority,
+  showPriorityBadge = true,
   decisionCandidate,
   isExactRoute,
   loadingDecision,
@@ -113,17 +114,19 @@ export function SortableChannelRow({
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0, flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <span
-                className="badge"
-                style={{
-                  fontSize: 10,
-                  fontWeight: 700,
-                  letterSpacing: 0.1,
-                  ...getPriorityTagStyle(resolvedPriority),
-                }}
-              >
-                P{resolvedPriority}
-              </span>
+              {showPriorityBadge ? (
+                <span
+                  className="badge"
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 700,
+                    letterSpacing: 0.1,
+                    ...getPriorityTagStyle(resolvedPriority),
+                  }}
+                >
+                  P{resolvedPriority}
+                </span>
+              ) : null}
 
               <span style={{ fontWeight: 600, color: 'var(--color-text-primary)', fontSize: 14, minWidth: 0 }}>
                 {channel.account?.username || `account-${channel.accountId}`}
@@ -335,17 +338,19 @@ export function SortableChannelRow({
           </svg>
         </button>
 
-        <span
-          className="badge"
-          style={{
-            fontSize: 10,
-            fontWeight: 700,
-            letterSpacing: 0.1,
-            ...getPriorityTagStyle(resolvedPriority),
-          }}
-        >
-          P{resolvedPriority}
-        </span>
+        {showPriorityBadge ? (
+          <span
+            className="badge"
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: 0.1,
+              ...getPriorityTagStyle(resolvedPriority),
+            }}
+          >
+            P{resolvedPriority}
+          </span>
+        ) : null}
 
         <span style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>
           {channel.account?.username || `account-${channel.accountId}`}
