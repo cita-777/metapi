@@ -207,10 +207,17 @@ class ProxyChannelCoordinator {
   getChannelLoadSnapshot(input: {
     channelId: number;
     accountExtraConfig?: string | null;
+    accountOauthProvider?: string | null;
   }): ProxyChannelLoadSnapshot {
     const channelId = Math.trunc(input.channelId || 0);
-    const sessionScoped = isSessionScopedChannel(input.accountExtraConfig);
-    const concurrencyLimit = getChannelConcurrencyLimit(input.accountExtraConfig);
+    const sessionScoped = isSessionScopedChannel({
+      extraConfig: input.accountExtraConfig,
+      oauthProvider: input.accountOauthProvider,
+    });
+    const concurrencyLimit = getChannelConcurrencyLimit({
+      extraConfig: input.accountExtraConfig,
+      oauthProvider: input.accountOauthProvider,
+    });
     const state = channelId > 0 ? channelRuntimeStates.get(channelId) : null;
     if (state) {
       pruneCancelledWaiters(state);
@@ -232,6 +239,7 @@ class ProxyChannelCoordinator {
   getChannelLoadSnapshots(input: Array<{
     channelId: number;
     accountExtraConfig?: string | null;
+    accountOauthProvider?: string | null;
   }>): Map<number, ProxyChannelLoadSnapshot> {
     const snapshots = new Map<number, ProxyChannelLoadSnapshot>();
     for (const item of input) {

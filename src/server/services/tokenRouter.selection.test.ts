@@ -1417,20 +1417,33 @@ describe('TokenRouter selection scoring', () => {
 
     const router = new TokenRouter();
     const selectedChannelIds: number[] = [];
-    for (let index = 0; index < 24; index += 1) {
+    for (let index = 0; index < 23; index += 1) {
       const selected = await router.selectChannel('gpt-5.4-probe-free');
       selectedChannelIds.push(selected?.channel.id ?? 0);
     }
-    const decision = await router.explainSelection('gpt-5.4-probe-free');
-    const observationCandidate = decision.candidates.find((candidate) => candidate.channelId === observationChannel.id);
-    const primaryCandidate = decision.candidates.find((candidate) => candidate.channelId === primaryChannel.id);
+    let decision = await router.explainSelection('gpt-5.4-probe-free');
+    let observationCandidate = decision.candidates.find((candidate) => candidate.channelId === observationChannel.id);
+    let primaryCandidate = decision.candidates.find((candidate) => candidate.channelId === primaryChannel.id);
+
+    expect(observationCandidate?.probability).toBe(100);
+    expect(primaryCandidate?.probability).toBe(0);
+    expect(decision.summary.join(' ')).toContain('本次命中观察池灰度流量');
+
+    const observationSelected = await router.selectChannel('gpt-5.4-probe-free');
+    selectedChannelIds.push(observationSelected?.channel.id ?? 0);
+
+    decision = await router.explainSelection('gpt-5.4-probe-free');
+    observationCandidate = decision.candidates.find((candidate) => candidate.channelId === observationChannel.id);
+    primaryCandidate = decision.candidates.find((candidate) => candidate.channelId === primaryChannel.id);
 
     expect(selectedChannelIds.filter((channelId) => channelId === observationChannel.id)).toHaveLength(1);
     expect(selectedChannelIds.filter((channelId) => channelId === primaryChannel.id).length).toBeGreaterThan(20);
     expect(decision.summary.join(' ')).toContain('观察池站点 1');
-    expect(decision.summary.join(' ')).toContain('灰度流量');
+    expect(decision.summary.join(' ')).toContain('还需 23 次主池请求');
     expect(observationCandidate?.reason || '').toContain('观察池');
+    expect(observationCandidate?.probability).toBe(0);
     expect(primaryCandidate?.reason || '').toContain('主池');
+    expect((primaryCandidate?.probability || 0)).toBeGreaterThan(0);
   });
 
   it('caps the stable_first rotation cache size', () => {

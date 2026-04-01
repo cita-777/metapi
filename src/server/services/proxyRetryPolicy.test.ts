@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { shouldRetryProxyRequest } from './proxyRetryPolicy.js';
+import { shouldAbortSameSiteEndpointFallback, shouldRetryProxyRequest } from './proxyRetryPolicy.js';
 
 describe('proxyRetryPolicy', () => {
   it('retries on rate limit and server errors', () => {
@@ -51,5 +51,17 @@ describe('proxyRetryPolicy', () => {
     expect(
       shouldRetryProxyRequest(400, '{"error":{"message":"invalid timeout parameter"}}'),
     ).toBe(false);
+  });
+
+  it('aborts same-site endpoint fallback on rate-limit and quota responses', () => {
+    expect(
+      shouldAbortSameSiteEndpointFallback(429, '{"error":{"message":"rate limit exceeded"}}'),
+    ).toBe(true);
+    expect(
+      shouldAbortSameSiteEndpointFallback(429, '{"error":{"message":"quota exceeded"}}'),
+    ).toBe(true);
+    expect(
+      shouldAbortSameSiteEndpointFallback(429, '{"error":{"message":"too many requests"}}'),
+    ).toBe(true);
   });
 });

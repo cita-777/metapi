@@ -213,4 +213,20 @@ describe('proxyChannelCoordinator', () => {
       second.lease.release();
     }
   });
+
+  it('treats structured oauth providers as session-scoped in load snapshots', () => {
+    expect(proxyChannelCoordinator.getChannelLoadSnapshot({
+      channelId: 41,
+      accountExtraConfig: JSON.stringify({ credentialMode: 'session' }),
+      accountOauthProvider: 'codex',
+    })).toEqual({
+      channelId: 41,
+      sessionScoped: true,
+      concurrencyLimit: 1,
+      activeLeaseCount: 0,
+      waitingCount: 0,
+      loadRatio: 0,
+      saturated: false,
+    });
+  });
 });

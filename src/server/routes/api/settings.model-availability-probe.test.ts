@@ -1,6 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { eq } from 'drizzle-orm';
@@ -51,6 +51,7 @@ describe('settings model availability probe runtime setting', () => {
 
   afterAll(async () => {
     await app.close();
+    rmSync(dataDir, { recursive: true, force: true });
     delete process.env.DATA_DIR;
   });
 

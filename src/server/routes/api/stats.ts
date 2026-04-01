@@ -1487,8 +1487,11 @@ export async function statsRoutes(app: FastifyInstance) {
       ? ''
       : String(rawAccountId).trim();
     const hasAccountId = normalizedAccountId !== '';
-    const accountId = hasAccountId && /^[1-9]\d*$/.test(normalizedAccountId)
+    const parsedAccountId = hasAccountId && /^[1-9]\d*$/.test(normalizedAccountId)
       ? Number(normalizedAccountId)
+      : undefined;
+    const accountId = parsedAccountId !== undefined && Number.isSafeInteger(parsedAccountId)
+      ? parsedAccountId
       : undefined;
     const wait = requestBody?.wait === true;
 

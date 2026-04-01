@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
@@ -14,6 +14,7 @@ type DbModule = typeof import('../db/index.js');
 type RecoveryModule = typeof import('./channelRecoveryProbeService.js');
 type CoordinatorModule = typeof import('./proxyChannelCoordinator.js');
 type ConfigModule = typeof import('../config.js');
+type TokenRouterModule = typeof import('./tokenRouter.js');
 
 describe('channelRecoveryProbeService', () => {
   let db: DbModule['db'];
@@ -22,6 +23,8 @@ describe('channelRecoveryProbeService', () => {
   let resetChannelRecoveryProbeState: RecoveryModule['resetChannelRecoveryProbeState'];
   let proxyChannelCoordinator: CoordinatorModule['proxyChannelCoordinator'];
   let resetProxyChannelCoordinatorState: CoordinatorModule['resetProxyChannelCoordinatorState'];
+  let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'];
+  let resetSiteRuntimeHealthState: TokenRouterModule['resetSiteRuntimeHealthState'];
   let config: ConfigModule['config'];
   let dataDir = '';
   let originalDataDir: string | undefined;
@@ -37,6 +40,7 @@ describe('channelRecoveryProbeService', () => {
     const recoveryModule = await import('./channelRecoveryProbeService.js');
     const coordinatorModule = await import('./proxyChannelCoordinator.js');
     const configModule = await import('../config.js');
+    const tokenRouterModule = await import('./tokenRouter.js');
 
     db = dbModule.db;
     schema = dbModule.schema;
@@ -44,6 +48,8 @@ describe('channelRecoveryProbeService', () => {
     resetChannelRecoveryProbeState = recoveryModule.resetChannelRecoveryProbeState;
     proxyChannelCoordinator = coordinatorModule.proxyChannelCoordinator;
     resetProxyChannelCoordinatorState = coordinatorModule.resetProxyChannelCoordinatorState;
+    invalidateTokenRouterCache = tokenRouterModule.invalidateTokenRouterCache;
+    resetSiteRuntimeHealthState = tokenRouterModule.resetSiteRuntimeHealthState;
     config = configModule.config;
     originalConcurrencyLimit = config.proxySessionChannelConcurrencyLimit;
   });
@@ -58,6 +64,8 @@ describe('channelRecoveryProbeService', () => {
     config.proxySessionChannelConcurrencyLimit = 1;
     resetChannelRecoveryProbeState();
     resetProxyChannelCoordinatorState();
+    invalidateTokenRouterCache();
+    resetSiteRuntimeHealthState();
 
     await db.delete(schema.routeChannels).run();
     await db.delete(schema.tokenRoutes).run();
@@ -71,6 +79,9 @@ describe('channelRecoveryProbeService', () => {
     config.proxySessionChannelConcurrencyLimit = originalConcurrencyLimit;
     resetChannelRecoveryProbeState();
     resetProxyChannelCoordinatorState();
+    invalidateTokenRouterCache();
+    resetSiteRuntimeHealthState();
+    rmSync(dataDir, { recursive: true, force: true });
     if (originalDataDir === undefined) {
       delete process.env.DATA_DIR;
     } else {

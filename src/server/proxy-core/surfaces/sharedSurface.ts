@@ -13,7 +13,7 @@ import type { DownstreamClientContext } from '../../routes/proxy/downstreamClien
 import { insertProxyLog } from '../../services/proxyLogStore.js';
 import { dispatchRuntimeRequest } from '../../services/runtimeDispatch.js';
 import type { BuiltEndpointRequest } from '../orchestration/endpointFlow.js';
-import { buildUpstreamUrl } from '../../routes/proxy/upstreamUrl.js';
+import { buildUpstreamUrl } from '../orchestration/upstreamRequest.js';
 import { recordOauthQuotaResetHint } from '../../services/oauth/quota.js';
 import { refreshOauthAccessTokenSingleflight } from '../../services/oauth/refreshSingleflight.js';
 import { proxyChannelCoordinator } from '../../services/proxyChannelCoordinator.js';

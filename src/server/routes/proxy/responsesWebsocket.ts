@@ -542,13 +542,23 @@ async function handleResponsesWebsocketConnection(
   const websocketSessionId = headerValueToTrimmedString(request.headers['session_id'])
     || headerValueToTrimmedString(request.headers['session-id'])
     || randomUUID();
+  const runtimeSessionKeys = new Set<string>();
   let lastRequest: Record<string, unknown> | null = null;
   let lastResponseOutput: unknown[] = [];
   let selectedChannel: SelectedChannel | null = null;
   let messageQueue = Promise.resolve();
 
   socket.once('close', () => {
-    void codexWebsocketRuntime.closeSession(websocketSessionId);
+    const sessionKeys = runtimeSessionKeys.size > 0
+      ? Array.from(runtimeSessionKeys)
+      : [websocketSessionId];
+    void Promise.all(sessionKeys.map(async (sessionKey) => {
+      try {
+        await codexWebsocketRuntime.closeSession(sessionKey);
+      } catch {
+        // Ignore close-time cleanup failures after downstream disconnects.
+      }
+    }));
   });
 
   socket.on('message', (raw) => {
@@ -641,6 +651,7 @@ async function handleResponsesWebsocketConnection(
                 accountId: codexWebsocketChannel.account.id,
                 channelId: codexWebsocketChannel.channel.id,
               }) || websocketSessionId;
+              runtimeSessionKeys.add(websocketRuntimeSessionKey);
               const runtimeResult = await codexWebsocketRuntime.sendRequest({
                 sessionId: websocketRuntimeSessionKey,
                 requestUrl,

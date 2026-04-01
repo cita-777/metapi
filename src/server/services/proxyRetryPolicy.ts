@@ -56,6 +56,10 @@ const NON_RETRYABLE_REQUEST_PATTERNS: RegExp[] = [
 ];
 
 const SAME_SITE_ENDPOINT_ABORT_PATTERNS: RegExp[] = [
+  /\b429\b/i,
+  /too\s+many\s+requests/i,
+  /rate\s+limit/i,
+  /quota(?:\s+exceeded)?/i,
   /bad\s+gateway/i,
   /gateway\s+time-?out/i,
   /service\s+unavailable/i,

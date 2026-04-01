@@ -2076,6 +2076,21 @@ export class TokenRouter {
         useChannelSourceModelForCost ? runtimeModelResolver : mappedModel,
         nowMs,
       );
+      const observationDueNow = poolPlan.observationCandidates.length > 0
+        && shouldUseStableFirstObservationCandidate(rotationKey, poolPlan.observationCandidates, nowMs);
+      const useObservationNow = poolPlan.observationCandidates.length > 0
+        && (poolPlan.primaryCandidates.length <= 0 || observationDueNow);
+      const observationProgressState = stableFirstObservationProgressByKey.get(rotationKey) ?? {
+        requestCount: 0,
+        lastObservationAtMs: null,
+      };
+      const remainingPrimaryRequestsBeforeObservation = poolPlan.primaryCandidates.length > 0
+        ? Math.max(0, STABLE_FIRST_OBSERVATION_REQUEST_INTERVAL - (observationProgressState.requestCount + 1))
+        : 0;
+      const observationBlockedByCooldown = poolPlan.primaryCandidates.length > 0
+        && poolPlan.observationCandidates.length > 0
+        && remainingPrimaryRequestsBeforeObservation === 0
+        && !observationDueNow;
       const primaryWeighted = this.calculateWeightedSelection(
         poolPlan.primaryCandidates,
         useChannelSourceModelForCost ? runtimeModelResolver : mappedModel,
@@ -2098,32 +2113,39 @@ export class TokenRouter {
           details: [],
           stableSiteCount: 0,
         };
-      const observationTrafficShare = poolPlan.observationCandidates.length > 0
-        ? (poolPlan.primaryCandidates.length > 0 ? (1 / STABLE_FIRST_OBSERVATION_REQUEST_INTERVAL) : 1)
-        : 0;
-      const primaryTrafficShare = Math.max(0, 1 - observationTrafficShare);
 
       for (const detail of primaryWeighted.details) {
         const target = candidateMap.get(detail.candidate.channel.id);
         if (!target) continue;
-        target.probability = Number((detail.probability * primaryTrafficShare * 100).toFixed(2));
+        target.probability = Number((detail.probability * (useObservationNow ? 0 : 100)).toFixed(2));
         if (target.eligible && !target.avoidedByRecentFailure) {
-          target.reason = `主池：${detail.reason}`;
+          target.reason = useObservationNow
+            ? `主池：本次让位给观察池灰度请求；${detail.reason}`
+            : `主池：${detail.reason}`;
         }
       }
       for (const detail of observationWeighted.details) {
         const target = candidateMap.get(detail.candidate.channel.id);
         if (!target) continue;
-        target.probability = Number((detail.probability * observationTrafficShare * 100).toFixed(2));
+        target.probability = Number((detail.probability * (useObservationNow ? 100 : 0)).toFixed(2));
         if (target.eligible && !target.avoidedByRecentFailure) {
           const siteState = poolPlan.siteStateById.get(detail.candidate.site.id);
+          const observationWindowPrefix = useObservationNow
+            ? (poolPlan.primaryCandidates.length > 0
+              ? '本次命中灰度真实请求'
+              : '当前主池为空，改由观察池承接')
+            : (observationBlockedByCooldown
+              ? '当前已到灰度窗口，但观察站点仍在冷却'
+              : `当前还需 ${remainingPrimaryRequestsBeforeObservation} 次主池请求`);
           target.reason = poolPlan.observationSiteIds.has(detail.candidate.site.id)
-            ? `${siteState?.observationReason || '观察池'}；${detail.reason}`
-            : `观察池：${detail.reason}`;
+            ? `${siteState?.observationReason || '观察池'}；${observationWindowPrefix}；${detail.reason}`
+            : `观察池：${observationWindowPrefix}；${detail.reason}`;
         }
       }
 
-      const weighted = primaryWeighted.selected ? primaryWeighted : observationWeighted;
+      const weighted = useObservationNow
+        ? observationWeighted
+        : (primaryWeighted.selected ? primaryWeighted : observationWeighted);
       if (!weighted.selected) {
         summary.push('本次未选出通道');
         return {
@@ -2146,7 +2168,15 @@ export class TokenRouter {
       }
       summaryParts.push('按近期成功率分层后按配置顺序轮询站点');
       if (poolPlan.observationSiteIds.size > 0) {
-        summaryParts.push('观察池仅消耗少量真实请求灰度流量');
+        if (useObservationNow) {
+          summaryParts.push('本次命中观察池灰度流量');
+        } else if (observationBlockedByCooldown) {
+          summaryParts.push('观察池已到灰度窗口，但候选站点仍在观察冷却');
+        } else if (poolPlan.primaryCandidates.length <= 0) {
+          summaryParts.push('当前主池为空，由观察池承接流量');
+        } else {
+          summaryParts.push(`观察池仅消耗少量真实请求灰度流量（当前还需 ${remainingPrimaryRequestsBeforeObservation} 次主池请求）`);
+        }
       }
       if (breakerFiltered.avoided.length > 0) {
         const breakerSummaryLabel = breakerFiltered.avoided.some((item) => item.reason.includes('模型熔断'))
@@ -3020,6 +3050,7 @@ export class TokenRouter {
       proxyChannelCoordinator.getChannelLoadSnapshot({
         channelId: candidate.channel.id,
         accountExtraConfig: candidate.account.extraConfig,
+        accountOauthProvider: candidate.account.oauthProvider,
       })
     ));
 

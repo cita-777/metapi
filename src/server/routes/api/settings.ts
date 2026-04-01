@@ -1131,8 +1131,8 @@ export async function settingsRoutes(app: FastifyInstance) {
       if (nextValue !== config.modelAvailabilityProbeEnabled) {
         changedLabels.push(nextValue ? '开启批量测活' : '关闭批量测活');
       }
+      await upsertSetting('model_availability_probe_enabled', nextValue);
       config.modelAvailabilityProbeEnabled = nextValue;
-      upsertSetting('model_availability_probe_enabled', config.modelAvailabilityProbeEnabled);
       if (nextValue) {
         startModelAvailabilityProbeScheduler();
       } else {

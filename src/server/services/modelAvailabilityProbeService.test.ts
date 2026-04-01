@@ -11,12 +11,12 @@ const resolveChannelProxyUrlMock = vi.fn();
 const withSiteRecordProxyRequestInitMock = vi.fn();
 const rebuildRoutesOnlyMock = vi.fn();
 
-vi.mock('../routes/proxy/upstreamEndpoint.js', () => ({
+vi.mock('./upstreamEndpointRuntime.js', () => ({
   resolveUpstreamEndpointCandidates: (...args: unknown[]) => resolveUpstreamEndpointCandidatesMock(...args),
   buildUpstreamEndpointRequest: (...args: unknown[]) => buildUpstreamEndpointRequestMock(...args),
 }));
 
-vi.mock('../routes/proxy/runtimeExecutor.js', () => ({
+vi.mock('./runtimeDispatch.js', () => ({
   dispatchRuntimeRequest: (...args: unknown[]) => dispatchRuntimeRequestMock(...args),
 }));
 

@@ -89,6 +89,19 @@ describe('/api/models/probe', () => {
     expect(queueModelAvailabilityProbeTaskMock).not.toHaveBeenCalled();
   });
 
+  it('rejects account ids that exceed the safe integer range', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/models/probe',
+      payload: {
+        accountId: '9007199254740993',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(queueModelAvailabilityProbeTaskMock).not.toHaveBeenCalled();
+  });
+
   it('reuses the running deduped task for wait=true requests', async () => {
     buildModelAvailabilityProbeTaskDedupeKeyMock.mockReturnValue('model-availability-probe-7');
     getRunningTaskByDedupeKeyMock.mockReturnValue({
