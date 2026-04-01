@@ -955,6 +955,66 @@ describe('ProxyLogs server-driven page', () => {
     }
   });
 
+  it('renders unknown usage as -- instead of 0 in the server-driven table', async () => {
+    apiMock.getProxyLogs.mockResolvedValue(buildListResponse({
+      items: [
+        {
+          id: 101,
+          createdAt: '2026-03-09 16:00:00',
+          modelRequested: 'gpt-5',
+          modelActual: 'gpt-5',
+          status: 'success',
+          latencyMs: 120,
+          promptTokens: null,
+          completionTokens: null,
+          totalTokens: null,
+          usageSource: 'unknown',
+          retryCount: 0,
+          estimatedCost: 0,
+          errorMessage: '[downstream:/v1/chat/completions] [upstream:/v1/chat/completions] [usage:unknown]',
+          username: 'tester',
+          siteName: 'main-site',
+          siteUrl: 'https://main-site.example.com',
+          clientFamily: 'codex',
+          clientAppId: 'cherry_studio',
+          clientAppName: 'Cherry Studio',
+          clientConfidence: 'heuristic',
+        },
+      ],
+      summary: {
+        totalCount: 1,
+        successCount: 1,
+        failedCount: 0,
+        totalCost: 0,
+        totalTokensAll: 0,
+      },
+    }));
+
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const row = root!.root.find((node) => (
+        node.type === 'tr' && node.props['data-testid'] === 'proxy-log-row-101'
+      ));
+      const rowText = collectText(row);
+      expect(rowText).toContain('--');
+      expect(rowText).not.toContain('输入0');
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('hydrates site and time filters from the route query', async () => {
     let root!: WebTestRenderer;
 

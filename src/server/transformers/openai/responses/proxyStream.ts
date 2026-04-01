@@ -98,7 +98,7 @@ function shouldFailEmptyResponsesCompletion(input: {
     : null;
   if (hasMeaningfulAggregateOutput(input.state)) return false;
   if (responsePayload && hasMeaningfulResponsesPayloadOutput(responsePayload)) return false;
-  return input.usage.completionTokens <= 0 && input.usage.totalTokens <= 0;
+  return input.usage.completionTokens <= 0;
 }
 
 function getResponsesStreamFailureMessage(payload: unknown, fallback = 'upstream stream failed'): string {

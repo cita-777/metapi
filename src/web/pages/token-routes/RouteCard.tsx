@@ -28,6 +28,7 @@ import type {
 } from './types.js';
 import type { RouteCandidateView, RouteTokenOption } from '../helpers/routeModelCandidatesIndex.js';
 import { SortableChannelRow } from './SortableChannelRow.js';
+import { SortableBucketSeparator } from './SortableBucketSeparator.js';
 import {
   getRouteRoutingStrategyLabel,
   getRouteRoutingStrategyDescription,
@@ -39,8 +40,11 @@ import {
   isExplicitGroupRoute,
   resolveRouteTitle,
   resolveRouteIcon,
-  buildSourceGroupKey,
 } from './utils.js';
+import {
+  buildPriorityBucketEditorItems,
+  buildPriorityBuckets,
+} from './priorityBuckets.js';
 
 type RouteCardProps = {
   route: RouteSummaryRow;
@@ -69,6 +73,7 @@ type RouteCardProps = {
   onDeleteChannel: (channelId: number, routeId: number) => void;
   onToggleChannelEnabled: (channelId: number, routeId: number, enabled: boolean) => void;
   onChannelDragEnd: (routeId: number, event: DragEndEvent) => void;
+  onSplitPriorityBucket: (routeId: number, channelId: number) => void;
   // Missing token hints
   missingTokenSiteItems: MissingTokenRouteSiteActionItem[];
   missingTokenGroupItems: MissingTokenGroupRouteSiteActionItem[];
@@ -118,6 +123,7 @@ function RouteCardInner({
   onDeleteChannel,
   onToggleChannelEnabled,
   onChannelDragEnd,
+  onSplitPriorityBucket,
   missingTokenSiteItems,
   missingTokenGroupItems,
   onCreateTokenForMissing,
@@ -163,25 +169,8 @@ function RouteCardInner({
     (routeDecision?.candidates || []).map((c) => [c.channelId, c]),
   );
 
-  const channelGroups = (() => {
-    if (!channels || channels.length === 0) return [];
-    const groups = new Map<string, RouteChannel[]>();
-    for (const channel of channels) {
-      const key = (channel.sourceModel || '').trim() || '__ungrouped__';
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key)!.push(channel);
-    }
-    return Array.from(groups.entries())
-      .sort((a, b) => {
-        if (a[0] === '__ungrouped__') return 1;
-        if (b[0] === '__ungrouped__') return -1;
-        return a[0].localeCompare(b[0], undefined, { sensitivity: 'base' });
-      })
-      .map(([sourceModel, chans]) => ({
-        sourceModel: sourceModel === '__ungrouped__' ? '' : sourceModel,
-        channels: chans,
-      }));
-  })();
+  const priorityBuckets = buildPriorityBuckets(channels || []);
+  const bucketEditorItems = buildPriorityBucketEditorItems(channels || []);
 
   // Collapsed card
   if (!expanded) {
@@ -408,11 +397,11 @@ function RouteCardInner({
 
       {explicitGroupRoute ? (
         <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 10 }}>
-          {tr('该群组会将多个来源模型聚合为一个对外模型名；当前策略以群组设置为准，来源模型会尽量跟随同步，但已单独自定义或被其他群组复用的来源模型不会被覆盖。')}
+          {tr('该群组会将多个来源模型聚合为一个对外模型名；这里调整优先级桶时会直接回写来源通道。若某个来源模型被其他群组复用，保存前会提示影响范围。')}
         </div>
       ) : !exactRoute ? (
         <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 10 }}>
-          {tr('通配符路由按请求实时决策；概率解释在当前路由内统一估算。')}
+          {tr('通配符路由按请求实时决策；下方优先级桶在整条路由内全局生效，来源模型只作为通道标签展示。')}
         </div>
       ) : null}
 
@@ -503,120 +492,104 @@ function RouteCardInner({
       ) : channels && channels.length > 0 ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(event) => onChannelDragEnd(route.id, event)}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {channelGroups.map((group) => {
-                const groupKey = buildSourceGroupKey(route.id, group.sourceModel || '');
-                const supportsCollapse = !exactRoute && !!group.sourceModel;
-                const isGroupExpanded = supportsCollapse ? !!expandedSourceGroupMap[groupKey] : true;
+            <SortableContext items={bucketEditorItems.map((item) => item.id)} strategy={verticalListSortingStrategy}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {priorityBuckets.map((bucket, bucketIndex) => {
+                  const sourceModelCount = new Set(
+                    bucket.channels
+                      .map((channel) => (channel.sourceModel || '').trim())
+                      .filter(Boolean),
+                  ).size;
 
-                return (
-                  <div key={`${route.id}-${group.sourceModel || '__ungrouped__'}`} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {group.sourceModel ? (
-                      supportsCollapse ? (
-                        <button
-                          type="button"
-                          onClick={() => onToggleSourceGroup(groupKey)}
-                          aria-expanded={isGroupExpanded}
-                          className="btn btn-ghost"
-                          style={{
-                            fontSize: 12, color: 'var(--color-text-secondary)', display: 'flex',
-                            alignItems: 'center', justifyContent: 'space-between', gap: 8,
-                            padding: '4px 6px', border: '1px dashed var(--color-border)',
-                            borderRadius: 'var(--radius-sm)', background: 'transparent',
-                          }}
-                        >
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                            <span>来源模型</span>
-                            <code style={{ fontSize: 11, border: '1px solid var(--color-border)', borderRadius: 6, padding: '2px 6px', background: 'var(--color-bg)' }}>
-                              {group.sourceModel}
-                            </code>
-                            <span style={{ color: 'var(--color-text-muted)' }}>{group.channels.length} 通道</span>
+                  return (
+                    <div key={`${route.id}-priority-bucket-${bucket.priority}-${bucketIndex}`} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div
+                        className="route-priority-bucket-header"
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          flexWrap: 'wrap',
+                          padding: '4px 2px',
+                          fontSize: 12,
+                          color: 'var(--color-text-secondary)',
+                        }}
+                      >
+                        <span className="badge badge-info" style={{ fontSize: 10 }}>
+                          {`P${bucketIndex}`}
+                        </span>
+                        <span>{`${bucket.channels.length} ${tr('通道')}`}</span>
+                        {!exactRoute && sourceModelCount > 0 ? (
+                          <span className="badge badge-muted" style={{ fontSize: 10 }}>
+                            {`${sourceModelCount} ${tr('来源模型')}`}
                           </span>
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--color-text-muted)' }}>
-                            {isGroupExpanded ? '收起' : '展开'}
-                            <svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2"
-                              style={{ transform: isGroupExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease' }}
-                              aria-hidden
-                            >
-                              <path d="m5 7 5 6 5-6" />
-                            </svg>
-                          </span>
-                        </button>
-                      ) : (
-                        <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 2 }}>
-                          <span>来源模型</span>
-                          <code style={{ fontSize: 11, border: '1px solid var(--color-border)', borderRadius: 6, padding: '2px 6px', background: 'var(--color-bg)' }}>
-                            {group.sourceModel}
-                          </code>
-                          <span style={{ color: 'var(--color-text-muted)' }}>{group.channels.length} 通道</span>
-                        </div>
-                      )
-                    ) : null}
-
-                    <AnimatedCollapseSection open={isGroupExpanded}>
-                      {explicitGroupRoute ? (
-                        <SortableContext items={group.channels.map((c) => c.id)} strategy={verticalListSortingStrategy}>
-                          {group.channels.map((channel) => {
-                            const tokenOptions = candidateView.tokenOptionsByAccountId[channel.accountId] || [];
-                            const activeTokenId = channelTokenDraft[channel.id] ?? channel.tokenId ?? 0;
-                            return (
-                              <SortableChannelRow
-                                key={channel.id}
-                                channel={channel}
-                                decisionCandidate={decisionMap.get(channel.id)}
-                                isExactRoute={exactRoute}
-                                loadingDecision={loadingDecision}
-                                isSavingPriority={!!savingPriority}
-                                readOnly
-                                mobile={compact}
-                                tokenOptions={tokenOptions}
-                                activeTokenId={activeTokenId}
-                                isUpdatingToken={!!updatingChannel[channel.id]}
-                                onTokenDraftChange={onTokenDraftChange}
-                                onSaveToken={() => onSaveToken(route.id, channel.id, channel.accountId)}
-                                onDeleteChannel={() => onDeleteChannel(channel.id, route.id)}
-                                onToggleEnabled={(enabled) => onToggleChannelEnabled(channel.id, route.id, enabled)}
-                              />
-                            );
-                          })}
-                        </SortableContext>
-                      ) : (
-                        <SortableContext items={group.channels.map((c) => c.id)} strategy={verticalListSortingStrategy}>
-                          {group.channels.map((channel) => {
-                            const tokenOptions = candidateView.tokenOptionsByAccountId[channel.accountId] || [];
-                            const activeTokenId = channelTokenDraft[channel.id] ?? channel.tokenId ?? 0;
-                            return (
-                              <SortableChannelRow
-                                key={channel.id}
-                                channel={channel}
-                                decisionCandidate={decisionMap.get(channel.id)}
-                                isExactRoute={exactRoute}
-                                loadingDecision={loadingDecision}
-                                isSavingPriority={savingPriority}
-                                mobile={compact}
-                                tokenOptions={tokenOptions}
-                                activeTokenId={activeTokenId}
-                                isUpdatingToken={!!updatingChannel[channel.id]}
-                                onTokenDraftChange={onTokenDraftChange}
-                                onSaveToken={() => onSaveToken(route.id, channel.id, channel.accountId)}
-                                onDeleteChannel={() => onDeleteChannel(channel.id, route.id)}
-                                onToggleEnabled={(enabled) => onToggleChannelEnabled(channel.id, route.id, enabled)}
-                                onSiteBlockModel={() => onSiteBlockModel(channel.id, route.id)}
-                              />
-                            );
-                          })}
-                        </SortableContext>
-                      )}
-                    </AnimatedCollapseSection>
-                    {!isGroupExpanded && (
-                      <div style={{ fontSize: 11, color: 'var(--color-text-muted)', paddingLeft: 6 }}>
-                        已收起，点击展开查看通道
+                        ) : null}
                       </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+
+                      {bucket.channels.map((channel, channelIndex) => {
+                        const tokenOptions = candidateView.tokenOptionsByAccountId[channel.accountId] || [];
+                        const activeTokenId = channelTokenDraft[channel.id] ?? channel.tokenId ?? 0;
+                        return (
+                          <div key={channel.id} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            <SortableChannelRow
+                              channel={channel}
+                              displayPriority={bucketIndex}
+                              decisionCandidate={decisionMap.get(channel.id)}
+                              isExactRoute={exactRoute}
+                              loadingDecision={loadingDecision}
+                              isSavingPriority={savingPriority}
+                              readOnly={readOnlyRoute}
+                              channelManagementDisabled={channelManagementDisabled}
+                              mobile={compact}
+                              tokenOptions={tokenOptions}
+                              activeTokenId={activeTokenId}
+                              isUpdatingToken={!!updatingChannel[channel.id]}
+                              onTokenDraftChange={onTokenDraftChange}
+                              onSaveToken={() => onSaveToken(route.id, channel.id, channel.accountId)}
+                              onDeleteChannel={() => onDeleteChannel(channel.id, route.id)}
+                              onToggleEnabled={(enabled) => onToggleChannelEnabled(channel.id, route.id, enabled)}
+                              onSiteBlockModel={channelManagementDisabled ? undefined : () => onSiteBlockModel(channel.id, route.id)}
+                            />
+                            {!readOnlyRoute && channelIndex < bucket.channels.length - 1 ? (
+                              <button
+                                type="button"
+                                className="btn btn-ghost"
+                                onClick={() => onSplitPriorityBucket(route.id, channel.id)}
+                                disabled={savingPriority}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: 8,
+                                  border: '1px dashed var(--color-border)',
+                                  borderRadius: 999,
+                                  background: 'transparent',
+                                  color: 'var(--color-text-muted)',
+                                  padding: '2px 10px',
+                                  fontSize: 11,
+                                  alignSelf: 'center',
+                                }}
+                              >
+                                {`拆分为 P${bucketIndex + 1}`}
+                              </button>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+
+                      {bucketIndex < priorityBuckets.length - 1 ? (
+                        <SortableBucketSeparator
+                          id={String(bucketEditorItems.find((item) => item.kind === 'separator' && item.id === `priority-separator:${bucketIndex}`)?.id || `priority-separator:${bucketIndex}`)}
+                          beforePriority={bucketIndex}
+                          afterPriority={bucketIndex + 1}
+                          isSavingPriority={savingPriority}
+                        />
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </SortableContext>
           </DndContext>
         </div>
       ) : (

@@ -29,6 +29,10 @@ type ProbeTokenTarget = {
 };
 
 type ProbeTarget = ProbeAccountTarget | ProbeTokenTarget;
+type ProbeAccountContext = {
+  account: typeof schema.accounts.$inferSelect;
+  site: typeof schema.sites.$inferSelect;
+};
 
 export type ModelAvailabilityProbeAccountResult = {
   accountId: number;
@@ -61,6 +65,7 @@ export type ModelAvailabilityProbeExecutionResult = {
 };
 
 let probeSchedulerTimer: ReturnType<typeof setInterval> | null = null;
+const probeAccountLeases = new Set<number>();
 
 async function mapWithConcurrency<T, R>(
   items: T[],
@@ -136,20 +141,26 @@ async function updateProbeRow(target: ProbeTarget, status: ProbeStatus, latencyM
   };
 }
 
-async function loadProbeTargetsForAccount(accountId: number): Promise<ProbeTarget[]> {
+async function loadActiveProbeAccountContext(accountId: number): Promise<ProbeAccountContext | null> {
   const accountRow = await db.select()
     .from(schema.accounts)
     .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
     .where(eq(schema.accounts.id, accountId))
     .get();
-  if (!accountRow) return [];
-  if ((accountRow.accounts.status || 'active') !== 'active') return [];
-  if ((accountRow.sites.status || 'active') !== 'active') return [];
+  if (!accountRow) return null;
+  if ((accountRow.accounts.status || 'active') !== 'active') return null;
+  if ((accountRow.sites.status || 'active') !== 'active') return null;
+  return {
+    account: accountRow.accounts,
+    site: accountRow.sites,
+  };
+}
 
+async function loadProbeTargetsForAccount(context: ProbeAccountContext): Promise<ProbeTarget[]> {
   const targets: ProbeTarget[] = [];
   const accountModels = await db.select()
     .from(schema.modelAvailability)
-    .where(eq(schema.modelAvailability.accountId, accountId))
+    .where(eq(schema.modelAvailability.accountId, context.account.id))
     .orderBy(asc(schema.modelAvailability.checkedAt))
     .all();
   for (const row of accountModels) {
@@ -159,8 +170,8 @@ async function loadProbeTargetsForAccount(accountId: number): Promise<ProbeTarge
       rowId: row.id,
       modelName: row.modelName,
       lastKnownAvailable: !!row.available,
-      account: accountRow.accounts,
-      site: accountRow.sites,
+      account: context.account,
+      site: context.site,
     });
   }
 
@@ -168,7 +179,7 @@ async function loadProbeTargetsForAccount(accountId: number): Promise<ProbeTarge
     .from(schema.tokenModelAvailability)
     .innerJoin(schema.accountTokens, eq(schema.tokenModelAvailability.tokenId, schema.accountTokens.id))
     .where(and(
-      eq(schema.accountTokens.accountId, accountId),
+      eq(schema.accountTokens.accountId, context.account.id),
       eq(schema.accountTokens.enabled, true),
       eq(schema.accountTokens.valueStatus, ACCOUNT_TOKEN_VALUE_STATUS_READY),
     ))
@@ -185,12 +196,42 @@ async function loadProbeTargetsForAccount(accountId: number): Promise<ProbeTarge
       modelName: row.token_model_availability.modelName,
       tokenValue,
       lastKnownAvailable: !!row.token_model_availability.available,
-      account: accountRow.accounts,
-      site: accountRow.sites,
+      account: context.account,
+      site: context.site,
     });
   }
 
   return targets;
+}
+
+function tryAcquireProbeAccountLease(accountId: number): boolean {
+  if (!Number.isFinite(accountId) || accountId <= 0) return false;
+  if (probeAccountLeases.has(accountId)) return false;
+  probeAccountLeases.add(accountId);
+  return true;
+}
+
+function releaseProbeAccountLease(accountId: number): void {
+  probeAccountLeases.delete(accountId);
+}
+
+function buildSkippedProbeAccountResult(input: {
+  accountId: number;
+  siteId: number;
+  message: string;
+}): ModelAvailabilityProbeAccountResult {
+  return {
+    accountId: input.accountId,
+    siteId: input.siteId,
+    status: 'skipped',
+    scanned: 0,
+    supported: 0,
+    unsupported: 0,
+    inconclusive: 0,
+    skipped: 0,
+    updatedRows: 0,
+    message: input.message,
+  };
 }
 
 function summarizeProbeResults(results: ModelAvailabilityProbeAccountResult[], rebuiltRoutes: boolean): ModelAvailabilityProbeExecutionResult {
@@ -227,98 +268,101 @@ export async function executeModelAvailabilityProbe(input: {
   let shouldRebuildRoutes = false;
 
   for (const accountId of accountIds) {
-    const targets = await loadProbeTargetsForAccount(accountId);
-    if (targets.length <= 0) {
-      const account = await db.select({
-        id: schema.accounts.id,
-        siteId: schema.accounts.siteId,
-      }).from(schema.accounts)
-        .where(eq(schema.accounts.id, accountId))
-        .get();
-      if (!account) continue;
-      results.push({
+    const context = await loadActiveProbeAccountContext(accountId);
+    if (!context) {
+      continue;
+    }
+    if (!tryAcquireProbeAccountLease(accountId)) {
+      results.push(buildSkippedProbeAccountResult({
         accountId,
-        siteId: account.siteId,
-        status: 'skipped',
-        scanned: 0,
-        supported: 0,
-        unsupported: 0,
-        inconclusive: 0,
-        skipped: 0,
-        updatedRows: 0,
-        message: 'no discovered models to probe',
-      });
+        siteId: context.site.id,
+        message: 'model availability probe already running for account',
+      }));
       continue;
     }
 
-    let supported = 0;
-    let unsupported = 0;
-    let inconclusive = 0;
-    let skipped = 0;
-    let updatedRows = 0;
-    let failed = false;
+    try {
+      const targets = await loadProbeTargetsForAccount(context);
+      if (targets.length <= 0) {
+        results.push(buildSkippedProbeAccountResult({
+          accountId,
+          siteId: context.site.id,
+          message: 'no discovered models to probe',
+        }));
+        continue;
+      }
 
-    const probeOutcomes = await mapWithConcurrency(
-      targets,
-      config.modelAvailabilityProbeConcurrency,
-      async (target) => {
-        try {
-          const probe = await probeSingleTarget(target);
-          const update = await updateProbeRow(target, probe.status, probe.latencyMs);
-          return {
-            target,
-            probe,
-            touched: update.touched,
-            availabilityChanged: update.availabilityChanged,
-            failed: false,
-          };
-        } catch (error) {
-          console.warn(`[model-probe] account ${accountId} model ${target.modelName} probe failed`, error);
-          return {
-            target,
-            probe: {
-              status: 'inconclusive' as const,
-              latencyMs: null,
-              reason: error instanceof Error ? error.message : 'probe failed',
-            },
-            touched: false,
-            availabilityChanged: false,
-            failed: true,
-          };
+      let supported = 0;
+      let unsupported = 0;
+      let inconclusive = 0;
+      let skipped = 0;
+      let updatedRows = 0;
+      let failed = false;
+
+      const probeOutcomes = await mapWithConcurrency(
+        targets,
+        config.modelAvailabilityProbeConcurrency,
+        async (target) => {
+          try {
+            const probe = await probeSingleTarget(target);
+            const update = await updateProbeRow(target, probe.status, probe.latencyMs);
+            return {
+              target,
+              probe,
+              touched: update.touched,
+              availabilityChanged: update.availabilityChanged,
+              failed: false,
+            };
+          } catch (error) {
+            console.warn(`[model-probe] account ${accountId} model ${target.modelName} probe failed`, error);
+            return {
+              target,
+              probe: {
+                status: 'inconclusive' as const,
+                latencyMs: null,
+                reason: error instanceof Error ? error.message : 'probe failed',
+              },
+              touched: false,
+              availabilityChanged: false,
+              failed: true,
+            };
+          }
+        },
+      );
+
+      for (const outcome of probeOutcomes) {
+        if (outcome.probe.status === 'supported') supported += 1;
+        if (outcome.probe.status === 'unsupported') unsupported += 1;
+        if (outcome.probe.status === 'inconclusive') inconclusive += 1;
+        if (outcome.probe.status === 'skipped') skipped += 1;
+        if (outcome.touched) {
+          updatedRows += 1;
         }
-      },
-    );
+        if (outcome.availabilityChanged) {
+          shouldRebuildRoutes = true;
+        }
+        if (outcome.failed) {
+          failed = true;
+        }
+      }
 
-    for (const outcome of probeOutcomes) {
-      if (outcome.probe.status === 'supported') supported += 1;
-      if (outcome.probe.status === 'unsupported') unsupported += 1;
-      if (outcome.probe.status === 'inconclusive') inconclusive += 1;
-      if (outcome.probe.status === 'skipped') skipped += 1;
-      if (outcome.touched) {
-        updatedRows += 1;
-      }
-      if (outcome.availabilityChanged) {
-        shouldRebuildRoutes = true;
-      }
-      if (outcome.failed) {
-        failed = true;
-      }
+      results.push({
+        accountId,
+        siteId: context.site.id,
+        status: failed ? 'failed' : 'success',
+        scanned: targets.length,
+        supported,
+        unsupported,
+        inconclusive,
+        skipped,
+        updatedRows,
+        message: failed
+          ? 'model availability probe finished with partial failures'
+          : 'model availability probe finished',
+      });
+    } finally {
+      releaseProbeAccountLease(accountId);
     }
-
-    results.push({
-      accountId,
-      siteId: targets[0]?.site.id || 0,
-      status: failed ? 'failed' : 'success',
-      scanned: targets.length,
-      supported,
-      unsupported,
-      inconclusive,
-      skipped,
-      updatedRows,
-      message: failed
-        ? 'model availability probe finished with partial failures'
-        : 'model availability probe finished',
-    });
   }
 
   let rebuiltRoutes = false;
@@ -396,4 +440,8 @@ export function stopModelAvailabilityProbeScheduler() {
     clearInterval(probeSchedulerTimer);
     probeSchedulerTimer = null;
   }
+}
+
+export function __resetModelAvailabilityProbeExecutionStateForTests(): void {
+  probeAccountLeases.clear();
 }

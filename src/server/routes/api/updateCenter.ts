@@ -23,7 +23,10 @@ import {
   streamUpdateCenterDeploy,
   streamUpdateCenterRollback,
 } from '../../services/updateCenterHelperClient.js';
-import { buildUpdateCenterStatus } from '../../services/updateCenterStatusService.js';
+import {
+  getUpdateCenterStatus,
+  refreshUpdateCenterStatusCache,
+} from '../../services/updateCenterStatusService.js';
 import {
   UPDATE_CENTER_DEPLOY_DEDUPE_KEY,
   UPDATE_CENTER_DEPLOY_TASK_TYPE,
@@ -74,11 +77,11 @@ function writeSseEvent(reply: { raw: NodeJS.WritableStream & { write: (chunk: st
 
 export async function updateCenterRoutes(app: FastifyInstance) {
   app.get('/api/update-center/status', async () => {
-    return await buildUpdateCenterStatus();
+    return await getUpdateCenterStatus();
   });
 
   app.post('/api/update-center/check', async () => {
-    return await buildUpdateCenterStatus();
+    return (await refreshUpdateCenterStatusCache()).status;
   });
 
   app.put<{ Body: UpdateCenterConfig }>('/api/update-center/config', async (request) => {

@@ -36,6 +36,7 @@ describe('modelAvailabilityProbeService', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let executeModelAvailabilityProbe: ProbeModule['executeModelAvailabilityProbe'];
+  let resetProbeExecutionState: ProbeModule['__resetModelAvailabilityProbeExecutionStateForTests'];
   let dataDir = '';
   let originalDataDir: string | undefined;
 
@@ -51,6 +52,7 @@ describe('modelAvailabilityProbeService', () => {
     db = dbModule.db;
     schema = dbModule.schema;
     executeModelAvailabilityProbe = probeModule.executeModelAvailabilityProbe;
+    resetProbeExecutionState = probeModule.__resetModelAvailabilityProbeExecutionStateForTests;
   });
 
   beforeEach(async () => {
@@ -61,6 +63,7 @@ describe('modelAvailabilityProbeService', () => {
     withSiteRecordProxyRequestInitMock.mockReset();
     rebuildRoutesOnlyMock.mockReset();
     rebuildRoutesOnlyMock.mockResolvedValue(undefined);
+    resetProbeExecutionState();
 
     resolveUpstreamEndpointCandidatesMock.mockResolvedValue(['chat']);
     buildUpstreamEndpointRequestMock.mockImplementation((input: { modelName?: string; endpoint?: string }) => ({
@@ -400,5 +403,105 @@ describe('modelAvailabilityProbeService', () => {
     expect(result.summary.updatedRows).toBe(1);
     expect(result.summary.rebuiltRoutes).toBe(true);
     expect(rebuildRoutesOnlyMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not count inactive accounts in probe results', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'inactive-site',
+      url: 'https://inactive.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'inactive-user',
+      accessToken: '',
+      apiToken: 'sk-inactive',
+      status: 'disabled',
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'gpt-inactive',
+      available: true,
+      checkedAt: '2026-03-20T00:00:00.000Z',
+    }).run();
+
+    const result = await executeModelAvailabilityProbe({
+      accountId: account.id,
+      rebuildRoutes: false,
+    });
+
+    expect(result.summary.totalAccounts).toBe(0);
+    expect(result.results).toEqual([]);
+    expect(dispatchRuntimeRequestMock).not.toHaveBeenCalled();
+  });
+
+  it('skips an account when another probe already holds the execution lease', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'leased-site',
+      url: 'https://leased.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'leased-user',
+      accessToken: '',
+      apiToken: 'sk-leased',
+      status: 'active',
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'gpt-leased',
+      available: true,
+      checkedAt: '2026-03-20T00:00:00.000Z',
+    }).run();
+
+    let releaseFirstProbe: (() => void) | null = null;
+    const firstProbeStarted = new Promise<void>((resolve) => {
+      dispatchRuntimeRequestMock.mockImplementationOnce(async () => {
+        resolve();
+        await new Promise<void>((release) => {
+          releaseFirstProbe = release;
+        });
+        return new Response(JSON.stringify({
+          id: 'resp_probe',
+          choices: [{ message: { role: 'assistant', content: 'OK' } }],
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      });
+    });
+
+    const firstProbe = executeModelAvailabilityProbe({
+      accountId: account.id,
+      rebuildRoutes: false,
+    });
+    await firstProbeStarted;
+
+    const overlappingProbe = await executeModelAvailabilityProbe({
+      accountId: account.id,
+      rebuildRoutes: false,
+    });
+
+    releaseFirstProbe?.();
+    await firstProbe;
+
+    expect(overlappingProbe.summary).toMatchObject({
+      totalAccounts: 1,
+      skipped: 1,
+      scanned: 0,
+    });
+    expect(overlappingProbe.results[0]).toMatchObject({
+      accountId: account.id,
+      siteId: site.id,
+      status: 'skipped',
+      message: 'model availability probe already running for account',
+    });
   });
 });

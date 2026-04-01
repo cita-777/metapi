@@ -173,6 +173,23 @@ describe('proxyLogStore', () => {
     });
   });
 
+  it('preserves null token fields instead of coercing unknown usage to zero', async () => {
+    await insertProxyLog({
+      modelRequested: 'gpt-5',
+      promptTokens: null,
+      completionTokens: null,
+      totalTokens: null,
+    });
+
+    expect(dbInsertValuesMock).toHaveBeenCalledTimes(1);
+    expect(dbInsertValuesMock.mock.calls[0][0]).toMatchObject({
+      modelRequested: 'gpt-5',
+      promptTokens: null,
+      completionTokens: null,
+      totalTokens: null,
+    });
+  });
+
   it('retries proxy log inserts without structured client fields when those columns are missing', async () => {
     hasProxyLogClientColumnsMock.mockResolvedValue(true);
     dbInsertRunMock

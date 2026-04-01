@@ -534,4 +534,54 @@ describe('stats proxy logs routes', () => {
     expect(detailBody.clientAppId).toBe(null);
     expect(detailBody.clientAppName).toBe(null);
   });
+
+  it('returns unknown usage source and nullable token fields for logs without recovered usage', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'unknown-usage-site',
+      url: 'https://unknown-usage.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'unknown-usage-user',
+      accessToken: 'unknown-usage-token',
+      status: 'active',
+    }).returning().get();
+
+    await db.insert(schema.proxyLogs).values({
+      accountId: account.id,
+      modelRequested: 'gpt-5',
+      modelActual: 'gpt-5',
+      status: 'success',
+      promptTokens: null,
+      completionTokens: null,
+      totalTokens: null,
+      estimatedCost: 0,
+      errorMessage: '[downstream:/v1/chat/completions] [upstream:/v1/chat/completions] [usage:unknown]',
+      createdAt: formatUtcSqlDateTime(new Date('2026-03-09T12:30:00.000Z')),
+    }).run();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/stats/proxy-logs',
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      items: Array<{
+        usageSource: string | null;
+        promptTokens: number | null;
+        completionTokens: number | null;
+        totalTokens: number | null;
+      }>;
+    };
+
+    expect(body.items[0]).toMatchObject({
+      usageSource: 'unknown',
+      promptTokens: null,
+      completionTokens: null,
+      totalTokens: null,
+    });
+  });
 });

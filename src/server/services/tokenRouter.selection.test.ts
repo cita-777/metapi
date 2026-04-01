@@ -25,6 +25,7 @@ describe('TokenRouter selection scoring', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let TokenRouter: TokenRouterModule['TokenRouter'];
+  let tokenRouterTestUtils: TokenRouterModule['__tokenRouterTestUtils'];
   let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'];
   let resetSiteRuntimeHealthState: TokenRouterModule['resetSiteRuntimeHealthState'];
   let flushSiteRuntimeHealthPersistence: TokenRouterModule['flushSiteRuntimeHealthPersistence'];
@@ -56,6 +57,7 @@ describe('TokenRouter selection scoring', () => {
     db = dbModule.db;
     schema = dbModule.schema;
     TokenRouter = tokenRouterModule.TokenRouter;
+    tokenRouterTestUtils = tokenRouterModule.__tokenRouterTestUtils;
     invalidateTokenRouterCache = tokenRouterModule.invalidateTokenRouterCache;
     resetSiteRuntimeHealthState = tokenRouterModule.resetSiteRuntimeHealthState;
     flushSiteRuntimeHealthPersistence = tokenRouterModule.flushSiteRuntimeHealthPersistence;
@@ -1154,6 +1156,16 @@ describe('TokenRouter selection scoring', () => {
     expect(third?.channel.id).toBe(channelC.id);
     expect(fourth?.channel.id).toBe(channelA.id);
     expect(decision.summary.join(' ')).toContain('按配置顺序轮询站点');
+  });
+
+  it('caps the stable_first rotation cache size', () => {
+    invalidateTokenRouterCache();
+
+    for (let index = 0; index < 1200; index += 1) {
+      tokenRouterTestUtils.rememberStableFirstSiteSelectionForKey(`route:${index}`, (index % 7) + 1);
+    }
+
+    expect(tokenRouterTestUtils.getStableFirstRotationCacheSize()).toBeLessThanOrEqual(1024);
   });
 
   it('penalizes saturated session-scoped channels using runtime load snapshots', async () => {

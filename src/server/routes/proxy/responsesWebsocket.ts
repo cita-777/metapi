@@ -4,6 +4,7 @@ import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import { createCodexWebsocketRuntime, CodexWebsocketRuntimeError } from '../../proxy-core/runtime/codexWebsocketRuntime.js';
+import { buildCodexSessionResponseStoreKey } from '../../proxy-core/runtime/codexSessionResponseStore.js';
 import {
   authorizeDownstreamToken,
   consumeManagedKeyRequest,
@@ -634,8 +635,14 @@ async function handleResponsesWebsocketConnection(
             const requestUrl = `${codexWebsocketChannel.site.url.replace(/\/+$/, '')}${prepared.path}`;
 
             try {
-              const runtimeResult = await codexWebsocketRuntime.sendRequest({
+              const websocketRuntimeSessionKey = buildCodexSessionResponseStoreKey({
                 sessionId: websocketSessionId,
+                siteId: codexWebsocketChannel.site.id,
+                accountId: codexWebsocketChannel.account.id,
+                channelId: codexWebsocketChannel.channel.id,
+              }) || websocketSessionId;
+              const runtimeResult = await codexWebsocketRuntime.sendRequest({
+                sessionId: websocketRuntimeSessionKey,
                 requestUrl,
                 headers: prepared.headers,
                 body: prepared.body,

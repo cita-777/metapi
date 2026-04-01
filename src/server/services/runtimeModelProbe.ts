@@ -1,12 +1,12 @@
 import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { buildOauthProviderHeaders } from './oauth/service.js';
 import { resolveChannelProxyUrl, withSiteRecordProxyRequestInit } from './siteProxy.js';
-import { dispatchRuntimeRequest } from '../routes/proxy/runtimeExecutor.js';
+import { dispatchRuntimeRequest } from './runtimeDispatch.js';
 import {
   buildUpstreamEndpointRequest,
   resolveUpstreamEndpointCandidates,
   type UpstreamEndpoint,
-} from '../routes/proxy/upstreamEndpoint.js';
+} from './upstreamEndpointRuntime.js';
 import { executeEndpointFlow, type BuiltEndpointRequest } from '../proxy-core/orchestration/endpointFlow.js';
 import type { schema } from '../db/index.js';
 

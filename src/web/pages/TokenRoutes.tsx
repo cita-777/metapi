@@ -1,6 +1,5 @@
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { arrayMove } from '@dnd-kit/sortable';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { api } from '../api.js';
 import { BrandGlyph, getBrand, InlineBrandIcon, type BrandInfo } from '../components/BrandIcon.js';
@@ -46,8 +45,8 @@ import type {
 import {
   AUTO_ROUTE_DECISION_LIMIT,
   ROUTE_RENDER_CHUNK,
-  isExactModelPattern,
   isExplicitGroupRoute,
+  isExactModelPattern,
   isRouteExactModel,
   matchesModelPattern,
   normalizeRouteMode,
@@ -59,6 +58,7 @@ import {
   inferEndpointTypesFromPlatform,
   getModelPatternError,
 } from './token-routes/utils.js';
+import { applyPriorityBucketDrag, splitPriorityBucketAfterChannel } from './token-routes/priorityBuckets.js';
 import { useRouteChannels } from './token-routes/useRouteChannels.js';
 import RouteFilterBar, { type EnabledFilter } from './token-routes/RouteFilterBar.js';
 import ManualRoutePanel from './token-routes/ManualRoutePanel.js';
@@ -1000,17 +1000,41 @@ export default function TokenRoutes() {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
+    const route = routeSummaries.find((item) => item.id === routeId);
+    if (!route) return;
+
     const channels = channelsByRouteId[routeId] || [];
-    const oldIndex = channels.findIndex((channel) => channel.id === Number(active.id));
-    const newIndex = channels.findIndex((channel) => channel.id === Number(over.id));
+    const reordered = applyPriorityBucketDrag(channels, active.id, over.id);
+    const changedChannels = reordered.filter((channel) => {
+      const previous = channels.find((item) => item.id === channel.id);
+      return (previous?.priority ?? 0) !== channel.priority;
+    });
 
-    if (oldIndex < 0 || newIndex < 0 || oldIndex === newIndex) return;
+    if (changedChannels.length === 0) return;
 
-    const previousChannels = [...channels];
-    const reordered = arrayMove(channels, oldIndex, newIndex).map((channel, index) => ({
-      ...channel,
-      priority: index,
-    }));
+    if (isExplicitGroupRoute(route)) {
+      const changedSourceRouteIds = Array.from(new Set(
+        changedChannels
+          .map((channel) => channel.routeId)
+          .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0),
+      ));
+      if (changedSourceRouteIds.length > 0) {
+        const affectedGroups = routeSummaries.filter((candidate) => (
+          candidate.id !== route.id
+          && isExplicitGroupRoute(candidate)
+          && (candidate.sourceRouteIds || []).some((sourceRouteId) => changedSourceRouteIds.includes(sourceRouteId))
+        ));
+        if (affectedGroups.length > 0) {
+          const affectedNames = affectedGroups.map((candidate) => resolveRouteTitle(candidate));
+          const confirmFn = typeof globalThis.confirm === 'function' ? globalThis.confirm : null;
+          const confirmed = !confirmFn
+            || confirmFn(`当前群组的优先级桶会直接回写来源通道，并同步影响：${affectedNames.join('、')}。是否继续？`);
+          if (!confirmed) return;
+        }
+      }
+    }
+
+    const previousChannels = channels.map((channel) => ({ ...channel }));
 
     setChannels(routeId, reordered);
     setSavingPriorityByRoute((prev) => ({ ...prev, [routeId]: true }));
@@ -1023,7 +1047,6 @@ export default function TokenRoutes() {
         })),
       );
 
-      const route = routeSummaries.find((r) => r.id === routeId);
       if (route && isRouteExactModel(route)) {
         try {
           const res = await api.getRouteDecision(route.modelPattern);
@@ -1033,6 +1056,74 @@ export default function TokenRoutes() {
           }));
         } catch {
           // ignore route decision refresh failures after reorder
+        }
+      }
+    } catch (e: any) {
+      setChannels(routeId, previousChannels);
+      toast.error(e.message || '保存通道优先级失败，已回滚');
+    } finally {
+      setSavingPriorityByRoute((prev) => ({ ...prev, [routeId]: false }));
+    }
+  };
+
+  const handleSplitPriorityBucket = async (routeId: number, channelId: number) => {
+    if (savingPriorityByRoute[routeId]) return;
+
+    const route = routeSummaries.find((item) => item.id === routeId);
+    if (!route) return;
+
+    const channels = channelsByRouteId[routeId] || [];
+    const reordered = splitPriorityBucketAfterChannel(channels, channelId);
+    const changedChannels = reordered.filter((channel) => {
+      const previous = channels.find((item) => item.id === channel.id);
+      return (previous?.priority ?? 0) !== channel.priority;
+    });
+
+    if (changedChannels.length === 0) return;
+
+    if (isExplicitGroupRoute(route)) {
+      const changedSourceRouteIds = Array.from(new Set(
+        changedChannels
+          .map((channel) => channel.routeId)
+          .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0),
+      ));
+      if (changedSourceRouteIds.length > 0) {
+        const affectedGroups = routeSummaries.filter((candidate) => (
+          candidate.id !== route.id
+          && isExplicitGroupRoute(candidate)
+          && (candidate.sourceRouteIds || []).some((sourceRouteId) => changedSourceRouteIds.includes(sourceRouteId))
+        ));
+        if (affectedGroups.length > 0) {
+          const affectedNames = affectedGroups.map((candidate) => resolveRouteTitle(candidate));
+          const confirmFn = typeof globalThis.confirm === 'function' ? globalThis.confirm : null;
+          const confirmed = !confirmFn
+            || confirmFn(`当前群组的优先级桶会直接回写来源通道，并同步影响：${affectedNames.join('、')}。是否继续？`);
+          if (!confirmed) return;
+        }
+      }
+    }
+
+    const previousChannels = channels.map((channel) => ({ ...channel }));
+    setChannels(routeId, reordered);
+    setSavingPriorityByRoute((prev) => ({ ...prev, [routeId]: true }));
+
+    try {
+      await api.batchUpdateChannels(
+        reordered.map((channel) => ({
+          id: channel.id,
+          priority: channel.priority,
+        })),
+      );
+
+      if (route && isRouteExactModel(route)) {
+        try {
+          const res = await api.getRouteDecision(route.modelPattern);
+          setDecisionByRoute((prev) => ({
+            ...prev,
+            [routeId]: (res?.decision || null) as RouteDecision | null,
+          }));
+        } catch {
+          // ignore route decision refresh failures after split
         }
       }
     } catch (e: any) {
@@ -1455,7 +1546,7 @@ export default function TokenRoutes() {
 
       {/* Info tip */}
       <div className="info-tip" style={{ marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <div>{tr('系统会根据模型可用性自动生成路由；精确模型路由会自动过滤只支持该模型的账号和令牌。')}</div>
+        <div>{tr('系统会根据模型可用性自动生成路由。优先级按 P0/P1 等桶管理，同一桶内可有多个通道；拖动通道或灰色分隔线即可调整。精确模型路由会自动过滤只支持该模型的账号和令牌。群组路由中的优先级调整会直接回写来源通道。选中概率表示请求到达时该通道被选中的概率。成本来源优先级为：实测成本 → 账号配置成本 → 目录参考价 → 默认回退单价。')}</div>
         <div>{`${getRouteRoutingStrategyLabel('weighted')}：${getRouteRoutingStrategyDescription('weighted')}`}</div>
         <div>{`${getRouteRoutingStrategyLabel('round_robin')}：${getRouteRoutingStrategyDescription('round_robin')}`}</div>
         <div>{`${getRouteRoutingStrategyLabel('stable_first')}：${getRouteRoutingStrategyDescription('stable_first')}`}</div>
@@ -1631,6 +1722,7 @@ export default function TokenRoutes() {
                     onDeleteChannel={stableDeleteChannel}
                     onToggleChannelEnabled={stableToggleChannelEnabled}
                     onChannelDragEnd={stableChannelDragEnd}
+                    onSplitPriorityBucket={handleSplitPriorityBucket}
                     missingTokenSiteItems={getMissingTokenSiteItems(route.id)}
                     missingTokenGroupItems={getMissingTokenGroupItems(route.id)}
                     onCreateTokenForMissing={stableCreateTokenForMissing}
@@ -1669,6 +1761,7 @@ export default function TokenRoutes() {
               onDeleteChannel={stableDeleteChannel}
               onToggleChannelEnabled={stableToggleChannelEnabled}
               onChannelDragEnd={stableChannelDragEnd}
+              onSplitPriorityBucket={handleSplitPriorityBucket}
               missingTokenSiteItems={getMissingTokenSiteItems(route.id)}
               missingTokenGroupItems={getMissingTokenGroupItems(route.id)}
               onCreateTokenForMissing={stableCreateTokenForMissing}

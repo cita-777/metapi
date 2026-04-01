@@ -13,11 +13,13 @@ import { getChannelDecisionState, getPriorityTagStyle, getProbabilityColor } fro
 
 export function SortableChannelRow({
   channel,
+  displayPriority,
   decisionCandidate,
   isExactRoute,
   loadingDecision,
   isSavingPriority,
   readOnly = false,
+  channelManagementDisabled = false,
   mobile = false,
   tokenOptions,
   activeTokenId,
@@ -41,13 +43,16 @@ export function SortableChannelRow({
     disabled: isSavingPriority || readOnly,
   });
 
+  const resolvedPriority = displayPriority ?? channel.priority ?? 0;
+  const managementLocked = readOnly || channelManagementDisabled;
+
   const rowStyle: CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.72 : channel.enabled === false ? 0.5 : 1,
     zIndex: isDragging ? 10 : 1,
     display: 'grid',
-    gridTemplateColumns: readOnly || mobile ? 'minmax(0, 1fr)' : 'minmax(0, 1fr) auto auto auto',
+    gridTemplateColumns: managementLocked || mobile ? 'minmax(0, 1fr)' : 'minmax(0, 1fr) auto auto auto',
     alignItems: mobile ? 'stretch' : 'center',
     gap: 8,
     padding: mobile ? '10px 12px' : '8px 12px',
@@ -93,8 +98,8 @@ export function SortableChannelRow({
               opacity: readOnly ? 0.65 : 1,
               marginTop: 2,
             }}
-            data-tooltip={readOnly ? '来源群组继承通道优先级，不能在这里拖动' : '拖拽调整优先级'}
-            aria-label="拖拽调整优先级"
+            data-tooltip={readOnly ? '该路由当前不可编辑优先级' : '拖拽调整优先级桶'}
+            aria-label="拖拽调整优先级桶"
           >
             <svg width="12" height="12" fill="currentColor" viewBox="0 0 12 12" aria-hidden>
               <circle cx="3" cy="2" r="1" />
@@ -114,10 +119,10 @@ export function SortableChannelRow({
                   fontSize: 10,
                   fontWeight: 700,
                   letterSpacing: 0.1,
-                  ...getPriorityTagStyle(channel.priority ?? 0),
+                  ...getPriorityTagStyle(resolvedPriority),
                 }}
               >
-                P{channel.priority ?? 0}
+                P{resolvedPriority}
               </span>
 
               <span style={{ fontWeight: 600, color: 'var(--color-text-primary)', fontSize: 14, minWidth: 0 }}>
@@ -218,7 +223,7 @@ export function SortableChannelRow({
                 </span>
               </div>
 
-              {!readOnly && (
+              {!managementLocked && (
                 <button
                   type="button"
                   className="btn btn-link"
@@ -230,7 +235,7 @@ export function SortableChannelRow({
               )}
             </div>
 
-            {!readOnly && mobileDetailsOpen && (
+            {!managementLocked && mobileDetailsOpen && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 8, borderTop: '1px solid var(--color-border-light)' }}>
                 <div style={{ width: '100%' }}>
                   <ModernSelect
@@ -317,8 +322,8 @@ export function SortableChannelRow({
             cursor: isSavingPriority || readOnly ? 'not-allowed' : 'grab',
             opacity: readOnly ? 0.65 : 1,
           }}
-          data-tooltip={readOnly ? '来源群组继承通道优先级，不能在这里拖动' : '拖拽调整优先级'}
-          aria-label="拖拽调整优先级"
+          data-tooltip={readOnly ? '该路由当前不可编辑优先级' : '拖拽调整优先级桶'}
+          aria-label="拖拽调整优先级桶"
         >
           <svg width="12" height="12" fill="currentColor" viewBox="0 0 12 12" aria-hidden>
             <circle cx="3" cy="2" r="1" />
@@ -336,10 +341,10 @@ export function SortableChannelRow({
             fontSize: 10,
             fontWeight: 700,
             letterSpacing: 0.1,
-            ...getPriorityTagStyle(channel.priority ?? 0),
+            ...getPriorityTagStyle(resolvedPriority),
           }}
         >
-          P{channel.priority ?? 0}
+          P{resolvedPriority}
         </span>
 
         <span style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>
@@ -444,7 +449,7 @@ export function SortableChannelRow({
         </div>
       </div>
 
-      {!readOnly ? (
+      {!managementLocked ? (
         mobile ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, width: '100%' }}>
             <div style={{ width: '100%' }}>

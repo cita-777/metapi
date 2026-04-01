@@ -56,6 +56,7 @@ describe('RouteCard', () => {
         onDeleteChannel={vi.fn()}
         onToggleChannelEnabled={vi.fn()}
         onChannelDragEnd={vi.fn()}
+        onSplitPriorityBucket={vi.fn()}
         missingTokenSiteItems={[]}
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}

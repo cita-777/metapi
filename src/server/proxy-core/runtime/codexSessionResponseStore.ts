@@ -6,6 +6,23 @@ function normalizeSessionId(sessionId: string): string {
   return sessionId.trim();
 }
 
+export function buildCodexSessionResponseStoreKey(input: {
+  sessionId: string;
+  siteId?: number | null;
+  accountId?: number | null;
+  channelId?: number | null;
+}): string {
+  const normalizedSessionId = normalizeSessionId(input.sessionId);
+  if (!normalizedSessionId) return '';
+  const parts = [
+    Number.isFinite(input.siteId as number) && Number(input.siteId) > 0 ? `site:${Math.trunc(Number(input.siteId))}` : '',
+    Number.isFinite(input.accountId as number) && Number(input.accountId) > 0 ? `account:${Math.trunc(Number(input.accountId))}` : '',
+    Number.isFinite(input.channelId as number) && Number(input.channelId) > 0 ? `channel:${Math.trunc(Number(input.channelId))}` : '',
+    `session:${normalizedSessionId}`,
+  ].filter(Boolean);
+  return parts.join('|');
+}
+
 export function getCodexSessionResponseId(sessionId: string): string | null {
   const normalized = normalizeSessionId(sessionId);
   if (!normalized) return null;

@@ -8,6 +8,7 @@ vi.mock('../../services/modelPricingService.js', () => ({
 }));
 
 import {
+  buildClaudeCountTokensUpstreamRequest,
   buildMinimalJsonHeadersForCompatibility,
   buildUpstreamEndpointRequest,
   isUnsupportedMediaTypeError,
@@ -2065,6 +2066,30 @@ describe('buildUpstreamEndpointRequest', () => {
       messages: [{ role: 'user', content: 'hello' }],
       stream: false,
     });
+  });
+
+  it('drops responses-style continuation fields before proxying Claude count_tokens upstream', () => {
+    const request = buildClaudeCountTokensUpstreamRequest({
+      modelName: 'claude-opus-4-6',
+      tokenValue: 'sk-test',
+      sitePlatform: 'claude',
+      claudeBody: {
+        model: 'claude-opus-4-6',
+        max_tokens: 256,
+        previous_response_id: 'resp_prev_1',
+        prompt_cache_key: 'cache-key-1',
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+    });
+
+    expect(request.body).toMatchObject({
+      model: 'claude-opus-4-6',
+      messages: [{ role: 'user' }],
+    });
+    expect(request.body).not.toHaveProperty('previous_response_id');
+    expect(request.body).not.toHaveProperty('prompt_cache_key');
+    expect(request.body).not.toHaveProperty('max_tokens');
+    expect(request.body).not.toHaveProperty('maxTokens');
   });
 
   it('preserves multimodal OpenAI user content when converting to Responses input', () => {

@@ -276,6 +276,7 @@ describe('selectSurfaceChannelForAttempt', () => {
       estimatedCost: 0.42,
       billingDetails: { source: 'test' },
       upstreamPath: '/v1/responses',
+      usageSource: 'self-log',
       clientContext: {
         clientKind: 'codex',
         clientAppId: 'app-id',
@@ -293,6 +294,7 @@ describe('selectSurfaceChannelForAttempt', () => {
       traceHint: 'trace-1',
       downstreamPath: '/v1/chat/completions',
       upstreamPath: '/v1/responses',
+      usageSource: 'self-log',
       errorMessage: 'upstream failed',
     });
     expect(insertProxyLogMock).toHaveBeenCalledWith({
@@ -829,6 +831,10 @@ describe('selectSurfaceChannelForAttempt', () => {
       promptTokens: 20,
       completionTokens: 8,
       totalTokens: 28,
+      recoveredFromSelfLog: true,
+      estimatedCostFromQuota: 0.42,
+      selfLogBillingMeta: null,
+      usageSource: 'self-log',
     });
     resolveProxyLogBillingMock.mockResolvedValue({
       estimatedCost: 0.42,
@@ -871,6 +877,7 @@ describe('selectSurfaceChannelForAttempt', () => {
       requestStartedAtMs: 1000,
       requestEndedAtMs: 1250,
       localLatencyMs: 250,
+      upstreamUsagePresent: true,
       usage: {
         promptTokens: 10,
         completionTokens: 5,
@@ -890,6 +897,10 @@ describe('selectSurfaceChannelForAttempt', () => {
         promptTokens: 20,
         completionTokens: 8,
         totalTokens: 28,
+        recoveredFromSelfLog: true,
+        estimatedCostFromQuota: 0.42,
+        selfLogBillingMeta: null,
+        usageSource: 'self-log',
       },
     });
     expect(recordSuccessMock).toHaveBeenCalledWith(11, 250, 0.42, 'upstream-model');
@@ -912,6 +923,7 @@ describe('selectSurfaceChannelForAttempt', () => {
       promptTokens: 20,
       completionTokens: 8,
       totalTokens: 28,
+      usageSource: 'self-log',
       estimatedCost: 0.42,
       billingDetails: { source: 'pricing-test' },
       upstreamPath: '/v1/responses',
@@ -921,10 +933,65 @@ describe('selectSurfaceChannelForAttempt', () => {
         promptTokens: 20,
         completionTokens: 8,
         totalTokens: 28,
+        recoveredFromSelfLog: true,
+        estimatedCostFromQuota: 0.42,
+        selfLogBillingMeta: null,
+        usageSource: 'self-log',
       },
       estimatedCost: 0.42,
       billingDetails: { source: 'pricing-test' },
     });
+  });
+
+  it('logs unknown usage as null tokens while preserving success bookkeeping', async () => {
+    resolveProxyUsageWithSelfLogFallbackMock.mockResolvedValue({
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      recoveredFromSelfLog: false,
+      estimatedCostFromQuota: 0,
+      selfLogBillingMeta: null,
+      usageSource: 'unknown',
+    });
+    resolveProxyLogBillingMock.mockResolvedValue({
+      estimatedCost: 0,
+      billingDetails: null,
+    });
+    const logSuccess = vi.fn().mockResolvedValue(undefined);
+
+    const { recordSurfaceSuccess } = await import('./sharedSurface.js');
+    await recordSurfaceSuccess({
+      selected: {
+        channel: { id: 11, routeId: 22 },
+        account: { id: 33, username: 'oauth-user' },
+        site: { id: 44, url: 'https://upstream.example.com', platform: 'new-api', name: 'Upstream' },
+        tokenValue: 'live-token',
+        tokenName: 'default',
+        actualModel: 'upstream-model',
+      },
+      requestedModel: 'gpt-5.2',
+      modelName: 'upstream-model',
+      parsedUsage: {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+      },
+      requestStartedAtMs: 1000,
+      latencyMs: 250,
+      retryCount: 0,
+      upstreamPath: '/v1/chat/completions',
+      logSuccess,
+    });
+
+    expect(resolveProxyUsageWithSelfLogFallbackMock).toHaveBeenCalledWith(expect.objectContaining({
+      upstreamUsagePresent: false,
+    }));
+    expect(logSuccess).toHaveBeenCalledWith(expect.objectContaining({
+      promptTokens: null,
+      completionTokens: null,
+      totalTokens: null,
+      usageSource: 'unknown',
+    }));
   });
 
   it('treats success metrics as best-effort when requested', async () => {
@@ -981,6 +1048,7 @@ describe('selectSurfaceChannelForAttempt', () => {
         recoveredFromSelfLog: false,
         estimatedCostFromQuota: 0,
         selfLogBillingMeta: null,
+        usageSource: 'upstream',
       },
       estimatedCost: 0,
       billingDetails: null,

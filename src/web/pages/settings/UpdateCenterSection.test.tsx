@@ -136,6 +136,18 @@ describe('UpdateCenterSection', () => {
       },
     });
     apiMock.checkUpdateCenter.mockResolvedValue({
+      currentVersion: '1.2.3',
+      config: {
+        enabled: true,
+        helperBaseUrl: 'http://metapi-deploy-helper.ai.svc.cluster.local:9850',
+        namespace: 'ai',
+        releaseName: 'metapi',
+        chartRef: 'oci://ghcr.io/cita-777/charts/metapi',
+        imageRepository: '1467078763/metapi',
+        githubReleasesEnabled: true,
+        dockerHubTagsEnabled: true,
+        defaultDeploySource: 'github-release',
+      },
       githubRelease: {
         normalizedVersion: '1.3.0',
         displayVersion: '1.3.0',
@@ -147,6 +159,25 @@ describe('UpdateCenterSection', () => {
         displayVersion: 'latest @ sha256:efb2ee655386',
         publishedAt: '2026-03-29T11:54:35.591877Z',
       },
+      helper: {
+        ok: true,
+        healthy: true,
+        revision: '18',
+        imageTag: 'latest',
+        imageDigest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+        history: [],
+      },
+      runtime: {
+        lastCheckedAt: '2026-03-30 20:35:00',
+        lastCheckError: null,
+        lastResolvedSource: 'github-release',
+        lastResolvedDisplayVersion: '1.3.0',
+        lastResolvedCandidateKey: 'github-release:v1.3.0',
+        lastNotifiedCandidateKey: 'github-release:v1.3.0',
+        lastNotifiedAt: '2026-03-30 20:31:00',
+      },
+      runningTask: null,
+      lastFinishedTask: null,
     });
     apiMock.deployUpdateCenter.mockResolvedValue({
       success: true,
@@ -259,6 +290,7 @@ describe('UpdateCenterSection', () => {
         targetDigest: null,
       });
       expect(apiMock.streamUpdateCenterTaskLogs).toHaveBeenCalledWith('task-1', expect.any(Object));
+      expect(apiMock.checkUpdateCenter).toHaveBeenCalledTimes(1);
 
       const text = collectText(root.root);
       expect(text).toContain('latest @ sha256:efb2ee655386');
@@ -501,10 +533,10 @@ describe('UpdateCenterSection', () => {
         targetRevision: '16',
       });
       expect(apiMock.streamUpdateCenterTaskLogs).toHaveBeenCalledWith('task-2', expect.any(Object));
+      expect(apiMock.checkUpdateCenter).toHaveBeenCalledTimes(1);
 
       const text = collectText(root.root);
-      expect(text).toContain('sha256:bbbbbbbbbbbb');
-      expect(text).toContain('Rollback to stable digest');
+      expect(text).toContain('最近状态：succeeded');
     } finally {
       root?.unmount();
     }

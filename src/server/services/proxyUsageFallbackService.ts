@@ -44,6 +44,7 @@ interface ProxyUsageFallbackInput {
   requestStartedAtMs: number;
   requestEndedAtMs: number;
   localLatencyMs: number;
+  upstreamUsagePresent?: boolean;
   usage: ProxyUsage;
 }
 
@@ -51,6 +52,7 @@ interface ProxyUsageFallbackResult extends ProxyUsage {
   recoveredFromSelfLog: boolean;
   estimatedCostFromQuota: number;
   selfLogBillingMeta: SelfLogBillingMeta | null;
+  usageSource: 'upstream' | 'self-log' | 'unknown';
 }
 
 export interface SelfLogBillingMeta {
@@ -149,11 +151,14 @@ function isUsageMissing(usage: ProxyUsage): boolean {
 export function shouldLookupSelfLog(
   platform: string,
   usage: ProxyUsage,
+  upstreamUsagePresent?: boolean,
 ): boolean {
   const normalizedPlatform = String(platform || '').toLowerCase();
   if (!SUPPORTED_USAGE_FALLBACK_PLATFORMS.has(normalizedPlatform)) return false;
   if (ALWAYS_LOOKUP_SELF_LOG_PLATFORMS.has(normalizedPlatform)) return true;
-  return isUsageMissing(usage);
+  const normalizedUsage = normalizeUsage(usage);
+  const hasUpstreamUsage = upstreamUsagePresent ?? !isUsageMissing(normalizedUsage);
+  return !hasUpstreamUsage;
 }
 
 function normalizeUrl(url: string): string {
@@ -534,15 +539,18 @@ export async function resolveProxyUsageWithSelfLogFallback(
   input: ProxyUsageFallbackInput,
 ): Promise<ProxyUsageFallbackResult> {
   const normalizedUsage = normalizeUsage(input.usage);
+  const hasUpstreamUsage = input.upstreamUsagePresent ?? !isUsageMissing(normalizedUsage);
+  const fallbackUsageSource = hasUpstreamUsage ? 'upstream' : 'unknown';
   const fallback: ProxyUsageFallbackResult = {
     ...normalizedUsage,
     recoveredFromSelfLog: false,
     estimatedCostFromQuota: 0,
     selfLogBillingMeta: null,
+    usageSource: fallbackUsageSource,
   };
 
   const platform = String(input.site.platform || '').toLowerCase();
-  if (!shouldLookupSelfLog(platform, normalizedUsage)) {
+  if (!shouldLookupSelfLog(platform, normalizedUsage, hasUpstreamUsage)) {
     return fallback;
   }
 
@@ -577,6 +585,7 @@ export async function resolveProxyUsageWithSelfLogFallback(
       recoveredFromSelfLog: true,
       estimatedCostFromQuota: toRecoveredCost(matched),
       selfLogBillingMeta: matched.billingMeta,
+      usageSource: useMatchedTokens ? 'self-log' : fallbackUsageSource,
     };
   } catch {
     return fallback;

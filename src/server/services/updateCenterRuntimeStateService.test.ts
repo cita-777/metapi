@@ -54,6 +54,7 @@ describe('updateCenterRuntimeStateService', () => {
       lastResolvedCandidateKey: null,
       lastNotifiedCandidateKey: null,
       lastNotifiedAt: null,
+      statusSnapshot: null,
     });
   });
 
@@ -66,6 +67,50 @@ describe('updateCenterRuntimeStateService', () => {
       lastResolvedCandidateKey: 'docker-hub-tag:latest@sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
       lastNotifiedCandidateKey: 'docker-hub-tag:latest@sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
       lastNotifiedAt: '2026-03-30 20:31:00',
+      statusSnapshot: {
+        githubRelease: {
+          source: 'github-release',
+          rawVersion: 'v1.3.0',
+          normalizedVersion: '1.3.0',
+          url: 'https://github.com/cita-777/metapi/releases/tag/v1.3.0',
+          tagName: 'v1.3.0',
+          digest: null,
+          displayVersion: '1.3.0',
+          publishedAt: '2026-03-30T20:30:00Z',
+        },
+        dockerHubTag: {
+          source: 'docker-hub-tag',
+          rawVersion: 'latest',
+          normalizedVersion: 'latest',
+          url: null,
+          tagName: 'latest',
+          digest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
+          displayVersion: 'latest @ sha256:efb2ee655386',
+          publishedAt: '2026-03-30T20:30:00Z',
+        },
+        helper: {
+          ok: true,
+          releaseName: 'metapi',
+          namespace: 'ai',
+          revision: '12',
+          imageRepository: '1467078763/metapi',
+          imageTag: 'latest',
+          imageDigest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+          healthy: true,
+          error: undefined,
+          history: [
+            {
+              revision: '11',
+              updatedAt: '2026-03-29T20:00:00Z',
+              status: 'superseded',
+              description: 'Rollback to stable digest',
+              imageRepository: '1467078763/metapi',
+              imageTag: 'main',
+              imageDigest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+            },
+          ],
+        },
+      },
     });
 
     await expect(loadUpdateCenterRuntimeState()).resolves.toEqual({
@@ -76,6 +121,50 @@ describe('updateCenterRuntimeStateService', () => {
       lastResolvedCandidateKey: 'docker-hub-tag:latest@sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
       lastNotifiedCandidateKey: 'docker-hub-tag:latest@sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
       lastNotifiedAt: '2026-03-30 20:31:00',
+      statusSnapshot: {
+        githubRelease: {
+          source: 'github-release',
+          rawVersion: 'v1.3.0',
+          normalizedVersion: '1.3.0',
+          url: 'https://github.com/cita-777/metapi/releases/tag/v1.3.0',
+          tagName: 'v1.3.0',
+          digest: null,
+          displayVersion: '1.3.0',
+          publishedAt: '2026-03-30T20:30:00Z',
+        },
+        dockerHubTag: {
+          source: 'docker-hub-tag',
+          rawVersion: 'latest',
+          normalizedVersion: 'latest',
+          url: null,
+          tagName: 'latest',
+          digest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
+          displayVersion: 'latest @ sha256:efb2ee655386',
+          publishedAt: '2026-03-30T20:30:00Z',
+        },
+        helper: {
+          ok: true,
+          releaseName: 'metapi',
+          namespace: 'ai',
+          revision: '12',
+          imageRepository: '1467078763/metapi',
+          imageTag: 'latest',
+          imageDigest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+          healthy: true,
+          error: undefined,
+          history: [
+            {
+              revision: '11',
+              updatedAt: '2026-03-29T20:00:00Z',
+              status: 'superseded',
+              description: 'Rollback to stable digest',
+              imageRepository: '1467078763/metapi',
+              imageTag: 'main',
+              imageDigest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+            },
+          ],
+        },
+      },
     });
   });
 });

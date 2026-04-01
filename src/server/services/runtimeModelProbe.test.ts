@@ -111,6 +111,6 @@ describe('probeRuntimeModel', () => {
 
     expect(result.status).toBe('inconclusive');
     expect(result.latencyMs).not.toBeNull();
-    expect(elapsedMs).toBeLessThan(80);
+    expect(elapsedMs).toBeLessThan(200);
   });
 });

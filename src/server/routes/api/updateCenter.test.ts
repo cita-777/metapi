@@ -36,12 +36,15 @@ vi.mock('../../services/updateCenterHelperClient.js', () => ({
 
 type DbModule = typeof import('../../db/index.js');
 type ConfigModule = typeof import('../../config.js');
+type RuntimeStateModule = typeof import('../../services/updateCenterRuntimeStateService.js');
 
 describe('update center routes', () => {
   let app: FastifyInstance;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let appConfig: ConfigModule['config'];
+  let saveUpdateCenterRuntimeState: RuntimeStateModule['saveUpdateCenterRuntimeState'];
+  let loadUpdateCenterRuntimeState: RuntimeStateModule['loadUpdateCenterRuntimeState'];
   let dataDir = '';
   let resetBackgroundTasks: (() => void) | null = null;
   let getBackgroundTask: ((taskId: string) => { status: string; logs?: Array<{ message: string }> } | null) | null = null;
@@ -76,12 +79,15 @@ describe('update center routes', () => {
     const dbModule = await import('../../db/index.js');
     const routesModule = await import('./updateCenter.js');
     const backgroundTaskModule = await import('../../services/backgroundTaskService.js');
+    const runtimeStateModule = await import('../../services/updateCenterRuntimeStateService.js');
 
     appConfig = configModule.config;
     db = dbModule.db;
     schema = dbModule.schema;
     resetBackgroundTasks = backgroundTaskModule.__resetBackgroundTasksForTests;
     getBackgroundTask = backgroundTaskModule.getBackgroundTask;
+    saveUpdateCenterRuntimeState = runtimeStateModule.saveUpdateCenterRuntimeState;
+    loadUpdateCenterRuntimeState = runtimeStateModule.loadUpdateCenterRuntimeState;
 
     app = Fastify();
     await app.register(routesModule.updateCenterRoutes);
@@ -201,11 +207,11 @@ describe('update center routes', () => {
         ],
       },
       runtime: {
-        lastCheckedAt: null,
+        lastCheckedAt: expect.any(String),
         lastCheckError: null,
-        lastResolvedSource: null,
-        lastResolvedDisplayVersion: null,
-        lastResolvedCandidateKey: null,
+        lastResolvedSource: 'github-release',
+        lastResolvedDisplayVersion: '1.3.0',
+        lastResolvedCandidateKey: 'github-release:1.3.0',
         lastNotifiedCandidateKey: null,
         lastNotifiedAt: null,
       },
@@ -296,6 +302,150 @@ describe('update center routes', () => {
       process.env.DEPLOY_HELPER_TOKEN = originalEnvToken;
       delete (appConfig as typeof appConfig & { deployHelperToken?: string }).deployHelperToken;
     }
+  });
+
+  it('reuses the persisted snapshot for status requests instead of re-querying external sources', async () => {
+    await saveValidConfig();
+    await saveUpdateCenterRuntimeState({
+      lastCheckedAt: '2026-03-31 09:00:00',
+      lastCheckError: null,
+      lastResolvedSource: 'docker-hub-tag',
+      lastResolvedDisplayVersion: 'latest @ sha256:efb2ee655386',
+      lastResolvedCandidateKey: 'docker-hub-tag:latest@sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
+      lastNotifiedCandidateKey: null,
+      lastNotifiedAt: null,
+      statusSnapshot: {
+        githubRelease: {
+          source: 'github-release',
+          rawVersion: 'v1.3.0',
+          normalizedVersion: '1.3.0',
+          url: 'https://github.com/cita-777/metapi/releases/tag/v1.3.0',
+          tagName: 'v1.3.0',
+          digest: null,
+          displayVersion: '1.3.0',
+          publishedAt: '2026-03-31T09:00:00Z',
+        },
+        dockerHubTag: {
+          source: 'docker-hub-tag',
+          rawVersion: 'latest',
+          normalizedVersion: 'latest',
+          tagName: 'latest',
+          digest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
+          displayVersion: 'latest @ sha256:efb2ee655386',
+          publishedAt: '2026-03-31T09:00:00Z',
+          url: null,
+        },
+        helper: {
+          ok: true,
+          releaseName: 'metapi',
+          namespace: 'ai',
+          revision: '12',
+          imageRepository: '1467078763/metapi',
+          imageTag: 'latest',
+          imageDigest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+          healthy: true,
+          error: null,
+          history: [],
+        },
+      },
+    });
+
+    const statusResponse = await app.inject({
+      method: 'GET',
+      url: '/api/update-center/status',
+    });
+
+    expect(statusResponse.statusCode).toBe(200);
+    expect(statusResponse.json()).toMatchObject({
+      githubRelease: {
+        normalizedVersion: '1.3.0',
+      },
+      dockerHubTag: {
+        displayVersion: 'latest @ sha256:efb2ee655386',
+      },
+      helper: {
+        imageDigest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+      },
+      runtime: {
+        lastCheckedAt: '2026-03-31 09:00:00',
+      },
+    });
+    expect(fetchLatestStableGitHubReleaseMock).not.toHaveBeenCalled();
+    expect(fetchLatestDockerHubTagMock).not.toHaveBeenCalled();
+    expect(getUpdateCenterHelperStatusMock).not.toHaveBeenCalled();
+  });
+
+  it('forces a live refresh on manual check and persists the refreshed snapshot', async () => {
+    await saveValidConfig();
+    fetchLatestStableGitHubReleaseMock.mockResolvedValue({
+      source: 'github-release',
+      rawVersion: 'v1.3.1',
+      normalizedVersion: '1.3.1',
+      tagName: 'v1.3.1',
+      displayVersion: '1.3.1',
+      publishedAt: '2026-03-31T10:00:00Z',
+      url: 'https://github.com/cita-777/metapi/releases/tag/v1.3.1',
+    });
+    fetchLatestDockerHubTagMock.mockResolvedValue({
+      source: 'docker-hub-tag',
+      rawVersion: 'latest',
+      normalizedVersion: 'latest',
+      tagName: 'latest',
+      digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+      displayVersion: 'latest @ sha256:dddddddddddd',
+      publishedAt: '2026-03-31T10:00:00Z',
+      url: null,
+    });
+    getUpdateCenterHelperStatusMock.mockResolvedValue({
+      ok: true,
+      releaseName: 'metapi',
+      namespace: 'ai',
+      revision: '13',
+      imageRepository: '1467078763/metapi',
+      imageTag: 'latest',
+      imageDigest: 'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+      healthy: true,
+      history: [],
+    });
+
+    const checkResponse = await app.inject({
+      method: 'POST',
+      url: '/api/update-center/check',
+    });
+
+    expect(checkResponse.statusCode).toBe(200);
+    expect(checkResponse.json()).toMatchObject({
+      githubRelease: {
+        normalizedVersion: '1.3.1',
+      },
+      dockerHubTag: {
+        digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+      },
+      helper: {
+        revision: '13',
+      },
+      runtime: {
+        lastCheckedAt: expect.any(String),
+      },
+    });
+    expect(fetchLatestStableGitHubReleaseMock).toHaveBeenCalledTimes(1);
+    expect(fetchLatestDockerHubTagMock).toHaveBeenCalledTimes(1);
+    expect(getUpdateCenterHelperStatusMock).toHaveBeenCalledTimes(1);
+    expect(await loadUpdateCenterRuntimeState()).toEqual(expect.objectContaining({
+      lastResolvedSource: 'github-release',
+      lastResolvedDisplayVersion: '1.3.1',
+      statusSnapshot: {
+        githubRelease: expect.objectContaining({
+          normalizedVersion: '1.3.1',
+        }),
+        dockerHubTag: expect.objectContaining({
+          digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+        }),
+        helper: expect.objectContaining({
+          revision: '13',
+        }),
+      },
+    }));
   });
 
   it('dedupes deploy requests while a task is already running', async () => {

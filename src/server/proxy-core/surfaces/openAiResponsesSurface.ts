@@ -2,7 +2,7 @@ import { TextDecoder } from 'node:util';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { config } from '../../config.js';
 import { reportProxyAllFailed } from '../../services/alertService.js';
-import { mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParser.js';
+import { hasProxyUsagePayload, mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParser.js';
 import { openAiResponsesTransformer } from '../../transformers/openai/responses/index.js';
 import {
   extractResponsesTerminalResponseId,
@@ -14,7 +14,7 @@ import {
 import {
   buildUpstreamEndpointRequest,
   resolveUpstreamEndpointCandidates,
-} from '../../routes/proxy/upstreamEndpoint.js';
+} from '../../services/upstreamEndpointRuntime.js';
 import {
   getUpstreamEndpointRuntimeStateSnapshot,
   recordUpstreamEndpointFailure,
@@ -47,6 +47,7 @@ import { isCodexResponsesSurface } from '../cliProfiles/codexProfile.js';
 import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
 import { runCodexHttpSessionTask } from '../runtime/codexHttpSessionQueue.js';
 import {
+  buildCodexSessionResponseStoreKey,
   clearCodexSessionResponseId,
   getCodexSessionResponseId,
   setCodexSessionResponseId,
@@ -329,6 +330,17 @@ export async function handleOpenAiResponsesSurfaceRequest(
       const codexSessionId = isCodexSite
         ? getCodexSessionHeaderValue(request.headers as Record<string, string>)
         : '';
+      const codexSessionStoreKey = (
+        isCodexSite
+        && codexSessionId
+      )
+        ? buildCodexSessionResponseStoreKey({
+          sessionId: codexSessionId,
+          siteId: selected.site.id,
+          accountId: selected.account.id,
+          channelId: selected.channel.id,
+        })
+        : '';
       const owner = getProxyResourceOwner(request);
       let normalizedResponsesBody: Record<string, unknown> = {
         ...requestEnvelope.parsed.normalizedBody,
@@ -413,15 +425,15 @@ export async function handleOpenAiResponsesSurfaceRequest(
         const responsesOriginalBody = (
           endpoint === 'responses'
           && isCodexSite
-          && codexSessionId
+          && codexSessionStoreKey
           && shouldInferResponsesPreviousResponseId(
             normalizedResponsesBody,
-            getCodexSessionResponseId(codexSessionId),
+            getCodexSessionResponseId(codexSessionStoreKey),
           )
         )
           ? withResponsesPreviousResponseId(
             normalizedResponsesBody,
-            getCodexSessionResponseId(codexSessionId)!,
+            getCodexSessionResponseId(codexSessionStoreKey)!,
           )
           : normalizedResponsesBody;
         const endpointRequest = buildUpstreamEndpointRequest({
@@ -465,7 +477,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
         }
         const sessionId = getCodexSessionHeaderValue(endpointRequest.headers);
         return runCodexHttpSessionTask(
-          sessionId,
+          codexSessionStoreKey || sessionId,
           () => baseDispatchRequest(endpointRequest, targetUrl),
         );
       };
@@ -498,8 +510,8 @@ export async function handleOpenAiResponsesSurfaceRequest(
             rawErrText: ctx.rawErrText,
           })
         ) {
-          if (codexSessionId) {
-            clearCodexSessionResponseId(codexSessionId);
+          if (codexSessionStoreKey) {
+            clearCodexSessionResponseId(codexSessionStoreKey);
           }
           const previousResponseRecovery = stripResponsesPreviousResponseId(ctx.request.body);
           if (previousResponseRecovery.removed) {
@@ -673,13 +685,19 @@ export async function handleOpenAiResponsesSurfaceRequest(
 
       const upstream = endpointResult.upstream;
       const successfulUpstreamPath = endpointResult.upstreamPath;
-      const finalizeStreamSuccess = async (parsedUsage: UsageSummary, latency: number, streamDebugBody: unknown) => {
+      const finalizeStreamSuccess = async (
+        parsedUsage: UsageSummary,
+        latency: number,
+        streamDebugBody: unknown,
+        upstreamUsagePresent: boolean,
+      ) => {
         try {
           await recordSurfaceSuccess({
             selected,
             requestedModel,
             modelName,
             parsedUsage,
+            upstreamUsagePresent,
             requestStartedAtMs: startTime,
             latencyMs: latency,
             retryCount,
@@ -722,6 +740,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
             cacheCreationTokens: 0,
             promptTokensIncludeCache: null,
           };
+          let upstreamUsagePresent = false;
           const writeLines = (lines: string[]) => {
             for (const line of lines) reply.raw.write(line);
           };
@@ -732,9 +751,10 @@ export async function handleOpenAiResponsesSurfaceRequest(
             getUsage: () => parsedUsage,
             onParsedPayload: (payload) => {
               if (payload && typeof payload === 'object') {
+                upstreamUsagePresent = upstreamUsagePresent || hasProxyUsagePayload(payload);
                 parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(payload));
-                if (codexSessionId) {
-                  rememberCodexSessionResponseId(codexSessionId, payload);
+                if (codexSessionStoreKey) {
+                  rememberCodexSessionResponseId(codexSessionStoreKey, payload);
                 }
               }
             },
@@ -782,6 +802,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
                   parsedUsage,
                   latency,
                   debugTrace?.options.captureStreamChunks ? rawText : { stream: true, usage: parsedUsage },
+                  upstreamUsagePresent,
                 );
 	              bindSurfaceStickyChannel({
 	                stickySessionKey,
@@ -798,11 +819,12 @@ export async function handleOpenAiResponsesSurfaceRequest(
             if (String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli') {
               upstreamData = unwrapGeminiCliPayload(upstreamData);
             }
-            if (codexSessionId) {
-              rememberCodexSessionResponseId(codexSessionId, upstreamData);
+            if (codexSessionStoreKey) {
+              rememberCodexSessionResponseId(codexSessionStoreKey, upstreamData);
             }
 
             parsedUsage = parseProxyUsage(upstreamData);
+            upstreamUsagePresent = upstreamUsagePresent || hasProxyUsagePayload(upstreamData);
             const latency = Date.now() - startTime;
             const failure = detectProxyFailure({ rawText, usage: parsedUsage });
 	            if (failure) {
@@ -867,6 +889,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
                 parsedUsage,
                 latency,
                 debugTrace?.options.captureStreamChunks ? rawText : upstreamData,
+                upstreamUsagePresent,
               );
 	            bindSurfaceStickyChannel({
 	              stickySessionKey,
@@ -883,6 +906,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
             if (looksLikeResponsesSseText(rawText)) {
               try {
                 const collectedPayload = collectResponsesFinalPayloadFromSseText(rawText, modelName).payload;
+                upstreamUsagePresent = upstreamUsagePresent || hasProxyUsagePayload(collectedPayload);
                 parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(collectedPayload));
                 const createdPayload = {
                   ...collectedPayload,
@@ -898,8 +922,8 @@ export async function handleOpenAiResponsesSurfaceRequest(
                   `event: ${terminalEventType}\ndata: ${JSON.stringify({ type: terminalEventType, response: collectedPayload })}\n\n`,
                   'data: [DONE]\n\n',
                 ]);
-                if (codexSessionId) {
-                  rememberCodexSessionResponseId(codexSessionId, collectedPayload);
+                if (codexSessionStoreKey) {
+                  rememberCodexSessionResponseId(codexSessionStoreKey, collectedPayload);
                 }
                 reply.raw.end();
                 const latency = Date.now() - startTime;
@@ -907,7 +931,12 @@ export async function handleOpenAiResponsesSurfaceRequest(
                   parsedUsage,
                   latency,
                   debugTrace?.options.captureStreamChunks ? rawText : collectedPayload,
+                  upstreamUsagePresent,
                 );
+                bindSurfaceStickyChannel({
+                  stickySessionKey,
+                  selected,
+                });
                 return;
               } catch {
                 // Fall through to the generic stream session for response.failed/error terminals.
@@ -945,6 +974,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
                 parsedUsage,
                 latency,
                 debugTrace?.options.captureStreamChunks ? rawText : { stream: true, usage: parsedUsage },
+                upstreamUsagePresent,
               );
               return;
             }
@@ -1015,6 +1045,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
               parsedUsage,
               latency,
               debugTrace?.options.captureStreamChunks ? rawText : { stream: true, usage: parsedUsage },
+              upstreamUsagePresent,
             );
 	          bindSurfaceStickyChannel({
 	            stickySessionKey,
@@ -1052,11 +1083,12 @@ export async function handleOpenAiResponsesSurfaceRequest(
         if (String(selected.site.platform || '').trim().toLowerCase() === 'gemini-cli') {
           upstreamData = unwrapGeminiCliPayload(upstreamData);
         }
-        if (codexSessionId) {
-          rememberCodexSessionResponseId(codexSessionId, upstreamData);
+        if (codexSessionStoreKey) {
+          rememberCodexSessionResponseId(codexSessionStoreKey, upstreamData);
         }
         const latency = Date.now() - startTime;
         const parsedUsage = parseProxyUsage(upstreamData);
+        const upstreamUsagePresent = hasProxyUsagePayload(upstreamData);
         const failure = detectProxyFailure({ rawText, usage: parsedUsage });
 	        if (failure) {
 	          clearSurfaceStickyChannel({
@@ -1103,6 +1135,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
             requestedModel,
             modelName,
             parsedUsage,
+            upstreamUsagePresent,
             requestStartedAtMs: startTime,
             latencyMs: latency,
             retryCount,

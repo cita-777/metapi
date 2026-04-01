@@ -184,10 +184,24 @@ type WeightedSelectionResult = {
 const siteRuntimeHealthStates = new Map<number, SiteRuntimeHealthState>();
 const siteModelRuntimeHealthStates = new Map<number, Map<string, SiteRuntimeHealthState>>();
 const stableFirstLastSelectedSiteByKey = new Map<string, number>();
+const MAX_STABLE_FIRST_ROTATION_KEYS = 1024;
 let siteRuntimeHealthLoaded = false;
 let siteRuntimeHealthLoadPromise: Promise<void> | null = null;
 let siteRuntimeHealthSaveTimer: ReturnType<typeof setTimeout> | null = null;
 let siteRuntimeHealthPersistInFlight: Promise<void> | null = null;
+
+function rememberStableFirstSiteSelectionForKey(rotationKey: string, siteId: number): void {
+  if (!rotationKey || !Number.isFinite(siteId) || siteId <= 0) return;
+  if (stableFirstLastSelectedSiteByKey.has(rotationKey)) {
+    stableFirstLastSelectedSiteByKey.delete(rotationKey);
+  }
+  stableFirstLastSelectedSiteByKey.set(rotationKey, siteId);
+  while (stableFirstLastSelectedSiteByKey.size > MAX_STABLE_FIRST_ROTATION_KEYS) {
+    const oldestKey = stableFirstLastSelectedSiteByKey.keys().next().value;
+    if (!oldestKey) break;
+    stableFirstLastSelectedSiteByKey.delete(oldestKey);
+  }
+}
 
 function fibonacciNumber(index: number): number {
   if (index <= 2) return 1;
@@ -2145,8 +2159,11 @@ export class TokenRouter {
       const tokenValue = this.resolveChannelTokenValue(selected);
       if (!tokenValue) return null;
       if (recordSelection) {
+        rememberStableFirstSiteSelectionForKey(
+          this.buildStableFirstRotationKey(match.route.id, requestedModel),
+          selected.site.id,
+        );
         await this.recordChannelSelection(selected.channel.id);
-        this.recordStableFirstSiteSelection(match.route.id, requestedModel, selected.site.id);
       }
 
       const actualModel = resolveActualModelForSelectedChannel(
@@ -2246,10 +2263,13 @@ export class TokenRouter {
     const tokenValue = this.resolveChannelTokenValue(selected);
     if (!tokenValue) return null;
     if (recordSelection && (routeStrategy === 'round_robin' || routeStrategy === 'stable_first')) {
-      await this.recordChannelSelection(selected.channel.id);
       if (routeStrategy === 'stable_first') {
-        this.recordStableFirstSiteSelection(match.route.id, requestedModel, selected.site.id);
+        rememberStableFirstSiteSelectionForKey(
+          this.buildStableFirstRotationKey(match.route.id, requestedModel),
+          selected.site.id,
+        );
       }
+      await this.recordChannelSelection(selected.channel.id);
     }
 
     const actualModel = resolveActualModelForSelectedChannel(
@@ -2412,11 +2432,6 @@ export class TokenRouter {
       || normalizeRouteDisplayName(requestedModel).toLowerCase()
       || String(routeId);
     return `${routeId}:${normalizedModel}`;
-  }
-
-  private recordStableFirstSiteSelection(routeId: number, requestedModel: string, siteId: number): void {
-    if (!Number.isFinite(siteId) || siteId <= 0) return;
-    stableFirstLastSelectedSiteByKey.set(this.buildStableFirstRotationKey(routeId, requestedModel), siteId);
   }
 
   private getStableFirstSiteOrder(candidates: RouteChannelCandidate[], siteId: number): number {
@@ -2727,5 +2742,7 @@ export const tokenRouter = new TokenRouter();
 
 export const __tokenRouterTestUtils = {
   resolveMappedModel,
+  getStableFirstRotationCacheSize: () => stableFirstLastSelectedSiteByKey.size,
+  rememberStableFirstSiteSelectionForKey,
 };
 

@@ -73,6 +73,27 @@ describe('updateCenterReminder shared logic', () => {
     }));
   });
 
+  it('treats alias tags like latest as digest-tracked targets when the digest changes', () => {
+    expect(resolveUpdateReminderCandidate({
+      currentVersion: '1.2.3',
+      helper: {
+        imageTag: 'latest',
+        imageDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      },
+      githubRelease: null,
+      dockerHubTag: {
+        normalizedVersion: 'latest',
+        displayVersion: 'latest @ sha256:bbbbbbbbbbbb',
+        tagName: 'latest',
+        digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      },
+    })).toEqual(expect.objectContaining({
+      source: 'docker-hub-tag',
+      kind: 'new-digest',
+      candidateKey: 'docker-hub-tag:latest@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    }));
+  });
+
   it('does not return an older GitHub candidate when the helper is already ahead of it', () => {
     expect(resolveUpdateReminderCandidate({
       currentVersion: '1.2.3',

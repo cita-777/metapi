@@ -106,6 +106,26 @@ export type ModelRefreshResult =
   | ModelRefreshFailureResult
   | ModelRefreshSuccessResult;
 
+function looksLikeHtmlJsonParseError(message: string): boolean {
+  const lowered = String(message || '').trim().toLowerCase();
+  return (
+    lowered.includes('unexpected token')
+    && lowered.includes('not valid json')
+    && (lowered.includes('<html') || lowered.includes('<script'))
+  );
+}
+
+function looksLikeShieldChallenge(message: string): boolean {
+  const lowered = String(message || '').trim().toLowerCase();
+  return (
+    lowered.includes('acw_sc__v2')
+    || lowered.includes('var arg1')
+    || lowered.includes('captcha')
+    || lowered.includes('challenge')
+    || lowered.includes('cloudflare tunnel error')
+  );
+}
+
 function classifyModelDiscoveryError(message: string): ModelRefreshErrorCode {
   const lowered = message.toLowerCase();
   if (lowered.includes('timeout') || lowered.includes('timed out') || lowered.includes('请求超时')) return 'timeout';
@@ -115,7 +135,15 @@ function classifyModelDiscoveryError(message: string): ModelRefreshErrorCode {
   return 'unknown';
 }
 
-function buildModelFailureMessage(code: ModelRefreshErrorCode, fallback?: string) {
+function buildModelFailureMessage(code: ModelRefreshErrorCode, fallback?: string, platform?: string | null) {
+  const raw = String(fallback || '').trim();
+  if (looksLikeHtmlJsonParseError(raw) || looksLikeShieldChallenge(raw)) {
+    const normalizedPlatform = String(platform || '').trim().toLowerCase();
+    if (normalizedPlatform === 'new-api' || normalizedPlatform === 'anyrouter') {
+      return '模型获取失败：站点返回了防护页面，请在目标站点创建 API Key 后再同步模型';
+    }
+    return '模型获取失败：站点返回了网页而不是 JSON 响应';
+  }
   if (code === 'timeout') return '模型获取失败（请求超时）';
   if (code === 'unauthorized') return '模型获取失败，API Key 已无效';
   if (code === 'empty_models') return '模型获取失败：未获取到可用模型';
@@ -844,7 +872,7 @@ export async function refreshModelsForAccount(
   if (accountModels.size === 0) {
     const firstMessage = failureMessages[0] || '';
     const errorCode = firstMessage ? classifyModelDiscoveryError(firstMessage) : 'empty_models';
-    const errorMessage = buildModelFailureMessage(errorCode, firstMessage);
+    const errorMessage = buildModelFailureMessage(errorCode, firstMessage, site.platform);
     await setAccountRuntimeHealth(account.id, {
       state: 'unhealthy',
       reason: errorMessage,

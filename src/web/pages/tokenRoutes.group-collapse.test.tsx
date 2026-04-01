@@ -14,6 +14,7 @@ const { apiMock, getBrandMock } = vi.hoisted(() => ({
     getRouteWideDecisionsBatch: vi.fn(),
     updateRoute: vi.fn(),
     addRoute: vi.fn(),
+    batchUpdateChannels: vi.fn(),
   },
   getBrandMock: vi.fn(),
 }));
@@ -94,15 +95,18 @@ describe('TokenRoutes grouped source models', () => {
     vi.clearAllMocks();
     getBrandMock.mockReset();
     getBrandMock.mockReturnValue(null);
+    vi.stubGlobal('confirm', vi.fn(() => true));
     apiMock.getModelTokenCandidates.mockResolvedValue({ models: {} });
     apiMock.getRouteChannels.mockResolvedValue([]);
     apiMock.getRouteDecisionsBatch.mockResolvedValue({ decisions: {} });
     apiMock.getRouteWideDecisionsBatch.mockResolvedValue({ decisions: {} });
     apiMock.updateRoute.mockResolvedValue({});
     apiMock.addRoute.mockResolvedValue({});
+    apiMock.batchUpdateChannels.mockResolvedValue({ success: true, channels: [] });
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     vi.clearAllMocks();
   });
 
@@ -154,18 +158,18 @@ describe('TokenRoutes grouped source models', () => {
     }
   });
 
-  it('collapses source-model groups by default for wildcard routes', async () => {
+  it('renders wildcard route channels in priority buckets and keeps source models as row badges', async () => {
     const channels = [
       {
-        id: 11, accountId: 101, tokenId: 1001, sourceModel: 'claude-opus-4-5',
+        id: 11, routeId: 1, accountId: 101, tokenId: 1001, sourceModel: 'claude-opus-4-5',
         priority: 0, weight: 1, enabled: true, manualOverride: false,
         successCount: 0, failCount: 0,
         account: { username: 'user_a' }, site: { name: 'site-a' },
         token: { id: 1001, name: 'token-a', accountId: 101, enabled: true, isDefault: true },
       },
       {
-        id: 12, accountId: 102, tokenId: 1002, sourceModel: 'claude-opus-4-6',
-        priority: 0, weight: 1, enabled: true, manualOverride: false,
+        id: 12, routeId: 1, accountId: 102, tokenId: 1002, sourceModel: 'claude-opus-4-6',
+        priority: 1, weight: 1, enabled: true, manualOverride: false,
         successCount: 0, failCount: 0,
         account: { username: 'user_b' }, site: { name: 'site-b' },
         token: { id: 1002, name: 'token-b', accountId: 102, enabled: true, isDefault: true },
@@ -209,37 +213,66 @@ describe('TokenRoutes grouped source models', () => {
       });
       await flushMicrotasks();
 
-      // After expansion, source models are visible but groups collapsed for wildcard
+      // After expansion, channels render in route-global buckets instead of source-model subgroups
       const expandedText = collectText(root.root);
+      expect(expandedText).toContain('P0');
+      expect(expandedText).toContain('P1');
+      expect(expandedText).toContain('user_a');
+      expect(expandedText).toContain('user_b');
       expect(expandedText).toContain('claude-opus-4-5');
       expect(expandedText).toContain('claude-opus-4-6');
-      // Users are inside collapsed source groups
-      expect(expandedText).not.toContain('user_a');
-      expect(expandedText).not.toContain('user_b');
     } finally {
       root?.unmount();
     }
   });
 
-  it('expands a source-model group after user click', async () => {
-    const channels = [
+  it('writes explicit-group priority edits back to source channels and confirms shared-source impact', async () => {
+    apiMock.getRoutesSummary.mockResolvedValue([
       {
-        id: 11, accountId: 101, tokenId: 1001, sourceModel: 'claude-opus-4-5',
+        id: 11, modelPattern: 'claude-opus-4-5', displayName: null,
+        displayIcon: null, modelMapping: null, enabled: true,
+        routeMode: 'pattern', sourceRouteIds: [],
+        channelCount: 1, enabledChannelCount: 1, siteNames: ['site-a'],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+      {
+        id: 12, modelPattern: 'claude-sonnet-4-5', displayName: null,
+        displayIcon: null, modelMapping: null, enabled: true,
+        routeMode: 'pattern', sourceRouteIds: [],
+        channelCount: 1, enabledChannelCount: 1, siteNames: ['site-b'],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+      {
+        id: 21, modelPattern: 'claude-proxy-a', displayName: 'claude-proxy-a',
+        displayIcon: '', modelMapping: null, enabled: true,
+        routeMode: 'explicit_group', sourceRouteIds: [11, 12],
+        channelCount: 2, enabledChannelCount: 2, siteNames: ['site-a', 'site-b'],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+      {
+        id: 22, modelPattern: 'claude-proxy-b', displayName: 'claude-proxy-b',
+        displayIcon: '', modelMapping: null, enabled: true,
+        routeMode: 'explicit_group', sourceRouteIds: [12],
+        channelCount: 1, enabledChannelCount: 1, siteNames: ['site-b'],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+    ]);
+    apiMock.getRouteChannels.mockResolvedValue([
+      {
+        id: 101, routeId: 11, accountId: 101, tokenId: 1001, sourceModel: 'claude-opus-4-5',
         priority: 0, weight: 1, enabled: true, manualOverride: false,
         successCount: 0, failCount: 0,
         account: { username: 'user_a' }, site: { name: 'site-a' },
         token: { id: 1001, name: 'token-a', accountId: 101, enabled: true, isDefault: true },
       },
-    ];
-    apiMock.getRoutesSummary.mockResolvedValue([
       {
-        id: 1, modelPattern: 're:^claude-opus-(4-6|4-5)$', displayName: 'claude-opus-4-6',
-        displayIcon: null, modelMapping: null, enabled: true,
-        channelCount: 1, enabledChannelCount: 1, siteNames: ['site-a'],
-        decisionSnapshot: null, decisionRefreshedAt: null,
+        id: 102, routeId: 12, accountId: 102, tokenId: 1002, sourceModel: 'claude-sonnet-4-5',
+        priority: 1, weight: 1, enabled: true, manualOverride: false,
+        successCount: 0, failCount: 0,
+        account: { username: 'user_b' }, site: { name: 'site-b' },
+        token: { id: 1002, name: 'token-b', accountId: 102, enabled: true, isDefault: true },
       },
     ]);
-    apiMock.getRouteChannels.mockResolvedValue(channels);
 
     let root!: WebTestRenderer;
     try {
@@ -254,24 +287,121 @@ describe('TokenRoutes grouped source models', () => {
       });
       await flushMicrotasks();
 
-      // Expand the card first
       const expandBtn = root.root.find((node) =>
-        node.type === 'div' && String(node.props.className || '').includes('route-card-collapsed'),
+        node.type === 'div'
+        && String(node.props.className || '').includes('route-card-collapsed')
+        && collectText(node).includes('claude-proxy-a'),
       );
       await act(async () => {
         expandBtn.props.onClick();
       });
       await flushMicrotasks();
 
-      expect(collectText(root.root)).not.toContain('user_a');
+      const dragContext = root.root.find((node) => typeof node.props?.onDragEnd === 'function');
+      expect(dragContext).toBeTruthy();
 
-      const toggleButton = findButtonByText(root.root, 'claude-opus-4-5');
       await act(async () => {
-        toggleButton.props.onClick();
+        await dragContext.props.onDragEnd({
+          active: { id: 102 },
+          over: { id: 101 },
+        });
       });
       await flushMicrotasks();
 
-      expect(collectText(root.root)).toContain('user_a');
+      expect(globalThis.confirm).toHaveBeenCalledWith(expect.stringContaining('claude-proxy-b'));
+      expect(apiMock.batchUpdateChannels).toHaveBeenCalledWith([
+        { id: 101, priority: 0 },
+        { id: 102, priority: 0 },
+      ]);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('does not rewrite shared-source priorities when the confirmation is cancelled', async () => {
+    vi.stubGlobal('confirm', vi.fn(() => false));
+    apiMock.getRoutesSummary.mockResolvedValue([
+      {
+        id: 11, modelPattern: 'claude-opus-4-5', displayName: null,
+        displayIcon: null, modelMapping: null, enabled: true,
+        routeMode: 'pattern', sourceRouteIds: [],
+        channelCount: 1, enabledChannelCount: 1, siteNames: ['site-a'],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+      {
+        id: 12, modelPattern: 'claude-sonnet-4-5', displayName: null,
+        displayIcon: null, modelMapping: null, enabled: true,
+        routeMode: 'pattern', sourceRouteIds: [],
+        channelCount: 1, enabledChannelCount: 1, siteNames: ['site-b'],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+      {
+        id: 21, modelPattern: 'claude-proxy-a', displayName: 'claude-proxy-a',
+        displayIcon: '', modelMapping: null, enabled: true,
+        routeMode: 'explicit_group', sourceRouteIds: [11, 12],
+        channelCount: 2, enabledChannelCount: 2, siteNames: ['site-a', 'site-b'],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+      {
+        id: 22, modelPattern: 'claude-proxy-b', displayName: 'claude-proxy-b',
+        displayIcon: '', modelMapping: null, enabled: true,
+        routeMode: 'explicit_group', sourceRouteIds: [12],
+        channelCount: 1, enabledChannelCount: 1, siteNames: ['site-b'],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+    ]);
+    apiMock.getRouteChannels.mockResolvedValue([
+      {
+        id: 101, routeId: 11, accountId: 101, tokenId: 1001, sourceModel: 'claude-opus-4-5',
+        priority: 0, weight: 1, enabled: true, manualOverride: false,
+        successCount: 0, failCount: 0,
+        account: { username: 'user_a' }, site: { name: 'site-a' },
+        token: { id: 1001, name: 'token-a', accountId: 101, enabled: true, isDefault: true },
+      },
+      {
+        id: 102, routeId: 12, accountId: 102, tokenId: 1002, sourceModel: 'claude-sonnet-4-5',
+        priority: 1, weight: 1, enabled: true, manualOverride: false,
+        successCount: 0, failCount: 0,
+        account: { username: 'user_b' }, site: { name: 'site-b' },
+        token: { id: 1002, name: 'token-b', accountId: 102, enabled: true, isDefault: true },
+      },
+    ]);
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const expandBtn = root.root.find((node) =>
+        node.type === 'div'
+        && String(node.props.className || '').includes('route-card-collapsed')
+        && collectText(node).includes('claude-proxy-a'),
+      );
+      await act(async () => {
+        expandBtn.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const dragContext = root.root.find((node) => typeof node.props?.onDragEnd === 'function');
+      await act(async () => {
+        await dragContext.props.onDragEnd({
+          active: { id: 102 },
+          over: { id: 101 },
+        });
+      });
+      await flushMicrotasks();
+
+      expect(globalThis.confirm).toHaveBeenCalledWith(expect.stringContaining('claude-proxy-b'));
+      expect(apiMock.batchUpdateChannels).not.toHaveBeenCalled();
+      expect(collectText(root.root)).toContain('P1');
     } finally {
       root?.unmount();
     }
@@ -1376,7 +1506,7 @@ describe('TokenRoutes grouped source models', () => {
     }
   });
 
-  it('reuses the standard channel row presentation for explicit-group details in read-only mode', async () => {
+  it('reuses the standard channel row presentation for explicit-group details while keeping channel management hidden', async () => {
     apiMock.getRoutesSummary.mockResolvedValue([
       {
         id: 11, modelPattern: 'claude-haiku-4-5-20251001', displayName: null,
@@ -1435,18 +1565,13 @@ describe('TokenRoutes grouped source models', () => {
       });
       await flushMicrotasks();
 
-      await act(async () => {
-        findButtonByText(root.root, 'claude-haiku-4-5-20251001').props.onClick();
-      });
-      await flushMicrotasks();
-
       const expandedText = collectText(root.root);
       expect(expandedText).toContain('P0');
       expect(expandedText).toContain('当前生效：token-a');
       expect(expandedText).toContain('选中概率');
-      expect(findButtonByAriaLabel(root.root, '拖拽调整优先级').props.disabled).toBe(true);
-      expect(expandedText).not.toContain('保存');
-      expect(expandedText).not.toContain('移除');
+      expect(findButtonByAriaLabel(root.root, '拖拽调整优先级桶').props.disabled).toBe(false);
+      expect(root.root.findAll((node) => node.type === 'button' && collectText(node).trim() === '保存')).toHaveLength(0);
+      expect(root.root.findAll((node) => node.type === 'button' && collectText(node).trim() === '移除')).toHaveLength(0);
     } finally {
       root?.unmount();
     }

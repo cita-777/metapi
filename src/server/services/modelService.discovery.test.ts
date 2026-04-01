@@ -274,6 +274,75 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(parsed.runtimeHealth?.checkedAt).toMatch(/\d{4}-\d{2}-\d{2}T/);
   });
 
+  it('normalizes anyrouter html challenge parse errors during model discovery', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockRejectedValue(new Error("Unexpected token '<', \"<html><scr\"... is not valid JSON"));
+
+    const site = await db.insert(schema.sites).values({
+      name: 'site-anyrouter',
+      url: 'https://anyrouter.example.com',
+      platform: 'anyrouter',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'shielded-user',
+      accessToken: 'session-token',
+      apiToken: null,
+      status: 'active',
+    }).returning().get();
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      modelCount: 0,
+      modelsPreview: [],
+      tokenScanned: 0,
+      status: 'failed',
+      errorCode: 'unknown',
+      errorMessage: '模型获取失败：站点返回了防护页面，请在目标站点创建 API Key 后再同步模型',
+    });
+
+    const latest = await db.select().from(schema.accounts)
+      .where(eq(schema.accounts.id, account.id))
+      .get();
+    const parsed = JSON.parse(latest!.extraConfig || '{}');
+    expect(parsed.runtimeHealth?.reason).toBe('模型获取失败：站点返回了防护页面，请在目标站点创建 API Key 后再同步模型');
+  });
+
+  it('keeps shield guidance when challenge html arrives with http 403 discovery failure', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockRejectedValue(new Error('HTTP 403: <html><script>var arg1="abc123"</script></html>'));
+
+    const site = await db.insert(schema.sites).values({
+      name: 'site-anyrouter-403',
+      url: 'https://anyrouter-403.example.com',
+      platform: 'anyrouter',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'shielded-user-403',
+      accessToken: 'session-token',
+      apiToken: null,
+      status: 'active',
+    }).returning().get();
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      status: 'failed',
+      errorCode: 'unauthorized',
+      errorMessage: '模型获取失败：站点返回了防护页面，请在目标站点创建 API Key 后再同步模型',
+    });
+  });
+
   it('does not scan hidden managed tokens for direct apikey connections', async () => {
     getApiTokenMock.mockResolvedValue(null);
     getModelsMock.mockImplementation(async (_baseUrl: string, token: string) => (

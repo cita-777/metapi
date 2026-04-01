@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  hasProxyUsagePayload,
   mergeProxyUsage,
   parseProxyUsage,
   pullSseDataEvents,
@@ -158,6 +159,30 @@ describe('proxyUsageParser', () => {
       cacheCreationTokens: 0,
       promptTokensIncludeCache: null,
     });
+  });
+
+  it('does not treat null placeholders as explicit upstream usage', () => {
+    expect(hasProxyUsagePayload({
+      usage: {
+        total_tokens: null,
+        cache_creation: {},
+      },
+    })).toBe(false);
+  });
+
+  it('treats explicit zero usage values as upstream usage', () => {
+    expect(hasProxyUsagePayload({
+      usage: {
+        total_tokens: 0,
+      },
+    })).toBe(true);
+    expect(hasProxyUsagePayload({
+      usage: {
+        prompt_tokens_details: {
+          cached_tokens: 0,
+        },
+      },
+    })).toBe(true);
   });
 
   it('pulls SSE data events across chunk boundaries', () => {

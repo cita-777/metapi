@@ -1033,7 +1033,7 @@ export function buildClaudeCountTokensUpstreamRequest(input: {
   const sitePlatform = normalizePlatformName(input.sitePlatform);
   const claudeHeaders = extractClaudePassthroughHeaders(input.downstreamHeaders);
   const { body: bodyWithoutBetas, betas } = extractClaudeBetasFromBody({
-    ...input.claudeBody,
+    ...stripClaudeMessagesContinuationFields(input.claudeBody),
     model: input.modelName,
   });
   const sanitizedBody = sanitizeAnthropicMessagesBody(bodyWithoutBetas);

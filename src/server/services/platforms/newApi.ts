@@ -2,6 +2,7 @@ import { ApiTokenInfo, BasePlatformAdapter, CheckinResult, BalanceInfo, UserInfo
 import type { RequestInit as UndiciRequestInit } from 'undici';
 import { createContext, runInContext } from 'node:vm';
 import { withSiteProxyRequestInit } from '../siteProxy.js';
+import { fetchJsonWithShieldCookieRetry } from './newApiShield.js';
 
 export class NewApiAdapter extends BasePlatformAdapter {
   readonly platformName: string = 'new-api';
@@ -761,12 +762,39 @@ export class NewApiAdapter extends BasePlatformAdapter {
     return [];
   }
 
+  private extractOpenAiModels(payload: any): string[] {
+    if (!Array.isArray(payload?.data)) return [];
+    return payload.data.map((m: any) => m?.id).filter(Boolean);
+  }
+
+  private async getOpenAiModelsViaShieldCookie(baseUrl: string, token: string): Promise<string[]> {
+    for (const cookie of this.buildCookieCandidates(token)) {
+      try {
+        const { data } = await fetchJsonWithShieldCookieRetry<any>(`${baseUrl}/v1/models`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Cookie: cookie,
+          },
+        });
+        const models = this.extractOpenAiModels(data);
+        if (models.length > 0) return models;
+      } catch {}
+    }
+    return [];
+  }
+
   private async getOpenAiModels(baseUrl: string, token: string): Promise<string[]> {
+    const shouldTryShieldCookie = this.platformName === 'anyrouter' || token.includes('=');
+    if (shouldTryShieldCookie) {
+      const shieldModels = await this.getOpenAiModelsViaShieldCookie(baseUrl, token);
+      if (shieldModels.length > 0) return shieldModels;
+    }
+
     try {
       const res = await this.fetchJson<any>(`${baseUrl}/v1/models`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      return (res?.data || []).map((m: any) => m.id).filter(Boolean);
+      return this.extractOpenAiModels(res);
     } catch {
       return [];
     }

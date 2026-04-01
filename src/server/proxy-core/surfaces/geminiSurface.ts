@@ -19,7 +19,7 @@ import { composeProxyLogMessage } from '../../routes/proxy/logPathMeta.js';
 import {
   buildUpstreamEndpointRequest,
   resolveUpstreamEndpointCandidates,
-} from '../../routes/proxy/upstreamEndpoint.js';
+} from '../../services/upstreamEndpointRuntime.js';
 import {
   getUpstreamEndpointRuntimeStateSnapshot,
   recordUpstreamEndpointFailure,
@@ -35,7 +35,7 @@ import {
   unwrapGeminiCliPayload,
   wrapGeminiCliRequest,
 } from '../../routes/proxy/geminiCliCompat.js';
-import { dispatchRuntimeRequest } from '../../routes/proxy/runtimeExecutor.js';
+import { dispatchRuntimeRequest } from '../../services/runtimeDispatch.js';
 import { detectDownstreamClientContext, type DownstreamClientContext } from '../../routes/proxy/downstreamClientContext.js';
 import { insertProxyLog } from '../../services/proxyLogStore.js';
 import { summarizeConversationFileInputsInOpenAiBody } from '../capabilities/conversationFileCapabilities.js';

@@ -12,7 +12,7 @@ import { composeProxyLogMessage } from '../../routes/proxy/logPathMeta.js';
 import { resolveProxyLogBilling } from '../../routes/proxy/proxyBilling.js';
 import type { DownstreamClientContext } from '../../routes/proxy/downstreamClientContext.js';
 import { insertProxyLog } from '../../services/proxyLogStore.js';
-import { dispatchRuntimeRequest } from '../../routes/proxy/runtimeExecutor.js';
+import { dispatchRuntimeRequest } from '../../services/runtimeDispatch.js';
 import type { BuiltEndpointRequest } from '../orchestration/endpointFlow.js';
 import { buildUpstreamUrl } from '../../routes/proxy/upstreamUrl.js';
 import { recordOauthQuotaResetHint } from '../../services/oauth/quota.js';
@@ -98,6 +98,7 @@ type SurfaceResolvedUsageSummary = {
   recoveredFromSelfLog: boolean;
   estimatedCostFromQuota: number;
   selfLogBillingMeta: import('../../services/proxyUsageFallbackService.js').SelfLogBillingMeta | null;
+  usageSource: 'upstream' | 'self-log' | 'unknown';
 };
 
 export async function selectSurfaceChannelForAttempt(input: {
@@ -228,12 +229,13 @@ export async function writeSurfaceProxyLog(input: {
   errorMessage: string | null;
   retryCount: number;
   downstreamPath: string;
-  promptTokens?: number;
-  completionTokens?: number;
-  totalTokens?: number;
+  promptTokens?: number | null;
+  completionTokens?: number | null;
+  totalTokens?: number | null;
   estimatedCost?: number;
   billingDetails?: unknown;
   upstreamPath?: string | null;
+  usageSource?: 'upstream' | 'self-log' | 'unknown' | null;
   clientContext?: DownstreamClientContext | null;
   downstreamApiKeyId?: number | null;
 }): Promise<void> {
@@ -247,6 +249,7 @@ export async function writeSurfaceProxyLog(input: {
       traceHint: input.clientContext?.traceHint || null,
       downstreamPath: input.downstreamPath,
       upstreamPath: input.upstreamPath || null,
+      usageSource: input.usageSource || null,
       errorMessage: input.errorMessage,
     });
     await insertProxyLog({
@@ -259,9 +262,9 @@ export async function writeSurfaceProxyLog(input: {
       status: input.status,
       httpStatus: input.httpStatus,
       latencyMs: input.latencyMs,
-      promptTokens: input.promptTokens ?? 0,
-      completionTokens: input.completionTokens ?? 0,
-      totalTokens: input.totalTokens ?? 0,
+      promptTokens: input.promptTokens ?? null,
+      completionTokens: input.completionTokens ?? null,
+      totalTokens: input.totalTokens ?? null,
       estimatedCost: input.estimatedCost ?? 0,
       billingDetails: input.billingDetails ?? null,
       clientFamily: input.clientContext?.clientKind || null,
@@ -354,6 +357,7 @@ export async function recordSurfaceSuccess(input: {
   requestedModel: string;
   modelName: string;
   parsedUsage: SurfaceUsageSummary;
+  upstreamUsagePresent?: boolean;
   requestStartedAtMs: number;
   latencyMs: number;
   retryCount: number;
@@ -366,9 +370,10 @@ export async function recordSurfaceSuccess(input: {
     latencyMs: number;
     errorMessage: string | null;
     retryCount: number;
-    promptTokens?: number;
-    completionTokens?: number;
-    totalTokens?: number;
+    promptTokens?: number | null;
+    completionTokens?: number | null;
+    totalTokens?: number | null;
+    usageSource?: 'upstream' | 'self-log' | 'unknown';
     estimatedCost?: number;
     billingDetails?: unknown;
     upstreamPath?: string | null;
@@ -382,6 +387,11 @@ export async function recordSurfaceSuccess(input: {
   estimatedCost: number;
   billingDetails: unknown;
 }> {
+  const hasUpstreamUsage = input.upstreamUsagePresent ?? (
+    input.parsedUsage.totalTokens > 0
+    || input.parsedUsage.promptTokens > 0
+    || input.parsedUsage.completionTokens > 0
+  );
   let resolvedUsage: SurfaceResolvedUsageSummary = {
     promptTokens: input.parsedUsage.promptTokens,
     completionTokens: input.parsedUsage.completionTokens,
@@ -389,6 +399,7 @@ export async function recordSurfaceSuccess(input: {
     recoveredFromSelfLog: false,
     estimatedCostFromQuota: 0,
     selfLogBillingMeta: null,
+    usageSource: hasUpstreamUsage ? 'upstream' : 'unknown',
   };
   let estimatedCost = 0;
   let billingDetails: unknown = null;
@@ -403,6 +414,7 @@ export async function recordSurfaceSuccess(input: {
       requestStartedAtMs: input.requestStartedAtMs,
       requestEndedAtMs: input.requestStartedAtMs + input.latencyMs,
       localLatencyMs: input.latencyMs,
+      upstreamUsagePresent: hasUpstreamUsage,
       usage: {
         promptTokens: input.parsedUsage.promptTokens,
         completionTokens: input.parsedUsage.completionTokens,
@@ -432,6 +444,17 @@ export async function recordSurfaceSuccess(input: {
     input.modelName,
   );
   input.recordDownstreamCost?.(estimatedCost);
+  const logTokens = resolvedUsage.usageSource === 'unknown'
+    ? {
+      promptTokens: null,
+      completionTokens: null,
+      totalTokens: null,
+    }
+    : {
+      promptTokens: resolvedUsage.promptTokens,
+      completionTokens: resolvedUsage.completionTokens,
+      totalTokens: resolvedUsage.totalTokens,
+    };
   await input.logSuccess({
     selected: input.selected,
     modelRequested: input.requestedModel,
@@ -440,9 +463,10 @@ export async function recordSurfaceSuccess(input: {
     latencyMs: input.latencyMs,
     errorMessage: null,
     retryCount: input.retryCount,
-    promptTokens: resolvedUsage.promptTokens,
-    completionTokens: resolvedUsage.completionTokens,
-    totalTokens: resolvedUsage.totalTokens,
+    promptTokens: logTokens.promptTokens,
+    completionTokens: logTokens.completionTokens,
+    totalTokens: logTokens.totalTokens,
+    usageSource: resolvedUsage.usageSource,
     estimatedCost,
     billingDetails,
     upstreamPath: input.upstreamPath,
@@ -470,9 +494,9 @@ export function createSurfaceFailureToolkit(input: {
     latencyMs: number;
     errorMessage: string | null;
     retryCount: number;
-    promptTokens?: number;
-    completionTokens?: number;
-    totalTokens?: number;
+    promptTokens?: number | null;
+    completionTokens?: number | null;
+    totalTokens?: number | null;
     estimatedCost?: number;
     billingDetails?: unknown;
     upstreamPath?: string | null;
@@ -581,9 +605,9 @@ export function createSurfaceFailureToolkit(input: {
       failure: { status: number; reason: string };
       latencyMs: number;
       retryCount: number;
-      promptTokens?: number;
-      completionTokens?: number;
-      totalTokens?: number;
+      promptTokens?: number | null;
+      completionTokens?: number | null;
+      totalTokens?: number | null;
       upstreamPath?: string | null;
     }): Promise<SurfaceFailureOutcome> {
       await tokenRouter.recordFailure(args.selected.channel.id, {
@@ -676,9 +700,9 @@ export function createSurfaceFailureToolkit(input: {
       errorMessage: string | null;
       latencyMs: number;
       retryCount: number;
-      promptTokens?: number;
-      completionTokens?: number;
-      totalTokens?: number;
+      promptTokens?: number | null;
+      completionTokens?: number | null;
+      totalTokens?: number | null;
       upstreamPath?: string | null;
       httpStatus?: number;
       runtimeFailureStatus?: number | null;

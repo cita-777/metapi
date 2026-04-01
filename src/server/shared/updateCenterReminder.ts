@@ -34,10 +34,18 @@ function normalizeStableTag(value?: string | null): string {
   return normalizeStableVersion(value);
 }
 
-function hasSameStableTag(left?: string | null, right?: string | null): boolean {
-  const normalizedLeft = normalizeStableTag(left);
-  const normalizedRight = normalizeStableTag(right);
-  return !!normalizedLeft && normalizedLeft === normalizedRight;
+function hasSameImageTag(left?: string | null, right?: string | null): boolean {
+  const rawLeft = normalizeString(left);
+  const rawRight = normalizeString(right);
+  if (!rawLeft || !rawRight) return false;
+
+  const stableLeft = normalizeStableTag(left);
+  const stableRight = normalizeStableTag(right);
+  if (stableLeft && stableRight) {
+    return stableLeft === stableRight;
+  }
+
+  return rawLeft === rawRight;
 }
 
 export function normalizeStableVersion(value?: string | null): string {
@@ -76,7 +84,7 @@ export function isSameImageTarget(
     return currentDigest === targetDigest;
   }
 
-  return hasSameStableTag(current?.imageTag, target.tag);
+  return hasSameImageTag(current?.imageTag, target.tag);
 }
 
 export function buildUpdateReminderCandidateKey(
@@ -138,7 +146,7 @@ export function resolveUpdateReminderCandidate(input: {
   }
 
   const helperDigest = normalizeDigest(input.helper?.imageDigest);
-  if (dockerDigest && helperDigest && hasSameStableTag(input.helper?.imageTag, dockerTag) && helperDigest !== dockerDigest) {
+  if (dockerDigest && helperDigest && hasSameImageTag(input.helper?.imageTag, dockerTag) && helperDigest !== dockerDigest) {
     return {
       source: 'docker-hub-tag',
       kind: 'new-digest',

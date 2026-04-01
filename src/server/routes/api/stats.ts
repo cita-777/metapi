@@ -302,6 +302,14 @@ function resolveProxyLogClientMeta(proxyLog: Record<string, unknown>) {
   };
 }
 
+function normalizeProxyLogUsageSource(value: unknown): 'upstream' | 'self-log' | 'unknown' | null {
+  const normalized = normalizeNullableText(value)?.toLowerCase() || null;
+  if (normalized === 'upstream' || normalized === 'self-log' || normalized === 'unknown') {
+    return normalized;
+  }
+  return null;
+}
+
 function buildProxyLogClientOptions(rows: Array<{
   clientFamily?: string | null;
   clientAppId?: string | null;
@@ -499,6 +507,7 @@ function mapProxyLogRow(
   options?: { includeBillingDetails?: boolean },
 ) {
   const clientMeta = resolveProxyLogClientMeta(row.proxy_logs);
+  const legacyMeta = parseProxyLogMessageMeta(typeof row.proxy_logs.errorMessage === 'string' ? row.proxy_logs.errorMessage : '');
   return {
     ...row.proxy_logs,
     ...(options?.includeBillingDetails
@@ -508,6 +517,7 @@ function mapProxyLogRow(
     clientAppId: clientMeta.clientAppId,
     clientAppName: clientMeta.clientAppName,
     clientConfidence: clientMeta.clientConfidence,
+    usageSource: normalizeProxyLogUsageSource(legacyMeta.usageSource),
     username: row.accounts?.username || null,
     siteId: row.sites?.id || null,
     siteName: row.sites?.name || null,
