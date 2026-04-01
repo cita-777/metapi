@@ -7,7 +7,10 @@ import TokenRoutes from './TokenRoutes.js';
 const { apiMock, getBrandMock } = vi.hoisted(() => ({
   apiMock: {
     getRoutesSummary: vi.fn(),
+    refreshRouteDecisionSnapshots: vi.fn(),
     getRouteChannels: vi.fn(),
+    getTask: vi.fn(),
+    getTasks: vi.fn(),
     getModelTokenCandidates: vi.fn(),
     getRouteDecisionsBatch: vi.fn(),
     getRouteWideDecisionsBatch: vi.fn(),
@@ -71,6 +74,9 @@ describe('TokenRoutes refresh decision action', () => {
       },
     ]);
     apiMock.getRouteChannels.mockResolvedValue([]);
+    apiMock.refreshRouteDecisionSnapshots.mockResolvedValue({ queued: true, jobId: 'task-1', status: 'pending' });
+    apiMock.getTasks.mockResolvedValue({ tasks: [] });
+    apiMock.getTask.mockResolvedValue({ task: { id: 'task-1', status: 'succeeded' } });
     apiMock.getModelTokenCandidates.mockResolvedValue({ models: {} });
     apiMock.getRouteDecisionsBatch.mockResolvedValue({ decisions: {} });
     apiMock.getRouteWideDecisionsBatch.mockResolvedValue({ decisions: {} });
@@ -80,9 +86,39 @@ describe('TokenRoutes refresh decision action', () => {
     vi.clearAllMocks();
   });
 
-  it('passes refreshPricingCatalog and persistSnapshots when user clicks refresh selection probability', async () => {
+  it('queues a background snapshot refresh task when user clicks refresh selection probability', async () => {
     let root!: WebTestRenderer;
     try {
+      apiMock.getRoutesSummary
+        .mockResolvedValueOnce([
+          {
+            id: 1, modelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini',
+            displayIcon: null, modelMapping: null, enabled: true,
+            channelCount: 0, enabledChannelCount: 0, siteNames: [],
+            decisionSnapshot: null, decisionRefreshedAt: null,
+          },
+          {
+            id: 2, modelPattern: 're:^claude-(opus|sonnet)-4-6$', displayName: 'claude-group',
+            displayIcon: null, modelMapping: null, enabled: true,
+            channelCount: 0, enabledChannelCount: 0, siteNames: [],
+            decisionSnapshot: null, decisionRefreshedAt: null,
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: 1, modelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini',
+            displayIcon: null, modelMapping: null, enabled: true,
+            channelCount: 0, enabledChannelCount: 0, siteNames: [],
+            decisionSnapshot: { matched: true, candidates: [] }, decisionRefreshedAt: '2026-04-01T00:00:00.000Z',
+          },
+          {
+            id: 2, modelPattern: 're:^claude-(opus|sonnet)-4-6$', displayName: 'claude-group',
+            displayIcon: null, modelMapping: null, enabled: true,
+            channelCount: 0, enabledChannelCount: 0, siteNames: [],
+            decisionSnapshot: { matched: true, candidates: [] }, decisionRefreshedAt: '2026-04-01T00:00:00.000Z',
+          },
+        ]);
+
       await act(async () => {
         root = create(
           <MemoryRouter initialEntries={['/routes']}>
@@ -99,9 +135,64 @@ describe('TokenRoutes refresh decision action', () => {
         await refreshButton.props.onClick();
       });
       await flushMicrotasks();
+      await flushMicrotasks();
 
-      expect(apiMock.getRouteDecisionsBatch).toHaveBeenCalledWith(['gpt-4o-mini'], { refreshPricingCatalog: true, persistSnapshots: true });
-      expect(apiMock.getRouteWideDecisionsBatch).toHaveBeenCalledWith([2], { refreshPricingCatalog: true, persistSnapshots: true });
+      expect(apiMock.refreshRouteDecisionSnapshots).toHaveBeenCalledTimes(1);
+      expect(apiMock.getTask).toHaveBeenCalledWith('task-1');
+      expect(apiMock.getRoutesSummary).toHaveBeenCalledTimes(2);
+      expect(apiMock.getRouteDecisionsBatch).not.toHaveBeenCalled();
+      expect(apiMock.getRouteWideDecisionsBatch).not.toHaveBeenCalled();
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('resumes a running background probability refresh task when revisiting the page', async () => {
+    let root!: WebTestRenderer;
+    try {
+      apiMock.getRoutesSummary
+        .mockResolvedValueOnce([
+          {
+            id: 1, modelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini',
+            displayIcon: null, modelMapping: null, enabled: true,
+            channelCount: 0, enabledChannelCount: 0, siteNames: [],
+            decisionSnapshot: null, decisionRefreshedAt: null,
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: 1, modelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini',
+            displayIcon: null, modelMapping: null, enabled: true,
+            channelCount: 0, enabledChannelCount: 0, siteNames: [],
+            decisionSnapshot: { matched: true, candidates: [] }, decisionRefreshedAt: '2026-04-01T00:00:00.000Z',
+          },
+        ]);
+      apiMock.getTasks.mockResolvedValue({
+        tasks: [
+          {
+            id: 'task-restore',
+            type: 'route-decision.refresh',
+            status: 'running',
+          },
+        ],
+      });
+      apiMock.getTask.mockResolvedValue({ task: { id: 'task-restore', status: 'succeeded' } });
+
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+      await flushMicrotasks();
+
+      expect(apiMock.getTasks).toHaveBeenCalled();
+      expect(apiMock.getTask).toHaveBeenCalledWith('task-restore');
+      expect(apiMock.getRoutesSummary).toHaveBeenCalledTimes(2);
     } finally {
       root?.unmount();
     }

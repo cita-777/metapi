@@ -731,6 +731,10 @@ export const api = {
     body: JSON.stringify({ refreshModels, ...(wait ? { wait: true } : {}) }),
     timeoutMs: wait ? 150_000 : 30_000,
   }),
+  refreshRouteDecisionSnapshots: () => request('/api/routes/decision/refresh', {
+    method: 'POST',
+    body: JSON.stringify({}),
+  }),
   getRouteDecision: (model: string) => request(`/api/routes/decision?model=${encodeURIComponent(model)}`),
   getRouteDecisionsBatch: (models: string[], options?: { refreshPricingCatalog?: boolean; persistSnapshots?: boolean }) => request('/api/routes/decision/batch', {
     method: 'POST',

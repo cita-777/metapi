@@ -126,6 +126,8 @@ describe('TokenRoutes cached snapshot load', () => {
       });
       await flushMicrotasks();
 
+      expect(collectText(root.root)).toContain('已缓存');
+
       // Expand the route card to see channel details with probability
       const expandBtn = root.root.find((node) =>
         node.type === 'div' && String(node.props.className || '').includes('route-card-collapsed'),
@@ -138,6 +140,40 @@ describe('TokenRoutes cached snapshot load', () => {
       const text = collectText(root.root);
       expect(text).toContain('88.8%');
       expect(text).toContain('cached-user');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('keeps showing the cached snapshot marker after revisiting the page', async () => {
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+      expect(collectText(root.root)).toContain('已缓存');
+
+      root.unmount();
+
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('已缓存');
     } finally {
       root?.unmount();
     }

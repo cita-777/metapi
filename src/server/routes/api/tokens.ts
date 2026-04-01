@@ -13,7 +13,7 @@ import {
   type RouteRoutingStrategy,
 } from '../../services/routeRoutingStrategy.js';
 import { invalidateTokenRouterCache, matchesModelPattern, tokenRouter } from '../../services/tokenRouter.js';
-import { startBackgroundTask } from '../../services/backgroundTaskService.js';
+import { appendBackgroundTaskLog, startBackgroundTask } from '../../services/backgroundTaskService.js';
 import {
   clearRouteDecisionSnapshot,
   clearRouteDecisionSnapshots,
@@ -21,6 +21,11 @@ import {
   saveRouteDecisionSnapshots,
 } from '../../services/routeDecisionSnapshotStore.js';
 import { clearRouteCooldown } from '../../services/routeCooldownService.js';
+import {
+  refreshAllRouteDecisionSnapshots,
+  ROUTE_DECISION_REFRESH_DEDUPE_KEY,
+  ROUTE_DECISION_REFRESH_TASK_TYPE,
+} from '../../services/routeDecisionRefreshService.js';
 import { normalizeTokenRouteMode, type RouteMode } from '../../../shared/tokenRouteContract.js';
 import {
   parseRouteChannelBatchCreatePayload,
@@ -968,6 +973,45 @@ export async function tokensRoutes(app: FastifyInstance) {
     }
 
     return { success: true, decisions };
+  });
+
+  app.post('/api/routes/decision/refresh', async (_request, reply) => {
+    let taskId = '';
+    const { task, reused } = startBackgroundTask(
+      {
+        type: ROUTE_DECISION_REFRESH_TASK_TYPE,
+        title: '刷新路由选中概率',
+        dedupeKey: ROUTE_DECISION_REFRESH_DEDUPE_KEY,
+        successMessage: (currentTask) => {
+          const result = currentTask.result as { exactModelCount?: number; wildcardRouteCount?: number } | null;
+          const exactModelCount = result?.exactModelCount ?? 0;
+          const wildcardRouteCount = result?.wildcardRouteCount ?? 0;
+          return `路由选中概率刷新完成：精确模型 ${exactModelCount}，通配符路由 ${wildcardRouteCount}`;
+        },
+        failureMessage: (currentTask) => `路由选中概率刷新失败：${currentTask.error || 'unknown error'}`,
+      },
+      async () => {
+        await Promise.resolve();
+        return await refreshAllRouteDecisionSnapshots({
+          refreshPricingCatalog: true,
+          onProgress: (message) => {
+            appendBackgroundTaskLog(taskId, message);
+          },
+        });
+      },
+    );
+    taskId = task.id;
+
+    return reply.code(202).send({
+      success: true,
+      queued: true,
+      reused,
+      jobId: task.id,
+      status: task.status,
+      message: reused
+        ? '路由选中概率刷新任务执行中，可稍后返回查看'
+        : '已开始后台刷新路由选中概率，可稍后返回查看',
+    });
   });
 
   // Create a route

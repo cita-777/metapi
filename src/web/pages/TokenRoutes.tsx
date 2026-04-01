@@ -42,7 +42,6 @@ import type {
   GroupRouteItem,
 } from './token-routes/types.js';
 import {
-  AUTO_ROUTE_DECISION_LIMIT,
   ROUTE_RENDER_CHUNK,
   isExplicitGroupRoute,
   isExactModelPattern,
@@ -63,6 +62,8 @@ import RouteFilterBar, { type EnabledFilter } from './token-routes/RouteFilterBa
 import ManualRoutePanel from './token-routes/ManualRoutePanel.js';
 import RouteCard from './token-routes/RouteCard.js';
 import AddChannelModal from './token-routes/AddChannelModal.js';
+
+const ROUTE_DECISION_REFRESH_TASK_TYPE = 'route-decision.refresh';
 
 const EMPTY_ROUTE_CANDIDATE_VIEW: RouteCandidateView = {
   routeCandidates: [],
@@ -161,73 +162,8 @@ export default function TokenRoutes() {
   const candidatesPromiseRef = useRef<Promise<void> | null>(null);
   const candidatesVersionRef = useRef(0);
   const candidatesSeqRef = useRef(0);
-
-  const loadRouteDecisions = async (
-    routeRows: RouteSummaryRow[],
-    options?: { force?: boolean; refreshPricingCatalog?: boolean; persistSnapshots?: boolean },
-  ) => {
-    const rows = routeRows || [];
-    const exactRoutes = rows.filter((route) => isRouteExactModel(route));
-    const wildcardRouteIds = rows
-      .filter((route) => !isRouteExactModel(route))
-      .map((route) => route.id);
-
-    const requestedModels = Array.from(new Set<string>(exactRoutes.map((route) => route.modelPattern)));
-
-    const defaultState: Record<number, RouteDecision | null> = {};
-    for (const route of rows) defaultState[route.id] = null;
-
-    if (requestedModels.length === 0 && wildcardRouteIds.length === 0) {
-      setDecisionByRoute(defaultState);
-      setDecisionAutoSkipped(false);
-      return;
-    }
-
-    const totalDecisionRequests = requestedModels.length + wildcardRouteIds.length;
-    if (!options?.force && totalDecisionRequests > AUTO_ROUTE_DECISION_LIMIT) {
-      setDecisionByRoute(defaultState);
-      setDecisionAutoSkipped(true);
-      return;
-    }
-
-    setLoadingDecision(true);
-    try {
-      setDecisionAutoSkipped(false);
-      const decisionRequestOptions = options?.refreshPricingCatalog
-        ? {
-          refreshPricingCatalog: true as const,
-          ...(options?.persistSnapshots ? { persistSnapshots: true as const } : {}),
-        }
-        : options?.persistSnapshots
-          ? { persistSnapshots: true as const }
-          : undefined;
-      const [exactRes, wildcardRes] = await Promise.all([
-        requestedModels.length > 0
-          ? api.getRouteDecisionsBatch(requestedModels, decisionRequestOptions)
-          : Promise.resolve({ decisions: {} }),
-        wildcardRouteIds.length > 0
-          ? api.getRouteWideDecisionsBatch(wildcardRouteIds, decisionRequestOptions)
-          : Promise.resolve({ decisions: {} }),
-      ]);
-
-      const decisionMap = (exactRes?.decisions || {}) as Record<string, RouteDecision | null>;
-      const wildcardDecisionMap = (wildcardRes?.decisions || {}) as Record<string, RouteDecision | null>;
-      const next = { ...defaultState };
-      for (const route of exactRoutes) {
-        next[route.id] = decisionMap[route.modelPattern] || null;
-      }
-      for (const routeId of wildcardRouteIds) {
-        next[routeId] = wildcardDecisionMap[String(routeId)] || null;
-      }
-
-      setDecisionByRoute(next);
-    } catch {
-      setDecisionByRoute(defaultState);
-      setDecisionAutoSkipped(false);
-    } finally {
-      setLoadingDecision(false);
-    }
-  };
+  const decisionRefreshWatchSeqRef = useRef(0);
+  const mountedRef = useRef(true);
 
   const loadCandidates = (force?: boolean) => {
     if (candidatesLoadedRef.current && !force) return;
@@ -281,10 +217,98 @@ export default function TokenRoutes() {
     }
   };
 
+  const loadRef = useRef(load);
+  loadRef.current = load;
+
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+
+  const monitorRouteDecisionRefreshTask = useCallback((taskId: string) => {
+    const normalizedTaskId = String(taskId || '').trim();
+    if (!normalizedTaskId) return;
+
+    const taskFetcher = (api as { getTask?: (id: string) => Promise<unknown> }).getTask;
+    if (typeof taskFetcher !== 'function') {
+      setLoadingDecision(false);
+      return;
+    }
+
+    const watchSeq = ++decisionRefreshWatchSeqRef.current;
+    setLoadingDecision(true);
+    setDecisionAutoSkipped(false);
+
+    void (async () => {
+      while (mountedRef.current && decisionRefreshWatchSeqRef.current === watchSeq) {
+        try {
+          const taskResponse = await taskFetcher(normalizedTaskId) as {
+            task?: { status?: string; message?: string; error?: string | null };
+          };
+          const task = taskResponse?.task;
+          if (!task) {
+            throw new Error('路由选中概率任务不存在');
+          }
+
+          const status = String(task.status || '').trim();
+          if (status === 'pending' || status === 'running') {
+            await new Promise((resolve) => setTimeout(resolve, 1200));
+            continue;
+          }
+
+          if (!mountedRef.current || decisionRefreshWatchSeqRef.current !== watchSeq) return;
+          await loadRef.current();
+          if (!mountedRef.current || decisionRefreshWatchSeqRef.current !== watchSeq) return;
+
+          setLoadingDecision(false);
+          if (status === 'succeeded') {
+            toastRef.current.success('路由选择概率已刷新');
+          } else {
+            toastRef.current.error(String(task.message || task.error || '刷新路由选择概率失败'));
+          }
+          return;
+        } catch (error: any) {
+          if (!mountedRef.current || decisionRefreshWatchSeqRef.current !== watchSeq) return;
+          setLoadingDecision(false);
+          toastRef.current.error(error?.message || '刷新路由选择概率失败');
+          return;
+        }
+      }
+    })();
+  }, []);
+
+  const resumeRouteDecisionRefreshTask = useCallback(async () => {
+    const tasksFetcher = (api as { getTasks?: (limit?: number) => Promise<unknown> }).getTasks;
+    if (typeof tasksFetcher !== 'function') {
+      setLoadingDecision(false);
+      return;
+    }
+
+    try {
+      const tasksResponse = await tasksFetcher(50) as {
+        tasks?: Array<{ id?: string; type?: string; status?: string }>;
+      };
+      const runningTask = Array.isArray(tasksResponse?.tasks)
+        ? tasksResponse.tasks.find((task) => (
+          String(task?.type || '').trim() === ROUTE_DECISION_REFRESH_TASK_TYPE
+          && (task?.status === 'pending' || task?.status === 'running')
+        ))
+        : null;
+      const taskId = String(runningTask?.id || '').trim();
+      if (!taskId) {
+        setLoadingDecision(false);
+        return;
+      }
+      monitorRouteDecisionRefreshTask(taskId);
+    } catch {
+      setLoadingDecision(false);
+    }
+  }, [monitorRouteDecisionRefreshTask]);
+
   useEffect(() => {
+    mountedRef.current = true;
     (async () => {
       try {
         await load();
+        await resumeRouteDecisionRefreshTask();
       } catch {
         toast.error('加载路由配置失败');
       }
@@ -292,7 +316,11 @@ export default function TokenRoutes() {
       const scheduleIdle = typeof requestIdleCallback === 'function' ? requestIdleCallback : (cb: () => void) => setTimeout(cb, 0);
       scheduleIdle(() => loadCandidates());
     })();
-  }, []);
+    return () => {
+      mountedRef.current = false;
+      decisionRefreshWatchSeqRef.current += 1;
+    };
+  }, [resumeRouteDecisionRefreshTask, toast]);
 
   const handleRebuild = async () => {
     try {
@@ -318,10 +346,19 @@ export default function TokenRoutes() {
 
   const handleRefreshRouteDecisions = async () => {
     try {
-      await loadRouteDecisions(routeSummaries, { force: true, refreshPricingCatalog: true, persistSnapshots: true });
-      toast.success('路由选择概率已刷新');
-    } catch {
-      toast.error('刷新路由选择概率失败');
+      const response = await api.refreshRouteDecisionSnapshots() as {
+        message?: string;
+        jobId?: string;
+      };
+      const taskId = String(response?.jobId || '').trim();
+      if (!taskId) {
+        throw new Error('刷新任务未返回 taskId');
+      }
+
+      toast.info(response?.message || '已开始后台刷新路由选中概率，可稍后返回查看');
+      monitorRouteDecisionRefreshTask(taskId);
+    } catch (error: any) {
+      toast.error(error?.message || '刷新路由选择概率失败');
     }
   };
 
