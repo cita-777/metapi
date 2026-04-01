@@ -35,7 +35,7 @@ import {
   parseBackupWebdavExportPayload,
 } from '../../contracts/settingsRoutePayloads.js';
 import { formatUtcSqlDateTime, getResolvedTimeZone } from '../../services/localTimeService.js';
-import { extractClientIp, isIpAllowed } from '../../middleware/auth.js';
+import { extractClientIp, findInvalidIpAllowlistEntries, isIpAllowed } from '../../middleware/auth.js';
 import { invalidateSiteProxyCache, normalizeSiteProxyUrl, withExplicitProxyRequestInit } from '../../services/siteProxy.js';
 import { performFactoryReset } from '../../services/factoryResetService.js';
 import { normalizeLogCleanupRetentionDays } from '../../services/logCleanupService.js';
@@ -1552,6 +1552,13 @@ export async function settingsRoutes(app: FastifyInstance) {
 
     if (body.adminIpAllowlist !== undefined) {
       const nextAllowlist = toStringList(body.adminIpAllowlist);
+      const invalidAllowlistEntries = findInvalidIpAllowlistEntries(nextAllowlist);
+      if (invalidAllowlistEntries.length > 0) {
+        return reply.code(400).send({
+          success: false,
+          message: `保存失败：IP 白名单包含无效条目：${invalidAllowlistEntries.join(', ')}。请使用单个 IP 或 IPv4 CIDR 网段（例如 192.168.1.10 或 192.168.1.0/24）。`,
+        });
+      }
       if (nextAllowlist.length > 0 && !isIpAllowed(currentRequestIp, nextAllowlist)) {
         return reply.code(400).send({
           success: false,

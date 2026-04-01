@@ -2053,7 +2053,7 @@ export default function Settings() {
         <div className="card animate-slide-up stagger-7" style={{ padding: 20 }}>
           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10 }}>会话与安全</div>
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
-            登录会话默认 12 小时自动过期。可选配置管理端 IP 白名单（每行一个 IP）。
+            登录会话默认 12 小时自动过期。可选配置管理端 IP 白名单，支持每行一个 IP 或 IPv4 CIDR 网段。
           </div>
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>
             当前识别到的管理端 IP（由服务端判定）：
@@ -2064,7 +2064,7 @@ export default function Settings() {
           <textarea
             value={adminIpAllowlistText}
             onChange={(e) => setAdminIpAllowlistText(e.target.value)}
-            placeholder={'例如：\n127.0.0.1\n192.168.1.10'}
+            placeholder={'例如：\n127.0.0.1\n192.168.1.10\n192.168.1.0/24'}
             rows={4}
             style={{ ...inputStyle, fontFamily: 'var(--font-mono)', resize: 'vertical', marginBottom: 10 }}
           />

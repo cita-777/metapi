@@ -758,6 +758,56 @@ describe('settings and auth events', () => {
     expect(saved?.value).toBe(JSON.stringify(['198.51.100.10', '198.51.100.11']));
   });
 
+  it('allows allowlist update when current request IP is covered by a CIDR range', async () => {
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      remoteAddress: '198.51.100.10',
+      payload: {
+        adminIpAllowlist: ['198.51.100.0/24'],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as { adminIpAllowlist?: string[] };
+    expect(body.adminIpAllowlist).toEqual(['198.51.100.0/24']);
+
+    const saved = await db.select().from(schema.settings).where(eq(schema.settings.key, 'admin_ip_allowlist')).get();
+    expect(saved?.value).toBe(JSON.stringify(['198.51.100.0/24']));
+  });
+
+  it('rejects allowlist update when current request IP is outside the CIDR range', async () => {
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      remoteAddress: '198.51.100.10',
+      payload: {
+        adminIpAllowlist: ['198.51.101.0/24'],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    const body = response.json() as { message?: string };
+    expect(body.message).toContain('白名单');
+    expect(body.message).toContain('198.51.100.10');
+  });
+
+  it('rejects allowlist update when it contains malformed CIDR entries', async () => {
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/api/settings/runtime',
+      remoteAddress: '198.51.100.10',
+      payload: {
+        adminIpAllowlist: ['198.51.100.0/99'],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    const body = response.json() as { message?: string };
+    expect(body.message).toContain('IP 白名单');
+    expect(body.message).toContain('198.51.100.0/99');
+  });
+
   it('appends event when admin auth token changes', async () => {
     const response = await app.inject({
       method: 'POST',
