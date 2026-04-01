@@ -648,10 +648,13 @@ export class NewApiAdapter extends BasePlatformAdapter {
     const text = message.toLowerCase();
     return (
       text.includes('access token') ||
+      text.includes('unauthorized') ||
+      text.includes('forbidden') ||
       text.includes('new-api-user') ||
       text.includes('user id') ||
       text.includes('invalid token') ||
       text.includes('expired') ||
+      text.includes('无权') ||
       text.includes('未登录') ||
       text.includes('未提供') ||
       text.includes('未授权') ||
