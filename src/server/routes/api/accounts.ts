@@ -603,17 +603,23 @@ export async function accountsRoutes(app: FastifyInstance) {
         updatedAt: new Date().toISOString(),
       }).where(eq(schema.accounts.id, existing.id)).run();
     } else {
-      const inserted = await db.insert(schema.accounts).values({
-        siteId,
-        username,
-        accessToken: loginResult.accessToken,
-        apiToken: preferredApiToken || undefined,
-        checkinEnabled: true,
-        extraConfig,
-        isPinned: false,
-        sortOrder: await getNextAccountSortOrder(),
-      }).run();
-      accountId = getInsertedRowId(inserted) ?? undefined;
+      const created = await insertAndGetById<typeof schema.accounts.$inferSelect>({
+        table: schema.accounts,
+        idColumn: schema.accounts.id,
+        values: {
+          siteId,
+          username,
+          accessToken: loginResult.accessToken,
+          apiToken: preferredApiToken || undefined,
+          checkinEnabled: true,
+          extraConfig,
+          isPinned: false,
+          sortOrder: await getNextAccountSortOrder(),
+        },
+        insertErrorMessage: 'account create failed',
+        loadErrorMessage: 'account create failed',
+      });
+      accountId = created.id;
     }
 
     const result = await db.select().from(schema.accounts).where(eq(schema.accounts.id, accountId!)).get();
