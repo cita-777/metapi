@@ -17,6 +17,7 @@ import {
   convertOpenAiBodyToResponsesBody as convertOpenAiBodyToResponsesBodyViaTransformer,
   sanitizeResponsesBodyForProxy as sanitizeResponsesBodyForProxyViaTransformer,
 } from '../../transformers/openai/responses/conversion.js';
+import { normalizeCodexResponsesBodyForProxy } from '../../transformers/openai/responses/codexCompatibility.js';
 import {
   convertOpenAiBodyToAnthropicMessagesBody,
   sanitizeAnthropicMessagesBody,
@@ -369,73 +370,6 @@ function sanitizeResponsesFallbackChatBody(
 function toFiniteNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
-
-function ensureCodexResponsesInstructions(
-  body: Record<string, unknown>,
-  sitePlatform: string,
-): Record<string, unknown> {
-  if (sitePlatform !== 'codex') return body;
-  if (typeof body.instructions === 'string') return body;
-  return {
-    ...body,
-    instructions: '',
-  };
-}
-
-function ensureCodexResponsesStoreFalse(
-  body: Record<string, unknown>,
-  sitePlatform: string,
-): Record<string, unknown> {
-  if (sitePlatform !== 'codex') return body;
-  return {
-    ...body,
-    store: false,
-  };
-}
-
-function stripCodexUnsupportedResponsesFields(
-  body: Record<string, unknown>,
-  sitePlatform: string,
-): Record<string, unknown> {
-  if (sitePlatform !== 'codex') return body;
-  const next = { ...body };
-  delete next.max_output_tokens;
-  delete next.max_completion_tokens;
-  delete next.max_tokens;
-  return next;
-}
-
-function convertCodexSystemRoleToDeveloper(input: unknown): unknown {
-  if (!Array.isArray(input)) return input;
-  return input.map((item) => {
-    if (!isRecord(item)) return item;
-    if (asTrimmedString(item.type).toLowerCase() !== 'message') return item;
-    if (asTrimmedString(item.role).toLowerCase() !== 'system') return item;
-    return {
-      ...item,
-      role: 'developer',
-    };
-  });
-}
-
-function applyCodexResponsesCompatibility(
-  body: Record<string, unknown>,
-  sitePlatform: string,
-): Record<string, unknown> {
-  if (sitePlatform !== 'codex') return body;
-
-  const next: Record<string, unknown> = {
-    ...body,
-    input: convertCodexSystemRoleToDeveloper(body.input),
-  };
-
-  if (typeof next.instructions !== 'string') {
-    next.instructions = '';
-  }
-
-  return next;
-}
-
 
 function normalizeEndpointTypes(value: unknown): UpstreamEndpoint[] {
   const raw = asTrimmedString(value).toLowerCase();
@@ -969,24 +903,12 @@ export function buildUpstreamEndpointRequest(input: {
     if (preserveWebsocketIncrementalMode && rawBody.generate === false) {
       sanitizedResponsesBody.generate = false;
     }
-    const body = ensureCodexResponsesStoreFalse(
-      stripCodexUnsupportedResponsesFields(
-        ensureCodexResponsesInstructions(
-          applyCodexResponsesCompatibility(
-            sanitizedResponsesBody,
-            sitePlatform,
-          ),
-          sitePlatform,
-        ),
-        sitePlatform,
-      ),
+    const body = normalizeCodexResponsesBodyForProxy(
+      sanitizedResponsesBody,
       sitePlatform,
     );
-    const configuredResponsesBody = ensureCodexResponsesStoreFalse(
-      stripCodexUnsupportedResponsesFields(
-        applyConfiguredPayloadRules(body),
-        sitePlatform,
-      ),
+    const configuredResponsesBody = normalizeCodexResponsesBodyForProxy(
+      applyConfiguredPayloadRules(body),
       sitePlatform,
     );
 

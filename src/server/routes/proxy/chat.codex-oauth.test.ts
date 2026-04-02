@@ -211,6 +211,7 @@ describe('chat proxy codex oauth compatibility', () => {
     expect(forwardedBody.parallel_tool_calls).toBeUndefined();
     expect(forwardedBody.include).toBeUndefined();
     expect(forwardedBody.max_output_tokens).toBeUndefined();
+    expect(forwardedBody.max_tokens).toBeUndefined();
     expect(forwardedBody.max_completion_tokens).toBeUndefined();
 
     const body = response.json();
