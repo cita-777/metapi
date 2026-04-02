@@ -1,4 +1,4 @@
-import { memo, useState, type ReactNode } from 'react';
+import { memo, useState } from 'react';
 import {
   DndContext,
   KeyboardSensor,
@@ -18,7 +18,6 @@ import {
 } from '@dnd-kit/sortable';
 import { BrandGlyph, InlineBrandIcon, type BrandInfo } from '../../components/BrandIcon.js';
 import ModernSelect from '../../components/ModernSelect.js';
-import { useAnimatedVisibility } from '../../components/useAnimatedVisibility.js';
 import { tr } from '../../i18n.js';
 import { formatDateTimeMinuteLocal } from '../helpers/checkinLogTime.js';
 import type {
@@ -59,6 +58,8 @@ type RouteCardProps = {
   brand: BrandInfo | null;
   expanded: boolean;
   compact?: boolean;
+  summaryExpanded?: boolean;
+  detailPanel?: boolean;
   onToggleExpand: (routeId: number) => void;
   onEdit: (route: RouteSummaryRow) => void;
   onDelete: (routeId: number) => void;
@@ -96,18 +97,6 @@ type RouteCardProps = {
   onToggleSourceGroup: (groupKey: string) => void;
 };
 
-function AnimatedCollapseSection({ open, children }: { open: boolean; children: ReactNode }) {
-  const presence = useAnimatedVisibility(open, 220);
-  if (!presence.shouldRender) return null;
-  return (
-    <div className={`anim-collapse ${presence.isVisible ? 'is-open' : ''}`.trim()}>
-      <div className="anim-collapse-inner">
-        {children}
-      </div>
-    </div>
-  );
-}
-
 function PriorityRailNewLayerRow({
   id,
   highlighted,
@@ -142,7 +131,7 @@ function PriorityRailNewLayerRow({
           fontWeight: 600,
           textAlign: 'center',
           lineHeight: 1.2,
-          transition: 'all 0.16s ease',
+          transition: 'border-color 0.16s ease, background 0.16s ease, color 0.16s ease',
         }}
       >
         {tr('放到新档位')}
@@ -152,7 +141,7 @@ function PriorityRailNewLayerRow({
           height: 0,
           borderTop: `1px dashed ${active ? 'var(--color-primary)' : 'var(--color-border)'}`,
           opacity: active ? 1 : 0.75,
-          transition: 'all 0.16s ease',
+          transition: 'border-color 0.16s ease, opacity 0.16s ease',
         }}
       />
     </div>
@@ -164,6 +153,8 @@ function RouteCardInner({
   brand,
   expanded,
   compact = false,
+  summaryExpanded = false,
+  detailPanel = false,
   onToggleExpand,
   onEdit,
   onDelete,
@@ -280,7 +271,7 @@ function RouteCardInner({
   if (!expanded) {
     return (
       <div
-        className="card route-card-collapsed"
+        className={`card route-card-collapsed ${summaryExpanded ? 'is-active' : ''}`.trim()}
         onClick={() => onToggleExpand(route.id)}
         style={{ cursor: 'pointer' }}
       >
@@ -374,7 +365,12 @@ function RouteCardInner({
 
           <svg
             width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2"
-            style={{ flexShrink: 0, color: 'var(--color-text-muted)' }}
+            style={{
+              flexShrink: 0,
+              color: 'var(--color-text-muted)',
+              transform: summaryExpanded ? 'rotate(180deg)' : 'none',
+              transition: 'transform 0.18s ease',
+            }}
             aria-hidden
           >
             <path d="m5 7 5 6 5-6" />
@@ -386,7 +382,10 @@ function RouteCardInner({
 
   // Expanded card
   return (
-    <div className={`card route-card-expanded ${compact ? 'route-card-expanded-compact' : ''}`.trim()} style={{ padding: compact ? 14 : 16 }}>
+    <div
+      className={`card route-card-expanded ${compact ? 'route-card-expanded-compact' : ''} ${detailPanel ? 'route-card-detail-panel' : ''}`.trim()}
+      style={{ padding: compact ? 14 : 16 }}
+    >
       {!compact ? (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 8, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -491,9 +490,18 @@ function RouteCardInner({
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                 {renderClearCooldownButton()}
                 {!exactRoute && (
-                  <button onClick={() => onEdit(route)} className="btn btn-link">{explicitGroupRoute ? tr('编辑群组') : tr('编辑路由')}</button>
+                  <button onClick={() => onEdit(route)} className="btn btn-link">{tr('编辑群组')}</button>
                 )}
                 <button onClick={() => onDelete(route.id)} className="btn btn-link btn-link-danger">{tr('删除路由')}</button>
+                {detailPanel && (
+                  <button
+                    onClick={() => onToggleExpand(route.id)}
+                    className="btn btn-ghost"
+                    style={{ padding: '4px 10px', border: '1px solid var(--color-border)' }}
+                  >
+                    {tr('收起详情')}
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -705,7 +713,7 @@ function RouteCardInner({
                                 fontWeight: 600,
                                 textAlign: 'center',
                                 lineHeight: 1.2,
-                                transition: 'all 0.16s ease',
+                                transition: 'border-color 0.16s ease, background 0.16s ease, color 0.16s ease',
                                 ...railNodeStyle,
                               }}
                             >
@@ -775,5 +783,66 @@ function RouteCardInner({
   );
 }
 
-const RouteCard = memo(RouteCardInner);
+function buildChannelInteractionSignature(
+  channels: RouteChannel[] | undefined,
+  channelTokenDraft: Record<number, number>,
+  updatingChannel: Record<number, boolean>,
+): string {
+  if (!Array.isArray(channels) || channels.length === 0) return '';
+  return channels
+    .map((channel) => `${channel.id}:${channelTokenDraft[channel.id] ?? ''}:${updatingChannel[channel.id] ? 1 : 0}`)
+    .join('|');
+}
+
+function areRouteCardPropsEqual(prev: RouteCardProps, next: RouteCardProps): boolean {
+  if (
+    prev.route !== next.route
+    || prev.brand !== next.brand
+    || prev.expanded !== next.expanded
+    || prev.compact !== next.compact
+    || prev.summaryExpanded !== next.summaryExpanded
+    || prev.detailPanel !== next.detailPanel
+    || prev.onToggleExpand !== next.onToggleExpand
+    || prev.onEdit !== next.onEdit
+    || prev.onDelete !== next.onDelete
+    || prev.onToggleEnabled !== next.onToggleEnabled
+    || prev.onClearCooldown !== next.onClearCooldown
+    || prev.onRoutingStrategyChange !== next.onRoutingStrategyChange
+    || prev.onTokenDraftChange !== next.onTokenDraftChange
+    || prev.onSaveToken !== next.onSaveToken
+    || prev.onDeleteChannel !== next.onDeleteChannel
+    || prev.onToggleChannelEnabled !== next.onToggleChannelEnabled
+    || prev.onChannelDragEnd !== next.onChannelDragEnd
+    || prev.onCreateTokenForMissing !== next.onCreateTokenForMissing
+    || prev.onAddChannel !== next.onAddChannel
+    || prev.onSiteBlockModel !== next.onSiteBlockModel
+    || prev.onToggleSourceGroup !== next.onToggleSourceGroup
+  ) {
+    return false;
+  }
+
+  if (!next.expanded) {
+    return true;
+  }
+
+  if (
+    prev.clearingCooldown !== next.clearingCooldown
+    || prev.updatingRoutingStrategy !== next.updatingRoutingStrategy
+    || prev.savingPriority !== next.savingPriority
+    || prev.loadingChannels !== next.loadingChannels
+    || prev.loadingDecision !== next.loadingDecision
+    || prev.routeDecision !== next.routeDecision
+    || prev.candidateView !== next.candidateView
+    || prev.missingTokenSiteItems !== next.missingTokenSiteItems
+    || prev.missingTokenGroupItems !== next.missingTokenGroupItems
+    || prev.channels !== next.channels
+  ) {
+    return false;
+  }
+
+  return buildChannelInteractionSignature(prev.channels, prev.channelTokenDraft, prev.updatingChannel)
+    === buildChannelInteractionSignature(next.channels, next.channelTokenDraft, next.updatingChannel);
+}
+
+const RouteCard = memo(RouteCardInner, areRouteCardPropsEqual);
 export default RouteCard;

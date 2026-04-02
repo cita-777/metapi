@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { api } from '../api.js';
@@ -792,6 +792,18 @@ export default function TokenRoutes() {
     });
   }, [baseFilteredRoutes, enabledFilter]);
 
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    if (search.trim()) count += 1;
+    if (activeBrand) count += 1;
+    if (activeSite) count += 1;
+    if (activeEndpointType) count += 1;
+    if (activeGroupFilter !== null) count += 1;
+    if (enabledFilter !== 'all') count += 1;
+    if (showZeroChannelRoutes) count += 1;
+    return count;
+  }, [search, activeBrand, activeSite, activeEndpointType, activeGroupFilter, enabledFilter, showZeroChannelRoutes]);
+
   const selectableRouteIds = useMemo(() => {
     return new Set(
       filteredRoutes
@@ -1384,10 +1396,42 @@ export default function TokenRoutes() {
   };
 
   return (
-    <div className="animate-fade-in" style={{ minHeight: 400 }}>
+    <div className="route-page-shell animate-fade-in" style={{ minHeight: 400 }}>
+      <section className="route-command-bar card">
+        <div className="route-command-bar-header">
+          <div className="route-command-bar-copy">
+            <div className="route-command-bar-eyebrow">{tr('路由工作台')}</div>
+            <div className="route-command-bar-title-row">
+              <h1 className="route-command-bar-title">{tr('模型路由')}</h1>
+              <span className="route-toolbar-total-pill">
+                {tr('共')} {filteredRoutes.length} {tr('条路由')}
+              </span>
+            </div>
+            <p className="route-command-bar-desc">
+              {tr('在一个工作台里完成搜索、筛选、分桶调度和通道路由检查。我们尽量让这页更稳、更轻，也更容易连续操作。')}
+            </p>
+          </div>
+          <div className="route-command-bar-stats">
+            <span className="route-workspace-stat">
+              <span>{tr('当前视图')}</span>
+              <strong>{visibleRouteCount} / {filteredRoutes.length}</strong>
+            </span>
+            <span className="route-workspace-stat">
+              <span>{tr('筛选状态')}</span>
+              <strong>{activeFilterCount > 0 ? `${activeFilterCount} 项` : tr('默认')}</strong>
+            </span>
+            {batchSelectMode ? (
+              <span className="route-workspace-stat is-emphasis">
+                <span>{tr('批量模式')}</span>
+                <strong>{selectedRouteIds.size} {tr('已选')}</strong>
+              </span>
+            ) : null}
+          </div>
+        </div>
+
       {/* Toolbar: search + sort + actions */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
-        <div className="toolbar-search" style={{ minWidth: 220, flex: 1, maxWidth: 360 }}>
+        <div className="route-toolbar-main">
+        <div className="toolbar-search route-toolbar-search">
           <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path
               strokeLinecap="round"
@@ -1403,7 +1447,7 @@ export default function TokenRoutes() {
           />
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div className="route-toolbar-cluster">
           <div style={{ minWidth: 128 }}>
             <ModernSelect
               size="sm"
@@ -1431,7 +1475,7 @@ export default function TokenRoutes() {
           </button>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, borderLeft: '1px solid var(--color-border)', paddingLeft: 8 }}>
+          <div className="route-toolbar-actions">
           <button
             onClick={handleRefreshRouteDecisions}
             disabled={loadingDecision}
@@ -1491,11 +1535,8 @@ export default function TokenRoutes() {
             {showZeroChannelRoutes ? tr('隐藏 0 通道路由') : tr('显示 0 通道路由')}
           </button>
         </div>
-
-        <span className="badge badge-info" style={{ fontSize: 12, fontWeight: 500, marginLeft: 'auto' }}>
-          {tr('共')} {filteredRoutes.length} {tr('条路由')}
-        </span>
       </div>
+      </section>
 
       {/* Collapsible filter panel */}
       <ResponsiveFilterPanel
@@ -1506,8 +1547,7 @@ export default function TokenRoutes() {
         mobileTriggerWrapperClassName=""
         mobileTrigger={(
           <button
-            className="btn btn-ghost"
-            style={{ border: '1px solid var(--color-border)', padding: '8px 14px', marginBottom: 12 }}
+            className="btn btn-ghost route-toolbar-mobile-trigger"
             onClick={() => {
               loadCandidates();
               setShowFilters(true);
@@ -1566,14 +1606,35 @@ export default function TokenRoutes() {
       />
 
       {/* Info tip */}
-      <div className="info-tip" style={{ marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <div>{tr('系统会根据模型可用性自动生成路由。优先级按 P0/P1 等桶管理，同一桶内可有多个通道；拖动通道或灰色分隔线即可调整。精确模型路由会自动过滤只支持该模型的账号和令牌。群组路由中的优先级调整会直接回写来源通道。选中概率表示请求到达时该通道被选中的概率。成本来源优先级为：实测成本 → 账号配置成本 → 目录参考价 → 默认回退单价。')}</div>
-        <div>{`${getRouteRoutingStrategyLabel('weighted')}：${getRouteRoutingStrategyDescription('weighted')}`}</div>
-        <div>{`${getRouteRoutingStrategyLabel('round_robin')}：${getRouteRoutingStrategyDescription('round_robin')}`}</div>
-        <div>{`${getRouteRoutingStrategyLabel('stable_first')}：${getRouteRoutingStrategyDescription('stable_first')}`}</div>
-        <div>{tr('选中概率用于解释当前策略下这一次请求更可能落到哪里；轮询和稳定优先更适合把它当作顺序参考。')}</div>
-        <div>{tr('成本来源优先级：实测成本 → 账号配置成本 → 目录参考价 → 默认回退单价。')}</div>
-      </div>
+      <section className="route-guidance-panel">
+        <div className="route-guidance-copy">
+          <div className="route-guidance-eyebrow">{tr('操作提示')}</div>
+          <div className="route-guidance-title">{tr('先筛选，再看桶，再调通道')}</div>
+          <div className="route-guidance-text">
+            {tr('系统会根据模型可用性自动生成路由。优先级按 P0/P1 等桶管理，同一桶内可有多个通道；拖动通道或灰色分隔线即可调整。精确模型路由会自动过滤只支持该模型的账号和令牌。群组路由中的优先级调整会直接回写来源通道。')}
+          </div>
+          <div className="route-guidance-keyline">
+            {tr('成本来源优先级：实测成本 → 账号配置成本 → 目录参考价 → 默认回退单价。')}
+          </div>
+        </div>
+        <div className="route-guidance-strategies">
+          <div className="route-strategy-chip">
+            <span className="route-strategy-chip-label">{getRouteRoutingStrategyLabel('weighted')}</span>
+            <span className="route-strategy-chip-desc">{getRouteRoutingStrategyDescription('weighted')}</span>
+          </div>
+          <div className="route-strategy-chip">
+            <span className="route-strategy-chip-label">{getRouteRoutingStrategyLabel('round_robin')}</span>
+            <span className="route-strategy-chip-desc">{getRouteRoutingStrategyDescription('round_robin')}</span>
+          </div>
+          <div className="route-strategy-chip">
+            <span className="route-strategy-chip-label">{getRouteRoutingStrategyLabel('stable_first')}</span>
+            <span className="route-strategy-chip-desc">{getRouteRoutingStrategyDescription('stable_first')}</span>
+          </div>
+          <div className="route-guidance-footnote">
+            {tr('选中概率用于解释当前策略下这一次请求更可能落到哪里；轮询和稳定优先更适合把它当作顺序参考。')}
+          </div>
+        </div>
+      </section>
 
       {/* Manual route panel */}
       <ManualRoutePanel
@@ -1594,15 +1655,7 @@ export default function TokenRoutes() {
       {/* Route card grid */}
       {/* Batch selection floating bar */}
       {batchSelectMode && (
-        <div style={{
-          position: 'sticky', top: 0, zIndex: 50,
-          background: 'var(--color-bg-card, #fff)',
-          border: '1px solid var(--color-border)',
-          borderRadius: 8, padding: '10px 16px',
-          marginBottom: 12,
-          display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
-        }}>
+        <div className="route-batch-bar">
           <span style={{ fontSize: 13, fontWeight: 500 }}>
             {tr('已选择')} <b>{selectedRouteIds.size}</b> / {selectableRouteIds.size} {tr('条路由')}
           </span>
@@ -1758,12 +1811,12 @@ export default function TokenRoutes() {
             );
           }
 
-          const routeCard = (
+          const summaryCard = (
             <RouteCard
-              key={route.id}
               route={route}
               brand={routeBrandById.get(route.id) || null}
-              expanded={isExpanded}
+              expanded={false}
+              summaryExpanded={isExpanded}
               onToggleExpand={stableToggleExpand}
               onEdit={stableEditRoute}
               onDelete={stableDeleteRoute}
@@ -1794,40 +1847,85 @@ export default function TokenRoutes() {
               onToggleSourceGroup={stableToggleSourceGroup}
             />
           );
+          const detailPanel = isExpanded ? (
+            <RouteCard
+              route={route}
+              brand={routeBrandById.get(route.id) || null}
+              expanded
+              compact
+              detailPanel
+              onToggleExpand={stableToggleExpand}
+              onEdit={stableEditRoute}
+              onDelete={stableDeleteRoute}
+              onToggleEnabled={stableToggleEnabled}
+              onClearCooldown={stableClearRouteCooldown}
+              clearingCooldown={!!clearingCooldownByRoute[route.id]}
+              onRoutingStrategyChange={stableRoutingStrategyChange}
+              updatingRoutingStrategy={!!updatingRoutingStrategyByRoute[route.id]}
+              channels={channelsByRouteId[route.id]}
+              loadingChannels={!!loadingChannelsByRouteId[route.id]}
+              routeDecision={decisionByRoute[route.id] || null}
+              loadingDecision={loadingDecision}
+              candidateView={getRouteCandidateView(route.id)}
+              channelTokenDraft={channelTokenDraft}
+              updatingChannel={updatingChannel}
+              savingPriority={!!savingPriorityByRoute[route.id]}
+              onTokenDraftChange={stableTokenDraftChange}
+              onSaveToken={stableChannelTokenSave}
+              onDeleteChannel={stableDeleteChannel}
+              onToggleChannelEnabled={stableToggleChannelEnabled}
+              onChannelDragEnd={stableChannelDragEnd}
+              missingTokenSiteItems={getMissingTokenSiteItems(route.id)}
+              missingTokenGroupItems={getMissingTokenGroupItems(route.id)}
+              onCreateTokenForMissing={stableCreateTokenForMissing}
+              onAddChannel={stableAddChannel}
+              onSiteBlockModel={stableSiteBlockModel}
+              expandedSourceGroupMap={expandedSourceGroupMap}
+              onToggleSourceGroup={stableToggleSourceGroup}
+            />
+          ) : null;
 
           if (batchSelectMode && isSelectable) {
             return (
-              <div key={route.id} style={{ display: 'flex', gap: 0, alignItems: 'stretch', ...(isExpanded ? { gridColumn: '1 / -1' } : {}) }}>
-                <div
-                  onClick={() => toggleRouteSelection(route.id)}
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    width: 36, minHeight: '100%', cursor: 'pointer',
-                    borderRadius: '8px 0 0 8px',
-                    background: isSelected ? 'var(--color-primary, #4f46e5)' : 'var(--color-bg-card, #fff)',
-                    border: '1px solid var(--color-border)',
-                    borderRight: 'none',
-                    transition: 'background 0.15s',
-                  }}
-                >
-                  <input
-                    data-testid={`route-select-${route.id}`}
-                    aria-label={`选择路由 ${routeTitle}`}
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={() => toggleRouteSelection(route.id)}
-                    onClick={(e) => e.stopPropagation()}
-                    style={{ width: 16, height: 16, cursor: 'pointer', accentColor: 'var(--color-primary, #4f46e5)' }}
-                  />
+              <Fragment key={route.id}>
+                <div style={{ display: 'flex', gap: 0, alignItems: 'stretch' }}>
+                  <div
+                    onClick={() => toggleRouteSelection(route.id)}
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      width: 36, minHeight: '100%', cursor: 'pointer',
+                      borderRadius: '8px 0 0 8px',
+                      background: isSelected ? 'var(--color-primary, #4f46e5)' : 'var(--color-bg-card, #fff)',
+                      border: '1px solid var(--color-border)',
+                      borderRight: 'none',
+                      transition: 'background 0.15s',
+                    }}
+                  >
+                    <input
+                      data-testid={`route-select-${route.id}`}
+                      aria-label={`选择路由 ${routeTitle}`}
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleRouteSelection(route.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      style={{ width: 16, height: 16, cursor: 'pointer', accentColor: 'var(--color-primary, #4f46e5)' }}
+                    />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {summaryCard}
+                  </div>
                 </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  {routeCard}
-                </div>
-              </div>
+                {detailPanel}
+              </Fragment>
             );
           }
 
-          return routeCard;
+          return (
+            <Fragment key={route.id}>
+              {summaryCard}
+              {detailPanel}
+            </Fragment>
+          );
         })}
       </div>
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { create, type ReactTestInstance } from 'react-test-renderer';
+import { act, create, type ReactTestInstance } from 'react-test-renderer';
 import RouteCard from './RouteCard.js';
 import type { RouteChannel, RouteSummaryRow } from './types.js';
 
@@ -228,5 +228,85 @@ describe('RouteCard', () => {
     expect(p0RailNode.props.style.background).not.toBe('var(--color-bg)');
     expect(p1RailNode.props.style.background).not.toBe('var(--color-bg)');
     expect(p0RailNode.props.style.color).not.toBe(p1RailNode.props.style.color);
+  });
+
+  it('skips collapsed rerenders when only expanded-channel state changes', () => {
+    const routeTarget = buildRoute();
+    let modelPatternReadCount = 0;
+    const route = new Proxy(routeTarget, {
+      get(target, property, receiver) {
+        if (property === 'modelPattern') {
+          modelPatternReadCount += 1;
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    }) as RouteSummaryRow;
+    const callbacks = {
+      onToggleExpand: vi.fn(),
+      onEdit: vi.fn(),
+      onDelete: vi.fn(),
+      onToggleEnabled: vi.fn(),
+      onClearCooldown: vi.fn(),
+      onRoutingStrategyChange: vi.fn(),
+      onTokenDraftChange: vi.fn(),
+      onSaveToken: vi.fn(),
+      onDeleteChannel: vi.fn(),
+      onToggleChannelEnabled: vi.fn(),
+      onChannelDragEnd: vi.fn(),
+      onCreateTokenForMissing: vi.fn(),
+      onAddChannel: vi.fn(),
+      onSiteBlockModel: vi.fn(),
+      onToggleSourceGroup: vi.fn(),
+    };
+    const candidateView = { routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} };
+
+    const renderCard = (channelTokenDraft: Record<number, number>, updatingChannel: Record<number, boolean>) => (
+      <RouteCard
+        route={route}
+        brand={null}
+        expanded={false}
+        onToggleExpand={callbacks.onToggleExpand}
+        onEdit={callbacks.onEdit}
+        onDelete={callbacks.onDelete}
+        onToggleEnabled={callbacks.onToggleEnabled}
+        onClearCooldown={callbacks.onClearCooldown}
+        clearingCooldown={false}
+        onRoutingStrategyChange={callbacks.onRoutingStrategyChange}
+        updatingRoutingStrategy={false}
+        channels={undefined}
+        loadingChannels={false}
+        routeDecision={null}
+        loadingDecision={false}
+        candidateView={candidateView}
+        channelTokenDraft={channelTokenDraft}
+        updatingChannel={updatingChannel}
+        savingPriority={false}
+        onTokenDraftChange={callbacks.onTokenDraftChange}
+        onSaveToken={callbacks.onSaveToken}
+        onDeleteChannel={callbacks.onDeleteChannel}
+        onToggleChannelEnabled={callbacks.onToggleChannelEnabled}
+        onChannelDragEnd={callbacks.onChannelDragEnd}
+        missingTokenSiteItems={[]}
+        missingTokenGroupItems={[]}
+        onCreateTokenForMissing={callbacks.onCreateTokenForMissing}
+        onAddChannel={callbacks.onAddChannel}
+        onSiteBlockModel={callbacks.onSiteBlockModel}
+        expandedSourceGroupMap={{}}
+        onToggleSourceGroup={callbacks.onToggleSourceGroup}
+      />
+    );
+
+    let root!: WebTestRenderer;
+    act(() => {
+      root = create(renderCard({}, {}));
+    });
+
+    const initialReadCount = modelPatternReadCount;
+
+    act(() => {
+      root.update(renderCard({ 11: 1001 }, { 11: true }));
+    });
+
+    expect(modelPatternReadCount).toBe(initialReadCount);
   });
 });

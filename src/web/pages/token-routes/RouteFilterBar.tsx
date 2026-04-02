@@ -63,7 +63,7 @@ function FilterRow({ label, children }: { label: string; children: ReactNode }) 
   );
 }
 
-function ActiveFilterSummary({
+function buildActiveFilterTags({
   activeBrand,
   activeSite,
   activeGroupFilter,
@@ -78,6 +78,24 @@ function ActiveFilterSummary({
   if (activeGroupFilter === '__all__') tags.push('群组=全部');
   else if (typeof activeGroupFilter === 'number') tags.push(`群组=#${activeGroupFilter}`);
   if (activeEndpointType) tags.push(`能力=${activeEndpointType}`);
+
+  return tags;
+}
+
+function ActiveFilterSummary({
+  activeBrand,
+  activeSite,
+  activeGroupFilter,
+  activeEndpointType,
+  enabledFilter,
+}: Pick<RouteFilterBarProps, 'activeBrand' | 'activeSite' | 'activeGroupFilter' | 'activeEndpointType' | 'enabledFilter'>) {
+  const tags = buildActiveFilterTags({
+    activeBrand,
+    activeSite,
+    activeGroupFilter,
+    activeEndpointType,
+    enabledFilter,
+  });
 
   if (tags.length === 0) return <span style={{ color: 'var(--color-text-muted)' }}>{tr('全部')}</span>;
   return <span>{tags.join(', ')}</span>;
@@ -106,6 +124,13 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
   } = props;
 
   const expandPresence = useAnimatedVisibility(!collapsed, 220);
+  const activeFilterCount = buildActiveFilterTags({
+    activeBrand,
+    activeSite,
+    activeGroupFilter,
+    activeEndpointType,
+    enabledFilter,
+  }).length;
 
   return (
     <div className="route-filter-bar">
@@ -122,14 +147,19 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
         >
           <path d="m5 7 5 6 5-6" />
         </svg>
-        <span style={{ fontWeight: 500, fontSize: 13 }}>{tr('筛选')}:</span>
-        <ActiveFilterSummary
-          activeBrand={activeBrand}
-          activeSite={activeSite}
-          activeGroupFilter={activeGroupFilter}
-          activeEndpointType={activeEndpointType}
-          enabledFilter={enabledFilter}
-        />
+        <span className="route-filter-bar-summary-label">{tr('筛选')}</span>
+        <span className="route-filter-bar-summary-content">
+          <ActiveFilterSummary
+            activeBrand={activeBrand}
+            activeSite={activeSite}
+            activeGroupFilter={activeGroupFilter}
+            activeEndpointType={activeEndpointType}
+            enabledFilter={enabledFilter}
+          />
+        </span>
+        <span className={`route-filter-bar-summary-count ${activeFilterCount > 0 ? 'has-active' : ''}`.trim()}>
+          {activeFilterCount > 0 ? `${activeFilterCount} 项` : tr('默认')}
+        </span>
       </button>
 
       {/* Expanded panel */}
