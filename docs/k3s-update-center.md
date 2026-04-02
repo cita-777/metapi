@@ -371,7 +371,7 @@ About 页里的“更新提醒”更像一个轻量入口：
 - K3s / Kubernetes
 - Helm release
 - Deploy Helper
-- 对齐的 token
+- 主服务的 `DEPLOY_HELPER_TOKEN`（或兼容别名 `UPDATE_CENTER_HELPER_TOKEN`）与 helper 侧 `DEPLOY_HELPER_TOKEN` 保持一致
 
 另外，如果你想用“按 digest 精确部署/回退”这条链路，还要确认你的 chart 没有忽略 `image.digest` 这个值；否则页面虽然能显示 digest，真正部署时还是只会落到 tag 语义。
 
