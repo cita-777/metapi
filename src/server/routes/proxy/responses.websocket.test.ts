@@ -24,6 +24,7 @@ const resolveProxyUsageWithSelfLogFallbackMock = vi.fn(async ({ usage }: any) =>
   recoveredFromSelfLog: false,
 }));
 const trackedClientSockets = new Set<WebSocket>();
+let siteApiEndpointRows: Array<Record<string, unknown>> = [];
 const dbInsertMock = vi.fn((_arg?: any) => ({
   values: () => ({
     run: () => undefined,
@@ -101,7 +102,7 @@ vi.mock('../../db/index.js', () => ({
       from: () => ({
         where: () => ({
           orderBy: () => ({
-            all: async () => [],
+            all: async () => siteApiEndpointRows,
           }),
         }),
       }),
@@ -156,6 +157,7 @@ function createSelectedChannel(options?: {
   return {
     channel: { id: 11, routeId: 22 },
     site: {
+      id: 44,
       name: options?.siteName ?? (isCodex ? 'codex-site' : 'openai-site'),
       url: options?.siteUrl ?? (isCodex ? 'https://chatgpt.com/backend-api/codex' : 'https://api.openai.com'),
       platform: sitePlatform,
@@ -365,6 +367,7 @@ describe('responses websocket transport', () => {
     reportTokenExpiredMock.mockReset();
     resolveProxyUsageWithSelfLogFallbackMock.mockClear();
     dbInsertMock.mockClear();
+    siteApiEndpointRows = [];
 
     const selectedChannel = createSelectedChannel();
     selectChannelMock.mockReturnValue(selectedChannel);
@@ -526,6 +529,46 @@ describe('responses websocket transport', () => {
       'response.completed',
     ]);
     expect(messages[3]?.response?.output?.[0]?.content?.[0]?.text).toBe('pong');
+    expect(fetchMock).toHaveBeenCalledTimes(0);
+    expect(upstreamConnectionCount).toBe(1);
+  });
+
+  it('uses the configured site api endpoint pool for codex websocket transport', async () => {
+    siteApiEndpointRows = [{
+      id: 901,
+      siteId: 44,
+      url: upstreamSiteUrl,
+      enabled: true,
+      sortOrder: 0,
+      cooldownUntil: null,
+      lastSelectedAt: null,
+      lastFailedAt: null,
+      lastFailureReason: null,
+      updatedAt: null,
+    }];
+    const selectedChannel = createSelectedChannel({
+      siteUrl: rejectedUpgradeSiteUrl,
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+
+    const socket = createClientSocket(baseUrl);
+    await waitForSocketOpen(socket);
+    const messagePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed',
+    );
+
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+
+    const message = await messagePromise;
+    socket.close();
+
+    expect(message?.type).toBe('response.completed');
     expect(fetchMock).toHaveBeenCalledTimes(0);
     expect(upstreamConnectionCount).toBe(1);
   });
