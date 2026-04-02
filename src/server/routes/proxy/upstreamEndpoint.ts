@@ -393,6 +393,18 @@ function ensureCodexResponsesStoreFalse(
   };
 }
 
+function stripCodexUnsupportedResponsesFields(
+  body: Record<string, unknown>,
+  sitePlatform: string,
+): Record<string, unknown> {
+  if (sitePlatform !== 'codex') return body;
+  const next = { ...body };
+  delete next.max_output_tokens;
+  delete next.max_completion_tokens;
+  delete next.max_tokens;
+  return next;
+}
+
 function convertCodexSystemRoleToDeveloper(input: unknown): unknown {
   if (!Array.isArray(input)) return input;
   return input.map((item) => {
@@ -958,9 +970,12 @@ export function buildUpstreamEndpointRequest(input: {
       sanitizedResponsesBody.generate = false;
     }
     const body = ensureCodexResponsesStoreFalse(
-      ensureCodexResponsesInstructions(
-        applyCodexResponsesCompatibility(
-          sanitizedResponsesBody,
+      stripCodexUnsupportedResponsesFields(
+        ensureCodexResponsesInstructions(
+          applyCodexResponsesCompatibility(
+            sanitizedResponsesBody,
+            sitePlatform,
+          ),
           sitePlatform,
         ),
         sitePlatform,
@@ -968,7 +983,10 @@ export function buildUpstreamEndpointRequest(input: {
       sitePlatform,
     );
     const configuredResponsesBody = ensureCodexResponsesStoreFalse(
-      applyConfiguredPayloadRules(body),
+      stripCodexUnsupportedResponsesFields(
+        applyConfiguredPayloadRules(body),
+        sitePlatform,
+      ),
       sitePlatform,
     );
 

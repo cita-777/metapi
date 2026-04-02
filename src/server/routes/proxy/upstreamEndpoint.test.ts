@@ -736,7 +736,7 @@ describe('buildUpstreamEndpointRequest', () => {
     expect(request.body.store).toBe(false);
     expect(request.body.parallel_tool_calls).toBeUndefined();
     expect(request.body.include).toBeUndefined();
-    expect(request.body.max_output_tokens).toBe(4096);
+    expect(request.body.max_output_tokens).toBeUndefined();
     expect(request.body.temperature).toBe(0.2);
     expect(request.body.top_p).toBe(0.9);
     expect(request.body.user).toBe('drop-me');
@@ -834,7 +834,7 @@ describe('buildUpstreamEndpointRequest', () => {
     expect(request.body.prompt_cache_key).toBe('codex-cache-123');
   });
 
-  it('preserves native codex responses continuity and request fields without compatibility rewrites', () => {
+  it('preserves native codex responses continuity while stripping unsupported token limit fields', () => {
     const request = buildUpstreamEndpointRequest({
       endpoint: 'responses',
       modelName: 'gpt-5.4',
@@ -873,7 +873,7 @@ describe('buildUpstreamEndpointRequest', () => {
     expect(request.body.previous_response_id).toBe('resp_prev_123');
     expect(request.body.temperature).toBe(0.3);
     expect(request.body.top_p).toBe(0.8);
-    expect(request.body.max_output_tokens).toBe(512);
+    expect(request.body.max_output_tokens).toBeUndefined();
   });
 
   it('applies configured codex header defaults with CLIProxyAPI-compatible precedence', () => {
@@ -1002,6 +1002,7 @@ describe('buildUpstreamEndpointRequest', () => {
           models: [{ name: 'gpt-5.4', protocol: 'codex' }],
           params: {
             'text.verbosity': 'low',
+            max_output_tokens: 64,
             store: true,
           },
         },
@@ -1038,6 +1039,7 @@ describe('buildUpstreamEndpointRequest', () => {
     expect(request.body.reasoning).toEqual({ effort: 'high' });
     expect(request.body.text).toEqual({ verbosity: 'low' });
     expect(request.body.safety_identifier).toBeUndefined();
+    expect(request.body.max_output_tokens).toBeUndefined();
     expect(request.body.store).toBe(false);
   });
 
