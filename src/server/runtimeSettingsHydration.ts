@@ -14,7 +14,7 @@ export function parseSettingFromMap<T>(settingsMap: Map<string, string>, key: st
   }
 }
 
-function normalizeLogCleanupRetentionDays(value: unknown, fallback = 30): number {
+export function normalizeLogCleanupRetentionDays(value: unknown, fallback = 30): number {
   const parsed = Number(value);
   if (Number.isFinite(parsed) && parsed >= 1) return Math.trunc(parsed);
 
@@ -268,7 +268,7 @@ export function applyRuntimeSettings(settingsMap: Map<string, string>) {
 
   const smtpPort = parseSettingFromMap<number>(settingsMap, 'smtp_port');
   if (typeof smtpPort === 'number' && Number.isFinite(smtpPort) && smtpPort > 0) {
-    config.smtpPort = smtpPort;
+    config.smtpPort = Math.trunc(smtpPort);
   }
 
   const smtpSecure = parseSettingFromMap<boolean>(settingsMap, 'smtp_secure');

@@ -51,7 +51,11 @@ import { isPublicApiRoute, registerDesktopRoutes } from './desktop.js';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, normalize, resolve, sep } from 'path';
-import { parseSettingFromMap, applyRuntimeSettings } from './runtimeSettingsHydration.js';
+import {
+  applyRuntimeSettings,
+  normalizeLogCleanupRetentionDays,
+  parseSettingFromMap,
+} from './runtimeSettingsHydration.js';
 import {
   db,
   ensureProxyFileCompatibilityColumns,
