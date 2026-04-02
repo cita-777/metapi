@@ -571,6 +571,130 @@ describe('responses proxy codex oauth refresh', () => {
     ]);
   });
 
+  it('reuses previous_response_id for codex tool-output follow-up turns after channel/account drift on the same downstream session', async () => {
+    const firstSelected = {
+      channel: { id: 11, routeId: 22 },
+      site: { name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
+      account: {
+        id: 33,
+        username: 'codex-user-a@example.com',
+        extraConfig: JSON.stringify({
+          credentialMode: 'session',
+          oauth: {
+            provider: 'codex',
+            accountId: 'chatgpt-account-123',
+            email: 'codex-user-a@example.com',
+            planType: 'plus',
+          },
+        }),
+      },
+      tokenName: 'default-a',
+      tokenValue: 'expired-access-token-a',
+      actualModel: 'gpt-5.2-codex',
+    };
+    const secondSelected = {
+      channel: { id: 12, routeId: 23 },
+      site: { name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
+      account: {
+        id: 34,
+        username: 'codex-user-b@example.com',
+        extraConfig: JSON.stringify({
+          credentialMode: 'session',
+          oauth: {
+            provider: 'codex',
+            accountId: 'chatgpt-account-456',
+            email: 'codex-user-b@example.com',
+            planType: 'plus',
+          },
+        }),
+      },
+      tokenName: 'default-b',
+      tokenValue: 'expired-access-token-b',
+      actualModel: 'gpt-5.2-codex',
+    };
+
+    selectChannelMock
+      .mockReset()
+      .mockReturnValueOnce(firstSelected)
+      .mockReturnValueOnce(secondSelected);
+    selectPreferredChannelMock
+      .mockReset()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null);
+
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'resp_codex_prev_drift_1',
+        object: 'response',
+        model: 'gpt-5.2-codex',
+        status: 'completed',
+        output_text: 'tool call issued',
+        usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'resp_codex_prev_drift_2',
+        object: 'response',
+        model: 'gpt-5.2-codex',
+        status: 'completed',
+        output_text: 'tool result accepted after drift',
+        usage: { input_tokens: 5, output_tokens: 2, total_tokens: 7 },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+
+    const headers = {
+      session_id: 'session-http-prev-drift',
+      'user-agent': 'CodexClient/1.0',
+    };
+
+    const firstResponse = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers,
+      payload: {
+        model: 'gpt-5.2-codex',
+        input: 'start codex tool flow',
+      },
+    });
+    expect(firstResponse.statusCode).toBe(200);
+
+    const secondResponse = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers,
+      payload: {
+        model: 'gpt-5.2-codex',
+        input: [
+          {
+            id: 'tool_out_drift_1',
+            type: 'function_call_output',
+            call_id: 'call_1',
+            output: '{"ok":true}',
+          },
+        ],
+      },
+    });
+
+    expect(secondResponse.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    const [, secondOptions] = fetchMock.mock.calls[1] as [string, any];
+    const secondBody = JSON.parse(secondOptions.body);
+    expect(secondBody.previous_response_id).toBe('resp_codex_prev_drift_1');
+    expect(secondBody.input).toEqual([
+      {
+        id: 'tool_out_drift_1',
+        type: 'function_call_output',
+        call_id: 'call_1',
+        output: '{"ok":true}',
+      },
+    ]);
+  });
+
   it('drops stale previous_response_id and retries codex responses requests once', async () => {
     fetchMock
       .mockResolvedValueOnce(new Response(JSON.stringify({

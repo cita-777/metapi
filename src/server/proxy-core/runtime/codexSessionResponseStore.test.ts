@@ -45,4 +45,28 @@ describe('codexSessionResponseStore', () => {
 
     resetCodexSessionResponseStore();
   });
+
+  it('falls back to the bare downstream session id across channel scope drift', () => {
+    resetCodexSessionResponseStore();
+
+    const originalScopedKey = buildCodexSessionResponseStoreKey({
+      sessionId: 'session-drift',
+      siteId: 10,
+      accountId: 20,
+      channelId: 30,
+    });
+    const driftedScopedKey = buildCodexSessionResponseStoreKey({
+      sessionId: 'session-drift',
+      siteId: 10,
+      accountId: 21,
+      channelId: 31,
+    });
+
+    setCodexSessionResponseId(originalScopedKey, 'resp-drift');
+
+    expect(getCodexSessionResponseId(originalScopedKey)).toBe('resp-drift');
+    expect(getCodexSessionResponseId(driftedScopedKey)).toBe('resp-drift');
+
+    resetCodexSessionResponseStore();
+  });
 });
