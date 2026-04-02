@@ -120,6 +120,19 @@ describe('accountMutationWorkflow', () => {
     expect(result.refreshedModels).toBe(false);
   });
 
+  it('passes allowInactive to model refresh when recovery explicitly requests it', async () => {
+    refreshModelsForAccountMock.mockResolvedValue({ accountId: 5, refreshed: true, status: 'success' });
+
+    const { convergeAccountMutation } = await import('./accountMutationWorkflow.js');
+    await convergeAccountMutation({
+      accountId: 5,
+      refreshModels: true,
+      allowInactiveModelRefresh: true,
+    });
+
+    expect(refreshModelsForAccountMock).toHaveBeenCalledWith(5, { allowInactive: true });
+  });
+
   it('refreshes model coverage in batches and maps failures', async () => {
     refreshModelsForAccountMock
       .mockResolvedValueOnce({ accountId: 1, refreshed: true, status: 'success' })

@@ -20,6 +20,7 @@ import {
   type AccountCredentialMode,
 } from '../../services/accountExtraConfig.js';
 import { encryptAccountPassword } from '../../services/accountCredentialService.js';
+import { applyAccountUpdateWorkflow } from '../../services/accountUpdateWorkflow.js';
 import { startBackgroundTask } from '../../services/backgroundTaskService.js';
 import { parseCheckinRewardAmount } from '../../services/checkinRewardParser.js';
 import { estimateRewardWithTodayIncomeFallback } from '../../services/todayIncomeRewardService.js';
@@ -1405,49 +1406,32 @@ export async function accountsRoutes(app: FastifyInstance) {
     const nextStatus = typeof updates.status === 'string' && updates.status.trim()
       ? updates.status.trim()
       : (account.status || 'active');
-    const credentialFieldsTouched =
-      Object.prototype.hasOwnProperty.call(body, 'accessToken')
-      || Object.prototype.hasOwnProperty.call(body, 'apiToken')
-      || wantsManagedSub2ApiAuthPatch;
     const needsModelRefresh =
       Object.prototype.hasOwnProperty.call(body, 'accessToken')
       || Object.prototype.hasOwnProperty.call(body, 'apiToken')
       || Object.prototype.hasOwnProperty.call(body, 'extraConfig')
       || Object.prototype.hasOwnProperty.call(body, 'proxyUrl')
       || wantsManagedSub2ApiAuthPatch;
-    const shouldAttemptExpiredApiKeyRecovery =
+    const isExpiredApiKeyAccount =
       account.status === 'expired'
       && nextCredentialMode === 'apikey'
-      && credentialFieldsTouched
       && nextStatus !== 'disabled';
+    const shouldAttemptExpiredApiKeyRecovery =
+      isExpiredApiKeyAccount
+      && needsModelRefresh;
 
-    if (shouldAttemptExpiredApiKeyRecovery) {
-      updates.status = 'expired';
-    }
-
-    updates.updatedAt = new Date().toISOString();
-    await db.update(schema.accounts).set(updates).where(eq(schema.accounts.id, id)).run();
-
-    const convergence = await convergeAccountMutation({
+    const { account: updatedAccount } = await applyAccountUpdateWorkflow({
       accountId: id,
+      updates,
       preferredApiToken: nextCredentialMode !== 'apikey' ? nextApiToken : null,
-      defaultTokenSource: 'manual',
       refreshModels: needsModelRefresh,
+      preserveExpiredStatus: isExpiredApiKeyAccount,
       allowInactiveModelRefresh: shouldAttemptExpiredApiKeyRecovery,
-      rebuildRoutes: false,
+      reactivateAfterSuccessfulModelRefresh: shouldAttemptExpiredApiKeyRecovery,
       continueOnError: true,
     });
 
-    if (shouldAttemptExpiredApiKeyRecovery && convergence.modelRefreshResult?.status === 'success') {
-      await db.update(schema.accounts).set({
-        status: 'active',
-        updatedAt: new Date().toISOString(),
-      }).where(eq(schema.accounts.id, id)).run();
-    }
-
-    await rebuildRoutesBestEffort();
-
-    return await db.select().from(schema.accounts).where(eq(schema.accounts.id, id)).get();
+    return updatedAccount;
   });
 
   // Delete an account

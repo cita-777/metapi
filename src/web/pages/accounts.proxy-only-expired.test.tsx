@@ -52,8 +52,8 @@ describe('Accounts proxy-only expired state', () => {
         status: 'expired',
         checkinEnabled: false,
         runtimeHealth: {
-          state: 'healthy',
-          reason: '模型探测成功',
+          state: 'unhealthy',
+          reason: '连接已过期，请更新 API Key',
         },
         capabilities: {
           canCheckin: false,
@@ -82,6 +82,7 @@ describe('Accounts proxy-only expired state', () => {
       const rendered = JSON.stringify(root.toJSON());
       expect(rendered).not.toContain('仅代理');
       expect(rendered).toContain('已过期');
+      expect(rendered).toContain('连接已过期，请更新 API Key');
       expect(rendered).not.toContain('访问令牌已过期');
 
       const badgeTexts = root.root.findAll((node) => (

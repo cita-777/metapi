@@ -112,9 +112,10 @@ export async function convergeAccountMutation(input: {
   }
 
   if (input.refreshModels) {
-    const modelRefreshResult = await runStep(() => refreshModelsForAccount(
-      input.accountId,
-      input.allowInactiveModelRefresh ? { allowInactive: true } : undefined,
+    const modelRefreshResult = await runStep(() => (
+      input.allowInactiveModelRefresh
+        ? refreshModelsForAccount(input.accountId, { allowInactive: true })
+        : refreshModelsForAccount(input.accountId)
     ));
     if (modelRefreshResult) {
       result.modelRefreshResult = modelRefreshResult;

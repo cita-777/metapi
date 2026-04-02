@@ -24,7 +24,7 @@ describe('accountHealthService', () => {
     const health = buildRuntimeHealthForAccount({
       accountStatus: 'expired',
       siteStatus: 'active',
-      extraConfig: null,
+      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
       sessionCapable: false,
     });
 
@@ -41,6 +41,7 @@ describe('accountHealthService', () => {
       accountStatus: 'expired',
       siteStatus: 'active',
       extraConfig: JSON.stringify({
+        credentialMode: 'apikey',
         runtimeHealth: {
           state: 'healthy',
           reason: '模型探测成功',
@@ -57,6 +58,25 @@ describe('accountHealthService', () => {
       source: 'auth',
     });
     expect(health.reason).toContain('连接已过期');
+  });
+
+  it('uses a generic expired-credential message for oauth-backed accounts', () => {
+    const health = buildRuntimeHealthForAccount({
+      accountStatus: 'expired',
+      siteStatus: 'active',
+      extraConfig: JSON.stringify({
+        oauth: {
+          provider: 'codex',
+        },
+      }),
+      sessionCapable: false,
+    });
+
+    expect(health).toMatchObject({
+      state: 'unhealthy',
+      source: 'auth',
+      reason: '连接凭证已过期，请更新凭证',
+    });
   });
 
   it('ignores stored auth failures for proxy-only accounts', () => {

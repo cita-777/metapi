@@ -597,16 +597,14 @@ export default function Accounts() {
   };
 
   const resolveRuntimeHealth = (account: any) => {
-    const capabilities = resolveAccountCapabilities(account);
     if (account.status === 'expired') {
       return {
         ...runtimeHealthMap.unhealthy,
         label: '已过期',
-        reason: capabilities.proxyOnly
-          ? '连接已过期，请在编辑中更新 API Key'
-          : (account.runtimeHealth?.reason || '访问令牌已过期，请重新绑定 Session Token'),
+        reason: account.runtimeHealth?.reason || '连接凭证已过期，请更新凭证',
       };
     }
+    const capabilities = resolveAccountCapabilities(account);
     const fallbackState = account.status === 'disabled' || account.site?.status === 'disabled'
       ? 'disabled'
       : (!capabilities.proxyOnly && account.status === 'expired' ? 'unhealthy' : 'unknown');

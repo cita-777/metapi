@@ -105,7 +105,7 @@ describe('Accounts refresh action', () => {
 
       expect(apiMock.getAccounts).toHaveBeenCalledTimes(2);
       const rendered = JSON.stringify(root.toJSON());
-      expect(rendered).toContain('异常');
+      expect(rendered).toContain('已过期');
     } finally {
       root?.unmount();
     }
