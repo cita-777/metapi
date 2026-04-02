@@ -264,16 +264,16 @@ function ensureDrizzleMigrationsTable(sqlite: Database.Database): void {
 function markMigrationRecordIfMissing(sqlite: Database.Database, record: MigrationRecord): boolean {
   ensureDrizzleMigrationsTable(sqlite);
   const existing = sqlite
-    .prepare('SELECT "created_at" FROM "__drizzle_migrations" WHERE "hash" = ? ORDER BY "created_at" DESC LIMIT 1')
-    .get(record.hash) as { created_at?: number } | undefined;
+    .prepare('SELECT rowid, "created_at" FROM "__drizzle_migrations" WHERE "hash" = ? ORDER BY "created_at" DESC LIMIT 1')
+    .get(record.hash) as { rowid?: number; created_at?: number } | undefined;
   if (existing) {
     if (Number(existing.created_at) === record.createdAt) {
       return false;
     }
 
     sqlite
-      .prepare('UPDATE "__drizzle_migrations" SET "created_at" = ? WHERE "hash" = ?')
-      .run(record.createdAt, record.hash);
+      .prepare('UPDATE "__drizzle_migrations" SET "created_at" = ? WHERE rowid = ?')
+      .run(record.createdAt, existing.rowid);
     return true;
   }
 

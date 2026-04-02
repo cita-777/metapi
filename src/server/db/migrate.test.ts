@@ -50,6 +50,8 @@ function recordAppliedMigrations(
   }
 }
 
+const STALE_JOURNAL_TIMESTAMP_DRIFT_MS = 4_196_930;
+
 describe('sqlite migrate bootstrap', () => {
   afterEach(() => {
     delete process.env.DATA_DIR;
@@ -204,6 +206,43 @@ describe('sqlite migrate bootstrap', () => {
 
     expect(applied).toHaveLength(1);
     expect(Number(applied[0].created_at)).toBe(1772500000001);
+
+    sqlite.close();
+  });
+
+  it('updates only the latest matching migration record when reconciling stale timestamps', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-rowid-reconcile-'));
+    process.env.DATA_DIR = dataDir;
+    vi.resetModules();
+
+    const migrateModule = await import('./migrate.js');
+    const { __migrateTestUtils } = migrateModule;
+
+    const sqlite = new Database(':memory:');
+    sqlite.exec(`
+      CREATE TABLE "__drizzle_migrations" (
+        id SERIAL PRIMARY KEY,
+        hash text NOT NULL,
+        created_at numeric
+      );
+    `);
+    sqlite.prepare('INSERT INTO "__drizzle_migrations" ("hash", "created_at") VALUES (?, ?)').run('same-hash', 10);
+    sqlite.prepare('INSERT INTO "__drizzle_migrations" ("hash", "created_at") VALUES (?, ?)').run('same-hash', 20);
+
+    const changed = __migrateTestUtils.markMigrationRecordIfMissing(sqlite, {
+      hash: 'same-hash',
+      createdAt: 30,
+    });
+
+    const records = sqlite
+      .prepare('SELECT rowid, hash, created_at FROM "__drizzle_migrations" ORDER BY rowid ASC')
+      .all() as Array<{ rowid: number; hash: string; created_at: number }>;
+
+    expect(changed).toBe(true);
+    expect(records).toEqual([
+      { rowid: 1, hash: 'same-hash', created_at: 10 },
+      { rowid: 2, hash: 'same-hash', created_at: 30 },
+    ]);
 
     sqlite.close();
   });
@@ -443,9 +482,10 @@ describe('sqlite migrate bootstrap', () => {
       ? readFileSync(join(migrationsDir, `${latestEntry.tag}.sql`), 'utf8')
       : '';
     const latestHash = createHash('sha256').update(latestSqlText).digest('hex');
+    // Introduce about 70 minutes of timestamp drift so journal reconciliation has work to do.
     sqlite
       .prepare('UPDATE __drizzle_migrations SET created_at = ? WHERE hash = ?')
-      .run((latestEntry?.when ?? 0) - 4_196_930, latestHash);
+      .run((latestEntry?.when ?? 0) - STALE_JOURNAL_TIMESTAMP_DRIFT_MS, latestHash);
     sqlite.close();
 
     process.env.DATA_DIR = dataDir;
