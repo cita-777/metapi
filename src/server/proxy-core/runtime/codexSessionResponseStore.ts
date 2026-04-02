@@ -3,6 +3,11 @@ const MAX_CODEX_SESSION_RESPONSE_IDS = 10_000;
 const codexSessionResponseIds = new Map<string, string>();
 
 const SCOPED_SESSION_SEGMENT_PREFIX = 'session:';
+const SCOPED_STORE_KEY_SEGMENT_PATTERN = /^(site|account|channel):\d+$/;
+
+function buildScopedSessionSegment(sessionId: string): string {
+  return `${SCOPED_SESSION_SEGMENT_PREFIX}${encodeURIComponent(sessionId)}`;
+}
 
 function extractScopedSessionSegment(sessionId: string): string {
   const normalizedSessionId = normalizeSessionId(sessionId);
@@ -16,8 +21,17 @@ function extractScopedSessionSegment(sessionId: string): string {
     .split('|')
     .map((segment) => segment.trim())
     .filter(Boolean);
-  const sessionSegment = scopedSegments.find((segment) => segment.startsWith(SCOPED_SESSION_SEGMENT_PREFIX));
-  return sessionSegment || '';
+  if (scopedSegments.length <= 1) return '';
+
+  const sessionSegment = scopedSegments[scopedSegments.length - 1];
+  if (!sessionSegment.startsWith(SCOPED_SESSION_SEGMENT_PREFIX)) {
+    return '';
+  }
+  const scopeSegments = scopedSegments.slice(0, -1);
+  if (!scopeSegments.every((segment) => SCOPED_STORE_KEY_SEGMENT_PATTERN.test(segment))) {
+    return '';
+  }
+  return sessionSegment;
 }
 
 function getBareSessionStoreKey(sessionId: string): string {
@@ -59,7 +73,7 @@ export function buildCodexSessionResponseStoreKey(input: {
     Number.isFinite(input.siteId as number) && Number(input.siteId) > 0 ? `site:${Math.trunc(Number(input.siteId))}` : '',
     Number.isFinite(input.accountId as number) && Number(input.accountId) > 0 ? `account:${Math.trunc(Number(input.accountId))}` : '',
     Number.isFinite(input.channelId as number) && Number(input.channelId) > 0 ? `channel:${Math.trunc(Number(input.channelId))}` : '',
-    `session:${normalizedSessionId}`,
+    buildScopedSessionSegment(normalizedSessionId),
   ].filter(Boolean);
   return parts.join('|');
 }

@@ -71,6 +71,37 @@ describe('codexSessionResponseStore', () => {
     resetCodexSessionResponseStore();
   });
 
+  it('does not collapse distinct downstream sessions when scoped session ids contain delimiters', () => {
+    resetCodexSessionResponseStore();
+
+    const delimitedScopedKey = buildCodexSessionResponseStoreKey({
+      sessionId: 'session-delimited|tail',
+      siteId: 10,
+      accountId: 20,
+      channelId: 30,
+    });
+    const delimitedDriftedScopedKey = buildCodexSessionResponseStoreKey({
+      sessionId: 'session-delimited|tail',
+      siteId: 10,
+      accountId: 21,
+      channelId: 31,
+    });
+    const plainScopedKey = buildCodexSessionResponseStoreKey({
+      sessionId: 'session-delimited',
+      siteId: 10,
+      accountId: 22,
+      channelId: 32,
+    });
+
+    setCodexSessionResponseId(delimitedScopedKey, 'resp-delimited');
+    setCodexSessionResponseId(plainScopedKey, 'resp-plain');
+
+    expect(getCodexSessionResponseId(delimitedDriftedScopedKey)).toBe('resp-delimited');
+    expect(getCodexSessionResponseId(plainScopedKey)).toBe('resp-plain');
+
+    resetCodexSessionResponseStore();
+  });
+
   it('clears the bare downstream session fallback when removing a scoped continuation id', () => {
     resetCodexSessionResponseStore();
 

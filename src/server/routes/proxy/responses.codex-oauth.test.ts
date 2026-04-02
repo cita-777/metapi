@@ -681,9 +681,14 @@ describe('responses proxy codex oauth refresh', () => {
 
     expect(secondResponse.statusCode).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(selectChannelMock).toHaveBeenCalledTimes(2);
+    expect(selectPreferredChannelMock).toHaveBeenCalledTimes(2);
 
+    const [, firstOptions] = fetchMock.mock.calls[0] as [string, any];
     const [, secondOptions] = fetchMock.mock.calls[1] as [string, any];
     const secondBody = JSON.parse(secondOptions.body);
+    expect(firstOptions.headers['Chatgpt-Account-Id'] || firstOptions.headers['chatgpt-account-id']).toBe('chatgpt-account-123');
+    expect(secondOptions.headers['Chatgpt-Account-Id'] || secondOptions.headers['chatgpt-account-id']).toBe('chatgpt-account-456');
     expect(secondBody.previous_response_id).toBe('resp_codex_prev_drift_1');
     expect(secondBody.input).toEqual([
       {
