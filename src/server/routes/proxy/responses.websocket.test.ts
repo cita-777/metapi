@@ -573,6 +573,52 @@ describe('responses websocket transport', () => {
     expect(upstreamConnectionCount).toBe(1);
   });
 
+  it('preserves the site endpoint exhaustion message on websocket errors', async () => {
+    siteApiEndpointRows = [{
+      id: 902,
+      siteId: 44,
+      url: upstreamSiteUrl,
+      enabled: false,
+      sortOrder: 0,
+      cooldownUntil: null,
+      lastSelectedAt: null,
+      lastFailedAt: null,
+      lastFailureReason: null,
+      updatedAt: null,
+    }];
+    const selectedChannel = createSelectedChannel({
+      siteUrl: rejectedUpgradeSiteUrl,
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+
+    const socket = createClientSocket(baseUrl);
+    await waitForSocketOpen(socket);
+    const errorPromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'error',
+    );
+
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+
+    const errorMessage = await errorPromise;
+    socket.close();
+
+    expect(errorMessage).toMatchObject({
+      type: 'error',
+      status: 408,
+      error: {
+        message: '当前站点的 AI 请求地址均不可用',
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(0);
+    expect(upstreamConnectionCount).toBe(0);
+  });
+
   it('echoes x-codex-turn-state on websocket upgrade responses', async () => {
     const socket = createClientSocket(baseUrl, {
       'x-codex-turn-state': 'turn-state-123',

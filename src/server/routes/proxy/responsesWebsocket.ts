@@ -136,7 +136,11 @@ function unwrapCodexWebsocketRuntimeError(error: unknown): CodexWebsocketRuntime
   if (error instanceof SiteApiEndpointRequestError && error.cause instanceof CodexWebsocketRuntimeError) {
     return error.cause;
   }
-  return new CodexWebsocketRuntimeError('upstream websocket request failed');
+  return new CodexWebsocketRuntimeError(
+    error instanceof Error && error.message.trim()
+      ? error.message
+      : 'upstream websocket request failed',
+  );
 }
 
 function shouldReuseSelectedChannel(
