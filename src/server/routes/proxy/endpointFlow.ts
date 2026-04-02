@@ -160,8 +160,9 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
       rawErrText,
       recoverApplied: false,
     };
+    const isLastEndpoint = endpointIndex >= endpointCount - 1;
 
-    if (isObservedFirstByteTimeoutResponse(response) && endpointIndex + 1 < endpointCount) {
+    if (isObservedFirstByteTimeoutResponse(response) && !isLastEndpoint) {
       const errText = rawErrText.trim() || 'first byte timeout';
       const timeoutContext = {
         ...baseContext,
@@ -171,6 +172,9 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
       finalStatus = response.status || 408;
       finalErrText = errText;
       finalRawErrText = rawErrText;
+      if (input.disableCrossProtocolFallback) {
+        break;
+      }
       continue;
     }
 
@@ -215,7 +219,6 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
       errText,
     }, 'onAttemptFailure');
 
-    const isLastEndpoint = endpointIndex >= endpointCount - 1;
     if (input.disableCrossProtocolFallback && !isLastEndpoint) {
       finalStatus = response.status;
       finalErrText = errText;

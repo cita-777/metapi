@@ -108,6 +108,7 @@ export async function searchProxyRoute(app: FastifyInstance) {
 
       try {
         const { upstream, text, firstByteLatencyMs } = await runWithSiteApiEndpointPool(selected.site, async (target) => {
+          const attemptStartedAtMs = Date.now();
           const targetUrl = buildUpstreamUrl(target.baseUrl, '/v1/search');
           const response = await fetchWithObservedFirstByte(
             async (signal) => fetch(targetUrl, withSiteRecordProxyRequestInit(selected.site, {
@@ -121,7 +122,7 @@ export async function searchProxyRoute(app: FastifyInstance) {
             }, getProxyUrlFromExtraConfig(selected.account.extraConfig))),
             {
               firstByteTimeoutMs,
-              startedAtMs: startTime,
+              startedAtMs: attemptStartedAtMs,
             },
           );
           const observedFirstByteLatencyMs = getObservedResponseMeta(response)?.firstByteLatencyMs ?? null;

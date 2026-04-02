@@ -76,6 +76,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
 
       try {
         const { upstream, text, firstByteLatencyMs } = await runWithSiteApiEndpointPool(selected.site, async (target) => {
+          const attemptStartedAtMs = Date.now();
           const targetUrl = buildUpstreamUrl(target.baseUrl, '/v1/images/generations');
           const response = await fetchWithObservedFirstByte(
             async (signal) => fetch(targetUrl, withSiteRecordProxyRequestInit(selected.site, {
@@ -89,7 +90,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             }, getProxyUrlFromExtraConfig(selected.account.extraConfig))),
             {
               firstByteTimeoutMs,
-              startedAtMs: startTime,
+              startedAtMs: attemptStartedAtMs,
             },
           );
           const observedFirstByteLatencyMs = getObservedResponseMeta(response)?.firstByteLatencyMs ?? null;
@@ -279,6 +280,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
 
       try {
         const { upstream, text, firstByteLatencyMs } = await runWithSiteApiEndpointPool(selected.site, async (target) => {
+          const attemptStartedAtMs = Date.now();
           const targetUrl = buildUpstreamUrl(target.baseUrl, '/v1/images/edits');
           const requestInit = multipartForm
             ? withSiteRecordProxyRequestInit(selected.site, {
@@ -308,7 +310,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             }),
             {
               firstByteTimeoutMs,
-              startedAtMs: startTime,
+              startedAtMs: attemptStartedAtMs,
             },
           );
           const observedFirstByteLatencyMs = getObservedResponseMeta(response)?.firstByteLatencyMs ?? null;

@@ -75,6 +75,7 @@ export async function embeddingsProxyRoute(app: FastifyInstance) {
       const startTime = Date.now();
       try {
         const { upstream, text, firstByteLatencyMs } = await runWithSiteApiEndpointPool(selected.site, async (target) => {
+          const attemptStartedAtMs = Date.now();
           const targetUrl = buildUpstreamUrl(target.baseUrl, '/v1/embeddings');
           const response = await fetchWithObservedFirstByte(
             async (signal) => fetch(targetUrl, withSiteRecordProxyRequestInit(selected.site, {
@@ -88,7 +89,7 @@ export async function embeddingsProxyRoute(app: FastifyInstance) {
             }, getProxyUrlFromExtraConfig(selected.account.extraConfig))),
             {
               firstByteTimeoutMs,
-              startedAtMs: startTime,
+              startedAtMs: attemptStartedAtMs,
             },
           );
           const observedFirstByteLatencyMs = getObservedResponseMeta(response)?.firstByteLatencyMs ?? null;

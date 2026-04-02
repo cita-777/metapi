@@ -70,7 +70,7 @@ const VERIFIED_SCHEMA_MARKERS: SchemaMarker[] = [
   { table: 'downstream_api_keys', column: 'tags' },
   // 0012: value_status column on account_tokens
   { table: 'account_tokens', column: 'value_status' },
-  // 0018: proxy log stream/timing columns
+  // 0019: proxy log stream/timing columns
   { table: 'proxy_logs', column: 'is_stream' },
   { table: 'proxy_logs', column: 'first_byte_latency_ms' },
 ];

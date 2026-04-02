@@ -81,6 +81,7 @@ export async function completionsProxyRoute(app: FastifyInstance) {
       const startTime = Date.now();
       try {
         const { upstream, firstByteLatencyMs } = await runWithSiteApiEndpointPool(selected.site, async (target) => {
+          const attemptStartedAtMs = Date.now();
           const targetUrl = buildUpstreamUrl(target.baseUrl, '/v1/completions');
           const response = await fetchWithObservedFirstByte(
             async (signal) => fetch(targetUrl, withSiteRecordProxyRequestInit(selected.site, {
@@ -94,7 +95,7 @@ export async function completionsProxyRoute(app: FastifyInstance) {
             }, getProxyUrlFromExtraConfig(selected.account.extraConfig))),
             {
               firstByteTimeoutMs,
-              startedAtMs: startTime,
+              startedAtMs: attemptStartedAtMs,
             },
           );
           const observedFirstByteLatencyMs = getObservedResponseMeta(response)?.firstByteLatencyMs ?? null;
@@ -246,6 +247,8 @@ export async function completionsProxyRoute(app: FastifyInstance) {
             null,
             clientContext,
             downstreamPath,
+            isStream,
+            firstByteLatencyMs,
           );
 
           if (shouldRetryProxyRequest(failure.status, errText) && canRetryChannelSelection(retryCount, forcedChannelId)) {
@@ -378,8 +381,8 @@ async function logProxy(
   billingDetails: unknown = null,
   clientContext: DownstreamClientContext | null = null,
   downstreamPath = '/v1/completions',
-  isStream = false,
-  firstByteLatencyMs: number | null = null,
+  isStream: boolean,
+  firstByteLatencyMs: number | null,
 ) {
   try {
     const createdAt = formatUtcSqlDateTime(new Date());

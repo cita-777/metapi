@@ -11,7 +11,12 @@ function requestFor(path: string): BuiltEndpointRequest {
   };
 }
 
-function buildDelayedResponse(bodyText: string, delayMs: number, status = 200): Response {
+function buildDelayedResponse(
+  bodyText: string,
+  delayMs: number,
+  status = 200,
+  _signal?: AbortSignal,
+): Response {
   const encoder = new TextEncoder();
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -30,9 +35,17 @@ function buildDelayedResponse(bodyText: string, delayMs: number, status = 200): 
 describe('executeEndpointFlow first-byte timeout', () => {
   it('falls through to the next endpoint candidate when the current endpoint times out before any output', async () => {
     const { executeEndpointFlow } = await import('./endpointFlow.js');
-    const dispatchRequest = async (request: BuiltEndpointRequest) => (
+    let timedOutSignal: AbortSignal | undefined;
+    const dispatchRequest = async (
+      request: BuiltEndpointRequest,
+      _targetUrl?: string,
+      signal?: AbortSignal,
+    ) => (
       request.path === '/v1/responses'
-        ? buildDelayedResponse(JSON.stringify({ ok: false }), 60, 200)
+        ? (
+          timedOutSignal = signal,
+          buildDelayedResponse(JSON.stringify({ ok: false }), 60, 200, signal)
+        )
         : new Response(JSON.stringify({ ok: true }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
@@ -57,7 +70,45 @@ describe('executeEndpointFlow first-byte timeout', () => {
     if (result.ok) {
       expect(result.upstreamPath).toBe('/v1/chat/completions');
     }
+    expect(timedOutSignal).toBeDefined();
+    expect(timedOutSignal?.aborted).toBe(true);
     expect(failures).toHaveLength(1);
     expect(failures[0]).toContain('first byte timeout');
+  });
+
+  it('treats first-byte timeout as terminal when cross-protocol fallback is disabled', async () => {
+    const { executeEndpointFlow } = await import('./endpointFlow.js');
+    const attemptedPaths: string[] = [];
+    const result = await executeEndpointFlow({
+      siteUrl: 'https://example.com',
+      endpointCandidates: ['responses', 'chat'],
+      disableCrossProtocolFallback: true,
+      buildRequest: (endpoint: 'responses' | 'chat') => endpoint === 'responses'
+        ? requestFor('/v1/responses')
+        : { ...requestFor('/v1/chat/completions'), endpoint },
+      dispatchRequest: async (
+        request: BuiltEndpointRequest,
+        _targetUrl?: string,
+        signal?: AbortSignal,
+      ) => {
+        attemptedPaths.push(request.path);
+        return (
+          request.path === '/v1/responses'
+            ? buildDelayedResponse(JSON.stringify({ ok: false }), 60, 200, signal)
+            : new Response(JSON.stringify({ ok: true }), {
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+            })
+        ) as unknown as Awaited<ReturnType<typeof import('undici').fetch>>;
+      },
+      firstByteTimeoutMs: 10,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(408);
+      expect(result.errText).toContain('first byte timeout');
+    }
+    expect(attemptedPaths).toEqual(['/v1/responses']);
   });
 });
