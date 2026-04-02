@@ -264,10 +264,17 @@ function ensureDrizzleMigrationsTable(sqlite: Database.Database): void {
 function markMigrationRecordIfMissing(sqlite: Database.Database, record: MigrationRecord): boolean {
   ensureDrizzleMigrationsTable(sqlite);
   const existing = sqlite
-    .prepare('SELECT 1 FROM "__drizzle_migrations" WHERE "hash" = ? LIMIT 1')
-    .get(record.hash);
+    .prepare('SELECT "created_at" FROM "__drizzle_migrations" WHERE "hash" = ? ORDER BY "created_at" DESC LIMIT 1')
+    .get(record.hash) as { created_at?: number } | undefined;
   if (existing) {
-    return false;
+    if (Number(existing.created_at) === record.createdAt) {
+      return false;
+    }
+
+    sqlite
+      .prepare('UPDATE "__drizzle_migrations" SET "created_at" = ? WHERE "hash" = ?')
+      .run(record.createdAt, record.hash);
+    return true;
   }
 
   sqlite
@@ -373,23 +380,29 @@ function recoverMigrationSequence(
   sqlite: Database.Database,
   migrationsFolder: string,
   failedMigrationTag: string,
-): boolean {
+): number {
   const migrations = readRecoveryMigrations(migrationsFolder);
   const failedMigrationIndex = migrations.findIndex((migration) => migration.tag === failedMigrationTag);
   if (failedMigrationIndex < 0) {
-    return false;
+    return 0;
   }
 
+  let recoveredCount = 0;
   for (const migration of migrations.slice(0, failedMigrationIndex + 1)) {
     if (hasMigrationRecord(sqlite, migration)) {
+      if (markMigrationRecordIfMissing(sqlite, migration)) {
+        recoveredCount += 1;
+      }
       continue;
     }
 
     replayMigrationStatements(sqlite, migration.statements);
-    markMigrationRecordIfMissing(sqlite, migration);
+    if (markMigrationRecordIfMissing(sqlite, migration)) {
+      recoveredCount += 1;
+    }
   }
 
-  return true;
+  return recoveredCount;
 }
 
 function backfillMissingRecordedMigrations(sqlite: Database.Database, migrationsFolder: string): number {
@@ -398,6 +411,9 @@ function backfillMissingRecordedMigrations(sqlite: Database.Database, migrations
   let recoveredCount = 0;
   for (const migration of readRecoveryMigrations(migrationsFolder)) {
     if (hasMigrationRecord(sqlite, migration)) {
+      if (markMigrationRecordIfMissing(sqlite, migration)) {
+        recoveredCount += 1;
+      }
       continue;
     }
 
@@ -414,13 +430,18 @@ function backfillMissingRecordedMigrations(sqlite: Database.Database, migrations
   return recoveredCount;
 }
 
-function tryRecoverDuplicateColumnMigrationError(
+type DuplicateColumnRecoveryResult = {
+  tag: string;
+  recoveredCount: number;
+};
+
+function recoverDuplicateColumnMigrationError(
   sqlite: Database.Database,
   migrationsFolder: string,
   error: unknown,
-): boolean {
+): DuplicateColumnRecoveryResult | null {
   if (!isDuplicateColumnError(error)) {
-    return false;
+    return null;
   }
 
   const failedSqlText = extractFailedSqlFromError(error);
@@ -429,14 +450,26 @@ function tryRecoverDuplicateColumnMigrationError(
       ?? findMatchingMigrationByErrorMessage(migrationsFolder, error)
     : findMatchingMigrationByErrorMessage(migrationsFolder, error);
   if (!matchedMigration) {
-    return false;
+    return null;
   }
 
-  const recovered = recoverMigrationSequence(sqlite, migrationsFolder, matchedMigration.tag);
-  if (recovered) {
+  const recoveredCount = recoverMigrationSequence(sqlite, migrationsFolder, matchedMigration.tag);
+  if (recoveredCount > 0) {
     console.warn(`[db] Recovered duplicate-column migration sequence through ${matchedMigration.tag}.`);
   }
-  return recovered;
+  return {
+    tag: matchedMigration.tag,
+    recoveredCount,
+  };
+}
+
+function tryRecoverDuplicateColumnMigrationError(
+  sqlite: Database.Database,
+  migrationsFolder: string,
+  error: unknown,
+): boolean {
+  const recovery = recoverDuplicateColumnMigrationError(sqlite, migrationsFolder, error);
+  return (recovery?.recoveredCount ?? 0) > 0;
 }
 
 function rewriteDownstreamSiteWeightMultipliers(
@@ -593,20 +626,31 @@ export function runSqliteMigrations(): void {
   bootstrapLegacyDrizzleMigrations(sqlite, migrationsFolder);
   backfillMissingRecordedMigrations(sqlite, migrationsFolder);
 
-  try {
-    migrate(drizzle(sqlite), { migrationsFolder });
-  } catch (error) {
-    const recoveredDuplicateColumns = tryRecoverDuplicateColumnMigrationError(sqlite, migrationsFolder, error);
-    const recoveredDuplicateSites = (
-      !recoveredDuplicateColumns
-      && isSitesPlatformUrlUniqueConflictError(error)
-      && deduplicateLegacySitesForUniqueIndex(sqlite)
-    );
-    if (!recoveredDuplicateColumns && !recoveredDuplicateSites) {
+  while (true) {
+    try {
+      migrate(drizzle(sqlite), { migrationsFolder });
+      break;
+    } catch (error) {
+      const duplicateColumnRecovery = recoverDuplicateColumnMigrationError(sqlite, migrationsFolder, error);
+      if (duplicateColumnRecovery) {
+        if (duplicateColumnRecovery.recoveredCount > 0) {
+          continue;
+        }
+        sqlite.close();
+        throw error;
+      }
+
+      const recoveredDuplicateSites = (
+        isSitesPlatformUrlUniqueConflictError(error)
+        && deduplicateLegacySitesForUniqueIndex(sqlite)
+      );
+      if (recoveredDuplicateSites) {
+        continue;
+      }
+
       sqlite.close();
       throw error;
     }
-    migrate(drizzle(sqlite), { migrationsFolder });
   }
 
   sqlite.close();
