@@ -53,9 +53,9 @@ import { fileURLToPath } from 'url';
 import { dirname, normalize, resolve, sep } from 'path';
 import {
   applyRuntimeSettings,
-  normalizeLogCleanupRetentionDays,
   parseSettingFromMap,
 } from './runtimeSettingsHydration.js';
+import { normalizeLogCleanupRetentionDays } from './shared/logCleanupRetentionDays.js';
 import {
   db,
   ensureProxyFileCompatibilityColumns,

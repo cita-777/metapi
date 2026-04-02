@@ -3,6 +3,7 @@ import {
   normalizeTokenRouterFailureCooldownMaxSec,
 } from './config.js';
 import { normalizePayloadRulesConfig } from './services/payloadRules.js';
+import { normalizeLogCleanupRetentionDays } from './shared/logCleanupRetentionDays.js';
 
 export function parseSettingFromMap<T>(settingsMap: Map<string, string>, key: string): T | undefined {
   const raw = settingsMap.get(key);
@@ -12,16 +13,6 @@ export function parseSettingFromMap<T>(settingsMap: Map<string, string>, key: st
   } catch {
     return undefined;
   }
-}
-
-export function normalizeLogCleanupRetentionDays(value: unknown, fallback = 30): number {
-  const parsed = Number(value);
-  if (Number.isFinite(parsed) && parsed >= 1) return Math.trunc(parsed);
-
-  const fallbackParsed = Number(fallback);
-  if (Number.isFinite(fallbackParsed) && fallbackParsed >= 1) return Math.trunc(fallbackParsed);
-
-  return 30;
 }
 
 function toStringList(value: unknown): string[] {

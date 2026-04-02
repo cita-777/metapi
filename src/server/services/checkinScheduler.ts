@@ -7,7 +7,8 @@ import { checkinAll } from './checkinService.js';
 import * as routeRefreshWorkflow from './routeRefreshWorkflow.js';
 import { sendNotification } from './notifyService.js';
 import { buildDailySummaryNotification, collectDailySummaryMetrics } from './dailySummaryService.js';
-import { cleanupConfiguredLogs, normalizeLogCleanupRetentionDays } from './logCleanupService.js';
+import { cleanupConfiguredLogs } from './logCleanupService.js';
+import { normalizeLogCleanupRetentionDays } from '../shared/logCleanupRetentionDays.js';
 
 export type CheckinScheduleMode = 'cron' | 'interval';
 

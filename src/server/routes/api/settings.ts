@@ -38,7 +38,7 @@ import { formatUtcSqlDateTime, getResolvedTimeZone } from '../../services/localT
 import { extractClientIp, findInvalidIpAllowlistEntries, isIpAllowed } from '../../middleware/auth.js';
 import { invalidateSiteProxyCache, normalizeSiteProxyUrl, withExplicitProxyRequestInit } from '../../services/siteProxy.js';
 import { performFactoryReset } from '../../services/factoryResetService.js';
-import { normalizeLogCleanupRetentionDays } from '../../services/logCleanupService.js';
+import { normalizeLogCleanupRetentionDays } from '../../shared/logCleanupRetentionDays.js';
 import { stopProxyLogRetentionService } from '../../services/proxyLogRetentionService.js';
 import {
   startModelAvailabilityProbeScheduler,

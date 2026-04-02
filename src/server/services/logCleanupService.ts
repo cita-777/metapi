@@ -2,6 +2,7 @@ import { lt } from 'drizzle-orm';
 import { config } from '../config.js';
 import { db, schema } from '../db/index.js';
 import { formatUtcSqlDateTime } from './localTimeService.js';
+import { normalizeLogCleanupRetentionDays } from '../shared/logCleanupRetentionDays.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -22,16 +23,6 @@ export type LogCleanupResult = {
   programLogsDeleted: number;
   totalDeleted: number;
 };
-
-export function normalizeLogCleanupRetentionDays(value: unknown, fallback = 30): number {
-  const parsed = Number(value);
-  if (Number.isFinite(parsed) && parsed >= 1) return Math.trunc(parsed);
-
-  const fallbackParsed = Number(fallback);
-  if (Number.isFinite(fallbackParsed) && fallbackParsed >= 1) return Math.trunc(fallbackParsed);
-
-  return 30;
-}
 
 export function getLogCleanupCutoffUtc(retentionDays: number, nowMs = Date.now()): string | null {
   const normalizedDays = normalizeLogCleanupRetentionDays(retentionDays);
