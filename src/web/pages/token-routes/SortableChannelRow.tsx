@@ -51,7 +51,7 @@ export function SortableChannelRow({
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.72 : channel.enabled === false ? 0.5 : 1,
-    zIndex: isDragging ? 10 : 1,
+    zIndex: isDragging ? 10 : undefined,
     display: 'grid',
     gridTemplateColumns: managementLocked || mobile ? 'minmax(0, 1fr)' : 'minmax(0, 1fr) auto auto auto',
     alignItems: mobile ? 'stretch' : 'center',
