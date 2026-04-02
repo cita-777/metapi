@@ -34,6 +34,15 @@ function getFallbackSessionStoreKeys(sessionId: string): string[] {
   return [bareSessionKey];
 }
 
+function getSessionStoreKeys(sessionId: string): string[] {
+  const normalizedSessionId = normalizeSessionId(sessionId);
+  if (!normalizedSessionId) return [];
+  return [
+    normalizedSessionId,
+    ...getFallbackSessionStoreKeys(normalizedSessionId),
+  ];
+}
+
 function normalizeSessionId(sessionId: string): string {
   return sessionId.trim();
 }
@@ -75,10 +84,7 @@ export function setCodexSessionResponseId(sessionId: string, responseId: string)
   const normalizedResponseId = responseId.trim();
   if (!normalizedSessionId || !normalizedResponseId) return;
 
-  const keysToWrite = new Set<string>([
-    normalizedSessionId,
-    ...getFallbackSessionStoreKeys(normalizedSessionId),
-  ]);
+  const keysToWrite = new Set<string>(getSessionStoreKeys(normalizedSessionId));
 
   for (const key of keysToWrite) {
     if (codexSessionResponseIds.has(key)) {
@@ -97,11 +103,8 @@ export function setCodexSessionResponseId(sessionId: string, responseId: string)
 export function clearCodexSessionResponseId(sessionId: string): void {
   const normalized = normalizeSessionId(sessionId);
   if (!normalized) return;
-  codexSessionResponseIds.delete(normalized);
-
-  const bareSessionKey = getBareSessionStoreKey(normalized);
-  if (normalized === bareSessionKey) {
-    codexSessionResponseIds.delete(bareSessionKey);
+  for (const key of getSessionStoreKeys(normalized)) {
+    codexSessionResponseIds.delete(key);
   }
 }
 

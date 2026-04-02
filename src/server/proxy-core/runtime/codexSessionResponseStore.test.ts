@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildCodexSessionResponseStoreKey,
+  clearCodexSessionResponseId,
   getCodexSessionResponseId,
   resetCodexSessionResponseStore,
   setCodexSessionResponseId,
@@ -66,6 +67,31 @@ describe('codexSessionResponseStore', () => {
 
     expect(getCodexSessionResponseId(originalScopedKey)).toBe('resp-drift');
     expect(getCodexSessionResponseId(driftedScopedKey)).toBe('resp-drift');
+
+    resetCodexSessionResponseStore();
+  });
+
+  it('clears the bare downstream session fallback when removing a scoped continuation id', () => {
+    resetCodexSessionResponseStore();
+
+    const originalScopedKey = buildCodexSessionResponseStoreKey({
+      sessionId: 'session-clear',
+      siteId: 10,
+      accountId: 20,
+      channelId: 30,
+    });
+    const driftedScopedKey = buildCodexSessionResponseStoreKey({
+      sessionId: 'session-clear',
+      siteId: 10,
+      accountId: 21,
+      channelId: 31,
+    });
+
+    setCodexSessionResponseId(originalScopedKey, 'resp-clear');
+    clearCodexSessionResponseId(originalScopedKey);
+
+    expect(getCodexSessionResponseId(originalScopedKey)).toBeNull();
+    expect(getCodexSessionResponseId(driftedScopedKey)).toBeNull();
 
     resetCodexSessionResponseStore();
   });
