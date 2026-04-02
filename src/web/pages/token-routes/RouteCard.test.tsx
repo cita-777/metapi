@@ -154,6 +154,60 @@ describe('RouteCard', () => {
     expect(onClearCooldown).toHaveBeenCalledTimes(1);
   });
 
+  it('lets keyboard users toggle the collapsed summary card', () => {
+    const onToggleExpand = vi.fn();
+    const root = create(
+      <RouteCard
+        route={buildRoute()}
+        brand={null}
+        expanded={false}
+        summaryExpanded={false}
+        onToggleExpand={onToggleExpand}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggleEnabled={vi.fn()}
+        onClearCooldown={vi.fn()}
+        clearingCooldown={false}
+        onRoutingStrategyChange={vi.fn()}
+        updatingRoutingStrategy={false}
+        channels={undefined}
+        loadingChannels={false}
+        routeDecision={null}
+        loadingDecision={false}
+        candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
+        channelTokenDraft={{}}
+        updatingChannel={{}}
+        savingPriority={false}
+        onTokenDraftChange={vi.fn()}
+        onSaveToken={vi.fn()}
+        onDeleteChannel={vi.fn()}
+        onToggleChannelEnabled={vi.fn()}
+        onChannelDragEnd={vi.fn()}
+        missingTokenSiteItems={[]}
+        missingTokenGroupItems={[]}
+        onCreateTokenForMissing={vi.fn()}
+        onAddChannel={vi.fn()}
+        onSiteBlockModel={vi.fn()}
+        expandedSourceGroupMap={{}}
+        onToggleSourceGroup={vi.fn()}
+      />,
+    );
+
+    const summaryCard = root.root.find((node) => (
+      node.type === 'div'
+      && String(node.props.className || '').includes('route-card-collapsed')
+    ));
+
+    expect(summaryCard.props.role).toBe('button');
+    expect(summaryCard.props.tabIndex).toBe(0);
+    expect(summaryCard.props['aria-expanded']).toBe(false);
+
+    summaryCard.props.onKeyDown({ key: 'Enter', preventDefault: vi.fn() });
+    summaryCard.props.onKeyDown({ key: ' ', preventDefault: vi.fn() });
+
+    expect(onToggleExpand).toHaveBeenCalledTimes(2);
+  });
+
   it('renders desktop priority rail summaries for multiple channel layers', () => {
     const root = create(
       <RouteCard

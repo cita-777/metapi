@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, create, type ReactTestInstance } from 'react-test-renderer';
+import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
 import TokenRoutes from './TokenRoutes.js';
@@ -139,7 +139,7 @@ describe('TokenRoutes desktop detail panel', () => {
   });
 
   it('keeps summary cards stable and opens a separate desktop detail panel', async () => {
-    let root!: WebTestRenderer;
+    let root!: ReactTestRenderer;
 
     try {
       await act(async () => {

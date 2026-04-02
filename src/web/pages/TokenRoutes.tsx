@@ -926,6 +926,14 @@ export default function TokenRoutes() {
     return hints;
   };
 
+  const missingTokenSiteItemsCacheRef = useRef<{ key: string; cache: Map<number, MissingTokenRouteSiteActionItem[]> }>({
+    key: '',
+    cache: new Map(),
+  });
+  if (missingTokenSiteItemsCacheRef.current.key !== missingTokenCacheKey) {
+    missingTokenSiteItemsCacheRef.current = { key: missingTokenCacheKey, cache: new Map() };
+  }
+
   // Lazy per-route missing token group index
   const missingTokenGroupCacheRef = useRef<{ key: string; cache: Map<number, RouteMissingTokenHint[]> }>({ key: '', cache: new Map() });
   const missingTokenGroupCacheKey = `${routePatternsKey}|${Object.keys(missingTokenGroupModelsByName).length}|${candidatesVersionRef.current}`;
@@ -944,6 +952,14 @@ export default function TokenRoutes() {
     cache.set(routeId, hints);
     return hints;
   };
+
+  const missingTokenGroupItemsCacheRef = useRef<{ key: string; cache: Map<number, MissingTokenGroupRouteSiteActionItem[]> }>({
+    key: '',
+    cache: new Map(),
+  });
+  if (missingTokenGroupItemsCacheRef.current.key !== missingTokenGroupCacheKey) {
+    missingTokenGroupItemsCacheRef.current = { key: missingTokenGroupCacheKey, cache: new Map() };
+  }
 
   const routeById = useMemo(
     () => new Map(visibleRouteRows.map((route) => [route.id, route])),
@@ -1237,6 +1253,8 @@ export default function TokenRoutes() {
   };
 
   const getMissingTokenSiteItems = (routeId: number): MissingTokenRouteSiteActionItem[] => {
+    const cached = missingTokenSiteItemsCacheRef.current.cache.get(routeId);
+    if (cached) return cached;
     const missingTokenHints = getRouteMissingTokenHints(routeId);
     if (missingTokenHints.length === 0) return EMPTY_MISSING_ITEMS;
     const siteMap = new Map<string, MissingTokenRouteSiteActionItem>();
@@ -1257,12 +1275,16 @@ export default function TokenRoutes() {
         }
       }
     }
-    return Array.from(siteMap.values()).sort((a, b) => (
+    const items = Array.from(siteMap.values()).sort((a, b) => (
       a.siteName.localeCompare(b.siteName, undefined, { sensitivity: 'base' })
     ));
+    missingTokenSiteItemsCacheRef.current.cache.set(routeId, items);
+    return items;
   };
 
   const getMissingTokenGroupItems = (routeId: number): MissingTokenGroupRouteSiteActionItem[] => {
+    const cached = missingTokenGroupItemsCacheRef.current.cache.get(routeId);
+    if (cached) return cached;
     const missingGroupHints = getRouteMissingTokenGroupHints(routeId);
     if (missingGroupHints.length === 0) return EMPTY_MISSING_GROUP_ITEMS;
     const siteMap = new Map<string, MissingTokenGroupRouteSiteActionItem>();
@@ -1304,9 +1326,11 @@ export default function TokenRoutes() {
         }
       }
     }
-    return Array.from(siteMap.values()).sort((a, b) => (
+    const items = Array.from(siteMap.values()).sort((a, b) => (
       a.siteName.localeCompare(b.siteName, undefined, { sensitivity: 'base' })
     ));
+    missingTokenGroupItemsCacheRef.current.cache.set(routeId, items);
+    return items;
   };
 
   // Stable callbacks for RouteCard memo (use refs to avoid dependency on closure variables)
@@ -1829,7 +1853,7 @@ export default function TokenRoutes() {
               loadingChannels={!!loadingChannelsByRouteId[route.id]}
               routeDecision={decisionByRoute[route.id] || null}
               loadingDecision={loadingDecision}
-              candidateView={getRouteCandidateView(route.id)}
+              candidateView={EMPTY_ROUTE_CANDIDATE_VIEW}
               channelTokenDraft={channelTokenDraft}
               updatingChannel={updatingChannel}
               savingPriority={!!savingPriorityByRoute[route.id]}
@@ -1838,8 +1862,8 @@ export default function TokenRoutes() {
               onDeleteChannel={stableDeleteChannel}
               onToggleChannelEnabled={stableToggleChannelEnabled}
               onChannelDragEnd={stableChannelDragEnd}
-              missingTokenSiteItems={getMissingTokenSiteItems(route.id)}
-              missingTokenGroupItems={getMissingTokenGroupItems(route.id)}
+              missingTokenSiteItems={EMPTY_MISSING_ITEMS}
+              missingTokenGroupItems={EMPTY_MISSING_GROUP_ITEMS}
               onCreateTokenForMissing={stableCreateTokenForMissing}
               onAddChannel={stableAddChannel}
               onSiteBlockModel={stableSiteBlockModel}

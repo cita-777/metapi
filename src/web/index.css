@@ -4828,7 +4828,7 @@ textarea {
 
 .route-batch-bar {
   position: sticky;
-  top: 0;
+  top: calc(var(--topbar-height) + 8px);
   z-index: 50;
   display: flex;
   align-items: center;

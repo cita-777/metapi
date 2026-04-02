@@ -273,6 +273,15 @@ function RouteCardInner({
       <div
         className={`card route-card-collapsed ${summaryExpanded ? 'is-active' : ''}`.trim()}
         onClick={() => onToggleExpand(route.id)}
+        role="button"
+        tabIndex={0}
+        aria-expanded={summaryExpanded}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            onToggleExpand(route.id);
+          }
+        }}
         style={{ cursor: 'pointer' }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
