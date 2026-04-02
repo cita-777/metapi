@@ -46,22 +46,49 @@ export function SortableChannelRow({
 
   const resolvedPriority = displayPriority ?? channel.priority ?? 0;
   const managementLocked = readOnly || channelManagementDisabled;
+  const rowTransition = [
+    transition,
+    'box-shadow 180ms ease',
+    'background-color 180ms ease',
+    'border-color 180ms ease',
+    'opacity 180ms ease',
+  ].filter(Boolean).join(', ');
+  const dragHandleStyle: CSSProperties = {
+    width: 22,
+    minWidth: 22,
+    height: 22,
+    padding: 0,
+    border: `1px solid ${isDragging ? 'color-mix(in srgb, var(--color-info) 34%, var(--color-border-light))' : 'var(--color-border-light)'}`,
+    borderRadius: 10,
+    backgroundColor: isDragging
+      ? 'color-mix(in srgb, var(--color-bg-card) 80%, var(--color-info) 20%)'
+      : 'color-mix(in srgb, var(--color-bg-card) 90%, white 10%)',
+    boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.62)',
+    color: isDragging ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
+    cursor: isSavingPriority || readOnly ? 'not-allowed' : 'grab',
+    opacity: readOnly ? 0.65 : 1,
+    transition: 'background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, color 0.16s ease',
+  };
 
   const rowStyle: CSSProperties = {
     transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.72 : channel.enabled === false ? 0.5 : 1,
+    transition: rowTransition || undefined,
+    opacity: isDragging ? 0.92 : channel.enabled === false ? 0.56 : 1,
     zIndex: isDragging ? 10 : undefined,
     display: 'grid',
     gridTemplateColumns: managementLocked || mobile ? 'minmax(0, 1fr)' : 'minmax(0, 1fr) auto auto auto',
     alignItems: mobile ? 'stretch' : 'center',
-    gap: 8,
-    padding: mobile ? '10px 12px' : '8px 12px',
-    borderLeft: '2px solid var(--color-primary)',
-    borderBottom: '1px solid var(--color-border)',
-    borderRadius: '0 var(--radius-sm) var(--radius-sm) 0',
-    background: isDragging ? 'rgba(59,130,246,0.08)' : 'var(--color-bg-card, rgba(79,70,229,0.02))',
-    boxShadow: isDragging ? 'var(--shadow-sm)' : 'none',
+    gap: mobile ? 10 : 8,
+    padding: mobile ? '10px 10px' : '7px 10px',
+    border: `1px solid ${isDragging ? 'color-mix(in srgb, var(--color-info) 38%, var(--color-border-light))' : 'color-mix(in srgb, var(--color-border-light) 92%, transparent)'}`,
+    borderRadius: 16,
+    backgroundColor: isDragging
+      ? 'color-mix(in srgb, var(--color-bg-card) 82%, var(--color-info) 18%)'
+      : 'color-mix(in srgb, var(--color-bg-card) 96%, white 4%)',
+    boxShadow: isDragging
+      ? '0 18px 34px rgba(15, 23, 42, 0.12)'
+      : '0 10px 22px rgba(15, 23, 42, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.7)',
+    willChange: 'transform',
   };
 
   const decisionState = getChannelDecisionState(decisionCandidate, channel, isExactRoute, loadingDecision);
@@ -89,15 +116,8 @@ export function SortableChannelRow({
             disabled={isSavingPriority || readOnly}
             className="btn btn-ghost"
             style={{
-              width: 22,
-              minWidth: 22,
-              height: 22,
-              padding: 0,
-              border: '1px solid var(--color-border-light)',
-              color: 'var(--color-text-muted)',
-              cursor: isSavingPriority || readOnly ? 'not-allowed' : 'grab',
-              opacity: readOnly ? 0.65 : 1,
               marginTop: 2,
+              ...dragHandleStyle,
             }}
             data-tooltip={readOnly ? '该路由当前不可编辑优先级' : '拖拽调整优先级桶'}
             aria-label="拖拽调整优先级桶"
@@ -113,7 +133,7 @@ export function SortableChannelRow({
           </button>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0, flex: 1 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
               {showPriorityBadge ? (
                 <span
                   className="badge"
@@ -161,8 +181,8 @@ export function SortableChannelRow({
                 className="badge"
                 style={{
                   fontSize: 10,
-                  background: 'color-mix(in srgb, var(--color-primary) 10%, transparent)',
-                  color: 'var(--color-primary)',
+                  background: 'color-mix(in srgb, var(--color-info) 14%, white)',
+                  color: 'var(--color-info)',
                   maxWidth: 220,
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
@@ -190,15 +210,15 @@ export function SortableChannelRow({
               ) : null}
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 11, color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>选中概率</span>
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 120 }}>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 108 }}>
                 <div
                   data-tooltip={decisionState.probability <= 0 ? decisionState.reasonText : undefined}
                   style={{
-                    width: 80,
-                    height: 6,
-                    background: 'var(--color-border)',
+                    width: 72,
+                    height: 5,
+                    background: 'color-mix(in srgb, var(--color-border) 88%, white 12%)',
                     borderRadius: 999,
                     overflow: 'hidden',
                   }}
@@ -209,7 +229,7 @@ export function SortableChannelRow({
                       height: '100%',
                       background: getProbabilityColor(decisionState.probability),
                       borderRadius: 999,
-                      transition: 'width 0.3s ease',
+                      transition: 'width 0.24s ease, background-color 0.18s ease',
                     }}
                   />
                 </div>
@@ -307,7 +327,7 @@ export function SortableChannelRow({
 
   return (
     <div ref={setNodeRef} style={rowStyle}>
-      <div style={{ display: 'flex', alignItems: mobile ? 'stretch' : 'center', flexDirection: mobile ? 'column' : 'row', gap: 10, fontSize: 13, flexWrap: 'wrap', minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: mobile ? 'stretch' : 'center', flexDirection: mobile ? 'column' : 'row', gap: 8, fontSize: 12.5, flexWrap: 'wrap', minWidth: 0 }}>
         <button
           type="button"
           ref={setActivatorNodeRef}
@@ -315,16 +335,7 @@ export function SortableChannelRow({
           {...listeners}
           disabled={isSavingPriority || readOnly}
           className="btn btn-ghost"
-          style={{
-            width: 22,
-            minWidth: 22,
-            height: 22,
-            padding: 0,
-            border: '1px solid var(--color-border-light)',
-            color: 'var(--color-text-muted)',
-            cursor: isSavingPriority || readOnly ? 'not-allowed' : 'grab',
-            opacity: readOnly ? 0.65 : 1,
-          }}
+          style={dragHandleStyle}
           data-tooltip={readOnly ? '该路由当前不可编辑优先级' : '拖拽调整优先级桶'}
           aria-label="拖拽调整优先级桶"
         >
@@ -377,8 +388,8 @@ export function SortableChannelRow({
           className="badge"
           style={{
             fontSize: 10,
-            background: 'color-mix(in srgb, var(--color-primary) 10%, transparent)',
-            color: 'var(--color-primary)',
+            background: 'color-mix(in srgb, var(--color-info) 14%, white)',
+            color: 'var(--color-info)',
             maxWidth: 220,
             overflow: 'hidden',
             textOverflow: 'ellipsis',
@@ -409,15 +420,15 @@ export function SortableChannelRow({
           <span className="badge badge-muted" style={{ fontSize: 10 }}>已禁用</span>
         ) : null}
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', marginTop: mobile ? 0 : 4, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, width: '100%', marginTop: mobile ? 0 : 2, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 11, color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>选中概率</span>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 120 }}>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 108 }}>
             <div
               data-tooltip={decisionState.probability <= 0 ? decisionState.reasonText : undefined}
               style={{
-                width: 80,
-                height: 6,
-                background: 'var(--color-border)',
+                width: 72,
+                height: 5,
+                background: 'color-mix(in srgb, var(--color-border) 88%, white 12%)',
                 borderRadius: 999,
                 overflow: 'hidden',
               }}
@@ -428,7 +439,7 @@ export function SortableChannelRow({
                   height: '100%',
                   background: getProbabilityColor(decisionState.probability),
                   borderRadius: 999,
-                  transition: 'width 0.3s ease',
+                  transition: 'width 0.24s ease, background-color 0.18s ease',
                 }}
               />
             </div>

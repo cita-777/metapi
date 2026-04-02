@@ -69,9 +69,11 @@ describe('SortableChannelRow layering', () => {
     const row = root.root.find((node) => (
       node.type === 'div'
       && node.props.style
-      && node.props.style.borderLeft === '2px solid var(--color-primary)'
+      && node.props.style.display === 'grid'
+      && node.props.style.borderRadius === 16
     ));
 
     expect(row.props.style.zIndex).toBeUndefined();
+    expect(row.props.style.borderLeft).toBeUndefined();
   });
 });

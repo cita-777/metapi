@@ -4600,21 +4600,22 @@ textarea {
 .route-page-shell {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
 }
 
 .route-command-bar {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 18px;
-  border-radius: 22px;
-  border-color: color-mix(in srgb, var(--color-border) 72%, transparent);
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--color-border) 82%, transparent);
+  border-radius: 18px;
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 88%, var(--color-primary) 12%), var(--color-bg-card));
+    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 96%, white 4%), color-mix(in srgb, var(--color-bg-card) 99%, white 1%));
   box-shadow:
-    0 18px 40px rgba(15, 23, 42, 0.06),
-    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+    0 12px 28px rgba(15, 23, 42, 0.045),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
 }
 
 .route-command-bar-header {
@@ -4628,7 +4629,7 @@ textarea {
 .route-command-bar-copy {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -4637,34 +4638,34 @@ textarea {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--color-primary);
+  color: var(--color-text-muted);
 }
 
 .route-command-bar-title-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
 .route-command-bar-title {
   margin: 0;
-  font-size: clamp(22px, 2vw, 28px);
-  line-height: 1.05;
+  font-size: clamp(20px, 1.7vw, 24px);
+  line-height: 1.08;
   color: var(--color-text-primary);
 }
 
 .route-command-bar-desc {
   margin: 0;
   max-width: 720px;
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 12.5px;
+  line-height: 1.55;
   color: var(--color-text-secondary);
 }
 
 .route-command-bar-stats {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
   align-items: flex-start;
 }
@@ -4673,43 +4674,44 @@ textarea {
   display: inline-flex;
   flex-direction: column;
   gap: 2px;
-  min-width: 110px;
-  padding: 8px 12px;
+  min-width: 102px;
+  padding: 7px 10px;
   border: 1px solid color-mix(in srgb, var(--color-border) 78%, transparent);
-  border-radius: 16px;
-  background: color-mix(in srgb, var(--color-bg-card) 76%, white 24%);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--color-bg-card) 88%, white 12%);
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: 10.5px;
   line-height: 1.35;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
 }
 
 .route-workspace-stat strong {
   color: var(--color-text-primary);
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 700;
 }
 
 .route-workspace-stat.is-emphasis {
-  border-color: color-mix(in srgb, var(--color-primary) 36%, transparent);
-  background: color-mix(in srgb, var(--color-primary) 10%, var(--color-bg-card));
+  border-color: color-mix(in srgb, var(--color-info) 26%, var(--color-border));
+  background: color-mix(in srgb, var(--color-info) 8%, var(--color-bg-card));
 }
 
 .route-toolbar-total-pill {
   display: inline-flex;
   align-items: center;
-  padding: 6px 10px;
+  padding: 5px 9px;
+  border: 1px solid color-mix(in srgb, var(--color-border) 84%, transparent);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
-  color: var(--color-primary);
-  font-size: 12px;
+  background: color-mix(in srgb, var(--color-bg-card) 86%, white 14%);
+  color: var(--color-text-secondary);
+  font-size: 11.5px;
   font-weight: 700;
 }
 
 .route-toolbar-main {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
@@ -4719,9 +4721,9 @@ textarea {
 }
 
 .route-toolbar-search input {
-  border-radius: 14px;
+  border-radius: 12px;
   border-color: color-mix(in srgb, var(--color-border) 76%, transparent);
-  background: color-mix(in srgb, var(--color-bg-card) 82%, white 18%);
+  background: color-mix(in srgb, var(--color-bg-card) 90%, white 10%);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
 }
 
@@ -4735,41 +4737,42 @@ textarea {
 .route-toolbar-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   flex-wrap: wrap;
-  padding-left: 10px;
+  padding-left: 8px;
   border-left: 1px solid color-mix(in srgb, var(--color-border) 82%, transparent);
 }
 
 .route-toolbar-actions .btn,
 .route-toolbar-cluster .btn,
 .route-toolbar-mobile-trigger {
-  min-height: 36px;
-  border-radius: 12px;
+  min-height: 34px;
+  border-radius: 10px;
 }
 
 .route-toolbar-mobile-trigger {
   border: 1px solid var(--color-border);
-  padding: 8px 14px;
-  margin-bottom: 12px;
+  padding: 7px 12px;
+  margin-bottom: 10px;
 }
 
 .route-guidance-panel {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(280px, 1fr);
-  gap: 14px;
-  padding: 16px 18px;
-  border: 1px solid color-mix(in srgb, var(--color-border) 76%, transparent);
-  border-radius: 20px;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--color-border) 82%, transparent);
+  border-radius: 18px;
   background:
-    linear-gradient(135deg, color-mix(in srgb, var(--color-primary) 7%, var(--color-bg-card)), var(--color-bg-card));
-  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.05);
+    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 95%, white 5%), color-mix(in srgb, var(--color-bg-card) 99%, white 1%));
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.04);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
 }
 
 .route-guidance-copy {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .route-guidance-eyebrow {
@@ -4777,41 +4780,41 @@ textarea {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--color-primary);
+  color: var(--color-text-muted);
 }
 
 .route-guidance-title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
   color: var(--color-text-primary);
 }
 
 .route-guidance-text {
-  font-size: 13px;
-  line-height: 1.7;
+  font-size: 12.5px;
+  line-height: 1.6;
   color: var(--color-text-secondary);
 }
 
 .route-guidance-keyline,
 .route-guidance-footnote {
-  font-size: 12px;
-  line-height: 1.6;
+  font-size: 11.5px;
+  line-height: 1.55;
   color: var(--color-text-muted);
 }
 
 .route-guidance-strategies {
   display: grid;
-  gap: 8px;
+  gap: 7px;
 }
 
 .route-strategy-chip {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  padding: 10px 12px;
+  padding: 9px 10px;
   border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
-  border-radius: 16px;
-  background: color-mix(in srgb, var(--color-bg-card) 78%, white 22%);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--color-bg-card) 90%, white 10%);
 }
 
 .route-strategy-chip-label {
@@ -4832,15 +4835,16 @@ textarea {
   z-index: 50;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
-  margin-bottom: 12px;
-  padding: 12px 16px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
   border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
-  border-radius: 18px;
+  border-radius: 16px;
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 90%, white 10%), var(--color-bg-card));
-  box-shadow: 0 16px 32px rgba(15, 23, 42, 0.06);
+    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 94%, white 6%), color-mix(in srgb, var(--color-bg-card) 98%, white 2%));
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.05);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
 }
 
 .proxy-logs-filter-select {
@@ -5871,40 +5875,40 @@ textarea {
 
 /* ===== Route Filter Bar (Collapsible, horizontal chips) ===== */
 .route-filter-bar {
-  margin-bottom: 12px;
-  border: 1px solid color-mix(in srgb, var(--color-border) 74%, transparent);
-  border-radius: 18px;
+  margin-bottom: 10px;
+  border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
+  border-radius: 16px;
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 90%, white 10%), var(--color-bg-card));
-  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.04);
+    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 94%, white 6%), color-mix(in srgb, var(--color-bg-card) 99%, white 1%));
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.035);
   overflow: hidden;
 }
 
 .route-filter-bar-summary {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   width: 100%;
-  padding: 12px 14px;
+  padding: 10px 12px;
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--color-text-secondary);
   text-align: left;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease, transform 0.18s ease;
 }
 
 .route-filter-bar-summary:hover {
-  background: color-mix(in srgb, var(--color-primary) 6%, transparent);
+  background: color-mix(in srgb, var(--color-bg) 74%, white 26%);
 }
 
 .route-filter-bar-expanded {
-  padding: 12px 14px 14px;
+  padding: 10px 12px 12px;
   border-top: 1px solid var(--color-border-light);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   animation: filter-bar-slide-down 0.22s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
@@ -5916,7 +5920,7 @@ textarea {
   from {
     opacity: 0;
     max-height: 0;
-    transform: translateY(-4px);
+    transform: translateY(-2px);
   }
 
   to {
@@ -5942,15 +5946,15 @@ textarea {
 .route-filter-row {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: 8px;
 }
 
 .route-filter-row-label {
   min-width: 46px;
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 600;
   color: var(--color-text-secondary);
-  padding-top: 7px;
+  padding-top: 6px;
   flex-shrink: 0;
   letter-spacing: 0.02em;
 }
@@ -5958,7 +5962,7 @@ textarea {
 .route-filter-row-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 5px;
   flex: 1;
   min-width: 0;
 }
@@ -5968,37 +5972,38 @@ textarea {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 5px 11px;
+  padding: 4px 10px;
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--color-border) 88%, transparent);
-  background: color-mix(in srgb, var(--color-bg-card) 72%, white 28%);
+  background: color-mix(in srgb, var(--color-bg-card) 90%, white 10%);
   cursor: pointer;
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--color-text-secondary);
   white-space: nowrap;
-  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease, box-shadow 0.18s ease;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease, box-shadow 0.18s ease, transform 0.18s ease;
   line-height: 1.3;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
 }
 
 .filter-chip:hover {
-  background: color-mix(in srgb, var(--color-primary) 7%, white);
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-  box-shadow: 0 8px 18px rgba(79, 70, 229, 0.08);
+  background: color-mix(in srgb, var(--color-bg) 78%, white 22%);
+  border-color: color-mix(in srgb, var(--color-text-muted) 22%, var(--color-border));
+  color: var(--color-text-primary);
+  box-shadow: 0 8px 16px rgba(15, 23, 42, 0.05);
+  transform: translateY(-1px);
 }
 
 .filter-chip.active {
-  background: color-mix(in srgb, var(--color-primary) 14%, white);
-  border-color: var(--color-primary);
-  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-info) 10%, var(--color-bg-card));
+  border-color: color-mix(in srgb, var(--color-info) 36%, var(--color-border));
+  color: var(--color-info);
   font-weight: 500;
-  box-shadow: 0 10px 20px rgba(79, 70, 229, 0.1);
+  box-shadow: 0 10px 18px rgba(14, 165, 233, 0.08);
 }
 
 .route-filter-bar-summary-label {
   font-weight: 600;
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--color-text-primary);
 }
 
@@ -6014,18 +6019,18 @@ textarea {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 52px;
-  padding: 4px 8px;
+  min-width: 48px;
+  padding: 3px 8px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--color-bg) 82%, white 18%);
+  background: color-mix(in srgb, var(--color-bg-card) 88%, white 12%);
   color: var(--color-text-muted);
   font-size: 11px;
   font-weight: 700;
 }
 
 .route-filter-bar-summary-count.has-active {
-  background: color-mix(in srgb, var(--color-primary) 14%, white);
-  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-info) 12%, white);
+  color: var(--color-info);
 }
 
 .filter-chip-icon {
@@ -6050,70 +6055,72 @@ textarea {
 }
 
 .filter-chip.active .filter-chip-count {
-  color: var(--color-primary);
+  color: var(--color-info);
 }
 
 /* ===== Route Card Grid (multi-column) ===== */
 .route-card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
-  gap: 14px;
+  gap: 12px;
   align-items: start;
 }
 
 /* Collapsed route card */
 .route-card-collapsed {
-  padding: 12px 15px;
-  border-radius: 18px;
-  border-color: color-mix(in srgb, var(--color-border) 80%, transparent);
+  padding: 10px 12px;
+  border-radius: 16px;
+  border-color: color-mix(in srgb, var(--color-border) 84%, transparent);
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 84%, white 16%), var(--color-bg-card));
+    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 94%, white 6%), color-mix(in srgb, var(--color-bg-card) 99%, white 1%));
   box-shadow:
-    0 12px 28px rgba(15, 23, 42, 0.05),
-    inset 0 1px 0 rgba(255, 255, 255, 0.58);
-  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+    0 12px 24px rgba(15, 23, 42, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease, background-color 0.16s ease;
 }
 
 .route-card-collapsed.is-active {
-  border-color: var(--color-primary);
+  border-color: color-mix(in srgb, var(--color-info) 36%, var(--color-border));
   box-shadow:
-    0 18px 36px rgba(79, 70, 229, 0.1),
-    0 0 0 1px color-mix(in srgb, var(--color-primary) 18%, transparent);
+    0 16px 30px rgba(14, 165, 233, 0.08),
+    0 0 0 1px color-mix(in srgb, var(--color-info) 16%, transparent);
 }
 
 .route-card-collapsed:hover {
-  border-color: var(--color-primary);
+  border-color: color-mix(in srgb, var(--color-info) 28%, var(--color-border));
   box-shadow:
-    0 16px 34px rgba(79, 70, 229, 0.1),
-    0 0 0 1px color-mix(in srgb, var(--color-primary) 20%, transparent);
+    0 14px 28px rgba(15, 23, 42, 0.06),
+    0 0 0 1px color-mix(in srgb, var(--color-info) 10%, transparent);
   transform: translateY(-1px);
 }
 
 /* Expanded route card spans full width */
 .route-card-expanded {
-  border-radius: 20px;
-  border-color: color-mix(in srgb, var(--color-border) 78%, transparent);
+  border-radius: 18px;
+  border-color: color-mix(in srgb, var(--color-border) 82%, transparent);
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 94%, white 6%), var(--color-bg-card));
-  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.06);
+    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 95%, white 5%), color-mix(in srgb, var(--color-bg-card) 99%, white 1%));
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.05);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
 }
 
 .route-card-expanded-compact {
-  background: color-mix(in srgb, var(--color-bg-card) 92%, var(--color-primary) 8%);
+  background: color-mix(in srgb, var(--color-bg-card) 96%, white 4%);
 }
 
 .route-card-detail-panel {
   grid-column: 1 / -1;
-  margin-top: -4px;
-  border-top-left-radius: 22px;
-  border-top-right-radius: 22px;
-  animation: route-detail-panel-in 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+  margin-top: -2px;
+  border-top-left-radius: 18px;
+  border-top-right-radius: 18px;
+  transform-origin: top center;
+  animation: route-detail-panel-in 0.22s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @keyframes route-detail-panel-in {
   from {
     opacity: 0;
-    transform: translateY(-6px);
+    transform: translateY(-4px);
   }
 
   to {
@@ -6124,23 +6131,24 @@ textarea {
 
 [data-theme="dark"] .route-command-bar {
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 86%, var(--color-primary) 14%), var(--color-bg-card));
+    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 92%, #0b1220 8%), color-mix(in srgb, var(--color-bg-card) 98%, #020617 2%));
   box-shadow:
-    0 22px 44px rgba(2, 6, 23, 0.34),
+    0 20px 40px rgba(2, 6, 23, 0.28),
     inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 [data-theme="dark"] .route-workspace-stat,
+[data-theme="dark"] .route-guidance-panel,
 [data-theme="dark"] .route-strategy-chip,
 [data-theme="dark"] .route-batch-bar {
-  background: color-mix(in srgb, var(--color-bg-card) 88%, #0f172a 12%);
+  background: color-mix(in srgb, var(--color-bg-card) 92%, #0b1220 8%);
   box-shadow: none;
 }
 
 [data-theme="dark"] .route-filter-bar {
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 92%, #0f172a 8%), var(--color-bg-card));
-  box-shadow: 0 18px 38px rgba(2, 6, 23, 0.28);
+    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 94%, #0b1220 6%), color-mix(in srgb, var(--color-bg-card) 99%, #020617 1%));
+  box-shadow: 0 16px 34px rgba(2, 6, 23, 0.22);
 }
 
 [data-theme="dark"] .filter-chip {
@@ -6155,22 +6163,22 @@ textarea {
 
 [data-theme="dark"] .route-card-collapsed {
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 90%, #0f172a 10%), var(--color-bg-card));
+    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 94%, #0b1220 6%), color-mix(in srgb, var(--color-bg-card) 99%, #020617 1%));
   box-shadow:
-    0 18px 34px rgba(2, 6, 23, 0.28),
+    0 16px 30px rgba(2, 6, 23, 0.22),
     inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 [data-theme="dark"] .route-card-expanded {
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 96%, #0f172a 4%), var(--color-bg-card));
-  box-shadow: 0 22px 40px rgba(2, 6, 23, 0.3);
+    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 95%, #0b1220 5%), color-mix(in srgb, var(--color-bg-card) 99%, #020617 1%));
+  box-shadow: 0 18px 34px rgba(2, 6, 23, 0.24);
 }
 
 @media (max-width: 768px) {
   .route-command-bar {
-    padding: 14px;
-    border-radius: 18px;
+    padding: 12px;
+    border-radius: 16px;
   }
 
   .route-command-bar-title-row {
@@ -6191,13 +6199,13 @@ textarea {
 
   .route-guidance-panel {
     grid-template-columns: 1fr;
-    padding: 14px;
-    border-radius: 18px;
+    padding: 12px;
+    border-radius: 16px;
   }
 
   .route-batch-bar {
     border-radius: 16px;
-    padding: 12px 14px;
+    padding: 9px 10px;
   }
 
   .route-card-grid {
