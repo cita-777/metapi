@@ -43,6 +43,66 @@ describe('anthropicMessagesInbound', () => {
     });
   });
 
+  it('drops null-content turns instead of rejecting the whole Claude request', () => {
+    const result = anthropicMessagesInbound.parse({
+      model: 'claude-opus-4-6',
+      max_tokens: 256,
+      messages: [
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: null },
+      ],
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.value?.parsed.upstreamBody.messages).toEqual([
+      { role: 'user', content: 'hello' },
+    ]);
+    expect(result.value?.parsed.claudeOriginalBody).toMatchObject({
+      messages: [
+        { role: 'user', content: 'hello' },
+      ],
+    });
+  });
+
+  it('preserves continuation hints for tool_result-only follow-up turns', () => {
+    const result = anthropicMessagesInbound.parse({
+      model: 'claude-opus-4-6',
+      max_tokens: 256,
+      previous_response_id: 'resp_prev_1',
+      prompt_cache_key: 'cache-key-1',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu_missing',
+              content: [{ type: 'text', text: '{"matches":1}' }],
+            },
+            { type: 'text', text: 'continue' },
+          ],
+        },
+      ],
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.value?.parsed.upstreamBody).toMatchObject({
+      previous_response_id: 'resp_prev_1',
+      prompt_cache_key: 'cache-key-1',
+      messages: [
+        {
+          role: 'tool',
+          tool_call_id: 'toolu_missing',
+          content: '{"matches":1}',
+        },
+        {
+          role: 'user',
+          content: 'continue',
+        },
+      ],
+    });
+  });
+
   it('normalizes adaptive effort and tool choice at the inbound boundary', () => {
     const result = anthropicMessagesInbound.parse({
       model: 'claude-opus-4-6',

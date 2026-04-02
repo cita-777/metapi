@@ -820,8 +820,8 @@ function buildResponsesToolCallDeltaFromItem(
   return {
     toolCallDeltas: [{
       index: canonicalIndex,
-      id: toolCallId,
-      name: toolName,
+      ...(shouldBackfillId && toolCallId ? { id: toolCallId } : {}),
+      ...(shouldBackfillName && toolName ? { name: toolName } : {}),
       argumentsDelta: argumentsDelta || undefined,
     }],
   };
@@ -1234,6 +1234,12 @@ export function convertClaudeRequestToOpenAiBody(body: Record<string, unknown>):
   if (body.tools !== undefined) payload.tools = convertClaudeToolsToOpenAiChat(body.tools);
   if (body.tool_choice !== undefined) payload.tool_choice = convertClaudeToolChoiceToOpenAiChat(body.tool_choice);
 
+  const promptCacheKey = asTrimmedString(body.prompt_cache_key);
+  if (promptCacheKey) payload.prompt_cache_key = promptCacheKey;
+
+  const previousResponseId = asTrimmedString(body.previous_response_id);
+  if (previousResponseId) payload.previous_response_id = previousResponseId;
+
   return { model, stream, messages, payload };
 }
 
@@ -1527,6 +1533,14 @@ export function normalizeUpstreamStreamEvent(
     };
   }
 
+  if (type === 'response.created' && isRecord((payload as any).response)) {
+    const responsePayload = (payload as any).response as Record<string, unknown>;
+    if (isNonEmptyString(responsePayload.id)) context.id = responsePayload.id;
+    if (isNonEmptyString(responsePayload.model)) context.model = responsePayload.model;
+    context.created = ensureIntegerTimestamp((responsePayload as any).created_at ?? responsePayload.created, context.created);
+    return { role: 'assistant' };
+  }
+
   if (type === 'response.failed' || type === 'response.incomplete' || type === 'error') {
     const responsePayload = isRecord((payload as any).response) ? (payload as any).response : null;
     const finishReason = normalizeStopReason(
@@ -1613,9 +1627,9 @@ export function normalizeUpstreamStreamEvent(
     return {
       toolCallDeltas: [{
         index: canonicalIndex,
-        id: toolCallId,
-        name: toolName,
-        argumentsDelta,
+        ...(shouldBackfillId && toolCallId ? { id: toolCallId } : {}),
+        ...(shouldBackfillName && toolName ? { name: toolName } : {}),
+        ...(argumentsDelta !== undefined ? { argumentsDelta } : {}),
       }],
     };
   }
@@ -1653,9 +1667,9 @@ export function normalizeUpstreamStreamEvent(
     return {
       toolCallDeltas: [{
         index: canonicalIndex,
-        id: toolCallId,
-        name: toolName,
-        argumentsDelta: argumentsDelta || undefined,
+        ...(shouldBackfillId && toolCallId ? { id: toolCallId } : {}),
+        ...(shouldBackfillName && toolName ? { name: toolName } : {}),
+        ...(argumentsDelta ? { argumentsDelta } : {}),
       }],
     };
   }
@@ -1696,19 +1710,20 @@ export function normalizeUpstreamStreamEvent(
         }
         return {
           index: canonicalIndex,
-          id: toolCall.id,
-          name: toolCall.name,
-          argumentsDelta: argumentsDelta || undefined,
+          ...(shouldBackfillId && toolCall.id ? { id: toolCall.id } : {}),
+          ...(shouldBackfillName && toolCall.name ? { name: toolCall.name } : {}),
+          ...(argumentsDelta ? { argumentsDelta } : {}),
         };
       })
       .filter((item): item is NonNullable<typeof item> => !!item);
+    const hasKnownToolCalls = toolCalls.length > 0 || context.nextResponsesToolCallIndex > 0;
     return {
       ...(contentDelta || reasoningDelta ? { role: 'assistant' as const } : {}),
       ...(contentDelta ? { contentDelta } : {}),
       ...(reasoningDelta ? { reasoningDelta } : {}),
       ...(responsesReasoning.reasoningSignature ? { reasoningSignature: responsesReasoning.reasoningSignature } : {}),
       ...(toolCallDeltas.length > 0 ? { toolCallDeltas } : {}),
-      finishReason: toolCallDeltas.length > 0
+      finishReason: hasKnownToolCalls
         ? 'tool_calls'
         : (normalizeStopReason(responsePayload.status) || 'stop'),
       done: true,
@@ -1877,25 +1892,26 @@ function buildOpenAiStreamChunk(
     const toolCalls = event.toolCallDeltas.map((toolDelta) => {
       const index = Number.isFinite(toolDelta.index) ? Math.max(0, Math.trunc(toolDelta.index)) : 0;
       const existing = context.toolCalls[index] || {};
-      const id = toolDelta.id || existing.id || `call_meta_${index}`;
+      const id = toolDelta.id || existing.id;
       const name = toolDelta.name || existing.name || '';
       const nextArguments = `${existing.arguments || ''}${toolDelta.argumentsDelta ?? ''}`;
+      // Keep synthetic call_meta_* ids as serialization-only fallbacks so later real ids can still backfill.
       context.toolCalls[index] = {
-        id,
-        name: name || existing.name,
+        ...(id ? { id } : {}),
+        ...(name || existing.name ? { name: name || existing.name } : {}),
         arguments: nextArguments,
       };
 
       const fn: Record<string, unknown> = {};
-      if (name) fn.name = name;
+      if (toolDelta.name) fn.name = toolDelta.name;
       if (toolDelta.argumentsDelta !== undefined) fn.arguments = toolDelta.argumentsDelta;
-
-      return {
+      const serializedToolCall: Record<string, unknown> = {
         index,
-        id,
-        type: 'function',
-        function: fn,
       };
+      if (toolDelta.id) serializedToolCall.id = toolDelta.id;
+      if (toolDelta.id || toolDelta.name) serializedToolCall.type = 'function';
+      if (Object.keys(fn).length > 0) serializedToolCall.function = fn;
+      return serializedToolCall;
     });
 
     if (toolCalls.length > 0) {

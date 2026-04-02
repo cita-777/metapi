@@ -163,6 +163,67 @@ describe('downstream api keys routes', () => {
     expect(listRes.json()).toMatchObject({ success: true, items: [] });
   });
 
+  it('clears nullable editor fields when updating a downstream api key', async () => {
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/downstream-keys',
+      payload: {
+        name: 'editor-key',
+        key: 'sk-editor-key-001',
+        description: 'editor consumer',
+        groupName: '项目A',
+        enabled: true,
+        expiresAt: '2026-12-31T00:00:00.000Z',
+        maxCost: 12.5,
+        maxRequests: 500,
+      },
+    });
+
+    expect(createRes.statusCode).toBe(200);
+    const keyId = (createRes.json() as { item: { id: number } }).item.id;
+
+    const updateRes = await app.inject({
+      method: 'PUT',
+      url: `/api/downstream-keys/${keyId}`,
+      payload: {
+        name: 'editor-key-updated',
+        key: 'sk-editor-key-001',
+        description: '',
+        groupName: null,
+        enabled: true,
+        expiresAt: null,
+        maxCost: null,
+        maxRequests: null,
+      },
+    });
+
+    expect(updateRes.statusCode).toBe(200);
+    expect(updateRes.json()).toMatchObject({
+      success: true,
+      item: {
+        id: keyId,
+        name: 'editor-key-updated',
+        description: null,
+        groupName: null,
+        expiresAt: null,
+        maxCost: null,
+        maxRequests: null,
+      },
+    });
+
+    const row = await db.select().from(schema.downstreamApiKeys)
+      .where(eq(schema.downstreamApiKeys.id, keyId))
+      .get();
+    expect(row).toMatchObject({
+      name: 'editor-key-updated',
+      description: null,
+      groupName: null,
+      expiresAt: null,
+      maxCost: null,
+      maxRequests: null,
+    });
+  });
+
   it('supports batch enable/disable/reset/delete operations', async () => {
     const inserted = await db.insert(schema.downstreamApiKeys).values([
       {

@@ -38,6 +38,14 @@ import { ensureOauthIdentityBackfill } from './services/oauth/oauthIdentityBackf
 import { ensureOauthProviderSitesExist } from './services/oauth/oauthSiteRegistry.js';
 import { startOAuthLoopbackCallbackServers, stopOAuthLoopbackCallbackServers } from './services/oauth/localCallbackServer.js';
 import { startSiteAnnouncementPolling, stopSiteAnnouncementPolling } from './services/siteAnnouncementPollingService.js';
+import {
+  startModelAvailabilityProbeScheduler,
+  stopModelAvailabilityProbeScheduler,
+} from './services/modelAvailabilityProbeService.js';
+import {
+  startChannelRecoveryProbeScheduler,
+  stopChannelRecoveryProbeScheduler,
+} from './services/channelRecoveryProbeService.js';
 import { startUpdateCenterPolling, stopUpdateCenterPolling } from './services/updateCenterPollingService.js';
 import { reloadBackupWebdavScheduler } from './services/backupService.js';
 import { ensureRuntimeDatabaseReady } from './runtimeDatabaseBootstrap.js';
@@ -144,6 +152,11 @@ function applyRuntimeSettings(settingsMap: Map<string, string>) {
 
   const systemProxyUrl = parseSettingFromMap<string>(settingsMap, 'system_proxy_url');
   if (typeof systemProxyUrl === 'string') config.systemProxyUrl = systemProxyUrl;
+
+  const modelAvailabilityProbeEnabled = parseSettingFromMap<boolean>(settingsMap, 'model_availability_probe_enabled');
+  if (typeof modelAvailabilityProbeEnabled === 'boolean') {
+    config.modelAvailabilityProbeEnabled = modelAvailabilityProbeEnabled;
+  }
 
   const codexUpstreamWebsocketEnabled = parseSettingFromMap<boolean>(settingsMap, 'codex_upstream_websocket_enabled');
   if (typeof codexUpstreamWebsocketEnabled === 'boolean') {
@@ -501,6 +514,8 @@ if (existsSync(webDir)) {
 await startScheduler();
 await reloadBackupWebdavScheduler();
 startSiteAnnouncementPolling();
+startModelAvailabilityProbeScheduler();
+startChannelRecoveryProbeScheduler();
 startUpdateCenterPolling();
 try {
   await startOAuthLoopbackCallbackServers();
@@ -514,6 +529,8 @@ app.addHook('onClose', async () => {
   stopUpdateCenterPolling();
   stopProxyFileRetentionService();
   stopProxyLogRetentionService();
+  stopModelAvailabilityProbeScheduler();
+  stopChannelRecoveryProbeScheduler();
   await stopOAuthLoopbackCallbackServers();
 });
 

@@ -14,12 +14,12 @@ import { refreshOauthAccessTokenSingleflight } from '../../services/oauth/refres
 import { resolveChannelProxyUrl, withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { getDownstreamRoutingPolicy } from '../../routes/proxy/downstreamPolicy.js';
-import { executeEndpointFlow, type BuiltEndpointRequest } from '../../routes/proxy/endpointFlow.js';
+import { executeEndpointFlow, type BuiltEndpointRequest } from '../orchestration/endpointFlow.js';
 import { composeProxyLogMessage } from '../../routes/proxy/logPathMeta.js';
 import {
   buildUpstreamEndpointRequest,
   resolveUpstreamEndpointCandidates,
-} from '../../routes/proxy/upstreamEndpoint.js';
+} from '../../services/upstreamEndpointRuntime.js';
 import {
   getUpstreamEndpointRuntimeStateSnapshot,
   recordUpstreamEndpointFailure,
@@ -35,13 +35,14 @@ import {
   unwrapGeminiCliPayload,
   wrapGeminiCliRequest,
 } from '../../routes/proxy/geminiCliCompat.js';
-import { dispatchRuntimeRequest } from '../../routes/proxy/runtimeExecutor.js';
+import { dispatchRuntimeRequest } from '../../services/runtimeDispatch.js';
 import { detectDownstreamClientContext, type DownstreamClientContext } from '../../routes/proxy/downstreamClientContext.js';
 import { insertProxyLog } from '../../services/proxyLogStore.js';
 import { summarizeConversationFileInputsInOpenAiBody } from '../capabilities/conversationFileCapabilities.js';
 import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
 import { fetchWithObservedFirstByte, getObservedResponseMeta } from '../firstByteTimeout.js';
 import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
+import { shouldAbortSameSiteEndpointFallback } from '../../services/proxyRetryPolicy.js';
 import {
   buildSurfaceProxyDebugResponseHeaders,
   captureSurfaceProxyDebugSuccessResponseBody,
@@ -1268,6 +1269,10 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           buildRequest: (endpoint) => buildEndpointRequest(endpoint),
           dispatchRequest,
           tryRecover: endpointStrategy.tryRecover,
+          shouldAbortRemainingEndpoints: (ctx) => shouldAbortSameSiteEndpointFallback(
+            ctx.response.status,
+            ctx.rawErrText || ctx.errText,
+          ),
           onAttemptFailure: async (ctx) => {
             const memoryWrite = recordUpstreamEndpointFailure({
               ...endpointRuntimeContext,

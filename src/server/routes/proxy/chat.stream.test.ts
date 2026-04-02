@@ -60,6 +60,7 @@ vi.mock('../../services/modelPricingService.js', () => ({
 
 vi.mock('../../services/proxyRetryPolicy.js', () => ({
   shouldRetryProxyRequest: () => false,
+  shouldAbortSameSiteEndpointFallback: () => false,
   RETRYABLE_TIMEOUT_PATTERNS: [/(request timed out|connection timed out|read timeout|\btimed out\b)/i],
 }));
 
@@ -815,6 +816,122 @@ describe('chat proxy stream behavior', () => {
     expect(response.body).toContain('event: content_block_delta');
     expect(response.body).toContain('\"text\":\"hello\"');
     expect(response.body).toContain('event: message_stop');
+  });
+
+  it('normalizes null Claude message content before proxying on /v1/messages', async () => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site: {
+        name: 'claude-site',
+        url: 'https://upstream.example.com',
+        platform: 'claude',
+      },
+      account: { id: 33, username: 'demo-user' },
+      tokenName: 'default',
+      tokenValue: 'sk-demo',
+      actualModel: 'claude-opus-4-6',
+    });
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'msg_1',
+      type: 'message',
+      role: 'assistant',
+      model: 'claude-opus-4-6',
+      content: [{ type: 'text', text: 'ok' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/messages',
+      payload: {
+        model: 'claude-opus-4-6',
+        max_tokens: 256,
+        messages: [
+          { role: 'user', content: 'hello' },
+          { role: 'assistant', content: null },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const forwardedBody = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string);
+    expect(forwardedBody.messages).toEqual([
+      { role: 'user', content: 'hello' },
+    ]);
+  });
+
+  it('prefers responses for Claude tool_result follow-ups that include continuation hints', async () => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site: {
+        name: 'openai-site',
+        url: 'https://upstream.example.com',
+        platform: 'openai',
+      },
+      account: { id: 33, username: 'demo-user' },
+      tokenName: 'default',
+      tokenValue: 'sk-demo',
+      actualModel: 'gpt-5.4',
+    });
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'resp_1',
+      object: 'response',
+      model: 'gpt-5.4',
+      created_at: 1_706_000_000,
+      status: 'completed',
+      output: [{
+        id: 'msg_1',
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        content: [{ type: 'output_text', text: 'done' }],
+      }],
+      usage: {
+        input_tokens: 5,
+        output_tokens: 1,
+        total_tokens: 6,
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/messages',
+      payload: {
+        model: 'claude-opus-4-6',
+        max_tokens: 256,
+        previous_response_id: 'resp_prev_1',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'toolu_missing',
+                content: [{ type: 'text', text: '{"matches":1}' }],
+              },
+              { type: 'text', text: 'continue' },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/v1/responses');
+    const forwardedBody = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string);
+    expect(forwardedBody.previous_response_id).toBe('resp_prev_1');
+    expect(forwardedBody.input[0]).toEqual({
+      type: 'function_call_output',
+      call_id: 'toolu_missing',
+      output: '{"matches":1}',
+    });
   });
 
   it('converts OpenAI tool_calls SSE into Claude tool_use stream events on /v1/messages', async () => {

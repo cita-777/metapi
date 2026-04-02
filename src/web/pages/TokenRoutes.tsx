@@ -25,6 +25,7 @@ import {
 import { buildVisibleRouteList } from './helpers/routeListVisibility.js';
 import { buildZeroChannelPlaceholderRoutes } from './helpers/zeroChannelRoutes.js';
 import {
+  getRouteRoutingStrategyDescription,
   getRouteRoutingStrategyLabel,
   normalizeRouteRoutingStrategyValue,
 } from './token-routes/routingStrategy.js';
@@ -1565,8 +1566,13 @@ export default function TokenRoutes() {
       />
 
       {/* Info tip */}
-      <div className="info-tip" style={{ marginBottom: 12 }}>
-        {tr('系统会根据模型可用性自动生成路由。优先级按 P0/P1 等桶管理，同一桶内可有多个通道；拖动通道或灰色分隔线即可调整。精确模型路由会自动过滤只支持该模型的账号和令牌。群组路由中的优先级调整会直接回写来源通道。选中概率表示请求到达时该通道被选中的概率。成本来源优先级为：实测成本 → 账号配置成本 → 目录参考价 → 默认回退单价。')}
+      <div className="info-tip" style={{ marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div>{tr('系统会根据模型可用性自动生成路由。优先级按 P0/P1 等桶管理，同一桶内可有多个通道；拖动通道或灰色分隔线即可调整。精确模型路由会自动过滤只支持该模型的账号和令牌。群组路由中的优先级调整会直接回写来源通道。选中概率表示请求到达时该通道被选中的概率。成本来源优先级为：实测成本 → 账号配置成本 → 目录参考价 → 默认回退单价。')}</div>
+        <div>{`${getRouteRoutingStrategyLabel('weighted')}：${getRouteRoutingStrategyDescription('weighted')}`}</div>
+        <div>{`${getRouteRoutingStrategyLabel('round_robin')}：${getRouteRoutingStrategyDescription('round_robin')}`}</div>
+        <div>{`${getRouteRoutingStrategyLabel('stable_first')}：${getRouteRoutingStrategyDescription('stable_first')}`}</div>
+        <div>{tr('选中概率用于解释当前策略下这一次请求更可能落到哪里；轮询和稳定优先更适合把它当作顺序参考。')}</div>
+        <div>{tr('成本来源优先级：实测成本 → 账号配置成本 → 目录参考价 → 默认回退单价。')}</div>
       </div>
 
       {/* Manual route panel */}

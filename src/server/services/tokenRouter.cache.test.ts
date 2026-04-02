@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 
 type DbModule = typeof import('../db/index.js');
 type TokenRouterModule = typeof import('./tokenRouter.js');
@@ -613,6 +613,90 @@ describe('TokenRouter runtime cache', () => {
     expect(cooledSibling?.cooldownUntil).toBeTruthy();
     expect(cooledSibling?.failCount).toBe(0);
     expect(await router.selectChannel('gpt-4o-mini')).toBeNull();
+  });
+
+  it('clears short-window cooldown on sibling channels after a successful recovery probe', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'shared-credential-recovery-site',
+      url: 'https://shared-credential-recovery.example.com',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'shared-credential-recovery-user',
+      accessToken: 'shared-credential-recovery-access-token',
+      status: 'active',
+      oauthProvider: 'codex',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+        },
+      }),
+    }).returning().get();
+
+    const primaryRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.4',
+      routingStrategy: 'weighted',
+      enabled: true,
+    }).returning().get();
+
+    const siblingRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4o-mini',
+      routingStrategy: 'weighted',
+      enabled: true,
+    }).returning().get();
+
+    const primaryChannel = await db.insert(schema.routeChannels).values({
+      routeId: primaryRoute.id,
+      accountId: account.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const siblingChannel = await db.insert(schema.routeChannels).values({
+      routeId: siblingRoute.id,
+      accountId: account.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    await router.recordFailure(primaryChannel.id, {
+      status: 429,
+      errorText: JSON.stringify({
+        error: {
+          type: 'usage_limit_reached',
+          message: 'The usage limit has been reached',
+        },
+      }),
+      modelName: 'gpt-5.4',
+    });
+
+    await router.recordProbeSuccess(primaryChannel.id, 180, 'gpt-5.4');
+
+    const refreshedChannels = await db.select().from(schema.routeChannels)
+      .where(inArray(schema.routeChannels.id, [primaryChannel.id, siblingChannel.id]))
+      .all();
+
+    expect(refreshedChannels).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: primaryChannel.id,
+        cooldownUntil: null,
+        consecutiveFailCount: 0,
+        cooldownLevel: 0,
+      }),
+      expect.objectContaining({
+        id: siblingChannel.id,
+        cooldownUntil: null,
+        consecutiveFailCount: 0,
+        cooldownLevel: 0,
+      }),
+    ]));
   });
 
   it('round robins across all available channels regardless of priority', async () => {

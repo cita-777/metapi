@@ -1,6 +1,7 @@
 import { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocketServer } from 'ws';
+import { resetCodexSessionResponseStore } from './codexSessionResponseStore.js';
 
 describe('codexWebsocketRuntime', () => {
   let upstreamServer: WebSocketServer;
@@ -25,6 +26,7 @@ describe('codexWebsocketRuntime', () => {
   });
 
   beforeEach(() => {
+    resetCodexSessionResponseStore();
     upstreamConnectionCount = 0;
     upstreamRequests = [];
     upstreamMessageHandler = (socket, parsed, requestIndex) => {

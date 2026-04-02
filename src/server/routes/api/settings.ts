@@ -40,12 +40,17 @@ import { invalidateSiteProxyCache, normalizeSiteProxyUrl, withExplicitProxyReque
 import { performFactoryReset } from '../../services/factoryResetService.js';
 import { normalizeLogCleanupRetentionDays } from '../../services/logCleanupService.js';
 import { stopProxyLogRetentionService } from '../../services/proxyLogRetentionService.js';
+import {
+  startModelAvailabilityProbeScheduler,
+  stopModelAvailabilityProbeScheduler,
+} from '../../services/modelAvailabilityProbeService.js';
 
 type RoutingWeights = typeof config.routingWeights;
 
 interface RuntimeSettingsBody {
   proxyToken?: string;
   systemProxyUrl?: string;
+  modelAvailabilityProbeEnabled?: boolean;
   codexUpstreamWebsocketEnabled?: boolean;
   disableCrossProtocolFallback?: boolean;
   proxySessionChannelConcurrencyLimit?: number;
@@ -405,6 +410,16 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       config.systemProxyUrl = normalizeSiteProxyUrl(value) || '';
       return;
     }
+    case 'model_availability_probe_enabled': {
+      if (typeof value !== 'boolean') return;
+      config.modelAvailabilityProbeEnabled = value;
+      if (value) {
+        startModelAvailabilityProbeScheduler();
+      } else {
+        stopModelAvailabilityProbeScheduler();
+      }
+      return;
+    }
     case 'codex_upstream_websocket_enabled': {
       if (typeof value !== 'boolean') return;
       config.codexUpstreamWebsocketEnabled = value;
@@ -694,6 +709,7 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     logCleanupUsageLogsEnabled: config.logCleanupUsageLogsEnabled,
     logCleanupProgramLogsEnabled: config.logCleanupProgramLogsEnabled,
     logCleanupRetentionDays: config.logCleanupRetentionDays,
+    modelAvailabilityProbeEnabled: config.modelAvailabilityProbeEnabled,
     codexUpstreamWebsocketEnabled: config.codexUpstreamWebsocketEnabled,
     disableCrossProtocolFallback: config.disableCrossProtocolFallback,
     proxySessionChannelConcurrencyLimit: config.proxySessionChannelConcurrencyLimit,
@@ -1107,6 +1123,29 @@ export async function settingsRoutes(app: FastifyInstance) {
       config.systemProxyUrl = normalizedSystemProxyUrl || '';
       upsertSetting('system_proxy_url', config.systemProxyUrl);
       invalidateSiteProxyCache();
+    }
+
+    if (body.modelAvailabilityProbeEnabled !== undefined) {
+      let nextValue = false;
+      try {
+        nextValue = parseBooleanFlag(body.modelAvailabilityProbeEnabled, '批量测活开关');
+      } catch (err: any) {
+        return reply.code(400).send({
+          success: false,
+          message: err?.message || '批量测活开关格式无效',
+        });
+      }
+
+      if (nextValue !== config.modelAvailabilityProbeEnabled) {
+        changedLabels.push(nextValue ? '开启批量测活' : '关闭批量测活');
+      }
+      await upsertSetting('model_availability_probe_enabled', nextValue);
+      config.modelAvailabilityProbeEnabled = nextValue;
+      if (nextValue) {
+        startModelAvailabilityProbeScheduler();
+      } else {
+        stopModelAvailabilityProbeScheduler();
+      }
     }
 
     if (body.codexUpstreamWebsocketEnabled !== undefined) {

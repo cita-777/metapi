@@ -301,6 +301,21 @@ export function getRunningTaskByDedupeKey(key: string): BackgroundTask | null {
   return task;
 }
 
+export async function waitForBackgroundTaskCompletion(taskId: string, pollIntervalMs = 25): Promise<BackgroundTask | null> {
+  const safePollIntervalMs = Math.max(5, Math.trunc(pollIntervalMs || 0));
+  while (true) {
+    const task = getBackgroundTask(taskId);
+    if (!task) return null;
+    if (task.status !== 'pending' && task.status !== 'running') {
+      return task;
+    }
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, safePollIntervalMs);
+      timer.unref?.();
+    });
+  }
+}
+
 export function summarizeCheckinResults(results: Array<{ result?: any }>): { total: number; success: number; skipped: number; failed: number } {
   const summary = { total: results.length, success: 0, skipped: 0, failed: 0 };
   for (const item of results) {

@@ -34,6 +34,8 @@ import type { RouteCandidateView, RouteTokenOption } from '../helpers/routeModel
 import { SortableChannelRow } from './SortableChannelRow.js';
 import {
   getRouteRoutingStrategyLabel,
+  getRouteRoutingStrategyDescription,
+  getRouteRoutingStrategyHint,
   normalizeRouteRoutingStrategyValue,
 } from './routingStrategy.js';
 import {
@@ -199,6 +201,8 @@ function RouteCardInner({
   const channelManagementDisabled = explicitGroupRoute;
   const title = resolveRouteTitle(route);
   const routingStrategy = normalizeRouteRoutingStrategyValue(route.routingStrategy);
+  const routingStrategyDescription = getRouteRoutingStrategyDescription(routingStrategy);
+  const routingStrategyHint = getRouteRoutingStrategyHint(routingStrategy);
   const hasCachedDecisionSnapshot = !!route.decisionSnapshot;
   const cachedDecisionTooltip = route.decisionRefreshedAt
     ? `${tr('最近刷新')}: ${formatDateTimeMinuteLocal(route.decisionRefreshedAt)}`
@@ -207,17 +211,17 @@ function RouteCardInner({
     {
       value: 'weighted',
       label: tr('权重随机'),
-      description: tr('按优先级、权重和成本信号综合选择'),
+      description: getRouteRoutingStrategyDescription('weighted'),
     },
     {
       value: 'round_robin',
       label: tr('轮询'),
-      description: tr('按全局顺序轮流调用，忽略优先级，连续失败 3 次后进入分级冷却'),
+      description: getRouteRoutingStrategyDescription('round_robin'),
     },
     {
       value: 'stable_first',
       label: tr('稳定优先'),
-      description: tr('按优先级优先选择当前最稳、最快、成功率更高的通道，不做随机分流'),
+      description: getRouteRoutingStrategyDescription('stable_first'),
     },
   ] as const;
 
@@ -359,7 +363,11 @@ function RouteCardInner({
               {tr('0 通道')}
             </span>
           ) : (
-            <span className="badge badge-muted" style={{ fontSize: 10, flexShrink: 0 }}>
+            <span
+              className="badge badge-muted"
+              style={{ fontSize: 10, flexShrink: 0 }}
+              data-tooltip={`${getRouteRoutingStrategyLabel(routingStrategy)}：${routingStrategyDescription}`}
+            >
               {getRouteRoutingStrategyLabel(routingStrategy)}
             </span>
           )}
@@ -545,6 +553,14 @@ function RouteCardInner({
               placeholder={tr('选择路由策略')}
               emptyLabel={tr('暂无可选策略')}
             />
+            <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div style={{ fontSize: 12, lineHeight: 1.55, color: 'var(--color-text-secondary)' }}>
+                {routingStrategyDescription}
+              </div>
+              <div style={{ fontSize: 11, lineHeight: 1.5, color: 'var(--color-text-muted)' }}>
+                {routingStrategyHint}
+              </div>
+            </div>
           </div>
         </div>
       )}

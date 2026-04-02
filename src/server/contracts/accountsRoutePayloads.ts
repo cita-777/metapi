@@ -21,9 +21,9 @@ const accountUpdatePayloadSchema = z.object({
   apiToken: z.union([z.string(), z.null()]).optional(),
   status: z.string().optional(),
   checkinEnabled: z.boolean().optional(),
-  unitCost: z.number().optional(),
+  unitCost: z.union([z.number(), z.null()]).optional(),
   extraConfig: z.union([z.string(), z.record(z.string(), z.unknown()), z.null()]).optional(),
-  refreshToken: z.string().optional(),
+  refreshToken: z.union([z.string(), z.null()]).optional(),
   tokenExpiresAt: z.union([z.number(), z.string(), z.null()]).optional(),
   isPinned: z.boolean().optional(),
   sortOrder: z.number().int().min(0).optional(),
@@ -98,6 +98,9 @@ function formatAccountsPayloadError(error: z.ZodError): string {
   if (firstPath === 'checkinEnabled') {
     return 'Invalid checkinEnabled. Expected boolean.';
   }
+  if (firstPath === 'unitCost') {
+    return 'Invalid unitCost. Expected number or null.';
+  }
   if (firstPath === 'credentialMode') {
     return 'Invalid credentialMode. Expected auto/session/apikey.';
   }
@@ -123,10 +126,10 @@ function formatAccountsPayloadError(error: z.ZodError): string {
     return 'Invalid platformUserId. Expected positive number.';
   }
   if (firstPath === 'refreshToken') {
-    return 'Invalid refreshToken. Expected string.';
+    return 'Invalid refreshToken. Expected string or null.';
   }
   if (firstPath === 'tokenExpiresAt') {
-    return 'Invalid tokenExpiresAt. Expected number or string.';
+    return 'Invalid tokenExpiresAt. Expected number, string, or null.';
   }
   if (firstPath === 'accountId') {
     return '账号 ID 无效';

@@ -9,6 +9,7 @@ const MODEL_UNSUPPORTED_PATTERNS: RegExp[] = [
   /model.*does\s+not\s+exist/i,
   /no\s+such\s+model/i,
   /unknown\s+model/i,
+  /unknown\s+provider\s+for\s+model/i,
   /invalid\s+model/i,
   /model[_\s-]?not[_\s-]?found/i,
   /you\s+do\s+not\s+have\s+access\s+to\s+the\s+model/i,
@@ -54,6 +55,23 @@ const NON_RETRYABLE_REQUEST_PATTERNS: RegExp[] = [
   /unsupported\s+media\s+type/i,
 ];
 
+const SAME_SITE_ENDPOINT_ABORT_PATTERNS: RegExp[] = [
+  /\b429\b/i,
+  /too\s+many\s+requests/i,
+  /rate\s+limit/i,
+  /quota(?:\s+exceeded)?/i,
+  /bad\s+gateway/i,
+  /gateway\s+time-?out/i,
+  /service\s+unavailable/i,
+  /temporar(?:y|ily)\s+unavailable/i,
+  /cpu\s+overloaded/i,
+  /connection\s+reset/i,
+  /connection\s+refused/i,
+  /econnreset/i,
+  /econnrefused/i,
+  ...RETRYABLE_TIMEOUT_PATTERNS,
+];
+
 function isModelUnsupportedErrorMessage(rawMessage?: string | null): boolean {
   const text = (rawMessage || '').trim();
   if (!text) return false;
@@ -75,4 +93,11 @@ export function shouldRetryProxyRequest(status: number, upstreamErrorText?: stri
   if (matchesAnyPattern(RETRYABLE_CHANNEL_LOCAL_PATTERNS, upstreamErrorText)) return true;
   if (status === 400 || status === 404 || status === 422) return false;
   return false;
+}
+
+export function shouldAbortSameSiteEndpointFallback(status: number, upstreamErrorText?: string | null): boolean {
+  if (status < 500 && status !== 408 && status !== 429) {
+    return false;
+  }
+  return matchesAnyPattern(SAME_SITE_ENDPOINT_ABORT_PATTERNS, upstreamErrorText);
 }

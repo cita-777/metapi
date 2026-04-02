@@ -162,4 +162,71 @@ describe('proxyChannelCoordinator', () => {
       second.lease.release();
     }
   });
+
+  it('exposes the set of currently active leased channels', async () => {
+    const lease = await proxyChannelCoordinator.acquireChannelLease({
+      channelId: 23,
+      accountExtraConfig: JSON.stringify({ credentialMode: 'session' }),
+    });
+    expect(lease.status).toBe('acquired');
+    if (lease.status !== 'acquired') return;
+
+    expect(proxyChannelCoordinator.getActiveChannelIds()).toEqual([23]);
+
+    lease.lease.release();
+    expect(proxyChannelCoordinator.getActiveChannelIds()).toEqual([]);
+  });
+
+  it('reports active and waiting load for a guarded session channel', async () => {
+    const first = await proxyChannelCoordinator.acquireChannelLease({
+      channelId: 31,
+      accountExtraConfig: JSON.stringify({ credentialMode: 'session' }),
+    });
+    expect(first.status).toBe('acquired');
+    if (first.status !== 'acquired') return;
+
+    const secondPromise = proxyChannelCoordinator.acquireChannelLease({
+      channelId: 31,
+      accountExtraConfig: JSON.stringify({ credentialMode: 'session' }),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(proxyChannelCoordinator.getChannelLoadSnapshot({
+      channelId: 31,
+      accountExtraConfig: JSON.stringify({ credentialMode: 'session' }),
+    })).toEqual({
+      channelId: 31,
+      sessionScoped: true,
+      concurrencyLimit: 1,
+      activeLeaseCount: 1,
+      waitingCount: 1,
+      loadRatio: 2,
+      saturated: true,
+    });
+
+    first.lease.release();
+    await vi.advanceTimersByTimeAsync(0);
+
+    const second = await secondPromise;
+    expect(second.status).toBe('acquired');
+    if (second.status === 'acquired') {
+      second.lease.release();
+    }
+  });
+
+  it('treats structured oauth providers as session-scoped in load snapshots', () => {
+    expect(proxyChannelCoordinator.getChannelLoadSnapshot({
+      channelId: 41,
+      accountExtraConfig: JSON.stringify({ credentialMode: 'session' }),
+      accountOauthProvider: 'codex',
+    })).toEqual({
+      channelId: 41,
+      sessionScoped: true,
+      concurrencyLimit: 1,
+      activeLeaseCount: 0,
+      waitingCount: 0,
+      loadRatio: 0,
+      saturated: false,
+    });
+  });
 });

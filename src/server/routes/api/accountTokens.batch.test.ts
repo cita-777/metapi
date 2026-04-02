@@ -159,6 +159,39 @@ describe('account token batch routes', () => {
     expect(remaining.map((item) => item.id)).toEqual([2]);
   });
 
+  it('accepts the edit-panel payload when updating account token metadata without changing token value', async () => {
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/api/account-tokens/1',
+      payload: {
+        name: 'token-1-updated',
+        group: 'default',
+        enabled: true,
+        isDefault: false,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      success: true,
+      token: {
+        id: 1,
+        name: 'token-1-updated',
+        tokenGroup: 'default',
+        enabled: true,
+        isDefault: false,
+      },
+    });
+
+    const row = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, 1)).get();
+    expect(row).toMatchObject({
+      name: 'token-1-updated',
+      tokenGroup: 'default',
+      enabled: true,
+      isDefault: false,
+    });
+  });
+
   it('rejects invalid account token batch action', async () => {
     const response = await app.inject({
       method: 'POST',

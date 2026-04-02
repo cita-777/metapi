@@ -425,6 +425,43 @@ function sanitizeAnthropicContentBlock(item: Record<string, unknown>): Record<st
   return { ...item };
 }
 
+function sanitizeAnthropicMessage(message: Record<string, unknown>): Record<string, unknown> | null {
+  const next: Record<string, unknown> = { ...message };
+  const rawContent = next.content;
+
+  if (Array.isArray(rawContent)) {
+    const content = rawContent
+      .map((item) => {
+        if (isRecord(item)) return sanitizeAnthropicContentBlock(item);
+        if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean') {
+          return sanitizeAnthropicContentBlock(toAnthropicTextBlock(String(item)) ?? {});
+        }
+        return null;
+      })
+      .filter((item): item is Record<string, unknown> => item !== null);
+    if (content.length <= 0) return null;
+    next.content = content;
+    return next;
+  }
+
+  if (rawContent === null || rawContent === undefined) {
+    return null;
+  }
+
+  if (isRecord(rawContent)) {
+    const block = sanitizeAnthropicContentBlock(rawContent);
+    if (!block) return null;
+    next.content = [block];
+    return next;
+  }
+
+  if (typeof rawContent === 'number' || typeof rawContent === 'boolean') {
+    next.content = String(rawContent);
+  }
+
+  return typeof next.content === 'string' ? next : null;
+}
+
 function isCacheableAnthropicMessageBlock(item: Record<string, unknown>): boolean {
   const type = asTrimmedString(item.type).toLowerCase();
   if (type === 'thinking' || type === 'redacted_thinking') return false;
@@ -710,15 +747,9 @@ export function sanitizeAnthropicMessagesBody(
   const rawMessages = Array.isArray(sanitized.messages) ? sanitized.messages : [];
   if (rawMessages.length > 0) {
     sanitized.messages = rawMessages.map((message) => {
-      if (!isRecord(message)) return message;
-      const next = { ...message };
-      if (Array.isArray(next.content)) {
-        next.content = next.content
-          .map((item) => (isRecord(item) ? sanitizeAnthropicContentBlock(item) : item))
-          .filter((item) => item !== null);
-      }
-      return next;
-    });
+      if (!isRecord(message)) return null;
+      return sanitizeAnthropicMessage(message);
+    }).filter((message): message is Record<string, unknown> => message !== null);
   }
 
   if (autoOptimizeCacheControls) {

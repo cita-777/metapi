@@ -24,6 +24,16 @@ type ChannelRuntimeState = {
   queue: ChannelWaiter[];
 };
 
+export type ProxyChannelLoadSnapshot = {
+  channelId: number;
+  sessionScoped: boolean;
+  concurrencyLimit: number;
+  activeLeaseCount: number;
+  waitingCount: number;
+  loadRatio: number;
+  saturated: boolean;
+};
+
 export type ProxyChannelLease = {
   channelId: number;
   isActive(): boolean;
@@ -104,9 +114,15 @@ function getOrCreateChannelRuntimeState(channelId: number): ChannelRuntimeState 
   return state;
 }
 
+function pruneCancelledWaiters(state: ChannelRuntimeState): void {
+  if (state.queue.length <= 0) return;
+  state.queue = state.queue.filter((waiter) => !waiter.cancelled);
+}
+
 function maybeDeleteChannelRuntimeState(channelId: number): void {
   const state = channelRuntimeStates.get(channelId);
   if (!state) return;
+  pruneCancelledWaiters(state);
   if (state.activeLeaseIds.size <= 0 && state.queue.every((waiter) => waiter.cancelled)) {
     channelRuntimeStates.delete(channelId);
   }
@@ -177,6 +193,62 @@ class ProxyChannelCoordinator {
     stickySessionBindings.delete(normalizedKey);
   }
 
+  getActiveChannelIds(): number[] {
+    const ids: number[] = [];
+    for (const [channelId, state] of channelRuntimeStates.entries()) {
+      pruneCancelledWaiters(state);
+      if (state.activeLeaseIds.size > 0) {
+        ids.push(channelId);
+      }
+    }
+    return ids;
+  }
+
+  getChannelLoadSnapshot(input: {
+    channelId: number;
+    accountExtraConfig?: string | null;
+    accountOauthProvider?: string | null;
+  }): ProxyChannelLoadSnapshot {
+    const channelId = Math.trunc(input.channelId || 0);
+    const sessionScoped = isSessionScopedChannel({
+      extraConfig: input.accountExtraConfig,
+      oauthProvider: input.accountOauthProvider,
+    });
+    const concurrencyLimit = getChannelConcurrencyLimit({
+      extraConfig: input.accountExtraConfig,
+      oauthProvider: input.accountOauthProvider,
+    });
+    const state = channelId > 0 ? channelRuntimeStates.get(channelId) : null;
+    if (state) {
+      pruneCancelledWaiters(state);
+    }
+    const activeLeaseCount = state?.activeLeaseIds.size ?? 0;
+    const waitingCount = state?.queue.length ?? 0;
+    const denominator = concurrencyLimit > 0 ? concurrencyLimit : 1;
+    return {
+      channelId,
+      sessionScoped,
+      concurrencyLimit,
+      activeLeaseCount,
+      waitingCount,
+      loadRatio: (activeLeaseCount + waitingCount) / denominator,
+      saturated: concurrencyLimit > 0 && activeLeaseCount >= concurrencyLimit,
+    };
+  }
+
+  getChannelLoadSnapshots(input: Array<{
+    channelId: number;
+    accountExtraConfig?: string | null;
+    accountOauthProvider?: string | null;
+  }>): Map<number, ProxyChannelLoadSnapshot> {
+    const snapshots = new Map<number, ProxyChannelLoadSnapshot>();
+    for (const item of input) {
+      const snapshot = this.getChannelLoadSnapshot(item);
+      snapshots.set(snapshot.channelId, snapshot);
+    }
+    return snapshots;
+  }
+
   async acquireChannelLease(input: {
     channelId: number;
     accountExtraConfig?: string | null;
@@ -202,6 +274,7 @@ class ProxyChannelCoordinator {
     }
 
     const state = getOrCreateChannelRuntimeState(channelId);
+    pruneCancelledWaiters(state);
     if (state.activeLeaseIds.size < concurrencyLimit) {
       return {
         status: 'acquired',
@@ -226,6 +299,7 @@ class ProxyChannelCoordinator {
       waiter.timer = setTimeout(() => {
         waiter.cancelled = true;
         waiter.timer = null;
+        pruneCancelledWaiters(state);
         maybeDeleteChannelRuntimeState(channelId);
         resolve({
           status: 'timeout',
@@ -285,6 +359,7 @@ class ProxyChannelCoordinator {
   private drainQueue(channelId: number): void {
     const state = channelRuntimeStates.get(channelId);
     if (!state) return;
+    pruneCancelledWaiters(state);
     const concurrencyLimit = Math.max(0, Math.trunc(config.proxySessionChannelConcurrencyLimit || 0));
     while (state.activeLeaseIds.size < concurrencyLimit && state.queue.length > 0) {
       const waiter = state.queue.shift();

@@ -536,21 +536,22 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
 
     const existingView = toDownstreamApiKeyPolicyView(existing);
     const body = parsedBody.data;
+    const hasOwn = (key: string) => Object.prototype.hasOwnProperty.call(body, key);
     let normalized: ReturnType<typeof normalizeDownstreamApiKeyPayload>;
     try {
       normalized = normalizeDownstreamApiKeyPayload({
-        name: body.name ?? existing.name,
-        key: body.key ?? existing.key,
-        description: body.description ?? existing.description,
-        groupName: body.groupName ?? existing.groupName,
-        tags: body.tags ?? existingView.tags,
-        enabled: body.enabled ?? existing.enabled,
-        expiresAt: body.expiresAt ?? existing.expiresAt,
-        maxCost: body.maxCost ?? existing.maxCost,
-        maxRequests: body.maxRequests ?? existing.maxRequests,
-        supportedModels: body.supportedModels ?? existingView.supportedModels,
-        allowedRouteIds: body.allowedRouteIds ?? existingView.allowedRouteIds,
-        siteWeightMultipliers: body.siteWeightMultipliers ?? existingView.siteWeightMultipliers,
+        name: hasOwn('name') ? body.name : existing.name,
+        key: hasOwn('key') ? body.key : existing.key,
+        description: hasOwn('description') ? body.description : existing.description,
+        groupName: hasOwn('groupName') ? body.groupName : existing.groupName,
+        tags: hasOwn('tags') ? body.tags : existingView.tags,
+        enabled: hasOwn('enabled') ? body.enabled : existing.enabled,
+        expiresAt: hasOwn('expiresAt') ? body.expiresAt : existing.expiresAt,
+        maxCost: hasOwn('maxCost') ? body.maxCost : existing.maxCost,
+        maxRequests: hasOwn('maxRequests') ? body.maxRequests : existing.maxRequests,
+        supportedModels: hasOwn('supportedModels') ? body.supportedModels : existingView.supportedModels,
+        allowedRouteIds: hasOwn('allowedRouteIds') ? body.allowedRouteIds : existingView.allowedRouteIds,
+        siteWeightMultipliers: hasOwn('siteWeightMultipliers') ? body.siteWeightMultipliers : existingView.siteWeightMultipliers,
       });
     } catch (error: unknown) {
       return reply.code(400).send({ success: false, message: (error as Error)?.message || '参数无效' });

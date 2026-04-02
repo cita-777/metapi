@@ -8,6 +8,14 @@ import {
   serializeNormalizedStreamEvent,
 } from './chatFormatsCore.js';
 
+function parseOpenAiSsePayload(lines: string[]): Record<string, unknown> {
+  const dataLine = lines.find((line) => line.startsWith('data: ') && line.trim() !== 'data: [DONE]');
+  if (!dataLine) {
+    throw new Error('expected serialized SSE payload');
+  }
+  return JSON.parse(dataLine.slice(6)) as Record<string, unknown>;
+}
+
 describe('chatFormatsCore inline think parsing', () => {
   it('tracks split think tags across stream chunks', () => {
     const context = createStreamTransformContext('gpt-test');
@@ -158,6 +166,39 @@ describe('chatFormatsCore inline think parsing', () => {
     });
   });
 
+  it('emits an assistant starter chunk for tool-first responses streams', () => {
+    const context = createStreamTransformContext('gpt-test');
+    const claudeContext = createClaudeDownstreamContext();
+
+    const startEvent = normalizeUpstreamStreamEvent({
+      type: 'response.created',
+      response: {
+        id: 'resp_tool_start',
+        model: 'gpt-test',
+        created_at: 1706000000,
+        status: 'in_progress',
+        output: [],
+      },
+    }, context, 'gpt-test');
+
+    const payload = parseOpenAiSsePayload(
+      serializeNormalizedStreamEvent('openai', startEvent, context, claudeContext),
+    );
+
+    expect(payload).toMatchObject({
+      id: 'resp_tool_start',
+      model: 'gpt-test',
+      choices: [{
+        index: 0,
+        delta: {
+          role: 'assistant',
+          content: '',
+        },
+        finish_reason: null,
+      }],
+    });
+  });
+
   it('keeps responses tool-call indices stable when response.completed replays mixed output arrays', () => {
     const context = createStreamTransformContext('gpt-test');
     const claudeContext = createClaudeDownstreamContext();
@@ -207,8 +248,197 @@ describe('chatFormatsCore inline think parsing', () => {
     }, context, 'gpt-test')).toEqual({
       role: 'assistant',
       contentDelta: 'working on it',
-      finishReason: 'stop',
+      finishReason: 'tool_calls',
       done: true,
+    });
+  });
+
+  it('keeps terminal tool-only responses completions marked as tool_calls after earlier streamed deltas', () => {
+    const context = createStreamTransformContext('gpt-test');
+    const claudeContext = createClaudeDownstreamContext();
+
+    const toolStarted = normalizeUpstreamStreamEvent({
+      type: 'response.output_item.added',
+      output_index: 0,
+      item: {
+        id: 'fc_1',
+        type: 'function_call',
+        call_id: 'call_tool_only',
+        name: 'lookup',
+      },
+    }, context, 'gpt-test');
+    serializeNormalizedStreamEvent('openai', toolStarted, context, claudeContext);
+
+    const toolArgs = normalizeUpstreamStreamEvent({
+      type: 'response.function_call_arguments.delta',
+      output_index: 0,
+      call_id: 'call_tool_only',
+      delta: '{"q":"x"}',
+    }, context, 'gpt-test');
+    serializeNormalizedStreamEvent('openai', toolArgs, context, claudeContext);
+
+    expect(normalizeUpstreamStreamEvent({
+      type: 'response.completed',
+      response: {
+        id: 'resp_tool_only',
+        model: 'gpt-test',
+        status: 'completed',
+        usage: { input_tokens: 3, output_tokens: 2, total_tokens: 5 },
+      },
+    }, context, 'gpt-test')).toEqual({
+      finishReason: 'tool_calls',
+      done: true,
+    });
+  });
+
+  it('keeps terminal tool-only responses completions marked as tool_calls before serialization side effects', () => {
+    const context = createStreamTransformContext('gpt-test');
+
+    expect(normalizeUpstreamStreamEvent({
+      type: 'response.output_item.added',
+      output_index: 0,
+      item: {
+        id: 'fc_pre_serialization',
+        type: 'function_call',
+        call_id: 'call_pre_serialization',
+        name: 'lookup',
+      },
+    }, context, 'gpt-test')).toEqual({
+      toolCallDeltas: [{
+        index: 0,
+        id: 'call_pre_serialization',
+        name: 'lookup',
+      }],
+    });
+
+    expect(normalizeUpstreamStreamEvent({
+      type: 'response.function_call_arguments.delta',
+      output_index: 0,
+      call_id: 'call_pre_serialization',
+      delta: '{"q":"x"}',
+    }, context, 'gpt-test')).toEqual({
+      toolCallDeltas: [{
+        index: 0,
+        id: 'call_pre_serialization',
+        argumentsDelta: '{"q":"x"}',
+      }],
+    });
+
+    expect(normalizeUpstreamStreamEvent({
+      type: 'response.completed',
+      response: {
+        id: 'resp_pre_serialization',
+        model: 'gpt-test',
+        status: 'completed',
+        usage: { input_tokens: 3, output_tokens: 2, total_tokens: 5 },
+      },
+    }, context, 'gpt-test')).toEqual({
+      finishReason: 'tool_calls',
+      done: true,
+    });
+  });
+
+  it('does not backfill historical tool identity into later arguments-only deltas', () => {
+    const context = createStreamTransformContext('gpt-test');
+    const claudeContext = createClaudeDownstreamContext();
+
+    const started = normalizeUpstreamStreamEvent({
+      type: 'response.output_item.added',
+      output_index: 0,
+      item: {
+        id: 'fc_identity',
+        type: 'function_call',
+        call_id: 'call_identity',
+        name: 'lookup',
+      },
+    }, context, 'gpt-test');
+    serializeNormalizedStreamEvent('openai', started, context, claudeContext);
+
+    const argumentDelta = normalizeUpstreamStreamEvent({
+      type: 'response.function_call_arguments.delta',
+      output_index: 0,
+      call_id: 'call_identity',
+      delta: '{"q":"x"}',
+    }, context, 'gpt-test');
+
+    const payload = parseOpenAiSsePayload(
+      serializeNormalizedStreamEvent('openai', argumentDelta, context, claudeContext),
+    );
+
+    expect(payload).toMatchObject({
+      choices: [{
+        index: 0,
+        delta: {
+          tool_calls: [{
+            index: 0,
+            function: {
+              arguments: '{"q":"x"}',
+            },
+          }],
+        },
+        finish_reason: null,
+      }],
+    });
+    const toolCall = (((payload.choices as any[])[0] as any).delta.tool_calls[0]) as Record<string, unknown>;
+    expect(toolCall.id).toBeUndefined();
+    expect(toolCall.type).toBeUndefined();
+    expect((toolCall.function as Record<string, unknown>).name).toBeUndefined();
+  });
+
+  it('backfills late real tool identity after earlier id-less argument deltas', () => {
+    const context = createStreamTransformContext('gpt-test');
+    const claudeContext = createClaudeDownstreamContext();
+
+    const argumentDelta = normalizeUpstreamStreamEvent({
+      type: 'response.function_call_arguments.delta',
+      output_index: 0,
+      delta: '{"q":"x"}',
+    }, context, 'gpt-test');
+
+    expect(argumentDelta).toEqual({
+      toolCallDeltas: [{
+        index: 0,
+        argumentsDelta: '{"q":"x"}',
+      }],
+    });
+    serializeNormalizedStreamEvent('openai', argumentDelta, context, claudeContext);
+
+    const started = normalizeUpstreamStreamEvent({
+      type: 'response.output_item.done',
+      output_index: 0,
+      item: {
+        id: 'fc_late_identity',
+        type: 'function_call',
+        call_id: 'call_late_identity',
+        name: 'lookup',
+        arguments: '{"q":"x"}',
+      },
+    }, context, 'gpt-test');
+
+    const payload = parseOpenAiSsePayload(
+      serializeNormalizedStreamEvent('openai', started, context, claudeContext),
+    );
+
+    expect(payload).toMatchObject({
+      choices: [{
+        index: 0,
+        delta: {
+          tool_calls: [{
+            index: 0,
+            id: 'call_late_identity',
+            type: 'function',
+            function: {
+              name: 'lookup',
+            },
+          }],
+        },
+        finish_reason: null,
+      }],
+    });
+    expect(context.toolCalls[0]).toEqual({
+      id: 'call_late_identity',
+      name: 'lookup',
+      arguments: '{"q":"x"}',
     });
   });
 

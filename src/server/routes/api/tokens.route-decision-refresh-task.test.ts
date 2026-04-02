@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { waitForBackgroundTaskToReachTerminalState } from '../../test-fixtures/backgroundTaskTestUtils.js';
 
 type DbModule = typeof import('../../db/index.js');
 type BackgroundTaskModule = typeof import('../../services/backgroundTaskService.js');
@@ -163,13 +164,8 @@ describe('POST /api/routes/decision/refresh', () => {
     expect(body.jobId.length).toBeGreaterThan(10);
     expect(body.status).toBe('pending');
 
-    for (let attempt = 0; attempt < 200; attempt += 1) {
-      const task = getBackgroundTask(body.jobId);
-      if (task?.status === 'succeeded') break;
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
-
-    expect(getBackgroundTask(body.jobId)).toMatchObject({ status: 'succeeded' });
+    const task = await waitForBackgroundTaskToReachTerminalState(getBackgroundTask, body.jobId);
+    expect(task).toMatchObject({ status: 'succeeded' });
 
     const routesResponse = await app.inject({
       method: 'GET',

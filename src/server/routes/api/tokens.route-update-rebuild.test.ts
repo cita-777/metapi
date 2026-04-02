@@ -578,6 +578,54 @@ describe('PUT /api/routes/:id route rebuild', () => {
     });
   });
 
+  it('accepts null tokenId when updating a channel and falls back to the account default token', async () => {
+    const seeded = await seedAccountWithToken('gpt-4o-mini');
+    const alternateToken = await db.insert(schema.accountTokens).values({
+      accountId: seeded.account.id,
+      name: 'token-alt',
+      token: 'sk-token-alt',
+      enabled: true,
+      isDefault: false,
+    }).returning().get();
+    await db.insert(schema.tokenModelAvailability).values({
+      tokenId: alternateToken.id,
+      modelName: 'gpt-4o-mini',
+      available: true,
+    }).run();
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4o-mini',
+      enabled: true,
+    }).returning().get();
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: seeded.account.id,
+      tokenId: alternateToken.id,
+      sourceModel: 'gpt-4o-mini',
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      manualOverride: true,
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/channels/${channel.id}`,
+      payload: {
+        tokenId: null,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      id: channel.id,
+      tokenId: seeded.token.id,
+    });
+
+    const updated = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, channel.id)).get();
+    expect(updated?.tokenId).toBe(seeded.token.id);
+  });
+
   it('prefers an exact route over a colliding explicit-group display name', async () => {
     const exactCandidate = await seedAccountWithToken('claude-opus-4-6');
     const groupedCandidate = await seedAccountWithToken('claude-opus-4-5');

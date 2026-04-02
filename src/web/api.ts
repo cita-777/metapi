@@ -342,6 +342,7 @@ export type RuntimeRoutingWeightsPayload = {
 export type RuntimeSettingsPayload = {
   proxyToken?: string;
   systemProxyUrl?: string;
+  modelAvailabilityProbeEnabled?: boolean;
   codexUpstreamWebsocketEnabled?: boolean;
   disableCrossProtocolFallback?: boolean;
   proxySessionChannelConcurrencyLimit?: number;

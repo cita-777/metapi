@@ -50,7 +50,7 @@ describe('TokenRoutes routing strategy updates', () => {
     getBrandMock.mockReset();
     getBrandMock.mockReturnValue(null);
     apiMock.getRoutesSummary
-      .mockResolvedValueOnce([
+      .mockResolvedValue([
         {
           id: 1,
           modelPattern: 'gpt-4o-mini',
@@ -65,8 +65,7 @@ describe('TokenRoutes routing strategy updates', () => {
           decisionSnapshot: null,
           decisionRefreshedAt: null,
         },
-      ])
-      .mockRejectedValueOnce(new Error('refresh failed'));
+      ]);
     apiMock.getRouteChannels.mockResolvedValue([]);
     apiMock.getModelTokenCandidates.mockResolvedValue({ models: {} });
     apiMock.getRouteDecisionsBatch.mockResolvedValue({ decisions: {} });
@@ -101,11 +100,13 @@ describe('TokenRoutes routing strategy updates', () => {
       });
       await flushMicrotasks();
 
+      apiMock.getRoutesSummary.mockRejectedValueOnce(new Error('refresh failed'));
+
       const roundRobinOption = root.root.find((node) => (
         node.type === 'button'
         && typeof node.props.className === 'string'
         && node.props.className.includes('modern-select-option')
-        && collectText(node).includes('轮询')
+        && collectText(node).startsWith('轮询')
       ));
 
       await act(async () => {
@@ -151,11 +152,13 @@ describe('TokenRoutes routing strategy updates', () => {
       });
       await flushMicrotasks();
 
+      apiMock.getRoutesSummary.mockRejectedValueOnce(new Error('refresh failed'));
+
       const stableFirstOption = root.root.find((node) => (
         node.type === 'button'
         && typeof node.props.className === 'string'
         && node.props.className.includes('modern-select-option')
-        && collectText(node).includes('稳定优先')
+        && collectText(node).startsWith('稳定优先')
       ));
 
       await act(async () => {
@@ -169,7 +172,7 @@ describe('TokenRoutes routing strategy updates', () => {
         node.type === 'button'
         && typeof node.props.className === 'string'
         && node.props.className.includes('modern-select-trigger')
-        && collectText(node).includes('稳定优先')
+        && collectText(node).startsWith('稳定优先')
       ));
       expect(collectText(strategyTrigger)).toContain('稳定优先');
     } finally {

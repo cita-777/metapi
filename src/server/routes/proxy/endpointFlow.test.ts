@@ -2,9 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetch } from 'undici';
 import type { BuiltEndpointRequest } from './endpointFlow.js';
 
-vi.mock('undici', () => ({
-  fetch: vi.fn(),
-}));
+vi.mock('undici', async () => {
+  const actual = await vi.importActual<typeof import('undici')>('undici');
+  return {
+    ...actual,
+    fetch: vi.fn(),
+  };
+});
 
 vi.mock('../../services/siteProxy.js', () => ({
   withSiteProxyRequestInit: async (_targetUrl: string, init: RequestInit) => init,
@@ -222,6 +226,37 @@ describe('executeEndpointFlow', () => {
     expect(onAttemptFailure.mock.calls[0]?.[0]?.request?.path).toBe('/v1/responses');
     expect(onAttemptSuccess).toHaveBeenCalledTimes(1);
     expect(onAttemptSuccess.mock.calls[0]?.[0]?.request?.path).toBe('/v1/chat/completions');
+  });
+
+  it('stops same-site endpoint fallback when the failure is classified as a site outage', async () => {
+    fetchMock
+      .mockResolvedValueOnce(toUndiciResponse(new Response(JSON.stringify({
+        error: { message: 'Service temporarily unavailable', type: 'upstream_error' },
+      }), {
+        status: 503,
+        headers: { 'content-type': 'application/json' },
+      })))
+      .mockResolvedValueOnce(toUndiciResponse(new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })));
+
+    const result = await executeEndpointFlow({
+      siteUrl: 'https://example.com',
+      endpointCandidates: ['responses', 'chat'],
+      buildRequest: (endpoint) => endpoint === 'responses'
+        ? requestFor('/v1/responses')
+        : { ...requestFor('/v1/chat/completions'), endpoint },
+      shouldAbortRemainingEndpoints: () => true,
+      shouldDowngrade: () => true,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(503);
+      expect(result.errText).toContain('Service temporarily unavailable');
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('accepts recovered response from tryRecover hook', async () => {

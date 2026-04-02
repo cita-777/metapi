@@ -9,7 +9,7 @@ import {
   buildClaudeCountTokensUpstreamRequest,
   buildUpstreamEndpointRequest,
   resolveUpstreamEndpointCandidates,
-} from '../../routes/proxy/upstreamEndpoint.js';
+} from '../../services/upstreamEndpointRuntime.js';
 import {
   getUpstreamEndpointRuntimeStateSnapshot,
   recordUpstreamEndpointFailure,
@@ -20,10 +20,11 @@ import {
   getDownstreamRoutingPolicy,
   recordDownstreamCostUsage,
 } from '../../routes/proxy/downstreamPolicy.js';
-import { executeEndpointFlow, type BuiltEndpointRequest } from '../../routes/proxy/endpointFlow.js';
+import { executeEndpointFlow, type BuiltEndpointRequest } from '../orchestration/endpointFlow.js';
 import { detectProxyFailure } from '../../routes/proxy/proxyFailureJudge.js';
 import { openAiChatTransformer } from '../../transformers/openai/chat/index.js';
 import { anthropicMessagesTransformer } from '../../transformers/anthropic/messages/index.js';
+import { shouldPreferResponsesForAnthropicContinuation } from '../../transformers/anthropic/messages/compatibility.js';
 import { getProxyAuthContext, getProxyResourceOwner } from '../../middleware/auth.js';
 import {
   ProxyInputFileResolutionError,
@@ -48,6 +49,7 @@ import { getObservedResponseMeta } from '../firstByteTimeout.js';
 import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
 import { detectDownstreamClientContext } from '../../routes/proxy/downstreamClientContext.js';
 import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
+import { shouldAbortSameSiteEndpointFallback } from '../../services/proxyRetryPolicy.js';
 import {
   acquireSurfaceChannelLease,
   bindSurfaceStickyChannel,
@@ -171,6 +173,10 @@ export async function handleChatSurfaceRequest(
   }
   const conversationFileSummary = summarizeConversationFileInputsInOpenAiBody(resolvedOpenAiBody);
   const hasNonImageFileInput = conversationFileSummary.hasDocument;
+  const wantsContinuationAwareResponses = (
+    downstreamFormat === 'claude'
+    && shouldPreferResponsesForAnthropicContinuation(claudeOriginalBody)
+  );
   const codexSessionCacheKey = deriveCodexSessionCacheKey({
     downstreamFormat,
     body: downstreamFormat === 'claude' ? claudeOriginalBody : request.body,
@@ -284,6 +290,7 @@ export async function handleChatSurfaceRequest(
         {
           hasNonImageFileInput,
           conversationFileSummary,
+          wantsContinuationAwareResponses,
         },
       ),
     ];
@@ -298,6 +305,7 @@ export async function handleChatSurfaceRequest(
       requestCapabilities: {
         hasNonImageFileInput,
         conversationFileSummary,
+        wantsContinuationAwareResponses,
       },
     };
     await safeUpdateSurfaceProxyDebugCandidates(debugTrace, {
@@ -310,6 +318,7 @@ export async function handleChatSurfaceRequest(
         stickyPreferredChannelId,
         oauthProvider: oauth?.provider || null,
         isCodexSite,
+        wantsContinuationAwareResponses,
       },
     });
     const buildProviderHeaders = () => (
@@ -391,6 +400,10 @@ export async function handleChatSurfaceRequest(
         buildRequest: (endpoint) => buildEndpointRequest(endpoint),
         dispatchRequest,
         tryRecover,
+        shouldAbortRemainingEndpoints: (ctx) => shouldAbortSameSiteEndpointFallback(
+          ctx.response.status,
+          ctx.rawErrText || ctx.errText,
+        ),
         onAttemptFailure: async (ctx) => {
           const memoryWrite = recordUpstreamEndpointFailure({
             ...endpointRuntimeContext,

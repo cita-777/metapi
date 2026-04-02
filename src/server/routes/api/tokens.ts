@@ -1360,7 +1360,7 @@ export async function tokensRoutes(app: FastifyInstance) {
     if (body.priority !== undefined) updates.priority = body.priority;
     if (body.weight !== undefined) updates.weight = body.weight;
     if (body.enabled !== undefined) updates.enabled = body.enabled;
-    if (body.tokenId !== undefined) updates.tokenId = body.tokenId;
+    if (body.tokenId !== undefined) updates.tokenId = nextTokenId;
 
     await db.update(schema.routeChannels).set(updates).where(eq(schema.routeChannels.id, channelId)).run();
     await clearRouteDecisionSnapshot(channel.routeId);

@@ -81,7 +81,7 @@ describe('filterRecentlyFailedCandidates', () => {
     expect(result.map((c) => c.id).sort()).toEqual(['a', 'b']);
   });
 
-  it('keeps candidates unchanged when avoidSec is omitted', () => {
+  it('uses the default recent-failure backoff when avoidSec is omitted', () => {
     const nowMs = Date.now();
     const candidates: Candidate[] = [
       {
@@ -101,7 +101,7 @@ describe('filterRecentlyFailedCandidates', () => {
     ];
 
     const result = filterRecentlyFailedCandidates(candidates, nowMs);
-    expect(result).toEqual(candidates);
+    expect(result.map((candidate) => candidate.id)).toEqual(['healthy']);
   });
 
   it('does not penalize stale failures outside the avoidance window', () => {

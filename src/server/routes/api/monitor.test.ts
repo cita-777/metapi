@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { eq } from 'drizzle-orm';
 
 type DbModule = typeof import('../../db/index.js');
 
@@ -49,5 +50,35 @@ describe('monitor routes', () => {
       success: false,
       message: 'Invalid ldohCookie. Expected string or null.',
     });
+  });
+
+  it('accepts null monitor cookie payloads and clears the stored cookie', async () => {
+    const saveResponse = await app.inject({
+      method: 'PUT',
+      url: '/api/monitor/config',
+      payload: {
+        ldohCookie: 'ld_auth_session=abcdefghijklmnopqrstuvwxyz',
+      },
+    });
+    expect(saveResponse.statusCode).toBe(200);
+
+    const clearResponse = await app.inject({
+      method: 'PUT',
+      url: '/api/monitor/config',
+      payload: {
+        ldohCookie: null,
+      },
+    });
+
+    expect(clearResponse.statusCode).toBe(200);
+    expect(clearResponse.json()).toMatchObject({
+      success: true,
+      ldohCookieConfigured: false,
+    });
+
+    const saved = await db.select().from(schema.settings)
+      .where(eq(schema.settings.key, 'monitor_ldoh_cookie'))
+      .get();
+    expect(saved?.value).toBe('""');
   });
 });
