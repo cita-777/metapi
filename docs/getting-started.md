@@ -137,15 +137,27 @@ npm run dev
 进入 **站点管理**，添加你使用的上游中转站：
 
 - 填写站点名称（自己想怎么取就怎么取）和 URL
-- 选择平台类型（`new-api` / `one-api` / `one-hub` / `done-hub` / `veloera` / `anyrouter` / `sub2api` / `openai` / `claude` / `gemini` / `cliproxyapi`），通常可自动检测，检测有误或者因为防护页导致检测失败可以手动选择。
+- 按你手上的上游形态选择：
+  - 有后台面板：`new-api` / `one-api` / `one-hub` / `done-hub` / `veloera` / `anyrouter` / `sub2api`
+  - 通用兼容接口：`openai` / `claude` / `gemini` / `cliproxyapi`
+  - 官方入口：直接在下拉里选对应**官方预设**，例如阿里云 / 智谱 / 豆包 Coding Plan，DeepSeek，Moonshot，MiniMax，ModelScope
+- 平台通常可自动检测；如果因为防护页、反向代理或特殊路径导致检测失败，再手动选择。
 - 可选是否开启系统代理，方便国内机器访问国外中转站。
 - 可选站点权重，站点权重越大，路由将更加频繁使用这个站点的模型。
+- 如果这个站点的控制台 URL 和真实 AI 请求地址不同，不要直接把主站点 URL 改掉，而是在表单下方补「AI 请求地址池」。
 
-如果你不确定该选哪个平台，先看 [上游接入](./upstream-integration.md)。
+> [!IMPORTANT]
+> 通用平台常见写法是填控制台地址或 provider base URL；但如果你选的是**官方预设**，请保留预设自动带出的完整路径，哪怕它本来就包含 `/v1`、`/anthropic` 或 `/api/coding/...`。
+
+如果你不确定该选哪个平台或预设，先看 [上游接入](/upstream-integration)。
 
 ![站点管理](./screenshots/site-management.png)
 
-### 步骤 2：添加账号(可签到、查询余额等)
+### 步骤 2：添加连接（账号 / API Key / OAuth）
+
+这一步不要再死记“所有站点都先加账号”。现在推荐按场景分流：
+
+#### 2A. 面板型站点：添加账号 / Session
 
 进入 **连接管理中的账号管理**，为每个站点添加已注册的账号：
 
@@ -161,15 +173,42 @@ npm run dev
 
 - 启用自动签到（如站点支持）
 
-### 步骤 3：添加 API Key（Base URL+Key模式，只可获取模型和使用模型）
+适合这一分支的平台：
 
-首先你需要在步骤1中，确保添加了（`new-api` / `one-api` / `one-hub` / `done-hub` / `veloera` / `anyrouter` / `sub2api` / `openai` / `claude` / `gemini` / `cliproxyapi`）的类型的Base URL。
+- `new-api`
+- `one-api`
+- `one-hub`
+- `done-hub`
+- `veloera`
+- `anyrouter`
+- `sub2api`
 
-- 进入 **连接管理中的API Key管理**，为每个站点添加你的API Key：
+#### 2B. 兼容接口 / 官方预设 / CPA：添加 API Key
+
+进入 **连接管理中的 API Key 管理**，为站点添加你的 API Key：
 
 ![API Key 管理](./screenshots/api-key-management.png)
 
-### 步骤 4：同步账号令牌
+适合这一分支的平台：
+
+- `openai`
+- `claude`
+- `gemini`
+- `cliproxyapi`
+- 所有官方预设（Coding Plan、DeepSeek、Moonshot、MiniMax、ModelScope 等）
+
+#### 2C. Provider 原生授权：走 OAuth 管理
+
+如果你要接的是：
+
+- Codex
+- Claude provider 账号
+- Gemini CLI
+- Antigravity
+
+那就不要在这里手填普通账号，而是直接去左侧菜单 **OAuth 管理** 完成授权，详见 [OAuth 管理](/oauth)。
+
+### 步骤 3：同步账号令牌（可选，仅面板型站点）
 
 进入 **连接管理中的账号令牌管理**：
 
@@ -179,14 +218,16 @@ npm run dev
 
   ![Token管理](./screenshots/token-management.png)
 
-### 步骤 5：路由管理
+如果你走的是 API Key-only 或 OAuth 流程，这一步通常不是必需的。
+
+### 步骤 4：路由管理
 
 进入 **路由管理**：
 
 - 系统会自动发现模型并生成路由规则
 - 点击右上角的刷新选中概率可以显示并将概率载入缓存中
 - 可以手动调整通道的优先级和权重
-- 关于路由权重参数调优，参考 [配置说明 → 智能路由](./configuration.md#智能路由)
+- 关于路由权重参数调优，参考 [配置说明 → 智能路由](/configuration#智能路由)
 - 左侧可以进行品牌、站点、接口等的筛选，如下图所示：
 
 ![路由筛选](./screenshots/routes-filter.png)

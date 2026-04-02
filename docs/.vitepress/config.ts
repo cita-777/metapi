@@ -58,6 +58,7 @@ export default withMermaid(
         { text: '首页', link: '/' },
         { text: '快速上手', link: '/getting-started' },
         { text: '上游接入', link: '/upstream-integration' },
+        { text: 'OAuth 管理', link: '/oauth' },
         { text: 'FAQ', link: '/faq' },
         { text: '文档维护', link: '/README' },
         { text: '项目主页', link: 'https://github.com/cita-777/metapi' },
@@ -75,6 +76,7 @@ export default withMermaid(
           text: '使用与运维',
           items: [
             { text: '上游接入', link: '/upstream-integration' },
+            { text: 'OAuth 管理', link: '/oauth' },
             { text: '配置说明', link: '/configuration' },
             { text: 'K3s 更新中心（高级）', link: '/k3s-update-center' },
             { text: '客户端接入', link: '/client-integration' },

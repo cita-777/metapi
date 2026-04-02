@@ -4,7 +4,19 @@
 
 ---
 
-这页写给已经把 Metapi 部署到 **K3s / Kubernetes + Helm** 的用户。
+本页适用于已经把 Metapi 部署到 **K3s / Kubernetes + Helm** 的用户。
+
+K3s 更新中心的日常入口位于：
+
+```text
+设置 → 更新中心
+```
+
+本文主要说明三件事：
+
+- 哪些配置直接在后台页面里填写
+- 哪些配置仍然需要主服务环境变量或 helper manifest
+- 哪些前提不满足时，页面虽然能打开，但无法真正部署
 
 如果你现在的环境只是一个最普通的 **Docker Compose 安装**，只有一个 Metapi 容器，其他什么都没有，那么先记住一句话：
 
@@ -15,12 +27,32 @@
 >
 > 但如果你是老用户，正打算 **从 Docker Compose 迁到 K3s / Helm，以获得滚动更新能力**，那这页仍然值得看，因为它描述的就是迁移完成后的目标形态。
 
-## 先判断：你需不需要看这页
+## 配置到底在哪里配
 
-| 你的现状 | 要不要看这页 | 你现在该怎么做 |
+更新中心涉及后台页面、主服务环境变量、helper 部署清单三层配置，最容易混淆，建议先看下面这张对照表。
+
+| 你要配什么 | 去哪里配 | 说明 |
+|------|------|------|
+| 是否启用更新中心 | UI：设置 → 更新中心 | 日常使用优先在 UI 操作 |
+| Deploy Helper URL | UI：设置 → 更新中心 | 例如集群内 Service 地址 |
+| Namespace / Release Name / Chart Ref / Image Repository | UI：设置 → 更新中心 | 都是页面里直接填的部署配置 |
+| GitHub Releases / Docker Hub / 默认部署来源 | UI：设置 → 更新中心 | 属于页面里的版本来源策略 |
+| 主 Metapi 到 helper 的认证 token | 主 Metapi 环境变量 | `DEPLOY_HELPER_TOKEN` 或 `UPDATE_CENTER_HELPER_TOKEN` |
+| helper 自己监听在哪个地址和端口 | helper 环境变量 / manifest | `DEPLOY_HELPER_HOST` / `DEPLOY_HELPER_PORT` |
+| helper 自己的 Bearer Token | helper 环境变量 / manifest | `DEPLOY_HELPER_TOKEN`，且必须与主服务一致 |
+| chart 是否真的支持 digest 部署 | chart 文件本身 | 这不是 UI，也不是普通 env，要看 chart 模板 |
+
+其中可以这样理解：
+
+- 日常使用时，更新中心的大部分配置直接在 **设置 → 更新中心** 页面填写
+- 环境变量主要负责主服务与 helper 之间的认证，以及 helper 自身的监听参数
+
+## 先判断：是否适用
+
+| 你的现状 | 是否适用 | 你现在该怎么做 |
 |------|------------|--------------|
 | 只有一个 `docker compose up -d` 跑起来的 Metapi 容器 | 不需要 | 继续用普通 Docker 升级方式 |
-| 目前是 Docker Compose，准备迁到 K3s / Helm 来获得滚动更新 | 需要 | 把这页当成迁移后的目标架构说明，先完成迁移，再启用更新中心 |
+| 目前是 Docker Compose，准备迁到 K3s / Helm 来获得滚动更新 | 需要 | 把本页当成迁移后的目标架构说明，先完成迁移，再启用更新中心 |
 | 有 K3s / Kubernetes 集群，但 Metapi 不是用 Helm release 部署的 | 暂时不建议 | 这套更新中心无法直接接管现有部署 |
 | Metapi 已经是 Helm release，想在后台里看版本并手动点一次升级 | 需要 | 继续看下文 |
 
@@ -45,7 +77,7 @@ docker compose up -d
 - 额外的 Bearer Token
 - 集群内 Service 地址
 
-也就是说，除非你本来就在用 K3s / Helm，否则这页可以直接跳过。
+除非你本来就在用 K3s / Helm，否则本页可以直接跳过。
 
 ## 如果你正准备从 Docker Compose 迁到 K3s
 
@@ -57,7 +89,7 @@ docker compose up -d
 - 用 Helm 管理版本和回滚
 - 后续在后台里看版本来源，并人工触发一次升级
 
-对这类用户来说，这页不是“现在立刻就能用”的操作手册，而是：
+对这类用户来说，本页不是“现在立刻就能用”的操作手册，而是：
 
 - “迁移完成后，你会得到什么能力”
 - “为了用上这个能力，集群侧要提前满足什么前提”
@@ -160,7 +192,7 @@ Deploy Helper 是一个跑在集群里的小服务。它不负责对外提供 Me
 
 那答案是：
 
-- 这是一个合理场景，这页正是给你看迁移后该怎么接入的。
+- 这是一个合理场景，本页正是说明迁移后该如何接入更新中心。
 
 ## K3s / Helm 用户的接入步骤
 
@@ -253,7 +285,11 @@ helper 端使用：
 
 它们的值必须完全一致。
 
+这一步仍然是**环境变量级配置**，因为它本质上是主服务与 helper 之间的认证，而不是普通用户日常在 UI 里调的业务参数。
+
 ### 3. 在后台“设置 → 更新中心”里填配置
+
+从这一步开始，**优先按 UI 来操作**，不要再回头把下面这些字段硬塞进环境变量。
 
 需要填写的核心字段有：
 
@@ -271,6 +307,12 @@ helper 端使用：
 - `启用更新中心`
 - `GitHub Releases`
 - `Docker Hub`
+
+对已经跑起来的 K3s / Helm 用户来说，更新中心的日常配置主要就在这一页：
+
+```text
+设置 → 更新中心
+```
 
 ### 4. 实际操作顺序
 
@@ -329,9 +371,9 @@ About 页里的“更新提醒”更像一个轻量入口：
 - K3s / Kubernetes
 - Helm release
 - Deploy Helper
+- 对齐的 token
 
 另外，如果你想用“按 digest 精确部署/回退”这条链路，还要确认你的 chart 没有忽略 `image.digest` 这个值；否则页面虽然能显示 digest，真正部署时还是只会落到 tag 语义。
-- 对齐的 token
 
 缺其中任何一项，都只能看，不能真正部署。
 

@@ -28,10 +28,11 @@ npm run docs:build
 |------|--------|------------|
 | 对外第一印象、产品定位、核心入口 | [文档首页](/) | 需要调整公开落地页信息架构、首页 CTA 或首屏导航时 |
 | 新用户部署与首条请求 | [快速上手](./getting-started.md) | 新安装流程、默认端口、首次调用步骤变化时 |
-| 上游平台选择与接法 | [上游接入](./upstream-integration.md) | 平台支持范围、默认连接分段、自动识别规则变化时 |
+| 上游平台选择与接法 | [上游接入](./upstream-integration.md) | 平台支持范围、官方预设、AI 请求地址池、自动识别规则变化时 |
+| Provider OAuth 授权 | [OAuth 管理](./oauth.md) | 支持的 OAuth provider、授权流程、回调方式或自动重绑能力变化时 |
 | 生产部署与回滚 | [部署指南](./deployment.md) | Docker Compose、反向代理、升级回滚策略变更时 |
 | K3s / Helm 高级升级面板 | [K3s 更新中心（高级）](./k3s-update-center.md) | 需要说明谁适合使用更新中心、helper 怎么配、K3s/Helm 发布链路怎么接入时 |
-| 环境变量、参数和配置项 | [配置说明](./configuration.md) | 新增配置、默认值变化、兼容行为变化时 |
+| 环境变量、参数和配置项 | [配置说明](./configuration.md) | 设置页 / 通知设置 / 下游密钥这些 UI 入口变化，或仅剩 env-only 的部署级参数变化时 |
 | 客户端与工具接入 | [客户端接入](./client-integration.md) | Open WebUI、Cherry Studio、Cursor 等接入方式变化时 |
 | 管理后台脚本化调用 | [管理 API](./management-api.md) | 需要说明如何用脚本批量导入站点/账号，或对接外部自动化时 |
 | 运维排障与日常维护 | [运维手册](./operations.md) / [常见问题](./faq.md) | 新排障案例、备份恢复、健康检查、典型报错变化时 |

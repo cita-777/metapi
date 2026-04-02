@@ -24,8 +24,11 @@ features:
     details: 从部署到第一条请求，按步骤完成最小可用环境搭建。
     link: /getting-started
   - title: 上游接入
-    details: 按当前代码支持的平台类型，快速判断该选什么平台、先走哪个连接分段。
+    details: 按平台类型、官方预设和 AI 请求地址池的现状，快速判断站点该怎么接。
     link: /upstream-integration
+  - title: OAuth 管理
+    details: 直接接入 Codex、Claude、Gemini CLI、Antigravity 等 provider 授权账号。
+    link: /oauth
   - title: 问题排查
     details: 汇总高频报错、根因定位和标准修复路径，降低重复沟通成本。
     link: /faq

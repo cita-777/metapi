@@ -1,56 +1,172 @@
 # ⚙️ 配置说明
 
-本文档列出 Metapi 的环境变量，并单独说明管理后台中的运行时设置。
+本文档按实际使用场景说明 Metapi 的配置入口。
+
+对大多数用户来说，日常配置优先通过管理后台完成；环境变量主要用于首次启动、部署级参数和当前没有 UI 的高级项。
 
 [返回文档中心](./README.md)
 
 ---
 
-## 配置来源
+## 概述
 
-| 配置类型 | 入口 | 生效方式 | 适用场景 |
-|----------|------|----------|----------|
-| 环境变量 | `.env` / 容器环境变量 | 服务启动时读取，作为启动配置或默认值 | 部署、容器编排、首次初始化 |
-| 运行时设置 | 管理后台「设置」 | 持久化到当前运行数据库；大部分即时生效，数据库运行配置保存后需重启 | 在线调整、运维排障 |
+Metapi 当前有三类主要配置入口：
 
-## 必填配置
+1. **管理后台「设置」** — 适合日常系统设置与运行时调整
+2. **管理后台「通知设置」与「下游密钥」** — 适合通知渠道和项目级下游 Key 管理
+3. **环境变量** — 适合首次启动、部署级参数、OAuth client 覆盖、Deploy Helper token 等当前没有 UI 的项
 
-> ⚠️ 以下变量**必须修改**，不要使用默认值。
+下表可用于快速判断：
+
+| 你要改什么 | 优先去哪里 | 说明 |
+|----------|------------|------|
+| 日常系统设置 | 管理后台「设置」 | 大部分运行时配置都在这里，保存后直接生效或按提示重启 |
+| 通知渠道 | 管理后台「通知设置」 | Webhook / Bark / Server酱 / Telegram / SMTP 都有 UI |
+| 下游项目级 Key | 管理后台「下游密钥」 | 不要再回到环境变量里硬塞 |
+| 首次启动令牌、端口、数据目录 | `.env` / 容器环境变量 | 这类属于部署级初始化 |
+| OAuth 客户端 ID / Secret | `.env` / 容器环境变量 | 当前没有 UI |
+| Deploy Helper token / helper 进程参数 | `.env` / helper manifest | 当前没有 UI，且属于集群侧部署参数 |
+| 少数高级部署级参数 | `.env` / 容器环境变量 | 例如日志保留、部分探测细粒度参数 |
+
+---
+
+## 配置入口总览
+
+### 1. 管理后台「设置」
+
+侧边栏入口：**系统 → 设置**
+
+当前已经能直接在这里配置的内容包括：
+
+| UI 项 | 对应能力 | 生效方式 |
+|------|----------|----------|
+| 管理员登录令牌 | `AUTH_TOKEN` 的后续修改 | 保存后即时生效 |
+| 定时任务 | `CHECKIN_CRON`、`BALANCE_REFRESH_CRON`、日志清理计划 | 保存后即时生效 |
+| 系统代理 | `SYSTEM_PROXY_URL` | 保存后即时生效 |
+| 代理失败判定 | 失败关键词、空内容失败判定 | 保存后即时生效 |
+| Codex 上游传输与会话并发 | WebSocket 开关、并发与队列参数 | 保存后即时生效 |
+| 批量测活 | 后台模型可用性探测开关 | 保存后即时生效 |
+| 下游访问令牌 | `PROXY_TOKEN` | 保存后即时生效 |
+| 路由策略 | 成本/余额/使用率权重、默认单价、首字超时、协议回退、失败冷却上限 | 保存后即时生效 |
+| 全局品牌屏蔽 | 全局品牌屏蔽 | 保存后即时生效，并触发路由重建 |
+| 全局模型白名单 | 全局模型白名单 | 保存后即时生效，并触发路由重建 |
+| 数据库迁移 / 运行数据库 | `DB_TYPE`、`DB_URL`、`DB_SSL` | 保存后下次后端重启生效 |
+| 更新中心 | K3s / Helm 更新中心配置 | 保存后即时生效 |
+| 会话与安全 | `ADMIN_IP_ALLOWLIST` | 保存后即时生效 |
+
+> [!TIP]
+> `AUTH_TOKEN` 和 `PROXY_TOKEN` 并不是“只能靠环境变量改”的配置。
+> 正常情况下，**首次启动先给一个值，后续都可以在 UI 里改**。
+
+### 2. 管理后台「通知设置」
+
+侧边栏入口：**系统 → 通知设置**
+
+当前已经有独立页面可直接配置：
+
+| UI 项 | 说明 | 生效方式 |
+|------|------|----------|
+| Webhook | 企业微信 / 飞书 / 通用 Webhook | 保存后即时生效 |
+| Bark | Bark 推送地址与开关 | 保存后即时生效 |
+| Server酱 | SendKey 与开关 | 保存后即时生效 |
+| Telegram | API Base URL、Chat ID、Topic ID、Bot Token、是否走系统代理 | 保存后即时生效 |
+| SMTP | SMTP 主机、端口、账号、密码、发件/收件地址 | 保存后即时生效 |
+| 告警冷静期 | `NOTIFY_COOLDOWN_SEC` | 保存后即时生效 |
+
+通知设置页面已经支持：
+
+- 直接保存
+- 直接发测试通知
+- 屏蔽回显已保存的敏感字段
+
+通知配置可直接在该页面完成，无需先记环境变量名。
+
+### 3. 管理后台「下游密钥」
+
+侧边栏入口：**控制台 → 下游密钥**
+
+「下游密钥」页面负责的是项目级下游 API Key，而不是全局 `PROXY_TOKEN`。
+
+适合在这里配置的内容：
+
+- Key 名称
+- 过期时间
+- 费用 / 请求上限
+- 模型白名单
+- 路由白名单
+- 站点权重倍率
+- 启停、重置用量、趋势与统计
+
+这类能力可直接在页面里完成，不需要额外依赖环境变量。
+
+---
+
+## 首次启动时，至少准备这些环境变量
+
+**首次把服务跑起来**时，建议先在环境变量里准备以下几项：
 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
-| `AUTH_TOKEN` | 管理后台登录令牌 | `change-me-admin-token` |
-| `PROXY_TOKEN` | 代理接口 Bearer Token（下游客户端使用此值作为 API Key） | `change-me-proxy-sk-token` |
+| `AUTH_TOKEN` | 初始管理员登录令牌 | `change-me-admin-token` |
+| `PROXY_TOKEN` | 初始下游访问令牌 | `change-me-proxy-sk-token` |
+| `PORT` | 服务监听端口 | `4000` |
+| `DATA_DIR` | 数据目录（SQLite 默认落这里） | `./data` |
+| `TZ` | 时区 | `Asia/Shanghai` |
 
-## 基础配置
+说明：
+
+- `AUTH_TOKEN` 只是**第一次登录前**必须要有；登录后可以去「设置」里改。
+- `PROXY_TOKEN` 也只是建议先给一个初始值；后续可以在「设置」里改。
+- `PORT`、`DATA_DIR`、`TZ` 这类属于部署级参数，更适合留在环境变量。
+
+---
+
+## 环境变量配置
+
+### 1. 启动与部署级
+
+这类配置要么属于进程启动参数，要么属于当前确实没有 UI 的部署项：
 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
 | `PORT` | 服务监听端口 | `4000` |
 | `DATA_DIR` | 数据目录（SQLite 数据库存储位置） | `./data` |
 | `TZ` | 时区 | `Asia/Shanghai` |
-| `SYSTEM_PROXY_URL` | 系统代理 URL（留空表示不使用） | 空 |
 | `ACCOUNT_CREDENTIAL_SECRET` | 账号凭证加密密钥（用于加密存储的上游账号密码） | 默认使用 `AUTH_TOKEN` |
 
-## 更新中心与 Deploy Helper
+### 2. OAuth 与 Provider 登录
 
-如果你现在只是一个普通 Docker / Docker Compose 部署，没有 K3s / Kubernetes、没有 Helm release、也没有 Deploy Helper，那么这一节可以先跳过。
+这一节只在你需要覆盖默认 OAuth client 配置时才看。
 
-这一节只写给已经准备使用“K3s 更新中心”的用户。除了设置页里的运行时字段，还需要补齐主服务和 helper 的环境变量。
+| 变量名 | 说明 | 默认值 |
+|--------|------|--------|
+| `CODEX_CLIENT_ID` | 覆盖内置 Codex OAuth Client ID | 内置默认值 |
+| `CLAUDE_CLIENT_ID` | 覆盖内置 Claude OAuth Client ID | 内置默认值 |
+| `CLAUDE_CLIENT_SECRET` | 预留的 Claude OAuth Client Secret（默认留空） | 空 |
+| `GEMINI_CLI_CLIENT_ID` | 覆盖内置 Gemini CLI OAuth Client ID | 内置默认值 |
+| `GEMINI_CLI_CLIENT_SECRET` | 覆盖内置 Gemini CLI OAuth Client Secret | 内置默认值 |
 
-如果你是老用户，正在从 Docker Compose 迁到 K3s / Helm，这一节可以提前看，先把迁移后的环境变量和组件关系理解清楚。
+说明：
 
-### 主 Metapi 服务
+- `Antigravity` 当前不需要额外环境变量即可启用。
+- 如果你的部署环境访问 provider 受限，优先先在 UI 里配置**系统代理**。
+- 如果 OAuth 页面运行在远程服务器上，还要考虑 SSH 隧道或手动回填 callback，详见 [OAuth 管理](./oauth.md)。
+
+### 3. K3s 更新中心与 Deploy Helper
+
+这里要分清楚两层：
+
+- **主 Metapi 后台里的日常更新中心配置**：优先在 UI 里填
+- **主服务访问 helper 的 token / helper 自己的监听参数**：仍然是环境变量
+
+#### 主 Metapi 服务
 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
 | `DEPLOY_HELPER_TOKEN` | 主服务访问 Deploy Helper 的 Bearer Token | 空 |
 | `UPDATE_CENTER_HELPER_TOKEN` | `DEPLOY_HELPER_TOKEN` 的兼容别名，二选一即可 | 空 |
 
-> [!IMPORTANT]
-> 主 Metapi 和 Deploy Helper 必须使用同一个 token，否则更新中心可以显示页面但无法完成 helper 状态查询或部署。
-
-### Deploy Helper 服务
+#### Deploy Helper 服务
 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
@@ -58,9 +174,11 @@
 | `DEPLOY_HELPER_PORT` | helper 监听端口 | `9850` |
 | `DEPLOY_HELPER_TOKEN` | helper Bearer Token，必须和主服务一致 | 空 |
 
-### 设置页里的持久化字段
+#### 更新中心里真正建议在 UI 配的字段
 
-更新中心页面本身还会把下面这些字段持久化到运行数据库：
+这些字段不建议再教用户去改 env，而是直接去：
+
+**设置 → 更新中心**
 
 - `helperBaseUrl`
 - `namespace`
@@ -71,161 +189,101 @@
 - `dockerHubTagsEnabled`
 - `defaultDeploySource`
 
-完整接入步骤见：
+完整接入步骤见 [K3s 更新中心（高级）](./k3s-update-center.md)。
 
-- [K3s 更新中心](./k3s-update-center.md)
+### 4. 当前没有 UI 的高级部署级参数
 
-## 数据库配置
-
-| 变量名 | 说明 | 默认值 |
-|--------|------|--------|
-| `DB_TYPE` | 运行数据库类型：`sqlite` / `mysql` / `postgres` | `sqlite` |
-| `DB_URL` | 数据库连接串；使用 `mysql` / `postgres` 时必填 | 空 |
-| `DB_SSL` | 连接 MySQL / Postgres 时启用 SSL | `false` |
-
-`DB_TYPE=sqlite` 时，`DB_URL` 留空即可，服务会使用默认 SQLite 路径。
-
-## 定时任务
-
-| 变量名 | 说明 | 默认值 | 示例 |
-|--------|------|--------|------|
-| `CHECKIN_CRON` | 自动签到计划 | `0 8 * * *` | 每天 8:00 |
-| `BALANCE_REFRESH_CRON` | 余额刷新计划 | `0 * * * *` | 每小时整点 |
-
-Cron 表达式格式：`分 时 日 月 周`（标准五段式）
-
-常用示例：
-- `0 8 * * *` — 每天 08:00
-- `0 */2 * * *` — 每 2 小时
-- `30 7,12,20 * * *` — 每天 07:30、12:30、20:30
-
-## 智能路由
-
-Metapi 的路由引擎按多因子加权选择最优通道。
-
-### 成本信号优先级
-
-```
-实测成本（代理日志） → 账号配置成本 → 目录参考价 → 兜底默认值
-```
-
-### 路由权重参数
-
-| 变量名 | 说明 | 默认值 | 范围 |
-|--------|------|--------|------|
-| `ROUTING_FALLBACK_UNIT_COST` | 无成本信号时的默认单价 | `1` | > 0 |
-| `BASE_WEIGHT_FACTOR` | 基础权重因子 | `0.5` | 0~1 |
-| `VALUE_SCORE_FACTOR` | 性价比评分因子 | `0.5` | 0~1 |
-| `COST_WEIGHT` | 成本权重（越大越偏向低成本通道） | `0.4` | 0~1 |
-| `BALANCE_WEIGHT` | 余额权重（越大越偏向余额充足的通道） | `0.3` | 0~1 |
-| `USAGE_WEIGHT` | 使用率权重（越大越偏向使用较少的通道） | `0.3` | 0~1 |
-
-> 三个权重之和建议为 1.0，但不强制。
-
-### 路由缓存
-
-| 变量名 | 说明 | 默认值 | 范围 |
-|--------|------|--------|------|
-| `TOKEN_ROUTER_CACHE_TTL_MS` | Token 路由缓存 TTL（毫秒） | `1500` | >= 100 |
-
-### 模型弹活探测
-
-用于异步校正“上游 `/models` 能看到，但实际调用不可用”的假阳性模型。
-
-| 变量名 | 说明 | 默认值 | 范围 |
-|--------|------|--------|------|
-| `MODEL_AVAILABILITY_PROBE_ENABLED` | 启用后台模型可用性探测 | `false` | `true` / `false` |
-| `MODEL_AVAILABILITY_PROBE_INTERVAL_MS` | 后台定时探测间隔（毫秒） | `1800000` | >= 60000 |
-| `MODEL_AVAILABILITY_PROBE_TIMEOUT_MS` | 单次探测超时（毫秒） | `15000` | >= 3000 |
-| `MODEL_AVAILABILITY_PROBE_CONCURRENCY` | 单账号模型探测并发数，默认串行避免对上游形成批量测活 | `1` | 1 ~ 16 |
-
-说明：
-
-- 探测任务在后台异步执行，不阻塞前台请求。
-- 只对看起来像对话/推理模型的条目发最小化探测请求，明显的 embedding、rerank、moderation、tts、image/video 等模型会先跳过。
-- 只有“明确模型不存在 / 不支持 / 无权限”的错误才会写回不可用；超时、5xx、网络抖动会归为“不确定”，不会误杀现有模型。
-- 为了避免对上游形成意外的批量测活，默认关闭；只有显式开启后才会按间隔执行，且不会在服务启动后立刻扫全量模型。
-- 同一批探测任务带去重，上一轮未结束时不会并发堆积；默认并发为 `1`，建议只在确认上游允许主动探测时启用。
-
-### 路由预设建议
-
-| 场景 | COST_WEIGHT | BALANCE_WEIGHT | USAGE_WEIGHT | 说明 |
-|------|:-----------:|:--------------:|:------------:|------|
-| **成本优先** | 0.7 | 0.2 | 0.1 | 适合预算敏感场景，总是选最便宜的通道 |
-| **均衡（默认）** | 0.4 | 0.3 | 0.3 | 兼顾成本、余额和负载均衡，推荐大多数用户 |
-| **稳定优先** | 0.2 | 0.5 | 0.3 | 适合生产环境，优先选余额充足的通道避免中断 |
-| **轮转均匀** | 0.1 | 0.1 | 0.8 | 适合测试场景，尽量让每个通道都被使用到 |
-
-**调参建议：**
-
-- 如果某个站点总是被选中导致余额很快耗尽 → 调高 `BALANCE_WEIGHT`
-- 如果你有几个很便宜的站点想优先用 → 调高 `COST_WEIGHT`
-- 如果你想让请求均匀分散到所有站点 → 调高 `USAGE_WEIGHT`
-- 如果你需要对特定项目偏好某个站点 → 使用[下游 API Key 的 `siteWeightMultipliers`](#下游-api-key-策略) 而非调全局权重
-
-## 代理日志保留
-
-| 变量名 | 说明 | 默认值 | 范围 |
-|--------|------|--------|------|
-| `PROXY_LOG_RETENTION_DAYS` | 代理日志保留天数 | `30` | >= 0 |
-| `PROXY_LOG_RETENTION_PRUNE_INTERVAL_MINUTES` | 代理日志清理任务执行间隔（分钟） | `30` | >= 1 |
-
-## 安全配置
+下面这些参数目前更偏部署级，仍然建议通过环境变量维护：
 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
-| `ADMIN_IP_ALLOWLIST` | 管理端 IP 白名单（逗号分隔，支持单个 IP 与 IPv4 CIDR） | 空（不限制） |
+| `TOKEN_ROUTER_CACHE_TTL_MS` | Token 路由缓存 TTL（毫秒） | `1500` |
+| `PROXY_LOG_RETENTION_DAYS` | 代理日志保留天数 | `30` |
+| `PROXY_LOG_RETENTION_PRUNE_INTERVAL_MINUTES` | 代理日志清理任务执行间隔（分钟） | `30` |
+| `MODEL_AVAILABILITY_PROBE_INTERVAL_MS` | 批量测活间隔（毫秒） | `1800000` |
+| `MODEL_AVAILABILITY_PROBE_TIMEOUT_MS` | 批量测活单次探测超时（毫秒） | `15000` |
+| `MODEL_AVAILABILITY_PROBE_CONCURRENCY` | 批量测活并发数 | `1` |
 
-示例：`ADMIN_IP_ALLOWLIST=192.168.1.10,192.168.1.0/24,10.0.0.0/8`
+注意：
 
-## 下游 API Key 策略
+- **批量测活开关本身**已经在 UI 里有了
+- 这里只剩下间隔、超时、并发这些更高级的细项还没有 UI
 
-除了全局 `PROXY_TOKEN`，Metapi 支持在管理后台「设置 → 下游 API Key」中创建多个项目级下游 Key。
+---
 
-每个 Key 可独立配置以下约束：
+## 常见配置与入口对照
 
-| 字段 | 说明 | 示例 |
-|------|------|------|
-| `name` | Key 名称（仅供标识） | `team-backend` |
-| `expiresAt` | 过期时间 | `2026-12-31T23:59:59Z` |
-| `maxCost` | 累计费用上限 | `100`（超限后拒绝请求） |
-| `maxRequests` | 累计请求数上限 | `10000` |
-| `supportedModels` | 模型白名单（JSON 数组） | `["gpt-4o", "claude-*", "re:deepseek.*"]` |
-| `allowedRouteIds` | 可走的路由 ID 白名单 | `[1, 3, 5]` |
-| `siteWeightMultipliers` | 站点权重倍率 | `{"1": 2.0, "3": 0.5}` |
+### 通常已经有 UI 的配置
 
-模型白名单支持三种匹配模式：
+- 管理员令牌
+- 下游访问令牌
+- 系统代理
+- 定时任务
+- 路由策略
+- 批量测活开关
+- 安全白名单
+- 通知渠道
+- 下游密钥
+- 数据库运行配置
+- 更新中心主体配置
 
-- **精确匹配**：`gpt-4o`
-- **通配符**：`claude-*`（glob 风格）
-- **正则表达式**：`re:deepseek.*`（`re:` 前缀）
+### 通常仍需看环境变量的配置
 
-## 通知渠道
+- 端口
+- 数据目录
+- 时区
+- 账号凭证加密密钥
+- OAuth client 覆盖
+- Deploy Helper token
+- helper 进程自身监听参数
+- 少数高级部署级性能 / 清理参数
+
+---
+
+## UI 与环境变量的关系
+
+Metapi 当前的配置关系可以概括为：
+
+1. **环境变量负责启动默认值和部署参数**
+2. **UI 负责用户日常操作和运行时调整**
+3. **UI 保存后的值会持久化到当前运行数据库**
+4. **大多数 UI 设置会覆盖原始默认值**
+
+例外主要有两类：
+
+- **纯部署级参数**：例如端口、数据目录
+- **保存后需重启的配置**：例如运行数据库类型 / 连接串 / SSL
+
+---
+
+## 通知渠道详细说明
+
+虽然我更推荐直接去「通知设置」页面，但为了方便查字段，这里保留一个速查表。
 
 ### Webhook
 
-| 变量名 | 说明 | 默认值 |
+| UI / 变量 | 说明 | 默认值 |
 |--------|------|--------|
 | `WEBHOOK_ENABLED` | 启用 Webhook 通知 | `true` |
 | `WEBHOOK_URL` | Webhook 推送地址 | 空 |
 
 ### Bark（iOS 推送）
 
-| 变量名 | 说明 | 默认值 |
+| UI / 变量 | 说明 | 默认值 |
 |--------|------|--------|
 | `BARK_ENABLED` | 启用 Bark 推送 | `true` |
 | `BARK_URL` | Bark 推送地址 | 空 |
 
 ### Server酱
 
-| 变量名 | 说明 | 默认值 |
+| UI / 变量 | 说明 | 默认值 |
 |--------|------|--------|
 | `SERVERCHAN_ENABLED` | 启用 Server酱 通知 | `true` |
 | `SERVERCHAN_KEY` | Server酱 SendKey | 空 |
 
 ### Telegram Bot
 
-| 变量名 | 说明 | 默认值 |
+| UI / 变量 | 说明 | 默认值 |
 |--------|------|--------|
 | `TELEGRAM_ENABLED` | 启用 Telegram 通知 | `false` |
 | `TELEGRAM_BOT_TOKEN` | Telegram Bot Token（形如 `123456:abc`） | 空 |
@@ -233,18 +291,18 @@ Metapi 的路由引擎按多因子加权选择最优通道。
 
 **配置步骤：**
 
-1. **创建 Bot**：在 Telegram 中搜索 [@BotFather](https://t.me/BotFather)，发送 `/newbot`，按提示设置名称后获取 Bot Token（格式如 `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`）
+1. **创建 Bot**：在 Telegram 中搜索 [@BotFather](https://t.me/BotFather)，发送 `/newbot`，按提示设置名称后获取 Bot Token
 2. **获取 Chat ID**：
-   - **个人聊天**：向你的 Bot 发送任意消息，然后访问 `https://api.telegram.org/bot<你的Token>/getUpdates`，在返回的 JSON 中找到 `chat.id`，或者在 Telegram 搜索 @userinfobot 或是 @getmyid_bot。点击 Start，它会立刻回复一串数字（通常是 9 到 10 位）。
-   - **群组**：将 Bot 邀请进群组，在群内发送消息后同样通过 `getUpdates` 接口获取群组 Chat ID（通常为负数，如 `-1001234567890`）
-   - **频道**：使用频道用户名，如 `@your_channel`（需先将 Bot 添加为频道管理员）
-3. **填入配置**：将获取的 Token 和 Chat ID 填入管理后台「通知设置」页面
-4. **大陆服务器反代**：如果服务器无法直连 Telegram，可在「通知设置」里填写 `Telegram API Base URL`，例如 `https://your-proxy.example.com`，Metapi 将请求 `https://your-proxy.example.com/bot<token>/sendMessage`
-5. **测试**：保存后点击页面上的「测试通知」按钮验证是否收到消息
+   - 个人聊天：给 Bot 发消息后，通过 `getUpdates` 或 @userinfobot / @getmyid_bot 查看 `chat.id`
+   - 群组：把 Bot 拉进群并发送消息后，通过 `getUpdates` 查看群组 Chat ID
+   - 频道：可直接使用 `@your_channel`（前提是 Bot 是频道管理员）
+3. **填入位置**：优先去 **通知设置** 页面填写
+4. **大陆服务器反代**：如果服务器不能直连 Telegram，可在 UI 里填写 `Telegram API Base URL`
+5. **测试**：保存后直接点“发送测试通知”
 
 ### SMTP 邮件
 
-| 变量名 | 说明 | 默认值 |
+| UI / 变量 | 说明 | 默认值 |
 |--------|------|--------|
 | `SMTP_ENABLED` | 启用邮件通知 | `false` |
 | `SMTP_HOST` | SMTP 服务器地址 | 空 |
@@ -257,23 +315,11 @@ Metapi 的路由引擎按多因子加权选择最优通道。
 
 ### 告警控制
 
-| 变量名 | 说明 | 默认值 |
+| UI / 变量 | 说明 | 默认值 |
 |--------|------|--------|
-| `NOTIFY_COOLDOWN_SEC` | 相同告警冷却时间（秒），防止同一事件重复通知 | `300` |
+| `NOTIFY_COOLDOWN_SEC` | 相同告警冷静期（秒），防止同一事件重复通知 | `300` |
 
-## 运行时设置
-
-管理后台「设置」中的运行时设置与环境变量分开管理：环境变量负责启动默认值；保存后的运行时设置会持久化到当前运行数据库，并覆盖对应默认值。
-
-| 分类 | 对应项 | 生效方式 |
-|------|--------|----------|
-| 代理访问与网络 | `PROXY_TOKEN`、`SYSTEM_PROXY_URL`、`ADMIN_IP_ALLOWLIST` | 保存后即时生效 |
-| 定时任务 | `CHECKIN_CRON`、`BALANCE_REFRESH_CRON` | 保存后即时生效 |
-| 智能路由 | `ROUTING_FALLBACK_UNIT_COST`、各路由权重 | 保存后即时生效 |
-| 通知渠道 | Webhook / Bark / Telegram / Server酱 / SMTP / `NOTIFY_COOLDOWN_SEC` | 保存后即时生效 |
-| 数据库运行配置 | `DB_TYPE`、`DB_URL`、`DB_SSL` | 保存后在下次 Metapi 后端启动时生效 |
-
-> `TOKEN_ROUTER_CACHE_TTL_MS`、`PROXY_LOG_RETENTION_DAYS`、`PROXY_LOG_RETENTION_PRUNE_INTERVAL_MINUTES` 当前仍属于部署级环境变量，不在后台运行时设置里单独维护。
+---
 
 ## 站点公告
 
@@ -296,6 +342,8 @@ Metapi 的路由引擎按多因子加权选择最优通道。
 ## 下一步
 
 - [部署指南](./deployment.md) — Docker Compose 与反向代理
+- [K3s 更新中心（高级）](./k3s-update-center.md) — K3s / Helm 用户的后台升级入口
 - [客户端接入](./client-integration.md) — 对接下游应用
 - [上游接入](./upstream-integration.md) — 添加和管理上游平台
+- [OAuth 管理](./oauth.md) — 授权 Codex / Claude / Gemini CLI / Antigravity
 - [运维手册](./operations.md) — 备份、日志与健康检查
