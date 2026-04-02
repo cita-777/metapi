@@ -26,6 +26,7 @@ linux:
   target:
     - AppImage
     - deb
+    - rpm
   maintainer: cita-777 <cita-777@users.noreply.github.com>
 publish:
   provider: github

@@ -77,6 +77,12 @@ docker compose up -d
 2. 安装并启动 Metapi Desktop
 3. 桌面壳会自动启动本地服务并保存数据，无需手动准备 Node.js 环境
 
+Linux 安装包选择建议：
+
+- Fedora / RHEL / CentOS / openSUSE 优先下载 `.rpm`
+- Debian / Ubuntu / Linux Mint 优先下载 `.deb`
+- 其他发行版或想免安装直接运行时，可下载 `.AppImage`
+
 | 项目 | 说明 |
 |------|------|
 | 管理界面 | 应用启动后会直接打开桌面窗口，不需要假设固定的 `http://localhost:4000` |
@@ -91,6 +97,7 @@ docker compose up -d
 > [!TIP]
 > - Windows 下常见路径是 `%APPDATA%\Metapi\data` 和 `%APPDATA%\Metapi\logs`。
 > - 如果没有额外覆盖端口，本机其他客户端可以直接连接 `http://127.0.0.1:4000`。
+> - Linux 用户建议优先选原生包：Fedora 系列用 `.rpm`，Debian/Ubuntu 系列用 `.deb`。
 
 > [!WARNING]
 > **端口冲突排障：** 桌面版默认使用 `4000` 端口；如果该端口被其他应用占用：

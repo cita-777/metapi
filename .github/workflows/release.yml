@@ -124,6 +124,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Linux packaging dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y rpm
+
       - name: Download built dist
         uses: actions/download-artifact@v8
         with:
@@ -246,6 +252,7 @@ jobs:
             release/*.zip
             release/*.AppImage
             release/*.deb
+            release/*.rpm
             release/*.blockmap
             release/latest*.yml
             release/latest*.json

@@ -232,6 +232,12 @@ docker run -d --name metapi \
 2. 用户数据目录会保留，升级后自动继续使用原有数据
 3. 如需排查启动问题，优先查看 `app.getPath('userData')/logs` 下的最新日志
 
+Linux 安装包选择建议：
+
+- Fedora / RHEL / CentOS / openSUSE 优先使用 `.rpm`
+- Debian / Ubuntu / Linux Mint 优先使用 `.deb`
+- 其他发行版可使用 `.AppImage`
+
 ## 本地开发运行（源码调试）
 
 开发、调试或提交 PR 的完整流程见 [快速上手 → 本地开发启动](./getting-started.md#方式三-本地开发启动) 和 [CONTRIBUTING.md](../CONTRIBUTING.md)。

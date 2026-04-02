@@ -26,4 +26,14 @@ describe('desktop icon assets', () => {
 
     expect(config).toContain('icon: build/desktop-icon.png');
   });
+
+  it('builds Linux desktop packages for AppImage, deb, and rpm distributions', async () => {
+    const configPath = join(process.cwd(), 'electron-builder.yml');
+    const config = await readFile(configPath, 'utf8');
+
+    expect(config).toContain('linux:');
+    expect(config).toContain('    - AppImage');
+    expect(config).toContain('    - deb');
+    expect(config).toContain('    - rpm');
+  });
 });
