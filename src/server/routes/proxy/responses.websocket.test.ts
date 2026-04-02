@@ -31,9 +31,13 @@ const dbInsertMock = vi.fn((_arg?: any) => ({
   }),
 }));
 
-vi.mock('undici', () => ({
-  fetch: (...args: unknown[]) => fetchMock(...args),
-}));
+vi.mock('undici', async () => {
+  const actual = await vi.importActual<typeof import('undici')>('undici');
+  return {
+    ...actual,
+    fetch: (...args: unknown[]) => fetchMock(...args),
+  };
+});
 
 vi.mock('../../services/tokenRouter.js', () => ({
   tokenRouter: {
@@ -118,6 +122,7 @@ vi.mock('../../db/index.js', () => ({
   hasProxyLogBillingDetailsColumn: async () => false,
   hasProxyLogClientColumns: async () => false,
   hasProxyLogDownstreamApiKeyIdColumn: async () => false,
+  hasProxyLogStreamTimingColumns: async () => false,
   schema: {
     proxyLogs: {},
     siteApiEndpoints: {

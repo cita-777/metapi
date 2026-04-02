@@ -48,10 +48,13 @@ function createDbSelectChain() {
   };
 }
 
-vi.mock('undici', () => ({
-  fetch: (...args: unknown[]) => fetchMock(...args),
-  Response: globalThis.Response,
-}));
+vi.mock('undici', async () => {
+  const actual = await vi.importActual<typeof import('undici')>('undici');
+  return {
+    ...actual,
+    fetch: (...args: unknown[]) => fetchMock(...args),
+  };
+});
 
 vi.mock('../../services/modelPricingService.js', () => ({
   fetchModelPricingCatalog: (...args: unknown[]) => fetchModelPricingCatalogMock(...args),
@@ -91,6 +94,7 @@ vi.mock('../../db/index.js', () => ({
   hasProxyLogBillingDetailsColumn: async () => false,
   hasProxyLogClientColumns: async () => false,
   hasProxyLogDownstreamApiKeyIdColumn: async () => false,
+  hasProxyLogStreamTimingColumns: async () => false,
   schema: {
     proxyLogs: {},
     modelAvailability: {
