@@ -1392,31 +1392,60 @@ export async function accountsRoutes(app: FastifyInstance) {
       });
     }
 
-    updates.updatedAt = new Date().toISOString();
-    await db.update(schema.accounts).set(updates).where(eq(schema.accounts.id, id)).run();
-
     const nextAccessToken = typeof updates.accessToken === 'string' ? updates.accessToken : account.accessToken;
+    const nextApiToken = Object.prototype.hasOwnProperty.call(updates, 'apiToken')
+      ? updates.apiToken
+      : account.apiToken;
     const nextExtraConfig = typeof updates.extraConfig === 'string' ? updates.extraConfig : account.extraConfig;
     const explicitNextMode = getCredentialModeFromExtraConfig(nextExtraConfig);
     const nextCredentialMode =
       explicitNextMode && explicitNextMode !== 'auto'
         ? explicitNextMode
         : (hasSessionTokenValue(nextAccessToken) ? 'session' : 'apikey');
+    const nextStatus = typeof updates.status === 'string' && updates.status.trim()
+      ? updates.status.trim()
+      : (account.status || 'active');
+    const credentialFieldsTouched =
+      Object.prototype.hasOwnProperty.call(body, 'accessToken')
+      || Object.prototype.hasOwnProperty.call(body, 'apiToken')
+      || wantsManagedSub2ApiAuthPatch;
     const needsModelRefresh =
       Object.prototype.hasOwnProperty.call(body, 'accessToken')
       || Object.prototype.hasOwnProperty.call(body, 'apiToken')
       || Object.prototype.hasOwnProperty.call(body, 'extraConfig')
       || Object.prototype.hasOwnProperty.call(body, 'proxyUrl')
       || wantsManagedSub2ApiAuthPatch;
+    const shouldAttemptExpiredApiKeyRecovery =
+      account.status === 'expired'
+      && nextCredentialMode === 'apikey'
+      && credentialFieldsTouched
+      && nextStatus !== 'disabled';
 
-    await convergeAccountMutation({
+    if (shouldAttemptExpiredApiKeyRecovery) {
+      updates.status = 'expired';
+    }
+
+    updates.updatedAt = new Date().toISOString();
+    await db.update(schema.accounts).set(updates).where(eq(schema.accounts.id, id)).run();
+
+    const convergence = await convergeAccountMutation({
       accountId: id,
-      preferredApiToken: nextCredentialMode !== 'apikey' ? updates.apiToken : null,
+      preferredApiToken: nextCredentialMode !== 'apikey' ? nextApiToken : null,
       defaultTokenSource: 'manual',
       refreshModels: needsModelRefresh,
-      rebuildRoutes: true,
+      allowInactiveModelRefresh: shouldAttemptExpiredApiKeyRecovery,
+      rebuildRoutes: false,
       continueOnError: true,
     });
+
+    if (shouldAttemptExpiredApiKeyRecovery && convergence.modelRefreshResult?.status === 'success') {
+      await db.update(schema.accounts).set({
+        status: 'active',
+        updatedAt: new Date().toISOString(),
+      }).where(eq(schema.accounts.id, id)).run();
+    }
+
+    await rebuildRoutesBestEffort();
 
     return await db.select().from(schema.accounts).where(eq(schema.accounts.id, id)).get();
   });

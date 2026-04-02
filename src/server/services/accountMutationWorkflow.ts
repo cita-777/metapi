@@ -32,6 +32,7 @@ export async function convergeAccountMutation(input: {
   upstreamTokens?: UpstreamTokenLike[];
   refreshBalance?: boolean;
   refreshModels?: boolean;
+  allowInactiveModelRefresh?: boolean;
   rebuildRoutes?: boolean;
   continueOnError?: boolean;
 }): Promise<{
@@ -111,7 +112,10 @@ export async function convergeAccountMutation(input: {
   }
 
   if (input.refreshModels) {
-    const modelRefreshResult = await runStep(() => refreshModelsForAccount(input.accountId));
+    const modelRefreshResult = await runStep(() => refreshModelsForAccount(
+      input.accountId,
+      input.allowInactiveModelRefresh ? { allowInactive: true } : undefined,
+    ));
     if (modelRefreshResult) {
       result.modelRefreshResult = modelRefreshResult;
       result.refreshedModels = modelRefreshResult.refreshed === true;

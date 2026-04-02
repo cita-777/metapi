@@ -115,10 +115,12 @@ export function buildRuntimeHealthForAccount(input: {
     };
   }
 
-  if (accountStatus === 'expired' && input.sessionCapable !== false) {
+  if (accountStatus === 'expired') {
     return {
       state: 'unhealthy',
-      reason: '访问令牌已过期',
+      reason: input.sessionCapable === false
+        ? '连接已过期，请更新 API Key'
+        : '访问令牌已过期',
       source: 'auth',
       checkedAt: null,
     };
