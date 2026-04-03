@@ -34,6 +34,15 @@ type RecoveryMigration = RecoveryMigrationRecord & {
   statements: string[];
 };
 
+type SqliteMigrationRecoveryLoopInput = {
+  runMigrate: () => void;
+  recoverDuplicateColumnMigrationError: (error: unknown) => DuplicateColumnRecoveryResult | null;
+  isSitesPlatformUrlUniqueConflictError: (error: unknown) => boolean;
+  deduplicateLegacySitesForUniqueIndex: () => boolean;
+  closeSqlite: () => void;
+  retryBudget?: number;
+};
+
 type LegacySiteRow = {
   id: number;
   platform: string;
@@ -41,6 +50,7 @@ type LegacySiteRow = {
 };
 
 const VERIFIED_BOOTSTRAP_TAG = '0012_account_token_value_status';
+const SQLITE_MIGRATION_RECOVERY_RETRY_BUDGET = 64;
 const VERIFIED_SCHEMA_MARKERS: SchemaMarker[] = [
   { table: 'sites' },
   { table: 'settings' },
@@ -463,6 +473,57 @@ function recoverDuplicateColumnMigrationError(
   };
 }
 
+function buildSqliteMigrationRetryBudgetError(error: unknown, retryBudget: number): Error {
+  const detail = normalizeSchemaErrorMessage(error);
+  return new Error(
+    detail
+      ? `[db] Migration recovery exceeded retry budget (${retryBudget} attempts): ${detail}`
+      : `[db] Migration recovery exceeded retry budget (${retryBudget} attempts).`,
+  );
+}
+
+function runSqliteMigrationRecoveryLoop(input: SqliteMigrationRecoveryLoopInput): void {
+  const retryBudget = Math.max(1, Math.trunc(input.retryBudget ?? SQLITE_MIGRATION_RECOVERY_RETRY_BUDGET));
+  let recoveryRetries = 0;
+
+  while (true) {
+    try {
+      input.runMigrate();
+      return;
+    } catch (error) {
+      const duplicateColumnRecovery = input.recoverDuplicateColumnMigrationError(error);
+      if (duplicateColumnRecovery?.recoveredCount > 0) {
+        recoveryRetries += 1;
+        if (recoveryRetries > retryBudget) {
+          input.closeSqlite();
+          throw buildSqliteMigrationRetryBudgetError(error, retryBudget);
+        }
+        continue;
+      }
+      if (duplicateColumnRecovery) {
+        input.closeSqlite();
+        throw error;
+      }
+
+      const recoveredDuplicateSites = (
+        input.isSitesPlatformUrlUniqueConflictError(error)
+        && input.deduplicateLegacySitesForUniqueIndex()
+      );
+      if (recoveredDuplicateSites) {
+        recoveryRetries += 1;
+        if (recoveryRetries > retryBudget) {
+          input.closeSqlite();
+          throw buildSqliteMigrationRetryBudgetError(error, retryBudget);
+        }
+        continue;
+      }
+
+      input.closeSqlite();
+      throw error;
+    }
+  }
+}
+
 function tryRecoverDuplicateColumnMigrationError(
   sqlite: Database.Database,
   migrationsFolder: string,
@@ -586,6 +647,8 @@ export const __migrateTestUtils = {
   tryRecoverDuplicateColumnMigrationError,
   isSitesPlatformUrlUniqueConflictError,
   deduplicateLegacySitesForUniqueIndex,
+  runSqliteMigrationRecoveryLoop,
+  sqliteMigrationRecoveryRetryBudget: SQLITE_MIGRATION_RECOVERY_RETRY_BUDGET,
 };
 
 function bootstrapLegacyDrizzleMigrations(sqlite: Database.Database, migrationsFolder: string): boolean {
@@ -626,32 +689,17 @@ export function runSqliteMigrations(): void {
   bootstrapLegacyDrizzleMigrations(sqlite, migrationsFolder);
   backfillMissingRecordedMigrations(sqlite, migrationsFolder);
 
-  while (true) {
-    try {
+  runSqliteMigrationRecoveryLoop({
+    runMigrate: () => {
       migrate(drizzle(sqlite), { migrationsFolder });
-      break;
-    } catch (error) {
-      const duplicateColumnRecovery = recoverDuplicateColumnMigrationError(sqlite, migrationsFolder, error);
-      if (duplicateColumnRecovery) {
-        if (duplicateColumnRecovery.recoveredCount > 0) {
-          continue;
-        }
-        sqlite.close();
-        throw error;
-      }
-
-      const recoveredDuplicateSites = (
-        isSitesPlatformUrlUniqueConflictError(error)
-        && deduplicateLegacySitesForUniqueIndex(sqlite)
-      );
-      if (recoveredDuplicateSites) {
-        continue;
-      }
-
-      sqlite.close();
-      throw error;
-    }
-  }
+    },
+    recoverDuplicateColumnMigrationError: (error) => (
+      recoverDuplicateColumnMigrationError(sqlite, migrationsFolder, error)
+    ),
+    isSitesPlatformUrlUniqueConflictError,
+    deduplicateLegacySitesForUniqueIndex: () => deduplicateLegacySitesForUniqueIndex(sqlite),
+    closeSqlite: () => sqlite.close(),
+  });
 
   sqlite.close();
   console.log('Migration complete.');

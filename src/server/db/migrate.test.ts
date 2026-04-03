@@ -584,4 +584,47 @@ describe('sqlite migrate bootstrap', () => {
 
     verified.close();
   });
+
+  it('fails fast when duplicate-column recovery exceeds the retry budget', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-retry-budget-'));
+    process.env.DATA_DIR = dataDir;
+    vi.resetModules();
+
+    const migrateModule = await import('./migrate.js');
+    const { __migrateTestUtils } = migrateModule as {
+      __migrateTestUtils: Record<string, unknown>;
+    };
+
+    const runSqliteMigrationRecoveryLoop = __migrateTestUtils
+      .runSqliteMigrationRecoveryLoop as ((input: {
+        runMigrate: () => void;
+        recoverDuplicateColumnMigrationError: (error: unknown) => { tag: string; recoveredCount: number } | null;
+        isSitesPlatformUrlUniqueConflictError: (error: unknown) => boolean;
+        deduplicateLegacySitesForUniqueIndex: () => boolean;
+        closeSqlite: () => void;
+      }) => void) | undefined;
+    const retryBudget = __migrateTestUtils.sqliteMigrationRecoveryRetryBudget as number | undefined;
+
+    const runMigrate = vi.fn(() => {
+      throw new Error('duplicate column name: token_group');
+    });
+    const closeSqlite = vi.fn();
+
+    expect(runSqliteMigrationRecoveryLoop).toBeTypeOf('function');
+    expect(typeof retryBudget).toBe('number');
+
+    expect(() => runSqliteMigrationRecoveryLoop!({
+      runMigrate,
+      recoverDuplicateColumnMigrationError: () => ({
+        tag: '0007_account_token_group',
+        recoveredCount: 1,
+      }),
+      isSitesPlatformUrlUniqueConflictError: () => false,
+      deduplicateLegacySitesForUniqueIndex: () => false,
+      closeSqlite,
+    })).toThrow(/retry budget/i);
+
+    expect(runMigrate).toHaveBeenCalledTimes((retryBudget ?? 0) + 1);
+    expect(closeSqlite).toHaveBeenCalledTimes(1);
+  });
 });
