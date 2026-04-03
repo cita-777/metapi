@@ -4597,253 +4597,21 @@ textarea {
   color: var(--color-text-muted);
 }
 
-.route-page-shell {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.route-command-bar {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 14px 16px;
-  border: 1px solid color-mix(in srgb, var(--color-border) 82%, transparent);
-  border-radius: 18px;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 96%, white 4%), color-mix(in srgb, var(--color-bg-card) 99%, white 1%));
-  box-shadow:
-    0 12px 28px rgba(15, 23, 42, 0.045),
-    inset 0 1px 0 rgba(255, 255, 255, 0.72);
-  transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
-}
-
-.route-command-bar-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
-.route-command-bar-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.route-command-bar-eyebrow {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
-}
-
-.route-command-bar-title-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.route-command-bar-title {
-  margin: 0;
-  font-size: clamp(20px, 1.7vw, 24px);
-  line-height: 1.08;
-  color: var(--color-text-primary);
-}
-
-.route-command-bar-desc {
-  margin: 0;
-  max-width: 720px;
-  font-size: 12.5px;
-  line-height: 1.55;
-  color: var(--color-text-secondary);
-}
-
-.route-command-bar-stats {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  align-items: flex-start;
-}
-
-.route-workspace-stat {
-  display: inline-flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 102px;
-  padding: 7px 10px;
-  border: 1px solid color-mix(in srgb, var(--color-border) 78%, transparent);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--color-bg-card) 88%, white 12%);
-  color: var(--color-text-secondary);
-  font-size: 10.5px;
-  line-height: 1.35;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
-}
-
-.route-workspace-stat strong {
-  color: var(--color-text-primary);
-  font-size: 12.5px;
-  font-weight: 700;
-}
-
-.route-workspace-stat.is-emphasis {
-  border-color: color-mix(in srgb, var(--color-info) 26%, var(--color-border));
-  background: color-mix(in srgb, var(--color-info) 8%, var(--color-bg-card));
-}
-
-.route-toolbar-total-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 5px 9px;
-  border: 1px solid color-mix(in srgb, var(--color-border) 84%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--color-bg-card) 86%, white 14%);
-  color: var(--color-text-secondary);
-  font-size: 11.5px;
-  font-weight: 700;
-}
-
-.route-toolbar-main {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.route-toolbar-search {
-  min-width: 240px;
-  max-width: 440px;
-}
-
-.route-toolbar-search input {
-  border-radius: 12px;
-  border-color: color-mix(in srgb, var(--color-border) 76%, transparent);
-  background: color-mix(in srgb, var(--color-bg-card) 90%, white 10%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
-}
-
-.route-toolbar-cluster {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.route-toolbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  flex-wrap: wrap;
-  padding-left: 8px;
-  border-left: 1px solid color-mix(in srgb, var(--color-border) 82%, transparent);
-}
-
-.route-toolbar-actions .btn,
-.route-toolbar-cluster .btn,
-.route-toolbar-mobile-trigger {
-  min-height: 34px;
-  border-radius: 10px;
-}
-
-.route-toolbar-mobile-trigger {
-  border: 1px solid var(--color-border);
-  padding: 7px 12px;
-  margin-bottom: 10px;
-}
-
-.route-guidance-panel {
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 1fr);
-  gap: 12px;
-  padding: 14px 16px;
-  border: 1px solid color-mix(in srgb, var(--color-border) 82%, transparent);
-  border-radius: 18px;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 95%, white 5%), color-mix(in srgb, var(--color-bg-card) 99%, white 1%));
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.04);
-  transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
-}
-
-.route-guidance-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.route-guidance-eyebrow {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
-}
-
-.route-guidance-title {
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--color-text-primary);
-}
-
-.route-guidance-text {
-  font-size: 12.5px;
-  line-height: 1.6;
-  color: var(--color-text-secondary);
-}
-
-.route-guidance-keyline,
-.route-guidance-footnote {
-  font-size: 11.5px;
-  line-height: 1.55;
-  color: var(--color-text-muted);
-}
-
-.route-guidance-strategies {
-  display: grid;
-  gap: 7px;
-}
-
-.route-strategy-chip {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 9px 10px;
-  border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--color-bg-card) 90%, white 10%);
-}
-
-.route-strategy-chip-label {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--color-text-primary);
-}
-
-.route-strategy-chip-desc {
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--color-text-secondary);
-}
-
 .route-batch-bar {
   position: sticky;
   top: calc(var(--topbar-height) + 8px);
   z-index: 50;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
-  margin-bottom: 10px;
-  padding: 10px 12px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
   border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
-  border-radius: 16px;
+  border-radius: 14px;
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 94%, white 6%), color-mix(in srgb, var(--color-bg-card) 98%, white 2%));
-  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.05);
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.04);
   transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
 }
 
@@ -5875,12 +5643,12 @@ textarea {
 
 /* ===== Route Filter Bar (Collapsible, horizontal chips) ===== */
 .route-filter-bar {
-  margin-bottom: 10px;
+  margin-bottom: 8px;
   border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
-  border-radius: 16px;
+  border-radius: 14px;
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 94%, white 6%), color-mix(in srgb, var(--color-bg-card) 99%, white 1%));
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.035);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.03);
   overflow: hidden;
 }
 
@@ -5889,7 +5657,7 @@ textarea {
   align-items: center;
   gap: 7px;
   width: 100%;
-  padding: 10px 12px;
+  padding: 8px 10px;
   background: none;
   border: none;
   cursor: pointer;
@@ -5904,54 +5672,22 @@ textarea {
 }
 
 .route-filter-bar-expanded {
-  padding: 10px 12px 12px;
+  padding: 8px 10px 10px;
   border-top: 1px solid var(--color-border-light);
   display: flex;
   flex-direction: column;
   gap: 8px;
-  animation: filter-bar-slide-down 0.22s cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.route-filter-bar-expanded.is-closing {
-  animation: filter-bar-slide-up 0.18s ease forwards;
-}
-
-@keyframes filter-bar-slide-down {
-  from {
-    opacity: 0;
-    max-height: 0;
-    transform: translateY(-2px);
-  }
-
-  to {
-    opacity: 1;
-    max-height: 600px;
-    transform: translateY(0);
-  }
-}
-
-@keyframes filter-bar-slide-up {
-  from {
-    opacity: 1;
-    max-height: 600px;
-  }
-
-  to {
-    opacity: 0;
-    max-height: 0;
-    overflow: hidden;
-  }
 }
 
 .route-filter-row {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: 7px;
 }
 
 .route-filter-row-label {
   min-width: 46px;
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 600;
   color: var(--color-text-secondary);
   padding-top: 6px;
@@ -5962,7 +5698,7 @@ textarea {
 .route-filter-row-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: 4px;
   flex: 1;
   min-width: 0;
 }
@@ -5972,12 +5708,12 @@ textarea {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 4px 10px;
+  padding: 3px 9px;
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--color-border) 88%, transparent);
   background: color-mix(in srgb, var(--color-bg-card) 90%, white 10%);
   cursor: pointer;
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--color-text-secondary);
   white-space: nowrap;
   transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease, box-shadow 0.18s ease, transform 0.18s ease;
@@ -6003,7 +5739,7 @@ textarea {
 
 .route-filter-bar-summary-label {
   font-weight: 600;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--color-text-primary);
 }
 
@@ -6019,8 +5755,8 @@ textarea {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 48px;
-  padding: 3px 8px;
+  min-width: 44px;
+  padding: 2px 7px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--color-bg-card) 88%, white 12%);
   color: var(--color-text-muted);
@@ -6062,19 +5798,19 @@ textarea {
 .route-card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
-  gap: 12px;
+  gap: 10px;
   align-items: start;
 }
 
 /* Collapsed route card */
 .route-card-collapsed {
-  padding: 10px 12px;
-  border-radius: 16px;
+  padding: 8px 10px;
+  border-radius: 14px;
   border-color: color-mix(in srgb, var(--color-border) 84%, transparent);
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 94%, white 6%), color-mix(in srgb, var(--color-bg-card) 99%, white 1%));
   box-shadow:
-    0 12px 24px rgba(15, 23, 42, 0.04),
+    0 10px 20px rgba(15, 23, 42, 0.035),
     inset 0 1px 0 rgba(255, 255, 255, 0.6);
   transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease, background-color 0.16s ease;
 }
@@ -6082,25 +5818,26 @@ textarea {
 .route-card-collapsed.is-active {
   border-color: color-mix(in srgb, var(--color-info) 36%, var(--color-border));
   box-shadow:
-    0 16px 30px rgba(14, 165, 233, 0.08),
+    0 12px 22px rgba(14, 165, 233, 0.07),
     0 0 0 1px color-mix(in srgb, var(--color-info) 16%, transparent);
 }
 
 .route-card-collapsed:hover {
   border-color: color-mix(in srgb, var(--color-info) 28%, var(--color-border));
   box-shadow:
-    0 14px 28px rgba(15, 23, 42, 0.06),
+    0 12px 22px rgba(15, 23, 42, 0.05),
     0 0 0 1px color-mix(in srgb, var(--color-info) 10%, transparent);
   transform: translateY(-1px);
 }
 
 /* Expanded route card spans full width */
 .route-card-expanded {
-  border-radius: 18px;
+  grid-column: 1 / -1;
+  border-radius: 16px;
   border-color: color-mix(in srgb, var(--color-border) 82%, transparent);
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 95%, white 5%), color-mix(in srgb, var(--color-bg-card) 99%, white 1%));
-  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.05);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.04);
   transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
 }
 
@@ -6110,11 +5847,26 @@ textarea {
 
 .route-card-detail-panel {
   grid-column: 1 / -1;
-  margin-top: -2px;
-  border-top-left-radius: 18px;
-  border-top-right-radius: 18px;
-  transform-origin: top center;
-  animation: route-detail-panel-in 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  margin-top: -1px;
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+  contain: layout paint;
+}
+
+.route-detail-panel-presence {
+  overflow: clip;
+  contain: layout paint;
+  opacity: 1;
+  transform: none;
+  transition: grid-template-rows 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.route-detail-panel-presence.is-closing {
+  pointer-events: none;
+}
+
+.route-detail-panel-presence.is-open .route-card-detail-panel {
+  animation: route-detail-panel-in 0.18s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @keyframes route-detail-panel-in {
@@ -6129,17 +5881,6 @@ textarea {
   }
 }
 
-[data-theme="dark"] .route-command-bar {
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 92%, #0b1220 8%), color-mix(in srgb, var(--color-bg-card) 98%, #020617 2%));
-  box-shadow:
-    0 20px 40px rgba(2, 6, 23, 0.28),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04);
-}
-
-[data-theme="dark"] .route-workspace-stat,
-[data-theme="dark"] .route-guidance-panel,
-[data-theme="dark"] .route-strategy-chip,
 [data-theme="dark"] .route-batch-bar {
   background: color-mix(in srgb, var(--color-bg-card) 92%, #0b1220 8%);
   box-shadow: none;
@@ -6176,33 +5917,6 @@ textarea {
 }
 
 @media (max-width: 768px) {
-  .route-command-bar {
-    padding: 12px;
-    border-radius: 16px;
-  }
-
-  .route-command-bar-title-row {
-    align-items: flex-start;
-  }
-
-  .route-command-bar-stats,
-  .route-toolbar-main,
-  .route-toolbar-cluster,
-  .route-toolbar-actions {
-    width: 100%;
-  }
-
-  .route-toolbar-actions {
-    padding-left: 0;
-    border-left: none;
-  }
-
-  .route-guidance-panel {
-    grid-template-columns: 1fr;
-    padding: 12px;
-    border-radius: 16px;
-  }
-
   .route-batch-bar {
     border-radius: 16px;
     padding: 9px 10px;

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { ButtonHTMLAttributes, ReactNode, RefCallback } from 'react';
 import type { BrandInfo } from '../../components/BrandIcon.js';
 import type { RouteDecision, RouteDecisionCandidate, RouteMode } from '../../../shared/tokenRouteContract.js';
 export type { RouteDecision, RouteDecisionCandidate, RouteMode } from '../../../shared/tokenRouteContract.js';
@@ -127,12 +127,16 @@ export type SortableChannelRowProps = {
   channel: RouteChannel;
   displayPriority?: number;
   showPriorityBadge?: boolean;
+  dragging?: boolean;
+  dragHandleProps?: ButtonHTMLAttributes<HTMLButtonElement>;
+  dragHandleRef?: RefCallback<HTMLButtonElement>;
   decisionCandidate?: RouteDecisionCandidate;
   isExactRoute: boolean;
   loadingDecision: boolean;
   isSavingPriority: boolean;
   readOnly?: boolean;
   channelManagementDisabled?: boolean;
+  dragInProgress?: boolean;
   mobile?: boolean;
   tokenOptions: RouteTokenOption[];
   activeTokenId: number;

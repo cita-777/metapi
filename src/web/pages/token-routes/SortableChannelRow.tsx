@@ -1,6 +1,4 @@
 import { useState, type CSSProperties } from 'react';
-import { useSortable } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
 import ModernSelect from '../../components/ModernSelect.js';
 import type { SortableChannelRowProps } from './types.js';
 import {
@@ -15,12 +13,16 @@ export function SortableChannelRow({
   channel,
   displayPriority,
   showPriorityBadge = true,
+  dragging = false,
+  dragHandleProps,
+  dragHandleRef,
   decisionCandidate,
   isExactRoute,
   loadingDecision,
   isSavingPriority,
   readOnly = false,
   channelManagementDisabled = false,
+  dragInProgress = false,
   mobile = false,
   tokenOptions,
   activeTokenId,
@@ -31,23 +33,10 @@ export function SortableChannelRow({
   onToggleEnabled,
   onSiteBlockModel,
 }: SortableChannelRowProps) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    setActivatorNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({
-    id: channel.id,
-    disabled: isSavingPriority || readOnly,
-  });
-
   const resolvedPriority = displayPriority ?? channel.priority ?? 0;
   const managementLocked = readOnly || channelManagementDisabled;
+  const suppressTooltips = dragInProgress || dragging;
   const rowTransition = [
-    transition,
     'box-shadow 180ms ease',
     'background-color 180ms ease',
     'border-color 180ms ease',
@@ -58,37 +47,34 @@ export function SortableChannelRow({
     minWidth: 22,
     height: 22,
     padding: 0,
-    border: `1px solid ${isDragging ? 'color-mix(in srgb, var(--color-info) 34%, var(--color-border-light))' : 'var(--color-border-light)'}`,
+    border: `1px solid ${dragging ? 'color-mix(in srgb, var(--color-info) 34%, var(--color-border-light))' : 'var(--color-border-light)'}`,
     borderRadius: 10,
-    backgroundColor: isDragging
+    backgroundColor: dragging
       ? 'color-mix(in srgb, var(--color-bg-card) 80%, var(--color-info) 20%)'
       : 'color-mix(in srgb, var(--color-bg-card) 90%, white 10%)',
     boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.62)',
-    color: isDragging ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
+    color: dragging ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
     cursor: isSavingPriority || readOnly ? 'not-allowed' : 'grab',
     opacity: readOnly ? 0.65 : 1,
     transition: 'background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, color 0.16s ease',
   };
 
   const rowStyle: CSSProperties = {
-    transform: CSS.Transform.toString(transform),
     transition: rowTransition || undefined,
-    opacity: isDragging ? 0.92 : channel.enabled === false ? 0.56 : 1,
-    zIndex: isDragging ? 10 : undefined,
+    opacity: dragging ? 0.92 : channel.enabled === false ? 0.56 : 1,
     display: 'grid',
     gridTemplateColumns: managementLocked || mobile ? 'minmax(0, 1fr)' : 'minmax(0, 1fr) auto auto auto',
     alignItems: mobile ? 'stretch' : 'center',
-    gap: mobile ? 10 : 8,
-    padding: mobile ? '10px 10px' : '7px 10px',
-    border: `1px solid ${isDragging ? 'color-mix(in srgb, var(--color-info) 38%, var(--color-border-light))' : 'color-mix(in srgb, var(--color-border-light) 92%, transparent)'}`,
-    borderRadius: 16,
-    backgroundColor: isDragging
+    gap: mobile ? 8 : 6,
+    padding: mobile ? '8px 9px' : '5px 8px',
+    border: `1px solid ${dragging ? 'color-mix(in srgb, var(--color-info) 38%, var(--color-border-light))' : 'color-mix(in srgb, var(--color-border-light) 92%, transparent)'}`,
+    borderRadius: 14,
+    backgroundColor: dragging
       ? 'color-mix(in srgb, var(--color-bg-card) 82%, var(--color-info) 18%)'
       : 'color-mix(in srgb, var(--color-bg-card) 96%, white 4%)',
-    boxShadow: isDragging
+    boxShadow: dragging
       ? '0 18px 34px rgba(15, 23, 42, 0.12)'
       : '0 10px 22px rgba(15, 23, 42, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.7)',
-    willChange: 'transform',
   };
 
   const decisionState = getChannelDecisionState(decisionCandidate, channel, isExactRoute, loadingDecision);
@@ -106,20 +92,19 @@ export function SortableChannelRow({
 
   if (mobile) {
     return (
-      <div ref={setNodeRef} style={{ ...rowStyle, display: 'block' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+      <div style={{ ...rowStyle, display: 'block' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
           <button
             type="button"
-            ref={setActivatorNodeRef}
-            {...attributes}
-            {...listeners}
+            ref={dragHandleRef}
+            {...dragHandleProps}
             disabled={isSavingPriority || readOnly}
             className="btn btn-ghost"
             style={{
               marginTop: 2,
               ...dragHandleStyle,
             }}
-            data-tooltip={readOnly ? '该路由当前不可编辑优先级' : '拖拽调整优先级桶'}
+            data-tooltip={suppressTooltips ? undefined : (readOnly ? '该路由当前不可编辑优先级' : '拖拽调整优先级桶')}
             aria-label="拖拽调整优先级桶"
           >
             <svg width="12" height="12" fill="currentColor" viewBox="0 0 12 12" aria-hidden>
@@ -132,7 +117,7 @@ export function SortableChannelRow({
             </svg>
           </button>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0, flex: 1 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0, flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
               {showPriorityBadge ? (
                 <span
@@ -163,7 +148,7 @@ export function SortableChannelRow({
               </span>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
               <span
                 className="badge"
                 style={{
@@ -188,7 +173,7 @@ export function SortableChannelRow({
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
                 }}
-                data-tooltip={`当前生效：${tokenBinding.effectiveTokenName}`}
+                data-tooltip={suppressTooltips ? undefined : `当前生效：${tokenBinding.effectiveTokenName}`}
               >
                 当前生效：{tokenBinding.effectiveTokenName}
               </span>
@@ -203,21 +188,21 @@ export function SortableChannelRow({
                 <span
                   className="badge badge-warning"
                   style={{ fontSize: 10 }}
-                  data-tooltip="该通道由用户手动添加，而非系统自动生成"
+                  data-tooltip={suppressTooltips ? undefined : '该通道由用户手动添加，而非系统自动生成'}
                 >
                   手动配置
                 </span>
               ) : null}
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 11, color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>选中概率</span>
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 108 }}>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 96 }}>
                 <div
-                  data-tooltip={decisionState.probability <= 0 ? decisionState.reasonText : undefined}
+                  data-tooltip={suppressTooltips ? undefined : (decisionState.probability <= 0 ? decisionState.reasonText : undefined)}
                   style={{
-                    width: 72,
-                    height: 5,
+                    width: 60,
+                    height: 4,
                     background: 'color-mix(in srgb, var(--color-border) 88%, white 12%)',
                     borderRadius: 999,
                     overflow: 'hidden',
@@ -234,7 +219,7 @@ export function SortableChannelRow({
                   />
                 </div>
                 <span
-                  data-tooltip={decisionState.probability <= 0 ? decisionState.reasonText : undefined}
+                  data-tooltip={suppressTooltips ? undefined : (decisionState.probability <= 0 ? decisionState.reasonText : undefined)}
                   style={{
                     fontSize: 11,
                     color: decisionState.probability > 0 ? 'var(--color-text-secondary)' : decisionState.reasonColor,
@@ -259,7 +244,7 @@ export function SortableChannelRow({
             </div>
 
             {!managementLocked && mobileDetailsOpen && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 8, borderTop: '1px solid var(--color-border-light)' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 6, borderTop: '1px solid var(--color-border-light)' }}>
                 <div style={{ width: '100%' }}>
                   <ModernSelect
                     size="sm"
@@ -280,12 +265,12 @@ export function SortableChannelRow({
                     ]}
                     placeholder="选择令牌绑定方式"
                   />
-                  <div style={{ marginTop: 4, fontSize: 11, color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
+                  <div style={{ marginTop: 3, fontSize: 10.5, color: 'var(--color-text-muted)', lineHeight: 1.35 }}>
                     {tokenBinding.helperText}
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
                   <button
                     onClick={onSaveToken}
                     disabled={isUpdatingToken}
@@ -326,17 +311,16 @@ export function SortableChannelRow({
   }
 
   return (
-    <div ref={setNodeRef} style={rowStyle}>
-      <div style={{ display: 'flex', alignItems: mobile ? 'stretch' : 'center', flexDirection: mobile ? 'column' : 'row', gap: 8, fontSize: 12.5, flexWrap: 'wrap', minWidth: 0 }}>
+    <div style={rowStyle}>
+      <div style={{ display: 'flex', alignItems: mobile ? 'stretch' : 'center', flexDirection: mobile ? 'column' : 'row', gap: 6, fontSize: 12, flexWrap: 'wrap', minWidth: 0 }}>
         <button
           type="button"
-          ref={setActivatorNodeRef}
-          {...attributes}
-          {...listeners}
+          ref={dragHandleRef}
+          {...dragHandleProps}
           disabled={isSavingPriority || readOnly}
           className="btn btn-ghost"
           style={dragHandleStyle}
-          data-tooltip={readOnly ? '该路由当前不可编辑优先级' : '拖拽调整优先级桶'}
+          data-tooltip={suppressTooltips ? undefined : (readOnly ? '该路由当前不可编辑优先级' : '拖拽调整优先级桶')}
           aria-label="拖拽调整优先级桶"
         >
           <svg width="12" height="12" fill="currentColor" viewBox="0 0 12 12" aria-hidden>
@@ -395,7 +379,7 @@ export function SortableChannelRow({
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
           }}
-          data-tooltip={`当前生效：${tokenBinding.effectiveTokenName}`}
+          data-tooltip={suppressTooltips ? undefined : `当前生效：${tokenBinding.effectiveTokenName}`}
         >
           当前生效：{tokenBinding.effectiveTokenName}
         </span>
@@ -410,7 +394,7 @@ export function SortableChannelRow({
           <span
             className="badge badge-warning"
             style={{ fontSize: 10 }}
-            data-tooltip="该通道由用户手动添加，而非系统自动生成"
+            data-tooltip={suppressTooltips ? undefined : '该通道由用户手动添加，而非系统自动生成'}
           >
             手动配置
           </span>
@@ -420,14 +404,14 @@ export function SortableChannelRow({
           <span className="badge badge-muted" style={{ fontSize: 10 }}>已禁用</span>
         ) : null}
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 7, width: '100%', marginTop: mobile ? 0 : 2, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', marginTop: mobile ? 0 : 1, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 11, color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>选中概率</span>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 108 }}>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 96 }}>
             <div
-              data-tooltip={decisionState.probability <= 0 ? decisionState.reasonText : undefined}
+              data-tooltip={suppressTooltips ? undefined : (decisionState.probability <= 0 ? decisionState.reasonText : undefined)}
               style={{
-                width: 72,
-                height: 5,
+                width: 60,
+                height: 4,
                 background: 'color-mix(in srgb, var(--color-border) 88%, white 12%)',
                 borderRadius: 999,
                 overflow: 'hidden',
@@ -444,7 +428,7 @@ export function SortableChannelRow({
               />
             </div>
             <span
-              data-tooltip={decisionState.probability <= 0 ? decisionState.reasonText : undefined}
+              data-tooltip={suppressTooltips ? undefined : (decisionState.probability <= 0 ? decisionState.reasonText : undefined)}
               style={{
                 fontSize: 11,
                 color: decisionState.probability > 0 ? 'var(--color-text-secondary)' : decisionState.reasonColor,
@@ -528,7 +512,7 @@ export function SortableChannelRow({
         ) : (
           <>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <div style={{ minWidth: 220, flex: 1 }}>
+            <div style={{ minWidth: 220, flex: 1 }}>
                 <ModernSelect
                   size="sm"
                   value={String(activeTokenId || 0)}
@@ -548,7 +532,7 @@ export function SortableChannelRow({
                   ]}
                   placeholder="选择令牌绑定方式"
                 />
-                <div style={{ marginTop: 4, fontSize: 11, color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
+                <div style={{ marginTop: 3, fontSize: 10.5, color: 'var(--color-text-muted)', lineHeight: 1.35 }}>
                   {tokenBinding.helperText}
                 </div>
               </div>
@@ -564,17 +548,17 @@ export function SortableChannelRow({
             <button
               onClick={() => onToggleEnabled(channel.enabled === false)}
               className={`btn btn-link ${channel.enabled === false ? 'btn-link-info' : 'btn-link-warning'}`}
-              data-tooltip={channel.enabled === false ? '启用此通道' : '禁用此通道'}
+              data-tooltip={suppressTooltips ? undefined : (channel.enabled === false ? '启用此通道' : '禁用此通道')}
             >
               {channel.enabled === false ? '启用' : '禁用'}
             </button>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
               {onSiteBlockModel && channel.site?.id ? (
                 <button
                   onClick={onSiteBlockModel}
                   className="btn btn-link btn-link-warning"
-                  data-tooltip={`将此模型加入站点「${channel.site?.name || '未知'}」的禁用列表，rebuild 后该站点的此模型通道将不再生成`}
+                  data-tooltip={suppressTooltips ? undefined : `将此模型加入站点「${channel.site?.name || '未知'}」的禁用列表，rebuild 后该站点的此模型通道将不再生成`}
                 >
                   站点屏蔽
                 </button>

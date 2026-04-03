@@ -180,10 +180,89 @@ describe('TokenRoutes desktop detail panel', () => {
         && String(node.props.className || '').includes('route-card-detail-panel')
       ));
       expect(detailPanels).toHaveLength(1);
-      expect(collectText(detailPanels[0]!)).toContain('路由详情与通道管理');
-      expect(collectText(detailPanels[0]!)).toContain('gpt-4o-mini');
+      const detailPanelText = collectText(detailPanels[0]!);
+      expect(detailPanelText).toContain('gpt-4o-mini');
+      expect(detailPanelText).toContain('路由策略');
     } finally {
       root?.unmount();
+    }
+  });
+
+  it('animates the desktop detail panel closed before unmounting it', async () => {
+    vi.useFakeTimers();
+    let root!: ReactTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const firstSummaryCard = root.root.find((node) => (
+        node.type === 'div'
+        && String(node.props.className || '').includes('route-card-collapsed')
+        && collectText(node).includes('gpt-4o-mini')
+      ));
+
+      await act(async () => {
+        await firstSummaryCard.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const closeButton = root.root.find((node) => (
+        node.type === 'button'
+        && collectText(node).includes('收起详情')
+      ));
+
+      await act(async () => {
+        await closeButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      let detailPanelPresence = root.root.findAll((node) => (
+        node.type === 'div'
+        && String(node.props.className || '').includes('route-detail-panel-presence')
+      ));
+      expect(detailPanelPresence).toHaveLength(1);
+      expect(String(detailPanelPresence[0]!.props.className || '')).toContain('anim-collapse');
+      expect(String(detailPanelPresence[0]!.props.className || '')).not.toContain('is-open');
+      expect(String(detailPanelPresence[0]!.props.className || '')).toContain('is-closing');
+      const detailPanelsWhileClosing = root.root.findAll((node) => (
+        node.type === 'div'
+        && String(node.props.className || '').includes('route-card-detail-panel')
+      ));
+      expect(detailPanelsWhileClosing).toHaveLength(1);
+      const summaryCardWhileClosing = root.root.find((node) => (
+        node.type === 'div'
+        && String(node.props.className || '').includes('route-card-collapsed')
+        && collectText(node).includes('gpt-4o-mini')
+      ));
+      expect(String(summaryCardWhileClosing.props.className || '')).toContain('is-active');
+
+      await act(async () => {
+        vi.advanceTimersByTime(260);
+      });
+
+      detailPanelPresence = root.root.findAll((node) => (
+        node.type === 'div'
+        && String(node.props.className || '').includes('route-detail-panel-presence')
+      ));
+      expect(detailPanelPresence).toHaveLength(0);
+      const summaryCardAfterClosing = root.root.find((node) => (
+        node.type === 'div'
+        && String(node.props.className || '').includes('route-card-collapsed')
+        && collectText(node).includes('gpt-4o-mini')
+      ));
+      expect(String(summaryCardAfterClosing.props.className || '')).not.toContain('is-active');
+    } finally {
+      root?.unmount();
+      vi.useRealTimers();
     }
   });
 });
