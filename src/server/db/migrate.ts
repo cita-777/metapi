@@ -492,7 +492,7 @@ function runSqliteMigrationRecoveryLoop(input: SqliteMigrationRecoveryLoopInput)
       return;
     } catch (error) {
       const duplicateColumnRecovery = input.recoverDuplicateColumnMigrationError(error);
-      if (duplicateColumnRecovery?.recoveredCount > 0) {
+      if (duplicateColumnRecovery && duplicateColumnRecovery.recoveredCount > 0) {
         recoveryRetries += 1;
         if (recoveryRetries > retryBudget) {
           input.closeSqlite();
