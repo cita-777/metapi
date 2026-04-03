@@ -68,9 +68,7 @@ describe('SortableChannelRow layering', () => {
 
     const row = root.root.find((node) => (
       node.type === 'div'
-      && node.props.style
-      && node.props.style.display === 'grid'
-      && node.props.style.borderRadius === 14
+      && node.props['data-layer-root']
     ));
 
     expect(row.props.style.zIndex).toBeUndefined();

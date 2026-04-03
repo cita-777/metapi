@@ -105,7 +105,7 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function DesktopDetailPanelPresence({
+export function DesktopDetailPanelPresence({
   open,
   children,
 }: {
@@ -115,9 +115,11 @@ function DesktopDetailPanelPresence({
   const [shouldRender, setShouldRender] = useState(open);
   const [isOpen, setIsOpen] = useState(open);
   const [isClosing, setIsClosing] = useState(false);
+  const hasEverOpenedRef = useRef(open);
 
   useEffect(() => {
     if (open) {
+      hasEverOpenedRef.current = true;
       setShouldRender(true);
       setIsClosing(false);
       if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
@@ -125,6 +127,13 @@ function DesktopDetailPanelPresence({
         return () => window.cancelAnimationFrame(rafId);
       }
       setIsOpen(true);
+      return undefined;
+    }
+
+    if (!hasEverOpenedRef.current) {
+      setShouldRender(false);
+      setIsOpen(false);
+      setIsClosing(false);
       return undefined;
     }
 

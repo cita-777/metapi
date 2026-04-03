@@ -239,7 +239,7 @@ function SortableChannelShell({
         transform: CSS.Translate.toString(translatedTransform),
         transition: shellTransition || undefined,
         zIndex: isDragging ? 10 : undefined,
-        willChange: 'transform',
+        willChange: isDragging || Boolean(transform) || Boolean(transition) ? 'transform' : undefined,
         display: compact ? 'flex' : 'grid',
         flexDirection: compact ? 'column' : undefined,
         gridTemplateColumns: compact ? undefined : '86px minmax(0, 1fr)',
@@ -769,7 +769,7 @@ function RouteCardInner({
             {!readOnlyRoute && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                 {renderClearCooldownButton()}
-                {!exactRoute && (
+                {(explicitGroupRoute || !exactRoute) && (
                   <button onClick={() => onEdit(route)} className="btn btn-link">{tr('编辑群组')}</button>
                 )}
                 <button onClick={() => onDelete(route.id)} className="btn btn-link btn-link-danger">{tr('删除路由')}</button>
@@ -1028,9 +1028,18 @@ function areRouteCardPropsEqual(prev: RouteCardProps, next: RouteCardProps): boo
     || prev.summaryExpanded !== next.summaryExpanded
     || prev.detailPanel !== next.detailPanel
     || prev.onToggleExpand !== next.onToggleExpand
-    || prev.onEdit !== next.onEdit
-    || prev.onDelete !== next.onDelete
     || prev.onToggleEnabled !== next.onToggleEnabled
+  ) {
+    return false;
+  }
+
+  if (!next.expanded) {
+    return true;
+  }
+
+  if (
+    prev.onEdit !== next.onEdit
+    || prev.onDelete !== next.onDelete
     || prev.onClearCooldown !== next.onClearCooldown
     || prev.onRoutingStrategyChange !== next.onRoutingStrategyChange
     || prev.onTokenDraftChange !== next.onTokenDraftChange
@@ -1042,16 +1051,7 @@ function areRouteCardPropsEqual(prev: RouteCardProps, next: RouteCardProps): boo
     || prev.onAddChannel !== next.onAddChannel
     || prev.onSiteBlockModel !== next.onSiteBlockModel
     || prev.onToggleSourceGroup !== next.onToggleSourceGroup
-  ) {
-    return false;
-  }
-
-  if (!next.expanded) {
-    return true;
-  }
-
-  if (
-    prev.clearingCooldown !== next.clearingCooldown
+    || prev.clearingCooldown !== next.clearingCooldown
     || prev.updatingRoutingStrategy !== next.updatingRoutingStrategy
     || prev.savingPriority !== next.savingPriority
     || prev.loadingChannels !== next.loadingChannels

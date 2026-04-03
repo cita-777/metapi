@@ -682,4 +682,96 @@ describe('RouteCard', () => {
 
     expect(modelPatternReadCount).toBe(initialReadCount);
   });
+
+  it('skips collapsed rerenders when only expanded-only callback identities change', () => {
+    const routeTarget = buildRoute();
+    let modelPatternReadCount = 0;
+    const route = new Proxy(routeTarget, {
+      get(target, property, receiver) {
+        if (property === 'modelPattern') {
+          modelPatternReadCount += 1;
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    }) as RouteSummaryRow;
+    const callbacksA = {
+      onToggleExpand: vi.fn(),
+      onEdit: vi.fn(),
+      onDelete: vi.fn(),
+      onToggleEnabled: vi.fn(),
+      onClearCooldown: vi.fn(),
+      onRoutingStrategyChange: vi.fn(),
+      onTokenDraftChange: vi.fn(),
+      onSaveToken: vi.fn(),
+      onDeleteChannel: vi.fn(),
+      onToggleChannelEnabled: vi.fn(),
+      onChannelDragEnd: vi.fn(),
+      onCreateTokenForMissing: vi.fn(),
+      onAddChannel: vi.fn(),
+      onSiteBlockModel: vi.fn(),
+      onToggleSourceGroup: vi.fn(),
+    };
+    const callbacksB = {
+      ...callbacksA,
+      onEdit: vi.fn(),
+      onDelete: vi.fn(),
+      onClearCooldown: vi.fn(),
+      onRoutingStrategyChange: vi.fn(),
+      onTokenDraftChange: vi.fn(),
+      onSaveToken: vi.fn(),
+      onDeleteChannel: vi.fn(),
+      onToggleChannelEnabled: vi.fn(),
+      onChannelDragEnd: vi.fn(),
+      onCreateTokenForMissing: vi.fn(),
+      onAddChannel: vi.fn(),
+      onSiteBlockModel: vi.fn(),
+      onToggleSourceGroup: vi.fn(),
+    };
+    const candidateView = { routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} };
+
+    const renderCard = (callbacks: typeof callbacksA) => (
+      <RouteCard
+        route={route}
+        brand={null}
+        expanded={false}
+        onToggleExpand={callbacks.onToggleExpand}
+        onEdit={callbacks.onEdit}
+        onDelete={callbacks.onDelete}
+        onToggleEnabled={callbacks.onToggleEnabled}
+        onClearCooldown={callbacks.onClearCooldown}
+        clearingCooldown={false}
+        onRoutingStrategyChange={callbacks.onRoutingStrategyChange}
+        updatingRoutingStrategy={false}
+        channels={undefined}
+        loadingChannels={false}
+        routeDecision={null}
+        loadingDecision={false}
+        candidateView={candidateView}
+        channelTokenDraft={{}}
+        updatingChannel={{}}
+        savingPriority={false}
+        onTokenDraftChange={callbacks.onTokenDraftChange}
+        onSaveToken={callbacks.onSaveToken}
+        onDeleteChannel={callbacks.onDeleteChannel}
+        onToggleChannelEnabled={callbacks.onToggleChannelEnabled}
+        onChannelDragEnd={callbacks.onChannelDragEnd}
+        missingTokenSiteItems={[]}
+        missingTokenGroupItems={[]}
+        onCreateTokenForMissing={callbacks.onCreateTokenForMissing}
+        onAddChannel={callbacks.onAddChannel}
+        onSiteBlockModel={callbacks.onSiteBlockModel}
+        expandedSourceGroupMap={{}}
+        onToggleSourceGroup={callbacks.onToggleSourceGroup}
+      />
+    );
+
+    const root = create(renderCard(callbacksA));
+    const initialReadCount = modelPatternReadCount;
+
+    act(() => {
+      root.update(renderCard(callbacksB));
+    });
+
+    expect(modelPatternReadCount).toBe(initialReadCount);
+  });
 });

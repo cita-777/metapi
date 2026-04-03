@@ -92,7 +92,7 @@ export function SortableChannelRow({
 
   if (mobile) {
     return (
-      <div style={{ ...rowStyle, display: 'block' }}>
+      <div data-layer-root style={{ ...rowStyle, display: 'block' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
           <button
             type="button"
@@ -166,7 +166,7 @@ export function SortableChannelRow({
                 className="badge"
                 style={{
                   fontSize: 10,
-                  background: 'color-mix(in srgb, var(--color-info) 14%, white)',
+                  background: 'var(--color-info-soft)',
                   color: 'var(--color-info)',
                   maxWidth: 220,
                   overflow: 'hidden',
@@ -311,7 +311,7 @@ export function SortableChannelRow({
   }
 
   return (
-    <div style={rowStyle}>
+    <div data-layer-root style={rowStyle}>
       <div style={{ display: 'flex', alignItems: mobile ? 'stretch' : 'center', flexDirection: mobile ? 'column' : 'row', gap: 6, fontSize: 12, flexWrap: 'wrap', minWidth: 0 }}>
         <button
           type="button"
@@ -372,7 +372,7 @@ export function SortableChannelRow({
           className="badge"
           style={{
             fontSize: 10,
-            background: 'color-mix(in srgb, var(--color-info) 14%, white)',
+            background: 'var(--color-info-soft)',
             color: 'var(--color-info)',
             maxWidth: 220,
             overflow: 'hidden',

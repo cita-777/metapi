@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
-import TokenRoutes from './TokenRoutes.js';
+import TokenRoutes, { DesktopDetailPanelPresence } from './TokenRoutes.js';
 
 const { apiMock, getBrandMock } = vi.hoisted(() => ({
   apiMock: {
@@ -260,6 +260,29 @@ describe('TokenRoutes desktop detail panel', () => {
         && collectText(node).includes('gpt-4o-mini')
       ));
       expect(String(summaryCardAfterClosing.props.className || '')).not.toContain('is-active');
+    } finally {
+      root?.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not schedule a close timer before the desktop detail panel has ever opened', async () => {
+    vi.useFakeTimers();
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    let root!: ReactTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <DesktopDetailPanelPresence open={false}>
+            {() => <div>detail</div>}
+          </DesktopDetailPanelPresence>,
+        );
+      });
+      await flushMicrotasks();
+
+      expect(root.toJSON()).toBeNull();
+      expect(setTimeoutSpy).not.toHaveBeenCalled();
     } finally {
       root?.unmount();
       vi.useRealTimers();

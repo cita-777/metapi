@@ -5798,6 +5798,7 @@ textarea {
 .route-card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+  grid-auto-flow: dense;
   gap: 10px;
   align-items: start;
 }
