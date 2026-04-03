@@ -1569,7 +1569,7 @@ describe('TokenRoutes grouped source models', () => {
       expect(expandedText).toContain('P0');
       expect(expandedText).toContain('当前生效：token-a');
       expect(expandedText).toContain('选中概率');
-      expect(findButtonByAriaLabel(root.root, '拖拽调整优先级桶').props.disabled).toBe(false);
+      expect(findButtonByAriaLabel(root.root, '拖拽调整优先级桶').props.disabled).toBe(true);
       expect(root.root.findAll((node) => node.type === 'button' && collectText(node).trim() === '保存')).toHaveLength(0);
       expect(root.root.findAll((node) => node.type === 'button' && collectText(node).trim() === '移除')).toHaveLength(0);
     } finally {

@@ -54,8 +54,8 @@ export function SortableChannelRow({
       : 'color-mix(in srgb, var(--color-bg-card) 90%, white 10%)',
     boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.62)',
     color: dragging ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
-    cursor: isSavingPriority || readOnly ? 'not-allowed' : 'grab',
-    opacity: readOnly ? 0.65 : 1,
+    cursor: isSavingPriority || managementLocked ? 'not-allowed' : 'grab',
+    opacity: managementLocked ? 0.65 : 1,
     transition: 'background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, color 0.16s ease',
   };
 
@@ -98,13 +98,13 @@ export function SortableChannelRow({
             type="button"
             ref={dragHandleRef}
             {...dragHandleProps}
-            disabled={isSavingPriority || readOnly}
+            disabled={isSavingPriority || managementLocked}
             className="btn btn-ghost"
             style={{
               marginTop: 2,
               ...dragHandleStyle,
             }}
-            data-tooltip={suppressTooltips ? undefined : (readOnly ? '该路由当前不可编辑优先级' : '拖拽调整优先级桶')}
+            data-tooltip={suppressTooltips ? undefined : (managementLocked ? '该路由当前不可编辑优先级' : '拖拽调整优先级桶')}
             aria-label="拖拽调整优先级桶"
           >
             <svg width="12" height="12" fill="currentColor" viewBox="0 0 12 12" aria-hidden>
@@ -317,10 +317,10 @@ export function SortableChannelRow({
           type="button"
           ref={dragHandleRef}
           {...dragHandleProps}
-          disabled={isSavingPriority || readOnly}
+          disabled={isSavingPriority || managementLocked}
           className="btn btn-ghost"
           style={dragHandleStyle}
-          data-tooltip={suppressTooltips ? undefined : (readOnly ? '该路由当前不可编辑优先级' : '拖拽调整优先级桶')}
+          data-tooltip={suppressTooltips ? undefined : (managementLocked ? '该路由当前不可编辑优先级' : '拖拽调整优先级桶')}
           aria-label="拖拽调整优先级桶"
         >
           <svg width="12" height="12" fill="currentColor" viewBox="0 0 12 12" aria-hidden>
@@ -450,9 +450,9 @@ export function SortableChannelRow({
       </div>
 
       {!managementLocked ? (
-        mobile ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, width: '100%' }}>
-            <div style={{ width: '100%' }}>
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ minWidth: 220, flex: 1 }}>
               <ModernSelect
                 size="sm"
                 value={String(activeTokenId || 0)}
@@ -472,107 +472,46 @@ export function SortableChannelRow({
                 ]}
                 placeholder="选择令牌绑定方式"
               />
-              <div style={{ marginTop: 4, fontSize: 11, color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
+              <div style={{ marginTop: 3, fontSize: 10.5, color: 'var(--color-text-muted)', lineHeight: 1.35 }}>
                 {tokenBinding.helperText}
               </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
-              <button
-                onClick={onSaveToken}
-                disabled={isUpdatingToken}
-                className="btn btn-link btn-link-info"
-              >
-                {isUpdatingToken ? <span className="spinner spinner-sm" /> : '保存'}
-              </button>
-
-              <button
-                onClick={() => onToggleEnabled(channel.enabled === false)}
-                className={`btn btn-link ${channel.enabled === false ? 'btn-link-info' : 'btn-link-warning'}`}
-              >
-                {channel.enabled === false ? '启用' : '禁用'}
-              </button>
-
-              {onSiteBlockModel && channel.site?.id ? (
-                <button
-                  onClick={onSiteBlockModel}
-                  className="btn btn-link btn-link-warning"
-                >
-                  站点屏蔽
-                </button>
-              ) : null}
-
-              <button
-                onClick={onDeleteChannel}
-                className="btn btn-link btn-link-danger"
-              >
-                移除
-              </button>
-            </div>
+            <button
+              onClick={onSaveToken}
+              disabled={isUpdatingToken}
+              className="btn btn-link btn-link-info"
+            >
+              {isUpdatingToken ? <span className="spinner spinner-sm" /> : '保存'}
+            </button>
           </div>
-        ) : (
-          <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div style={{ minWidth: 220, flex: 1 }}>
-                <ModernSelect
-                  size="sm"
-                  value={String(activeTokenId || 0)}
-                  onChange={(nextValue) => onTokenDraftChange(channel.id, Number.parseInt(nextValue, 10) || 0)}
-                  disabled={isUpdatingToken}
-                  options={[
-                    {
-                      value: '0',
-                      label: tokenBinding.followOptionLabel,
-                      description: tokenBinding.followOptionDescription,
-                    },
-                    ...tokenOptions.map((token) => ({
-                      value: String(token.id),
-                      label: buildFixedTokenOptionLabel(token, { includeDefaultTag: true }),
-                      description: buildFixedTokenOptionDescription(token),
-                    })),
-                  ]}
-                  placeholder="选择令牌绑定方式"
-                />
-                <div style={{ marginTop: 3, fontSize: 10.5, color: 'var(--color-text-muted)', lineHeight: 1.35 }}>
-                  {tokenBinding.helperText}
-                </div>
-              </div>
+
+          <button
+            onClick={() => onToggleEnabled(channel.enabled === false)}
+            className={`btn btn-link ${channel.enabled === false ? 'btn-link-info' : 'btn-link-warning'}`}
+            data-tooltip={suppressTooltips ? undefined : (channel.enabled === false ? '启用此通道' : '禁用此通道')}
+          >
+            {channel.enabled === false ? '启用' : '禁用'}
+          </button>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+            {onSiteBlockModel && channel.site?.id ? (
               <button
-                onClick={onSaveToken}
-                disabled={isUpdatingToken}
-                className="btn btn-link btn-link-info"
+                onClick={onSiteBlockModel}
+                className="btn btn-link btn-link-warning"
+                data-tooltip={suppressTooltips ? undefined : `将此模型加入站点「${channel.site?.name || '未知'}」的禁用列表，rebuild 后该站点的此模型通道将不再生成`}
               >
-                {isUpdatingToken ? <span className="spinner spinner-sm" /> : '保存'}
+                站点屏蔽
               </button>
-            </div>
+            ) : null}
 
             <button
-              onClick={() => onToggleEnabled(channel.enabled === false)}
-              className={`btn btn-link ${channel.enabled === false ? 'btn-link-info' : 'btn-link-warning'}`}
-              data-tooltip={suppressTooltips ? undefined : (channel.enabled === false ? '启用此通道' : '禁用此通道')}
+              onClick={onDeleteChannel}
+              className="btn btn-link btn-link-danger"
             >
-              {channel.enabled === false ? '启用' : '禁用'}
+              移除
             </button>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-              {onSiteBlockModel && channel.site?.id ? (
-                <button
-                  onClick={onSiteBlockModel}
-                  className="btn btn-link btn-link-warning"
-                  data-tooltip={suppressTooltips ? undefined : `将此模型加入站点「${channel.site?.name || '未知'}」的禁用列表，rebuild 后该站点的此模型通道将不再生成`}
-                >
-                  站点屏蔽
-                </button>
-              ) : null}
-
-              <button
-                onClick={onDeleteChannel}
-                className="btn btn-link btn-link-danger"
-              >
-                移除
-              </button>
-            </div>
-          </>
-        )
+          </div>
+        </>
       ) : null}
     </div>
   );
