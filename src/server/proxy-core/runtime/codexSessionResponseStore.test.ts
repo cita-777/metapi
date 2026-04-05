@@ -126,4 +126,32 @@ describe('codexSessionResponseStore', () => {
 
     resetCodexSessionResponseStore();
   });
+
+  it('keeps the latest continuation id when the same downstream session drifts back to an earlier scope', () => {
+    resetCodexSessionResponseStore();
+
+    const originalScopedKey = buildCodexSessionResponseStoreKey({
+      sessionId: 'session-roundtrip',
+      siteId: 10,
+      accountId: 20,
+      channelId: 30,
+    });
+    const driftedScopedKey = buildCodexSessionResponseStoreKey({
+      sessionId: 'session-roundtrip',
+      siteId: 10,
+      accountId: 21,
+      channelId: 31,
+    });
+
+    setCodexSessionResponseId(originalScopedKey, 'resp-roundtrip-1');
+
+    expect(getCodexSessionResponseId(driftedScopedKey)).toBe('resp-roundtrip-1');
+
+    setCodexSessionResponseId(driftedScopedKey, 'resp-roundtrip-2');
+
+    expect(getCodexSessionResponseId(driftedScopedKey)).toBe('resp-roundtrip-2');
+    expect(getCodexSessionResponseId(originalScopedKey)).toBe('resp-roundtrip-2');
+
+    resetCodexSessionResponseStore();
+  });
 });
