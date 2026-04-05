@@ -115,6 +115,20 @@ const BLOCKED_PASSTHROUGH_HEADERS = new Set([
   'sec-websocket-version',
   'sec-websocket-extensions',
 ]);
+const GENERIC_PASSTHROUGH_ALLOWED_HEADERS = new Set([
+  'accept',
+  'accept-language',
+  'conversation-id',
+  'conversation_id',
+  'openai-beta',
+  'originator',
+  'session-id',
+  'session_id',
+  'user-agent',
+  'x-codex-beta-features',
+  'x-codex-turn-metadata',
+  'x-codex-turn-state',
+]);
 const METAPI_INTERNAL_HEADER_BLOCKLIST = new Set([
   'x-metapi-tester-request',
   'x-metapi-tester-forced-channel-id',
@@ -128,6 +142,7 @@ function shouldSkipPassthroughHeader(key: string): boolean {
   if (HOP_BY_HOP_HEADERS.has(key) || BLOCKED_PASSTHROUGH_HEADERS.has(key)) return true;
   if (METAPI_INTERNAL_HEADER_BLOCKLIST.has(key)) return true;
   if (key.startsWith('x-metapi-')) return true;
+  if (!GENERIC_PASSTHROUGH_ALLOWED_HEADERS.has(key)) return true;
   return false;
 }
 
