@@ -56,7 +56,6 @@ describe('Settings proxy transport', () => {
       logCleanupProgramLogsEnabled: true,
       logCleanupRetentionDays: 14,
       codexUpstreamWebsocketEnabled: false,
-      responsesCompactFallbackToResponsesEnabled: false,
       proxySessionChannelConcurrencyLimit: 4,
       proxySessionChannelQueueWaitMs: 3200,
       routingFallbackUnitCost: 1,
@@ -75,7 +74,6 @@ describe('Settings proxy transport', () => {
     apiMock.updateRuntimeSettings.mockResolvedValue({
       success: true,
       codexUpstreamWebsocketEnabled: true,
-      responsesCompactFallbackToResponsesEnabled: true,
       proxySessionChannelConcurrencyLimit: 6,
       proxySessionChannelQueueWaitMs: 4200,
     });
@@ -100,18 +98,19 @@ describe('Settings proxy transport', () => {
       });
       await flushMicrotasks();
 
+      const proxyTransportCard = root.root.find((node) => (
+        node.type === 'div'
+        && node.props['data-settings-card'] === 'proxy-transport'
+      ));
+      expect(collectText(proxyTransportCard)).toContain('HTTP 优先');
+      expect(collectText(proxyTransportCard)).toContain('会话池 4 并发 / 3200ms');
+
       const websocketToggleLabel = root.root.find((node) => (
         node.type === 'label'
         && collectText(node).includes('允许 metapi 到 Codex 上游使用 WebSocket')
       ));
       const websocketToggle = websocketToggleLabel.findByType('input');
       expect(websocketToggle.props.checked).toBe(false);
-      const compactFallbackToggleLabel = root.root.find((node) => (
-        node.type === 'label'
-        && collectText(node).includes('Compact 明确不支持时回退到普通 Responses')
-      ));
-      const compactFallbackToggle = compactFallbackToggleLabel.findByType('input');
-      expect(compactFallbackToggle.props.checked).toBe(false);
 
       const concurrencyInput = root.root.find((node) => (
         node.type === 'input'
@@ -126,10 +125,12 @@ describe('Settings proxy transport', () => {
 
       await act(async () => {
         websocketToggle.props.onChange({ target: { checked: true } });
-        compactFallbackToggle.props.onChange({ target: { checked: true } });
         concurrencyInput.props.onChange({ target: { value: '6' } });
         queueWaitInput.props.onChange({ target: { value: '4200' } });
       });
+
+      expect(collectText(proxyTransportCard)).toContain('上游 WebSocket 已启用');
+      expect(collectText(proxyTransportCard)).toContain('会话池 6 并发 / 4200ms');
 
       const saveButton = root.root.find((node) => (
         node.type === 'button'
@@ -143,7 +144,6 @@ describe('Settings proxy transport', () => {
 
       expect(apiMock.updateRuntimeSettings).toHaveBeenCalledWith({
         codexUpstreamWebsocketEnabled: true,
-        responsesCompactFallbackToResponsesEnabled: true,
         proxySessionChannelConcurrencyLimit: 6,
         proxySessionChannelQueueWaitMs: 4200,
       });

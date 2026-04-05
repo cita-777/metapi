@@ -96,6 +96,13 @@ describe('Settings model availability probe confirmation', () => {
       });
       await flushMicrotasks();
 
+      const probeCard = root.root.find((node) => (
+        node.type === 'div'
+        && node.props['data-settings-card'] === 'model-availability-probe'
+      ));
+      expect(collectText(probeCard)).toContain('已关闭');
+      expect(collectText(probeCard)).toContain('高风险操作');
+
       const toggleLabel = root.root.find((node) => (
         node.type === 'label'
         && collectText(node).includes('允许 metapi 后台主动批量测活')
@@ -106,6 +113,8 @@ describe('Settings model availability probe confirmation', () => {
       await act(async () => {
         toggle.props.onChange({ target: { checked: true } });
       });
+
+      expect(collectText(probeCard)).toContain('待保存');
 
       const saveButton = root.root.find((node) => (
         node.type === 'button'
