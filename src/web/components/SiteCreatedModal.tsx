@@ -7,6 +7,7 @@ type Props = {
   siteName: string;
   initializationPresetId?: string | null;
   initialSegment?: 'session' | 'apikey';
+  sessionLabel?: string;
   onChoice: (choice: NextStepChoice) => void;
   onClose: () => void;
 };
@@ -15,6 +16,7 @@ export default function SiteCreatedModal({
   siteName,
   initializationPresetId,
   initialSegment = 'session',
+  sessionLabel = '添加账号（用户名密码登录）',
   onChoice,
   onClose,
 }: Props) {
@@ -31,12 +33,12 @@ export default function SiteCreatedModal({
     }
     : {
       choice: 'session' as const,
-      label: '添加账号（用户名密码登录）',
+      label: sessionLabel,
     };
   const secondaryAction = apiKeyFirst
     ? {
       choice: 'session' as const,
-      label: '添加账号（用户名密码登录）',
+      label: sessionLabel,
     }
     : {
       choice: 'apikey' as const,

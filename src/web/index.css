@@ -3457,6 +3457,7 @@ textarea {
 
 .site-created-summary,
 .site-created-helper-text {
+  margin: 0;
   font-size: 12px;
   line-height: 1.7;
 }

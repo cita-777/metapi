@@ -121,19 +121,21 @@ async function createSiteAndClickModalChoice(
     // Find the button based on choice
     let targetButton;
     if (choice === 'session') {
-      targetButton = modalButtons.find((btn) => collectText(btn).includes('添加账号（用户名密码登录）'));
+      const expectedSessionLabel = createdSite.platform === 'codex'
+        ? '添加 OAuth 连接'
+        : '添加账号（用户名密码登录）';
+      targetButton = modalButtons.find((btn) => collectText(btn).includes(expectedSessionLabel));
     } else if (choice === 'apikey') {
       targetButton = modalButtons.find((btn) => collectText(btn).includes('添加 API Key'));
     } else {
       targetButton = modalButtons.find((btn) => collectText(btn).includes('稍后配置'));
     }
 
-    if (targetButton) {
-      await act(async () => {
-        targetButton.props.onClick();
-      });
-      await flushMicrotasks();
-    }
+    expect(targetButton).toBeTruthy();
+    await act(async () => {
+      targetButton!.props.onClick();
+    });
+    await flushMicrotasks();
 
     return JSON.stringify(root.toJSON());
   } finally {

@@ -82,4 +82,24 @@ describe('SiteCreatedModal', () => {
 
     expect(onChoice).toHaveBeenCalledWith('session');
   });
+
+  it('uses the supplied session label for OAuth-style session actions', () => {
+    const root = create(
+      <SiteCreatedModal
+        siteName="Codex Site"
+        initialSegment="session"
+        sessionLabel="添加 OAuth 连接"
+        onChoice={() => {}}
+        onClose={() => {}}
+      />,
+    );
+
+    const buttons = root.root.findAll((node) => (
+      node.type === 'button'
+      && typeof node.props.onClick === 'function'
+      && node.props['aria-label'] !== '关闭弹框'
+    ));
+
+    expect(buttons.some((button) => collectText(button) === '添加 OAuth 连接')).toBe(true);
+  });
 });
