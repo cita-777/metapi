@@ -62,6 +62,10 @@ function findPrimarySiteUrlInput(root: ReactTestRenderer) {
   ));
 }
 
+function findPlatformSelect(root: ReactTestRenderer) {
+  return root.root.findByProps({ 'data-testid': 'site-platform-select' });
+}
+
 describe('Sites detect race handling', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -144,7 +148,7 @@ describe('Sites detect race handling', () => {
       await flushMicrotasks();
 
       expect(findPrimarySiteUrlInput(root).props.value).toBe('https://fresh.example.com');
-      expect(root.root.findAllByType(ModernSelect).at(-1)?.props.value).toBe('');
+      expect(findPlatformSelect(root).props.value).toBe('');
       expect(toastMock.info).not.toHaveBeenCalledWith(expect.stringContaining('https://stale.example.com'));
       expect(toastMock.success).not.toHaveBeenCalled();
     } finally {

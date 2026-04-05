@@ -301,6 +301,22 @@ describe('Sub2ApiAdapter', () => {
     expect(models).toEqual(['gemini-2.5-flash-lite', 'gemini-3-pro-preview']);
   });
 
+  it('uses the api/v1 model endpoint directly when the ai base already includes /api/v1', async () => {
+    await startServer((req, res) => {
+      if (req.url === '/api/v1/models') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          data: [{ id: 'gpt-4o-mini' }, { id: 'claude-3-5-sonnet' }],
+        }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    const models = await adapter.getModels(`${baseUrl}/api/v1`, 'jwt-token');
+    expect(models).toEqual(['gpt-4o-mini', 'claude-3-5-sonnet']);
+  });
+
   it('fetches models via api key discovered from /api/v1/keys when JWT cannot call /v1/models directly', async () => {
     await startServer((req, res) => {
       const auth = req.headers.authorization || '';
@@ -383,6 +399,50 @@ describe('Sub2ApiAdapter', () => {
 
     const models = await adapter.getModels(`${baseUrl}/v1beta`, 'jwt-token');
     expect(models).toEqual(['gemini-2.5-flash', 'gemini-3.1-pro-preview']);
+  });
+
+  it('strips a bare antigravity suffix before listing api keys for jwt fallback', async () => {
+    await startServer((req, res) => {
+      const auth = req.headers.authorization || '';
+      if (req.url === '/antigravity/v1beta/models' && auth === 'Bearer jwt-token') {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          error: {
+            code: 401,
+            message: 'API key is required',
+            status: 'UNAUTHENTICATED',
+          },
+        }));
+        return;
+      }
+      if (req.url === '/api/v1/keys?page=1&page_size=100' && auth === 'Bearer jwt-token') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 0,
+          message: 'success',
+          data: {
+            items: [
+              { id: 1, key: 'sk-sub2-antigravity', name: 'gemini', status: 'active' },
+            ],
+          },
+        }));
+        return;
+      }
+      if (req.url === '/antigravity/v1beta/models' && auth === 'Bearer sk-sub2-antigravity') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          models: [
+            { name: 'models/gemini-2.5-flash' },
+            { name: 'models/gemini-2.5-pro' },
+          ],
+        }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    const models = await adapter.getModels(`${baseUrl}/antigravity`, 'jwt-token');
+    expect(models).toEqual(['gemini-2.5-flash', 'gemini-2.5-pro']);
   });
 
   it('handles non-zero code as error in /api/v1/auth/me', async () => {

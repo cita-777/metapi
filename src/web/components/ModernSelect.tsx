@@ -14,6 +14,7 @@ type ModernSelectProps = {
   value: string;
   onChange: (value: string) => void;
   options: ModernSelectOption[];
+  'data-testid'?: string;
   placeholder?: string;
   disabled?: boolean;
   emptyLabel?: string;
@@ -28,6 +29,7 @@ export default function ModernSelect({
   value,
   onChange,
   options,
+  'data-testid': dataTestId,
   placeholder = 'Select',
   disabled = false,
   emptyLabel = 'No options',
@@ -112,6 +114,7 @@ export default function ModernSelect({
   return (
     <div
       ref={rootRef}
+      data-testid={dataTestId}
       className={`modern-select ${open ? 'is-open' : ''} ${disabled ? 'is-disabled' : ''} ${size === 'sm' ? 'is-sm' : ''} ${className}`.trim()}
     >
       <button

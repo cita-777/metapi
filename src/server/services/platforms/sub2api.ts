@@ -470,6 +470,7 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
 
     const suffixes = [
       '/models',
+      '/antigravity',
       '/antigravity/v1beta',
       '/antigravity/v1',
       '/api/v1',

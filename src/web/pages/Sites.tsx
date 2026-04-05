@@ -1105,6 +1105,7 @@ export default function Sites() {
               }}
             >
               <ModernSelect
+                data-testid="site-platform-select"
                 value={platformSelectValue}
                 onChange={(value) => {
                   if (value.startsWith('preset:')) {
