@@ -97,7 +97,7 @@
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.10.1",
     "@types/node-cron": "^3.0.11",
-    "@types/nodemailer": "^7.0.11",
+    "@types/nodemailer": "^8.0.0",
     "@types/pg": "^8.20.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
