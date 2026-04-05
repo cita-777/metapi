@@ -1187,6 +1187,108 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(parsed.oauth).not.toHaveProperty('provider');
   });
 
+  it('preserves refreshed codex oauth metadata when the retry after refresh still fails', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockRejectedValue(new Error('codex oauth discovery should not call adapter.getModels'));
+    refreshOauthAccessTokenSingleflightMock.mockImplementation(async (accountId: number) => {
+      const refreshedExtraConfig = JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          email: 'codex-refreshed-user@example.com',
+          accountId: 'chatgpt-account-refreshed',
+          planType: 'plus',
+          refreshToken: 'codex-refresh-token-next',
+          tokenExpiresAt: 1770000000000,
+        },
+      });
+
+      await db.update(schema.accounts).set({
+        accessToken: 'codex-access-token-refreshed',
+        oauthProvider: 'codex',
+        oauthAccountKey: 'chatgpt-account-refreshed',
+        extraConfig: refreshedExtraConfig,
+        status: 'active',
+        updatedAt: '2026-03-21T00:00:00.000Z',
+      }).where(eq(schema.accounts.id, accountId)).run();
+
+      return {
+        accountId,
+        accessToken: 'codex-access-token-refreshed',
+        accountKey: 'chatgpt-account-refreshed',
+        extraConfig: refreshedExtraConfig,
+      };
+    });
+    undiciFetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ error: 'expired' }),
+        text: async () => 'expired',
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        json: async () => ({ error: 'still unavailable' }),
+        text: async () => 'still unavailable',
+      });
+
+    const site = await db.insert(schema.sites).values({
+      name: 'codex-refresh-failure-site',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'codex-user@example.com',
+      accessToken: 'codex-access-token-expired',
+      apiToken: null,
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-account-original',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          email: 'codex-user@example.com',
+          accountId: 'chatgpt-account-original',
+          planType: 'plus',
+          refreshToken: 'codex-refresh-token-old',
+          tokenExpiresAt: 1760000000000,
+        },
+      }),
+    }).returning().get();
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      status: 'failed',
+      errorCode: 'unknown',
+      discoveredByCredential: false,
+    });
+    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(account.id);
+
+    const latest = await db.select().from(schema.accounts)
+      .where(eq(schema.accounts.id, account.id))
+      .get();
+    expect(latest).toMatchObject({
+      accessToken: 'codex-access-token-refreshed',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-account-refreshed',
+    });
+    const parsed = JSON.parse(latest!.extraConfig || '{}');
+    expect(parsed.oauth).toMatchObject({
+      email: 'codex-refreshed-user@example.com',
+      refreshToken: 'codex-refresh-token-next',
+      tokenExpiresAt: 1770000000000,
+      modelDiscoveryStatus: 'abnormal',
+    });
+  });
+
   it('marks codex oauth account abnormal when upstream cloud discovery fails', async () => {
     getApiTokenMock.mockResolvedValue(null);
     getModelsMock.mockRejectedValue(new Error('codex plan discovery should not call adapter.getModels'));

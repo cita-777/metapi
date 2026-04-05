@@ -274,7 +274,7 @@ app.addHook('onClose', async () => {
   stopProxyLogRetentionService();
   stopModelAvailabilityProbeScheduler();
   stopChannelRecoveryProbeScheduler();
-  stopOauthTokenRefreshScheduler();
+  await stopOauthTokenRefreshScheduler();
   await stopOAuthLoopbackCallbackServers();
 });
 

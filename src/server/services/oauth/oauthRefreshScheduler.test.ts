@@ -59,17 +59,19 @@ describe('oauthRefreshScheduler', () => {
   beforeEach(async () => {
     vi.useFakeTimers();
     refreshOauthAccessTokenSingleflightMock.mockReset();
-    stopOauthTokenRefreshScheduler();
-    resetOauthTokenRefreshSchedulerForTests();
+    await stopOauthTokenRefreshScheduler();
+    await resetOauthTokenRefreshSchedulerForTests();
 
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
   });
 
   afterEach(() => {
-    stopOauthTokenRefreshScheduler();
-    resetOauthTokenRefreshSchedulerForTests();
-    vi.useRealTimers();
+    return (async () => {
+      await stopOauthTokenRefreshScheduler();
+      await resetOauthTokenRefreshSchedulerForTests();
+      vi.useRealTimers();
+    })();
   });
 
   afterAll(() => {
@@ -275,8 +277,55 @@ describe('oauthRefreshScheduler', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledTimes(2);
 
-    stopOauthTokenRefreshScheduler();
+    await stopOauthTokenRefreshScheduler();
     await vi.advanceTimersByTimeAsync(60_000);
     expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('waits for an in-flight refresh pass before stop resolves', async () => {
+    const nowMs = Date.parse('2026-04-05T12:00:00.000Z');
+    vi.setSystemTime(nowMs);
+
+    let releaseRefresh: (() => void) | null = null;
+    refreshOauthAccessTokenSingleflightMock.mockImplementation(() => new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    }));
+
+    const site = await db.insert(schema.sites).values({
+      name: 'oauth-refresh-site',
+      url: 'https://oauth-refresh.example.com',
+      platform: 'antigravity',
+      status: 'active',
+    }).returning().get();
+
+    await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'scheduler-user@example.com',
+      accessToken: 'scheduler-access-token',
+      apiToken: null,
+      status: 'active',
+      oauthProvider: 'antigravity',
+      oauthAccountKey: 'scheduler-user@example.com',
+      extraConfig: buildOauthExtraConfig({
+        provider: 'antigravity',
+        refreshToken: 'scheduler-refresh-token',
+        tokenExpiresAt: nowMs + (4 * 60 * 1000),
+      }),
+    }).run();
+
+    startOauthTokenRefreshScheduler(60_000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledTimes(1);
+
+    let stopResolved = false;
+    const stopPromise = Promise.resolve(stopOauthTokenRefreshScheduler()).then(() => {
+      stopResolved = true;
+    });
+    await Promise.resolve();
+    expect(stopResolved).toBe(false);
+
+    releaseRefresh?.();
+    await stopPromise;
+    expect(stopResolved).toBe(true);
   });
 });

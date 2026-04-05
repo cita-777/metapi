@@ -15,6 +15,12 @@ const OAUTH_REFRESH_LEAD_BY_PROVIDER: Record<string, number> = {
 let oauthRefreshSchedulerTimer: ReturnType<typeof setInterval> | null = null;
 let oauthRefreshPassInFlight: Promise<void> | null = null;
 
+function clearOauthRefreshSchedulerTimer(): void {
+  if (!oauthRefreshSchedulerTimer) return;
+  clearInterval(oauthRefreshSchedulerTimer);
+  oauthRefreshSchedulerTimer = null;
+}
+
 function normalizeProvider(provider?: string | null): string {
   return String(provider || '').trim().toLowerCase();
 }
@@ -106,7 +112,7 @@ async function runScheduledOauthRefreshPass(): Promise<void> {
 }
 
 export function startOauthTokenRefreshScheduler(intervalMs = OAUTH_REFRESH_SCHEDULER_INTERVAL_MS) {
-  stopOauthTokenRefreshScheduler();
+  clearOauthRefreshSchedulerTimer();
 
   const safeIntervalMs = Math.max(OAUTH_REFRESH_SCHEDULER_INTERVAL_MS, Math.trunc(intervalMs || 0));
   void runScheduledOauthRefreshPass();
@@ -121,14 +127,14 @@ export function startOauthTokenRefreshScheduler(intervalMs = OAUTH_REFRESH_SCHED
   };
 }
 
-export function stopOauthTokenRefreshScheduler() {
-  if (oauthRefreshSchedulerTimer) {
-    clearInterval(oauthRefreshSchedulerTimer);
-    oauthRefreshSchedulerTimer = null;
+export async function stopOauthTokenRefreshScheduler() {
+  clearOauthRefreshSchedulerTimer();
+  if (oauthRefreshPassInFlight) {
+    await oauthRefreshPassInFlight;
   }
 }
 
-export function __resetOauthTokenRefreshSchedulerForTests() {
-  stopOauthTokenRefreshScheduler();
+export async function __resetOauthTokenRefreshSchedulerForTests() {
+  await stopOauthTokenRefreshScheduler();
   oauthRefreshPassInFlight = null;
 }
