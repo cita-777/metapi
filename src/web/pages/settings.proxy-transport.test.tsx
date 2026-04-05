@@ -56,6 +56,7 @@ describe('Settings proxy transport', () => {
       logCleanupProgramLogsEnabled: true,
       logCleanupRetentionDays: 14,
       codexUpstreamWebsocketEnabled: false,
+      responsesCompactFallbackToResponsesEnabled: false,
       proxySessionChannelConcurrencyLimit: 4,
       proxySessionChannelQueueWaitMs: 3200,
       routingFallbackUnitCost: 1,
@@ -74,6 +75,7 @@ describe('Settings proxy transport', () => {
     apiMock.updateRuntimeSettings.mockResolvedValue({
       success: true,
       codexUpstreamWebsocketEnabled: true,
+      responsesCompactFallbackToResponsesEnabled: true,
       proxySessionChannelConcurrencyLimit: 6,
       proxySessionChannelQueueWaitMs: 4200,
     });
@@ -104,6 +106,12 @@ describe('Settings proxy transport', () => {
       ));
       const websocketToggle = websocketToggleLabel.findByType('input');
       expect(websocketToggle.props.checked).toBe(false);
+      const compactFallbackToggleLabel = root.root.find((node) => (
+        node.type === 'label'
+        && collectText(node).includes('Compact 明确不支持时回退到普通 Responses')
+      ));
+      const compactFallbackToggle = compactFallbackToggleLabel.findByType('input');
+      expect(compactFallbackToggle.props.checked).toBe(false);
 
       const concurrencyInput = root.root.find((node) => (
         node.type === 'input'
@@ -118,6 +126,7 @@ describe('Settings proxy transport', () => {
 
       await act(async () => {
         websocketToggle.props.onChange({ target: { checked: true } });
+        compactFallbackToggle.props.onChange({ target: { checked: true } });
         concurrencyInput.props.onChange({ target: { value: '6' } });
         queueWaitInput.props.onChange({ target: { value: '4200' } });
       });
@@ -134,6 +143,7 @@ describe('Settings proxy transport', () => {
 
       expect(apiMock.updateRuntimeSettings).toHaveBeenCalledWith({
         codexUpstreamWebsocketEnabled: true,
+        responsesCompactFallbackToResponsesEnabled: true,
         proxySessionChannelConcurrencyLimit: 6,
         proxySessionChannelQueueWaitMs: 4200,
       });

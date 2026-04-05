@@ -52,6 +52,7 @@ interface RuntimeSettingsBody {
   systemProxyUrl?: string;
   modelAvailabilityProbeEnabled?: boolean;
   codexUpstreamWebsocketEnabled?: boolean;
+  responsesCompactFallbackToResponsesEnabled?: boolean;
   disableCrossProtocolFallback?: boolean;
   proxySessionChannelConcurrencyLimit?: number;
   proxySessionChannelQueueWaitMs?: number;
@@ -425,6 +426,11 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       config.codexUpstreamWebsocketEnabled = value;
       return;
     }
+    case 'responses_compact_fallback_to_responses_enabled': {
+      if (typeof value !== 'boolean') return;
+      config.responsesCompactFallbackToResponsesEnabled = value;
+      return;
+    }
     case 'disable_cross_protocol_fallback': {
       if (typeof value !== 'boolean') return;
       config.disableCrossProtocolFallback = value;
@@ -711,6 +717,7 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     logCleanupRetentionDays: config.logCleanupRetentionDays,
     modelAvailabilityProbeEnabled: config.modelAvailabilityProbeEnabled,
     codexUpstreamWebsocketEnabled: config.codexUpstreamWebsocketEnabled,
+    responsesCompactFallbackToResponsesEnabled: config.responsesCompactFallbackToResponsesEnabled,
     disableCrossProtocolFallback: config.disableCrossProtocolFallback,
     proxySessionChannelConcurrencyLimit: config.proxySessionChannelConcurrencyLimit,
     proxySessionChannelQueueWaitMs: config.proxySessionChannelQueueWaitMs,
@@ -1164,6 +1171,24 @@ export async function settingsRoutes(app: FastifyInstance) {
       }
       config.codexUpstreamWebsocketEnabled = nextValue;
       upsertSetting('codex_upstream_websocket_enabled', config.codexUpstreamWebsocketEnabled);
+    }
+
+    if (body.responsesCompactFallbackToResponsesEnabled !== undefined) {
+      let nextValue = false;
+      try {
+        nextValue = parseBooleanFlag(body.responsesCompactFallbackToResponsesEnabled, 'Compact 回退到 Responses 开关');
+      } catch (err: any) {
+        return reply.code(400).send({
+          success: false,
+          message: err?.message || 'Compact 回退到 Responses 开关格式无效',
+        });
+      }
+
+      if (nextValue !== config.responsesCompactFallbackToResponsesEnabled) {
+        changedLabels.push('Compact 不支持时回退到普通 Responses');
+      }
+      config.responsesCompactFallbackToResponsesEnabled = nextValue;
+      upsertSetting('responses_compact_fallback_to_responses_enabled', config.responsesCompactFallbackToResponsesEnabled);
     }
 
     if (body.disableCrossProtocolFallback !== undefined) {

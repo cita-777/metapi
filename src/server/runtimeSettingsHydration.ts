@@ -50,6 +50,11 @@ export function applyRuntimeSettings(settingsMap: Map<string, string>) {
     config.codexUpstreamWebsocketEnabled = codexUpstreamWebsocketEnabled;
   }
 
+  const responsesCompactFallbackToResponsesEnabled = parseSettingFromMap<boolean>(settingsMap, 'responses_compact_fallback_to_responses_enabled');
+  if (typeof responsesCompactFallbackToResponsesEnabled === 'boolean') {
+    config.responsesCompactFallbackToResponsesEnabled = responsesCompactFallbackToResponsesEnabled;
+  }
+
   const disableCrossProtocolFallback = parseSettingFromMap<boolean>(settingsMap, 'disable_cross_protocol_fallback');
   if (typeof disableCrossProtocolFallback === 'boolean') {
     config.disableCrossProtocolFallback = disableCrossProtocolFallback;
