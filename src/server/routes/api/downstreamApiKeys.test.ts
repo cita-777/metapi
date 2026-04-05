@@ -787,6 +787,71 @@ describe('downstream api keys routes', () => {
     expect(trendBody.buckets.some((bucket: any) => bucket.totalTokens === 900)).toBe(true);
   });
 
+  it('groups all-range trend buckets by local day boundaries', async () => {
+    const inserted = await db.insert(schema.downstreamApiKeys).values({
+      name: 'local-day-key',
+      key: 'sk-local-day-key-001',
+      enabled: true,
+      description: 'local day trend',
+      usedCost: 0,
+      usedRequests: 0,
+    }).returning().get();
+
+    await db.insert(schema.proxyLogs).values([
+      {
+        downstreamApiKeyId: inserted.id,
+        status: 'success',
+        totalTokens: 100,
+        estimatedCost: 0.01,
+        createdAt: '2026-04-05T23:30:00.000Z',
+      },
+      {
+        downstreamApiKeyId: inserted.id,
+        status: 'failed',
+        totalTokens: 200,
+        estimatedCost: 0.02,
+        createdAt: '2026-04-06T01:00:00.000Z',
+      },
+      {
+        downstreamApiKeyId: inserted.id,
+        status: 'success',
+        totalTokens: 300,
+        estimatedCost: 0.03,
+        createdAt: '2026-04-06T16:30:00.000Z',
+      },
+    ]).run();
+
+    const trendRes = await app.inject({
+      method: 'GET',
+      url: `/api/downstream-keys/${inserted.id}/trend?range=all&timeZone=${encodeURIComponent('Asia/Shanghai')}`,
+    });
+
+    expect(trendRes.statusCode).toBe(200);
+    expect(trendRes.json()).toMatchObject({
+      success: true,
+      range: 'all',
+      timeZone: 'Asia/Shanghai',
+      buckets: [
+        {
+          startUtc: '2026-04-05T16:00:00.000Z',
+          totalRequests: 2,
+          successRequests: 1,
+          failedRequests: 1,
+          totalTokens: 300,
+          totalCost: 0.03,
+        },
+        {
+          startUtc: '2026-04-06T16:00:00.000Z',
+          totalRequests: 1,
+          successRequests: 1,
+          failedRequests: 0,
+          totalTokens: 300,
+          totalCost: 0.03,
+        },
+      ],
+    });
+  });
+
   it('rejects unknown route ids and site ids in downstream policy payloads', async () => {
     const createRes = await app.inject({
       method: 'POST',

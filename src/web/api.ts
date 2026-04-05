@@ -134,12 +134,12 @@ async function fetchAuthenticatedResponse(url: string, options: RequestOptions =
   }
 }
 
-async function request(url: string, options: RequestOptions = {}) {
+async function request<T = any>(url: string, options: RequestOptions = {}): Promise<T> {
   const res = await fetchAuthenticatedResponse(url, options);
   if (!res.ok) {
     throw new Error(await extractResponseErrorMessage(res));
   }
-  return res.json();
+  return res.json() as Promise<T>;
 }
 
 async function streamSse(
@@ -686,6 +686,28 @@ export type OAuthImportResponse = {
   }>;
 };
 
+export type DownstreamApiKeyTrendBucket = {
+  startUtc: string | null;
+  totalRequests: number;
+  successRequests: number;
+  failedRequests: number;
+  successRate: number | null;
+  totalTokens: number;
+  totalCost: number;
+};
+
+export type DownstreamApiKeyTrendResponse = {
+  success: boolean;
+  range: '24h' | '7d' | 'all';
+  item: {
+    id: number;
+    name: string;
+  };
+  bucketSeconds: number;
+  timeZone?: string | null;
+  buckets: DownstreamApiKeyTrendBucket[];
+};
+
 export const api = {
   // Sites
   getSites: () => request('/api/sites'),
@@ -949,8 +971,8 @@ export const api = {
   getDownstreamApiKeysSummary: (params?: { range?: '24h' | '7d' | 'all'; status?: 'all' | 'enabled' | 'disabled'; search?: string }) =>
     request(`/api/downstream-keys/summary${buildQueryString(params)}`),
   getDownstreamApiKeyOverview: (id: number) => request(`/api/downstream-keys/${id}/overview`),
-  getDownstreamApiKeyTrend: (id: number, params?: { range?: '24h' | '7d' | 'all' }) =>
-    request(`/api/downstream-keys/${id}/trend${buildQueryString(params)}`),
+  getDownstreamApiKeyTrend: (id: number, params?: { range?: '24h' | '7d' | 'all'; timeZone?: string }) =>
+    request<DownstreamApiKeyTrendResponse>(`/api/downstream-keys/${id}/trend${buildQueryString(params)}`),
   exportBackup: (type: 'all' | 'accounts' | 'preferences' = 'all') =>
     request(`/api/settings/backup/export?type=${encodeURIComponent(type)}`),
   importBackup: (data: any) =>

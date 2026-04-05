@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify';
-import { and, eq, inArray, sql, type SQL, type SQLWrapper } from 'drizzle-orm';
+import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import { db, hasProxyLogDownstreamApiKeyIdColumn, runtimeDbDialect, schema } from '../../db/index.js';
 import { insertAndGetById } from '../../db/insertHelpers.js';
 import {
@@ -9,12 +9,20 @@ import {
   toDownstreamApiKeyPolicyView,
   toPersistenceJson,
 } from '../../services/downstreamApiKeyService.js';
-import type { DownstreamExcludedCredentialRef } from '../../services/downstreamPolicyTypes.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
+import type { DownstreamExcludedCredentialRef } from '../../services/downstreamPolicyTypes.js';
+import {
+  buildBucketTsExpressionForDialect,
+  readDownstreamApiKeyTrendBuckets,
+  resolveDownstreamTrendRangeSinceUtc,
+  type DownstreamKeyTrendRange,
+} from '../../services/downstreamApiKeyTrendService.js';
 import {
   parseDownstreamApiKeyBatchPayload,
   parseDownstreamApiKeyPayload,
 } from '../../contracts/downstreamApiKeyRoutePayloads.js';
+
+export { buildBucketTsExpressionForDialect };
 
 function parseRouteId(raw: string): number | null {
   const id = Number.parseInt(raw, 10);
@@ -78,7 +86,7 @@ function normalizeBatchIds(raw: unknown): number[] {
   return ids;
 }
 
-type DownstreamKeyRange = '24h' | '7d' | 'all';
+type DownstreamKeyRange = DownstreamKeyTrendRange;
 type DownstreamKeyStatus = 'all' | 'enabled' | 'disabled';
 
 function normalizeDownstreamKeyRange(raw: unknown): DownstreamKeyRange {
@@ -124,37 +132,7 @@ function normalizeTagMatchMode(raw: unknown): 'any' | 'all' {
 }
 
 function resolveRangeSinceUtc(range: DownstreamKeyRange): string | null {
-  const nowTs = Date.now();
-  if (range === '24h') return formatUtcSqlDateTime(new Date(nowTs - 24 * 60 * 60 * 1000));
-  if (range === '7d') return formatUtcSqlDateTime(new Date(nowTs - 7 * 24 * 60 * 60 * 1000));
-  return null;
-}
-
-function resolveBucketSeconds(range: DownstreamKeyRange): number {
-  return range === 'all' ? 86400 : 3600;
-}
-
-export function buildBucketTsExpressionForDialect(
-  dialect: 'sqlite' | 'mysql' | 'postgres',
-  createdAtColumn: SQLWrapper,
-  bucketSeconds: number,
-) {
-  if (dialect === 'mysql') {
-    return sql<number>`floor(unix_timestamp(${createdAtColumn}) / ${bucketSeconds}) * ${bucketSeconds}`;
-  }
-  if (dialect === 'postgres') {
-    const createdAtTimestamp = sql`cast(${createdAtColumn} as timestamp)`;
-    if (bucketSeconds === 86400) {
-      return sql<number>`extract(epoch from date_trunc('day', ${createdAtTimestamp}))::bigint`;
-    }
-    return sql<number>`extract(epoch from date_trunc('hour', ${createdAtTimestamp}))::bigint`;
-  }
-  // sqlite
-  return sql<number>`cast(cast(strftime('%s', ${createdAtColumn}) as integer) / ${bucketSeconds} as integer) * ${bucketSeconds}`;
-}
-
-function resolveBucketTsExpression(bucketSeconds: number) {
-  return buildBucketTsExpressionForDialect(runtimeDbDialect, schema.proxyLogs.createdAt, bucketSeconds);
+  return resolveDownstreamTrendRangeSinceUtc(range);
 }
 
 async function validatePolicyReferences(input: {
@@ -447,7 +425,7 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
     return { success: true, item, usage: { last24h, last7d, all } };
   });
 
-  app.get<{ Params: { id: string }; Querystring: { range?: string } }>('/api/downstream-keys/:id/trend', async (request, reply) => {
+  app.get<{ Params: { id: string }; Querystring: { range?: string; timeZone?: string } }>('/api/downstream-keys/:id/trend', async (request, reply) => {
     const id = parseRouteId(request.params.id);
     if (!id) {
       return reply.code(400).send({ success: false, message: 'id 无效' });
@@ -464,46 +442,19 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
       return { success: true, range, item: { id: item.id, name: item.name }, buckets: [] };
     }
 
-    const bucketSeconds = resolveBucketSeconds(range);
-    const bucketTs = resolveBucketTsExpression(bucketSeconds);
-    const sinceUtc = resolveRangeSinceUtc(range);
-
-    const rows = await db.select({
-      bucketTs,
-      totalRequests: sql<number>`count(*)`,
-      successRequests: sql<number>`coalesce(sum(case when ${schema.proxyLogs.status} = 'success' then 1 else 0 end), 0)`,
-      failedRequests: sql<number>`coalesce(sum(case when ${schema.proxyLogs.status} = 'success' then 0 else 1 end), 0)`,
-      totalTokens: sql<number>`coalesce(sum(coalesce(${schema.proxyLogs.totalTokens}, 0)), 0)`,
-      totalCost: sql<number>`coalesce(sum(coalesce(${schema.proxyLogs.estimatedCost}, 0)), 0)`,
-    })
-      .from(schema.proxyLogs)
-      .where(and(
-        eq(schema.proxyLogs.downstreamApiKeyId, id),
-        ...(sinceUtc ? [sql`${schema.proxyLogs.createdAt} >= ${sinceUtc}`] : []),
-      ))
-      .groupBy(bucketTs)
-      .orderBy(bucketTs)
-      .all();
+    const trend = await readDownstreamApiKeyTrendBuckets({
+      downstreamApiKeyId: id,
+      range,
+      timeZone: request.query?.timeZone,
+    });
 
     return {
       success: true,
       range,
       item: { id: item.id, name: item.name },
-      bucketSeconds,
-      buckets: rows.map((row: any) => {
-        const tsSeconds = Number(row.bucketTs || 0);
-        const totalRequests = Number(row.totalRequests || 0);
-        const successRequests = Number(row.successRequests || 0);
-        return {
-          startUtc: tsSeconds > 0 ? new Date(tsSeconds * 1000).toISOString() : null,
-          totalRequests,
-          successRequests,
-          failedRequests: Number(row.failedRequests || 0),
-          successRate: totalRequests > 0 ? Math.round((successRequests / totalRequests) * 1000) / 10 : null,
-          totalTokens: Number(row.totalTokens || 0),
-          totalCost: Math.round(Number(row.totalCost || 0) * 1_000_000) / 1_000_000,
-        };
-      }),
+      bucketSeconds: trend.bucketSeconds,
+      timeZone: trend.timeZone,
+      buckets: trend.buckets,
     };
   });
 

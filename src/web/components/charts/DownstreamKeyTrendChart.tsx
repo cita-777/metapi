@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { VChart } from '@visactor/react-vchart';
+import { formatDateTimeMinuteLocal } from '../../pages/helpers/checkinLogTime.js';
 
 type Metric = 'tokens' | 'requests' | 'cost';
 
@@ -17,12 +18,27 @@ export type DownstreamKeyTrendBucket = {
   successRate: number | null;
 };
 
+function pad2(value: number): string {
+  return String(value).padStart(2, '0');
+}
+
+function formatTrendAxisLabel(raw: string, bucketSeconds: number): string {
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return raw;
+  const month = pad2(parsed.getMonth() + 1);
+  const day = pad2(parsed.getDate());
+  if (bucketSeconds >= 86400) return `${month}/${day}`;
+  return `${month}/${day} ${pad2(parsed.getHours())}:${pad2(parsed.getMinutes())}`;
+}
+
 export default function DownstreamKeyTrendChart({
   buckets,
+  bucketSeconds = 3600,
   loading,
   height = 260,
 }: {
   buckets: DownstreamKeyTrendBucket[];
+  bucketSeconds?: number;
   loading?: boolean;
   height?: number;
 }) {
@@ -32,13 +48,17 @@ export default function DownstreamKeyTrendChart({
     if (!Array.isArray(buckets) || buckets.length === 0) return [];
     return buckets
       .map((bucket) => {
-        const date = bucket.startUtc || '';
+        const rawDate = (bucket.startUtc || '').trim();
         const value = metric === 'tokens'
           ? Number(bucket.totalTokens || 0)
           : (metric === 'requests'
             ? Number(bucket.totalRequests || 0)
             : Number(bucket.totalCost || 0));
-        return { date, value };
+        return {
+          date: rawDate,
+          tooltipDate: rawDate ? formatDateTimeMinuteLocal(rawDate) : '',
+          value,
+        };
       })
       .filter((row) => row.date.length > 0);
   }, [buckets, metric]);
@@ -89,7 +109,10 @@ export default function DownstreamKeyTrendChart({
     axes: [
       {
         orient: 'bottom',
-        label: { style: { fontSize: 11, fill: 'var(--color-text-muted)' } },
+        label: {
+          style: { fontSize: 11, fill: 'var(--color-text-muted)' },
+          formatMethod: (value: string) => formatTrendAxisLabel(String(value || ''), bucketSeconds),
+        },
         domainLine: { style: { stroke: 'var(--color-border-light)' } },
         tick: { style: { stroke: 'var(--color-border-light)' } },
       },
@@ -102,7 +125,7 @@ export default function DownstreamKeyTrendChart({
     ],
     tooltip: {
       dimension: {
-        title: { value: (datum: Record<string, unknown>) => String(datum?.date || '') },
+        title: { value: (datum: Record<string, unknown>) => String(datum?.tooltipDate || datum?.date || '') },
         content: [
           {
             key: () => METRIC_OPTIONS.find((opt) => opt.key === metric)?.label || 'Value',

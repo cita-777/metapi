@@ -1,8 +1,9 @@
-import React, { Suspense, lazy, useEffect, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { api } from '../../api.js';
+import { api, type DownstreamApiKeyTrendResponse } from '../../api.js';
 import { useToast } from '../../components/Toast.js';
 import { useAnimatedVisibility } from '../../components/useAnimatedVisibility.js';
+import { readClientTimeZone } from '../helpers/siteAnnouncementPresentation.js';
 import {
   formatCompactTokens,
   formatIso,
@@ -40,10 +41,13 @@ export default function DownstreamKeyDrawer({
   const [trendRange, setTrendRange] = useState<Range>(initialRange);
   const [trendLoading, setTrendLoading] = useState(false);
   const [buckets, setBuckets] = useState<DownstreamKeyTrendBucket[]>([]);
+  const [trendBucketSeconds, setTrendBucketSeconds] = useState<number>(initialRange === 'all' ? 86400 : 3600);
+  const viewerTimeZone = useMemo(() => readClientTimeZone(), []);
 
   useEffect(() => {
     if (!open) return;
     setTrendRange(initialRange);
+    setTrendBucketSeconds(initialRange === 'all' ? 86400 : 3600);
   }, [open, initialRange]);
 
   useEffect(() => {
@@ -72,12 +76,19 @@ export default function DownstreamKeyDrawer({
   useEffect(() => {
     if (!open || !item?.id) return;
     let cancelled = false;
+    const fallbackBucketSeconds = trendRange === 'all' ? 86400 : 3600;
     setBuckets([]);
+    setTrendBucketSeconds(fallbackBucketSeconds);
     setTrendLoading(true);
-    api.getDownstreamApiKeyTrend(item.id, { range: trendRange })
-      .then((res: any) => {
+    const trendParams = trendRange === 'all' && viewerTimeZone
+      ? { range: trendRange, timeZone: viewerTimeZone }
+      : { range: trendRange };
+    api.getDownstreamApiKeyTrend(item.id, trendParams)
+      .then((res: DownstreamApiKeyTrendResponse) => {
         if (cancelled) return;
-        setBuckets(Array.isArray(res?.buckets) ? res.buckets : []);
+        setBuckets(Array.isArray(res.buckets) ? res.buckets : []);
+        const nextBucketSeconds = Number(res.bucketSeconds);
+        setTrendBucketSeconds(Number.isFinite(nextBucketSeconds) && nextBucketSeconds > 0 ? nextBucketSeconds : fallbackBucketSeconds);
       })
       .catch((err: any) => {
         if (cancelled) return;
@@ -90,7 +101,7 @@ export default function DownstreamKeyDrawer({
     return () => {
       cancelled = true;
     };
-  }, [open, item?.id, trendRange, toast]);
+  }, [open, item?.id, trendRange, toast, viewerTimeZone]);
 
   if (!presence.shouldRender) return null;
 
@@ -146,7 +157,7 @@ export default function DownstreamKeyDrawer({
             </div>
 
             <Suspense fallback={<TrendChartFallback height={260} />}>
-              <DownstreamKeyTrendChart buckets={buckets} loading={trendLoading} height={260} />
+              <DownstreamKeyTrendChart buckets={buckets} bucketSeconds={trendBucketSeconds} loading={trendLoading} height={260} />
             </Suspense>
           </div>
 
