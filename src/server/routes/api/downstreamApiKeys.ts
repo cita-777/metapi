@@ -14,6 +14,7 @@ import type { DownstreamExcludedCredentialRef } from '../../services/downstreamP
 import {
   buildBucketTsExpressionForDialect,
   readDownstreamApiKeyTrendBuckets,
+  resolveDownstreamTrendBucketSeconds,
   resolveDownstreamTrendRangeSinceUtc,
   type DownstreamKeyTrendRange,
 } from '../../services/downstreamApiKeyTrendService.js';
@@ -439,7 +440,14 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
 
     const columnReady = await hasProxyLogDownstreamApiKeyIdColumn();
     if (!columnReady) {
-      return { success: true, range, item: { id: item.id, name: item.name }, buckets: [] };
+      return {
+        success: true,
+        range,
+        item: { id: item.id, name: item.name },
+        bucketSeconds: resolveDownstreamTrendBucketSeconds(range),
+        timeZone: request.query?.timeZone ?? null,
+        buckets: [],
+      };
     }
 
     const trend = await readDownstreamApiKeyTrendBuckets({
