@@ -138,21 +138,21 @@ describe('refreshModelsForAccount credential discovery', () => {
   it('uses the configured ai endpoint for direct model discovery credentials', async () => {
     getApiTokenMock.mockResolvedValue(null);
     getModelsMock.mockImplementation(async (baseUrl: string, token: string) => (
-      baseUrl === 'https://api.nih.cc' && token === 'session-token'
+      baseUrl === 'https://api.example.com' && token === 'session-token'
         ? ['gpt-4.1']
         : []
     ));
 
     const site = await db.insert(schema.sites).values({
       name: 'nihao-panel',
-      url: 'https://nih.cc',
+      url: 'https://console.example.com',
       platform: 'new-api',
       status: 'active',
     }).returning().get();
 
     await db.insert(schema.siteApiEndpoints).values({
       siteId: site.id,
-      url: 'https://api.nih.cc',
+      url: 'https://api.example.com',
       enabled: true,
       sortOrder: 0,
     }).run();
@@ -175,7 +175,7 @@ describe('refreshModelsForAccount credential discovery', () => {
       modelCount: 1,
       modelsPreview: ['gpt-4.1'],
     });
-    expect(getModelsMock).toHaveBeenCalledWith('https://api.nih.cc', 'session-token', undefined);
+    expect(getModelsMock).toHaveBeenCalledWith('https://api.example.com', 'session-token', undefined);
   });
 
   it('deduplicates discovered model names before writing availability rows', async () => {

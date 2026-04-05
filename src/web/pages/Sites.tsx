@@ -1028,7 +1028,7 @@ export default function Sites() {
             <div style={{ display: 'flex', gap: 8, flexDirection: isMobile ? 'column' : 'row' }}>
               <input
                 data-testid="site-primary-url-input"
-                placeholder="站点 URL（面板/登录/签到地址，如 https://nih.cc）"
+                placeholder="站点 URL（面板/登录/签到地址，如 https://console.example.com）"
                 value={form.url}
                 onChange={(e) => setForm((prev) => ({ ...prev, url: e.target.value }))}
                 onBlur={() => {
@@ -1146,7 +1146,7 @@ export default function Sites() {
               >
                 <div style={{ display: 'flex', gap: 8, flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'stretch' : 'center' }}>
                   <input
-                    placeholder="API 请求地址（如 https://api.nih.cc）"
+                    placeholder="API 请求地址（如 https://api.example.com）"
                     value={endpoint.url}
                     onChange={(e) => updateApiEndpointRow(index, { url: e.target.value })}
                     style={{ ...formInputStyle, flex: 1, fontFamily: 'var(--font-mono)' }}

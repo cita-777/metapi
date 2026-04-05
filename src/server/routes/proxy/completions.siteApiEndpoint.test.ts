@@ -120,7 +120,7 @@ describe('/v1/completions site api endpoint rotation', () => {
   it('cools down a retryable failed endpoint and retries the next endpoint within the same site', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'nihao-panel',
-      url: 'https://nih.cc',
+      url: 'https://console.example.com',
       platform: 'new-api',
       status: 'active',
     }).returning().get();
@@ -138,13 +138,13 @@ describe('/v1/completions site api endpoint rotation', () => {
     await db.insert(schema.siteApiEndpoints).values([
       {
         siteId: site.id,
-        url: 'https://api-a.nih.cc',
+        url: 'https://api-a.example.com',
         enabled: true,
         sortOrder: 0,
       },
       {
         siteId: site.id,
-        url: 'https://api-b.nih.cc',
+        url: 'https://api-b.example.com',
         enabled: true,
         sortOrder: 1,
       },
@@ -194,8 +194,8 @@ describe('/v1/completions site api endpoint rotation', () => {
       object: 'text_completion',
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(String(fetchMock.mock.calls[0]?.[0] || '')).toBe('https://api-a.nih.cc/v1/completions');
-    expect(String(fetchMock.mock.calls[1]?.[0] || '')).toBe('https://api-b.nih.cc/v1/completions');
+    expect(String(fetchMock.mock.calls[0]?.[0] || '')).toBe('https://api-a.example.com/v1/completions');
+    expect(String(fetchMock.mock.calls[1]?.[0] || '')).toBe('https://api-b.example.com/v1/completions');
     expect(selectNextChannelMock).not.toHaveBeenCalled();
     expect(recordFailureMock).not.toHaveBeenCalled();
     expect(recordSuccessMock).toHaveBeenCalledTimes(1);
@@ -205,12 +205,12 @@ describe('/v1/completions site api endpoint rotation', () => {
       .orderBy(asc(schema.siteApiEndpoints.sortOrder), asc(schema.siteApiEndpoints.id))
       .all();
     expect(storedEndpoints[0]).toMatchObject({
-      url: 'https://api-a.nih.cc',
+      url: 'https://api-a.example.com',
       lastFailureReason: 'HTTP 502: bad gateway',
     });
     expect(storedEndpoints[0]?.cooldownUntil).toBeTruthy();
     expect(storedEndpoints[1]).toMatchObject({
-      url: 'https://api-b.nih.cc',
+      url: 'https://api-b.example.com',
     });
     expect(storedEndpoints[1]?.lastSelectedAt).toBeTruthy();
   });
