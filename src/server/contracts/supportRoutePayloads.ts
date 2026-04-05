@@ -15,6 +15,7 @@ const oauthStartPayloadSchema = z.object({
   accountId: z.number().int().positive().optional(),
   projectId: z.string().optional(),
   proxyUrl: z.union([z.string(), z.null()]).optional(),
+  useSystemProxy: z.boolean().optional(),
 }).passthrough();
 
 const oauthManualCallbackPayloadSchema = z.object({
@@ -23,6 +24,15 @@ const oauthManualCallbackPayloadSchema = z.object({
 
 const oauthConnectionRebindPayloadSchema = z.object({
   proxyUrl: z.union([z.string(), z.null()]).optional(),
+  useSystemProxy: z.boolean().optional(),
+}).passthrough();
+
+const oauthQuotaBatchRefreshPayloadSchema = z.object({
+  accountIds: z.array(z.number().int().positive()).optional(),
+}).passthrough();
+
+const oauthImportPayloadSchema = z.object({
+  data: z.unknown().optional(),
 }).passthrough();
 
 const updateCenterConfigPayloadSchema = z.object({
@@ -51,7 +61,9 @@ const updateCenterRollbackPayloadSchema = z.object({
 export type AuthChangePayload = z.output<typeof authChangePayloadSchema>;
 export type MonitorConfigPayload = z.output<typeof monitorConfigPayloadSchema>;
 export type OauthConnectionRebindPayload = z.output<typeof oauthConnectionRebindPayloadSchema>;
+export type OauthImportPayload = z.output<typeof oauthImportPayloadSchema>;
 export type OauthManualCallbackPayload = z.output<typeof oauthManualCallbackPayloadSchema>;
+export type OauthQuotaBatchRefreshPayload = z.output<typeof oauthQuotaBatchRefreshPayloadSchema>;
 export type OauthStartPayload = z.output<typeof oauthStartPayloadSchema>;
 export type UpdateCenterConfigPayload = z.output<typeof updateCenterConfigPayloadSchema>;
 export type UpdateCenterDeployPayload = z.output<typeof updateCenterDeployPayloadSchema>;
@@ -85,8 +97,17 @@ function formatSupportRoutePayloadError(error: z.ZodError): string {
   if (firstPath === 'proxyUrl') {
     return 'Invalid proxyUrl. Expected string or null.';
   }
+  if (firstPath === 'useSystemProxy') {
+    return 'Invalid useSystemProxy. Expected boolean.';
+  }
+  if (firstPath === 'accountIds') {
+    return 'Invalid accountIds. Expected positive number array.';
+  }
   if (firstPath === 'callbackUrl') {
     return 'Invalid callbackUrl. Expected string.';
+  }
+  if (firstPath === 'data') {
+    return 'Invalid data. Expected object.';
   }
   if (firstPath === 'enabled') {
     return 'Invalid enabled. Expected boolean.';
@@ -173,6 +194,16 @@ export function parseOauthManualCallbackPayload(input: unknown):
 export function parseOauthConnectionRebindPayload(input: unknown):
 { success: true; data: OauthConnectionRebindPayload } | { success: false; error: string } {
   return parseSupportRoutePayload(oauthConnectionRebindPayloadSchema, input);
+}
+
+export function parseOauthQuotaBatchRefreshPayload(input: unknown):
+{ success: true; data: OauthQuotaBatchRefreshPayload } | { success: false; error: string } {
+  return parseSupportRoutePayload(oauthQuotaBatchRefreshPayloadSchema, input);
+}
+
+export function parseOauthImportPayload(input: unknown):
+{ success: true; data: OauthImportPayload } | { success: false; error: string } {
+  return parseSupportRoutePayload(oauthImportPayloadSchema, input);
 }
 
 export function parseUpdateCenterConfigPayload(input: unknown):

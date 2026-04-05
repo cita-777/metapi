@@ -16,6 +16,7 @@ const reportProxyAllFailedMock = vi.fn();
 const reportTokenExpiredMock = vi.fn();
 const isTokenExpiredErrorMock = vi.fn();
 const shouldRetryProxyRequestMock = vi.fn();
+const recordOauthQuotaHeadersSnapshotMock = vi.fn();
 const recordOauthQuotaResetHintMock = vi.fn();
 const recordSuccessMock = vi.fn();
 const resolveProxyUsageWithSelfLogFallbackMock = vi.fn();
@@ -89,6 +90,7 @@ vi.mock('../../services/proxyRetryPolicy.js', () => ({
 }));
 
 vi.mock('../../services/oauth/quota.js', () => ({
+  recordOauthQuotaHeadersSnapshot: (...args: unknown[]) => recordOauthQuotaHeadersSnapshotMock(...args),
   recordOauthQuotaResetHint: (...args: unknown[]) => recordOauthQuotaResetHintMock(...args),
 }));
 
@@ -126,6 +128,7 @@ describe('selectSurfaceChannelForAttempt', () => {
     reportTokenExpiredMock.mockReset();
     isTokenExpiredErrorMock.mockReset();
     shouldRetryProxyRequestMock.mockReset();
+    recordOauthQuotaHeadersSnapshotMock.mockReset();
     recordOauthQuotaResetHintMock.mockReset();
     recordSuccessMock.mockReset();
     resolveProxyUsageWithSelfLogFallbackMock.mockReset();
@@ -1074,6 +1077,59 @@ describe('selectSurfaceChannelForAttempt', () => {
       totalTokens: null,
       usageSource: 'unknown',
     }));
+  });
+
+  it('captures codex quota headers from successful upstream responses as best-effort bookkeeping', async () => {
+    resolveProxyUsageWithSelfLogFallbackMock.mockResolvedValue({
+      promptTokens: 10,
+      completionTokens: 5,
+      totalTokens: 15,
+      recoveredFromSelfLog: false,
+      estimatedCostFromQuota: 0,
+      selfLogBillingMeta: null,
+      usageSource: 'upstream',
+    });
+    resolveProxyLogBillingMock.mockResolvedValue({
+      estimatedCost: 0.12,
+      billingDetails: null,
+    });
+    recordOauthQuotaHeadersSnapshotMock.mockResolvedValue(null);
+    const logSuccess = vi.fn().mockResolvedValue(undefined);
+
+    const { recordSurfaceSuccess } = await import('./sharedSurface.js');
+    await recordSurfaceSuccess({
+      selected: {
+        channel: { id: 11, routeId: 22 },
+        account: { id: 33, username: 'oauth-user' },
+        site: { id: 44, url: 'https://upstream.example.com', name: 'Codex OAuth' },
+        tokenValue: 'live-token',
+        tokenName: 'default',
+        actualModel: 'upstream-model',
+      },
+      requestedModel: 'gpt-5.2',
+      modelName: 'upstream-model',
+      parsedUsage: {
+        promptTokens: 10,
+        completionTokens: 5,
+        totalTokens: 15,
+      },
+      requestStartedAtMs: 1000,
+      latencyMs: 250,
+      retryCount: 0,
+      upstreamPath: '/v1/responses',
+      upstreamHeaders: new Headers({
+        'x-codex-primary-used-percent': '61',
+        'x-codex-secondary-used-percent': '13',
+      }),
+      logSuccess,
+    });
+
+    await vi.waitFor(() => {
+      expect(recordOauthQuotaHeadersSnapshotMock).toHaveBeenCalledWith({
+        accountId: 33,
+        headers: expect.any(Headers),
+      });
+    });
   });
 
   it('treats success metrics as best-effort when requested', async () => {

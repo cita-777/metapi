@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { db, schema } from '../../db/index.js';
 import { getOAuthProviderDefinition } from './providers.js';
-import { getProxyUrlFromExtraConfig } from '../accountExtraConfig.js';
+import { resolveProxyUrlFromExtraConfig } from '../accountExtraConfig.js';
 import { resolveSiteProxyUrlByRequestUrl } from '../siteProxy.js';
 
 export async function resolveOauthProviderProxyUrl(provider: string): Promise<string | null> {
@@ -14,7 +14,7 @@ export async function resolveOauthAccountProxyUrl(input: {
   siteId?: number | null;
   extraConfig?: string | null;
 }): Promise<string | null> {
-  const accountProxyUrl = getProxyUrlFromExtraConfig(input.extraConfig);
+  const accountProxyUrl = resolveProxyUrlFromExtraConfig(input.extraConfig);
   if (accountProxyUrl) return accountProxyUrl;
   if (!input.siteId || input.siteId <= 0) return null;
   const site = await db.select({

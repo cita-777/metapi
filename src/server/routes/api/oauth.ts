@@ -2,10 +2,12 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { createRateLimitGuard } from '../../middleware/requestRateLimit.js';
 import {
   deleteOauthConnection,
+  importOauthConnectionsFromNativeJson,
   getOauthSessionStatus,
   handleOauthCallback,
   listOauthConnections,
   listOauthProviders,
+  refreshOauthConnectionQuotaBatch,
   refreshOauthConnectionQuota,
   startOauthProviderFlow,
   startOauthRebindFlow,
@@ -14,7 +16,9 @@ import {
 import { parseSiteProxyUrlInput } from '../../services/siteProxy.js';
 import {
   parseOauthConnectionRebindPayload,
+  parseOauthImportPayload,
   parseOauthManualCallbackPayload,
+  parseOauthQuotaBatchRefreshPayload,
   parseOauthStartPayload,
 } from '../../contracts/supportRoutePayloads.js';
 
@@ -147,6 +151,7 @@ export async function oauthRoutes(app: FastifyInstance) {
           rebindAccountId: rebindAccountId ?? undefined,
           projectId: projectId ?? undefined,
           proxyUrl: normalizedProxyUrl.present ? normalizedProxyUrl.proxyUrl : undefined,
+          useSystemProxy: body.useSystemProxy,
           requestOrigin: resolveRequestOrigin(request),
         });
       } catch (error: any) {
@@ -248,6 +253,7 @@ export async function oauthRoutes(app: FastifyInstance) {
           {
             requestOrigin: resolveRequestOrigin(request),
             proxyUrl: normalizedProxyUrl.present ? normalizedProxyUrl.proxyUrl : undefined,
+            useSystemProxy: parsedBody.data.useSystemProxy,
           },
         );
       } catch (error: any) {
@@ -284,6 +290,42 @@ export async function oauthRoutes(app: FastifyInstance) {
         return await refreshOauthConnectionQuota(accountId);
       } catch (error: any) {
         return reply.code(404).send({ message: error?.message || 'oauth account not found' });
+      }
+    },
+  );
+
+  app.post<{ Body: unknown }>(
+    '/api/oauth/connections/quota/refresh-batch',
+    { preHandler: [limitOauthConnectionMutate] },
+    async (request, reply) => {
+      const parsedBody = parseOauthQuotaBatchRefreshPayload(request.body);
+      if (!parsedBody.success) {
+        return reply.code(400).send({ message: parsedBody.error });
+      }
+      const accountIds = Array.isArray(parsedBody.data.accountIds) ? parsedBody.data.accountIds : [];
+      if (accountIds.length === 0) {
+        return reply.code(400).send({ message: 'accountIds is required' });
+      }
+      return refreshOauthConnectionQuotaBatch(accountIds);
+    },
+  );
+
+  app.post<{ Body: unknown }>(
+    '/api/oauth/import',
+    { preHandler: [limitOauthConnectionMutate] },
+    async (request, reply) => {
+      const parsedBody = parseOauthImportPayload(request.body);
+      if (!parsedBody.success) {
+        return reply.code(400).send({ message: parsedBody.error });
+      }
+      const data = parsedBody.data.data;
+      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        return reply.code(400).send({ message: 'data must be a native oauth json object' });
+      }
+      try {
+        return await importOauthConnectionsFromNativeJson(data);
+      } catch (error: any) {
+        return reply.code(400).send({ message: error?.message || 'oauth import failed' });
       }
     },
   );

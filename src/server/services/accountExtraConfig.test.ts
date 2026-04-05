@@ -5,6 +5,8 @@ import {
   hasOauthProvider,
   getPlatformUserIdFromExtraConfig,
   getProxyUrlFromExtraConfig,
+  getUseSystemProxyFromExtraConfig,
+  resolveProxyUrlFromExtraConfig,
   getSub2ApiAuthFromExtraConfig,
   getSub2ApiSubscriptionFromExtraConfig,
   guessPlatformUserIdFromUsername,
@@ -14,6 +16,7 @@ import {
   requiresManagedAccountTokens,
   supportsDirectAccountRoutingConnection,
 } from './accountExtraConfig.js';
+import { config } from '../config.js';
 
 describe('accountExtraConfig', () => {
   it('reads platformUserId from extra config when present', () => {
@@ -108,6 +111,31 @@ describe('accountExtraConfig', () => {
     expect(getProxyUrlFromExtraConfig(null)).toBeNull();
     expect(getProxyUrlFromExtraConfig(undefined)).toBeNull();
     expect(getProxyUrlFromExtraConfig('invalid-json')).toBeNull();
+  });
+
+  it('reads useSystemProxy from extra config', () => {
+    expect(getUseSystemProxyFromExtraConfig(JSON.stringify({ useSystemProxy: true }))).toBe(true);
+    expect(getUseSystemProxyFromExtraConfig(JSON.stringify({ useSystemProxy: false }))).toBe(false);
+    expect(getUseSystemProxyFromExtraConfig(JSON.stringify({}))).toBe(false);
+  });
+
+  it('resolves account proxy url from custom override before system proxy', () => {
+    const previousSystemProxyUrl = config.systemProxyUrl;
+    try {
+      config.systemProxyUrl = 'http://127.0.0.1:7890';
+      expect(resolveProxyUrlFromExtraConfig(JSON.stringify({
+        proxyUrl: 'http://account-proxy:8080',
+        useSystemProxy: true,
+      }))).toBe('http://account-proxy:8080');
+      expect(resolveProxyUrlFromExtraConfig(JSON.stringify({
+        useSystemProxy: true,
+      }))).toBe('http://127.0.0.1:7890');
+      expect(resolveProxyUrlFromExtraConfig(JSON.stringify({
+        useSystemProxy: false,
+      }))).toBeNull();
+    } finally {
+      config.systemProxyUrl = previousSystemProxyUrl;
+    }
   });
 
   it('treats auto-mode api token connections as direct-account routable', () => {

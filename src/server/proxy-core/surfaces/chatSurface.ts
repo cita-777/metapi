@@ -47,7 +47,7 @@ import {
 import { summarizeConversationFileInputsInOpenAiBody } from '../capabilities/conversationFileCapabilities.js';
 import { getObservedResponseMeta } from '../firstByteTimeout.js';
 import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
-import { detectDownstreamClientContext } from '../downstreamClientContext.js';
+import { detectDownstreamClientContext } from '../../routes/proxy/downstreamClientContext.js';
 import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 import { shouldAbortSameSiteEndpointFallback } from '../../services/proxyRetryPolicy.js';
 import {
@@ -559,6 +559,7 @@ export async function handleChatSurfaceRequest(
             modelName,
             parsedUsage,
             upstreamUsagePresent,
+            upstreamHeaders: upstream.headers,
             requestStartedAtMs: startTime,
             isStream: true,
             firstByteLatencyMs,
@@ -922,6 +923,7 @@ export async function handleChatSurfaceRequest(
         modelName,
         parsedUsage,
         upstreamUsagePresent,
+        upstreamHeaders: upstream.headers,
         requestStartedAtMs: startTime,
         isStream: false,
         firstByteLatencyMs,

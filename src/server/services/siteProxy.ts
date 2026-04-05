@@ -9,7 +9,7 @@ import { SocksClient } from 'socks';
 import type { Dispatcher, RequestInit as UndiciRequestInit } from 'undici';
 import { Agent as UndiciAgent, ProxyAgent } from 'undici';
 import { mergeHeadersWithSiteCustomHeaders } from './siteCustomHeaders.js';
-import { getProxyUrlFromExtraConfig } from './accountExtraConfig.js';
+import { resolveProxyUrlFromExtraConfig } from './accountExtraConfig.js';
 import { stripTrailingSlashes } from './urlNormalization.js';
 
 const SITE_PROXY_CACHE_TTL_MS = 3_000;
@@ -481,7 +481,7 @@ export function resolveChannelProxyUrl(
   accountExtraConfig?: string | null,
 ): string | null {
   if (accountExtraConfig) {
-    const normalized = normalizeSiteProxyUrl(getProxyUrlFromExtraConfig(accountExtraConfig));
+    const normalized = normalizeSiteProxyUrl(resolveProxyUrlFromExtraConfig(accountExtraConfig));
     if (normalized) return normalized;
   }
   return resolveProxyUrlForSite(site);

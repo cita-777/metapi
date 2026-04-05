@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { config } from '../../config.js';
 
 const fetchMock = vi.fn();
 const undiciAgentCtorMock = vi.fn();
@@ -29,6 +30,23 @@ function buildJwt(payload: Record<string, unknown>) {
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value))
     .toString('base64url');
   return `${encode({ alg: 'none', typ: 'JWT' })}.${encode(payload)}.signature`;
+}
+
+function buildCodexQuotaProbeResponse(input: {
+  status?: number;
+  headers?: Record<string, string>;
+  text?: string;
+}) {
+  const status = input.status ?? 200;
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: new Headers(input.headers || {}),
+    text: async () => input.text || '',
+    body: {
+      cancel: async () => undefined,
+    },
+  };
 }
 
 function createDeferred<T>() {
@@ -65,6 +83,9 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     fetchMock.mockReset();
     undiciAgentCtorMock.mockReset();
     undiciProxyAgentCtorMock.mockReset();
+    config.systemProxyUrl = '';
+    const { resetRequestRateLimitStore } = await import('../../middleware/requestRateLimit.js');
+    resetRequestRateLimitStore();
     await db.delete(schema.routeChannels).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
@@ -167,6 +188,18 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     expect(invalidRebindResponse.statusCode).toBe(400);
     expect(invalidRebindResponse.json()).toMatchObject({
       message: 'Invalid proxyUrl. Expected string or null.',
+    });
+
+    const invalidUseSystemProxyResponse = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/providers/antigravity/start',
+      payload: {
+        useSystemProxy: 'yes',
+      },
+    });
+    expect(invalidUseSystemProxyResponse.statusCode).toBe(400);
+    expect(invalidUseSystemProxyResponse.json()).toMatchObject({
+      message: 'Invalid useSystemProxy. Expected boolean.',
     });
   });
 
@@ -635,6 +668,77 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     expect(codexTokenFetchInit).toEqual(expect.objectContaining({
       dispatcher: expect.anything(),
     }));
+  });
+
+  it('includes dispatcher for codex token exchange when oauth start explicitly requests the system proxy', async () => {
+    const jwt = buildJwt({
+      email: 'codex-system-proxy@example.com',
+      'https://api.openai.com/auth': {
+        chatgpt_account_id: 'chatgpt-account-system-proxy',
+        chatgpt_plan_type: 'plus',
+      },
+    });
+    config.systemProxyUrl = 'http://127.0.0.1:7890';
+
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          access_token: 'oauth-access-token-system',
+          refresh_token: 'oauth-refresh-token-system',
+          id_token: jwt,
+          expires_in: 3600,
+          token_type: 'Bearer',
+        }),
+        text: async () => JSON.stringify({ ok: true }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          models: [{ id: 'gpt-5.4' }],
+        }),
+        text: async () => JSON.stringify({ ok: true }),
+      });
+
+    const startResponse = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/providers/codex/start',
+      headers: {
+        host: 'metapi.example',
+        'x-forwarded-proto': 'https',
+      },
+      payload: {
+        useSystemProxy: true,
+      },
+    });
+    expect(startResponse.statusCode).toBe(200);
+    const startBody = startResponse.json() as { state: string };
+
+    const callbackResponse = await app.inject({
+      method: 'POST',
+      url: `/api/oauth/sessions/${encodeURIComponent(startBody.state)}/manual-callback`,
+      payload: {
+        callbackUrl: `http://localhost:1455/auth/callback?state=${encodeURIComponent(startBody.state)}&code=oauth-code-system-proxy`,
+      },
+    });
+    expect(callbackResponse.statusCode).toBe(200);
+
+    const codexTokenCall = fetchMock.mock.calls.find((call) => String(call[0] || '') === 'https://auth.openai.com/oauth/token');
+    const codexTokenFetchInit = codexTokenCall?.[1] as Record<string, unknown> | undefined;
+    expect(codexTokenFetchInit).toEqual(expect.objectContaining({
+      dispatcher: expect.anything(),
+    }));
+
+    const accounts = await db.select().from(schema.accounts).all();
+    expect(accounts).toHaveLength(1);
+    expect(JSON.parse(accounts[0]?.extraConfig || '{}')).toMatchObject({
+      useSystemProxy: true,
+      oauth: {
+        email: 'codex-system-proxy@example.com',
+      },
+    });
   });
 
   it('falls back to the site proxy during rebind exchange when clearing an account proxy override', async () => {
@@ -1717,6 +1821,17 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       }),
     }).returning().get();
 
+    fetchMock.mockResolvedValueOnce(buildCodexQuotaProbeResponse({
+      headers: {
+        'x-codex-primary-used-percent': '62',
+        'x-codex-primary-reset-after-seconds': '604800',
+        'x-codex-primary-window-minutes': '10080',
+        'x-codex-secondary-used-percent': '14',
+        'x-codex-secondary-reset-after-seconds': '7200',
+        'x-codex-secondary-window-minutes': '300',
+      },
+    }));
+
     const codexRefresh = await app.inject({
       method: 'POST',
       url: `/api/oauth/connections/${codexAccount.id}/quota/refresh`,
@@ -1726,13 +1841,39 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       success: true,
       quota: expect.objectContaining({
         status: 'supported',
+        providerMessage: 'codex usage windows inferred from rate limit response headers',
         subscription: expect.objectContaining({
           planType: 'plus',
           activeStart: '2026-03-01T00:00:00.000Z',
           activeUntil: '2026-04-01T00:00:00.000Z',
         }),
+        windows: {
+          fiveHour: expect.objectContaining({
+            supported: true,
+            used: 14,
+            limit: 100,
+            remaining: 86,
+          }),
+          sevenDay: expect.objectContaining({
+            supported: true,
+            used: 62,
+            limit: 100,
+            remaining: 38,
+          }),
+        },
       }),
     });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://chatgpt.com/backend-api/codex/responses',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer oauth-access-token',
+          Originator: 'codex_cli_rs',
+          'Chatgpt-Account-Id': 'chatgpt-account-123',
+        }),
+      }),
+    );
 
     const antigravityRefresh = await app.inject({
       method: 'POST',
@@ -1745,6 +1886,321 @@ describe('oauth routes', { timeout: 15_000 }, () => {
         status: 'unsupported',
         providerMessage: 'official quota windows are not exposed for antigravity oauth',
       }),
+    });
+  });
+
+  it('supports batch quota refresh for oauth connections', async () => {
+    const codexSite = await db.insert(schema.sites).values({
+      name: 'ChatGPT Codex OAuth',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+
+    const firstAccount = await db.insert(schema.accounts).values({
+      siteId: codexSite.id,
+      username: 'codex-a@example.com',
+      accessToken: 'oauth-access-token-a',
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-account-a',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          accountId: 'chatgpt-account-a',
+          email: 'codex-a@example.com',
+          planType: 'plus',
+          idToken: buildJwt({
+            email: 'codex-a@example.com',
+            'https://api.openai.com/auth': {
+              chatgpt_account_id: 'chatgpt-account-a',
+              chatgpt_plan_type: 'plus',
+            },
+          }),
+        },
+      }),
+    }).returning().get();
+
+    const secondAccount = await db.insert(schema.accounts).values({
+      siteId: codexSite.id,
+      username: 'codex-b@example.com',
+      accessToken: 'oauth-access-token-b',
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-account-b',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          accountId: 'chatgpt-account-b',
+          email: 'codex-b@example.com',
+          planType: 'team',
+          idToken: buildJwt({
+            email: 'codex-b@example.com',
+            'https://api.openai.com/auth': {
+              chatgpt_account_id: 'chatgpt-account-b',
+              chatgpt_plan_type: 'team',
+            },
+          }),
+        },
+      }),
+    }).returning().get();
+
+    fetchMock
+      .mockResolvedValueOnce(buildCodexQuotaProbeResponse({
+        headers: {
+          'x-codex-primary-used-percent': '41',
+          'x-codex-primary-reset-after-seconds': '86400',
+          'x-codex-primary-window-minutes': '10080',
+          'x-codex-secondary-used-percent': '9',
+          'x-codex-secondary-reset-after-seconds': '1800',
+          'x-codex-secondary-window-minutes': '300',
+        },
+      }))
+      .mockResolvedValueOnce(buildCodexQuotaProbeResponse({
+        headers: {
+          'x-codex-primary-used-percent': '88',
+          'x-codex-primary-reset-after-seconds': '43200',
+          'x-codex-primary-window-minutes': '10080',
+          'x-codex-secondary-used-percent': '27',
+          'x-codex-secondary-reset-after-seconds': '900',
+          'x-codex-secondary-window-minutes': '300',
+        },
+      }));
+
+    const batchRefresh = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/connections/quota/refresh-batch',
+      payload: {
+        accountIds: [firstAccount.id, secondAccount.id],
+      },
+    });
+
+    expect(batchRefresh.statusCode).toBe(200);
+    expect(batchRefresh.json()).toMatchObject({
+      success: true,
+      refreshed: 2,
+      failed: 0,
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          accountId: firstAccount.id,
+          success: true,
+          quota: expect.objectContaining({
+            status: 'supported',
+            windows: expect.objectContaining({
+              fiveHour: expect.objectContaining({
+                supported: true,
+                used: 9,
+                limit: 100,
+              }),
+              sevenDay: expect.objectContaining({
+                supported: true,
+                used: 41,
+                limit: 100,
+              }),
+            }),
+          }),
+        }),
+        expect.objectContaining({
+          accountId: secondAccount.id,
+          success: true,
+          quota: expect.objectContaining({
+            status: 'supported',
+            windows: expect.objectContaining({
+              fiveHour: expect.objectContaining({
+                supported: true,
+                used: 27,
+                limit: 100,
+              }),
+              sevenDay: expect.objectContaining({
+                supported: true,
+                used: 88,
+                limit: 100,
+              }),
+            }),
+          }),
+        }),
+      ]),
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('imports a native codex oauth json object', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/import',
+      payload: {
+        data: {
+          type: 'codex',
+          access_token: 'imported-access-token',
+          refresh_token: 'imported-refresh-token',
+          expired: '2026-04-12T11:26:13+08:00',
+          last_refresh: '2026-04-02T11:26:14+08:00',
+          id_token: buildJwt({
+            email: 'imported-codex@example.com',
+            'https://api.openai.com/auth': {
+              chatgpt_account_id: 'chatgpt-imported-123',
+              chatgpt_plan_type: 'plus',
+            },
+          }),
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      success: true,
+      imported: 1,
+      skipped: 0,
+      failed: 0,
+    });
+
+    const accounts = await db.select().from(schema.accounts).all();
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]).toMatchObject({
+      username: 'imported-codex@example.com',
+      accessToken: 'imported-access-token',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-imported-123',
+      status: 'active',
+    });
+
+    const parsedExtra = JSON.parse(accounts[0]?.extraConfig || '{}') as {
+      credentialMode?: string;
+      oauth?: {
+        provider?: string;
+        refreshToken?: string;
+        email?: string;
+        planType?: string;
+        tokenExpiresAt?: number;
+      };
+    };
+    expect(parsedExtra.credentialMode).toBe('session');
+    expect(parsedExtra.oauth).toMatchObject({
+      refreshToken: 'imported-refresh-token',
+      email: 'imported-codex@example.com',
+      planType: 'plus',
+    });
+    expect(parsedExtra.oauth?.tokenExpiresAt).toBe(Date.parse('2026-04-12T11:26:13+08:00'));
+  });
+
+  it('prefers explicit identity fields from native oauth json and preserves disabled status', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/import',
+      payload: {
+        data: {
+          type: 'codex',
+          access_token: 'imported-access-token',
+          refresh_token: 'imported-refresh-token',
+          account_id: 'explicit-account-id',
+          email: 'explicit-user@example.com',
+          disabled: true,
+          id_token: buildJwt({
+            email: 'claim-user@example.com',
+            'https://api.openai.com/auth': {
+              chatgpt_account_id: 'claim-account-id',
+              chatgpt_plan_type: 'plus',
+            },
+          }),
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      success: true,
+      imported: 1,
+      skipped: 0,
+      failed: 0,
+    });
+
+    const accounts = await db.select().from(schema.accounts).all();
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]).toMatchObject({
+      username: 'explicit-user@example.com',
+      accessToken: 'imported-access-token',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'explicit-account-id',
+      status: 'disabled',
+    });
+  });
+
+  it('rejects a native oauth json object without access_token', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/import',
+      payload: {
+        data: {
+          type: 'codex',
+          refresh_token: 'imported-refresh-token',
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      message: 'oauth credentials missing access_token',
+    });
+  });
+
+  it('rejects a native oauth json object with malformed expired', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/import',
+      payload: {
+        data: {
+          type: 'codex',
+          access_token: 'imported-access-token',
+          expired: 'not-a-date',
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      message: 'invalid oauth expired timestamp',
+    });
+  });
+
+  it('rejects legacy sub2api oauth envelopes', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/import',
+      payload: {
+        data: {
+          type: 'sub2api-data',
+          version: 1,
+          accounts: [],
+          proxies: [],
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      message: 'native oauth json expected; sub2api envelopes are no longer supported',
+    });
+  });
+
+  it('rejects oauth import arrays', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/import',
+      payload: {
+        data: [
+          {
+            type: 'codex',
+            access_token: 'imported-access-token',
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      message: 'data must be a native oauth json object',
     });
   });
 

@@ -1,7 +1,12 @@
 import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { db, schema } from '../../db/index.js';
 import { insertAndGetById } from '../../db/insertHelpers.js';
-import { getProxyUrlFromExtraConfig, mergeAccountExtraConfig } from '../accountExtraConfig.js';
+import {
+  getProxyUrlFromExtraConfig,
+  getUseSystemProxyFromExtraConfig,
+  mergeAccountExtraConfig,
+  resolveProxyUrlFromExtraConfig,
+} from '../accountExtraConfig.js';
 import { refreshModelsForAccount } from '../modelService.js';
 import * as routeRefreshWorkflow from '../routeRefreshWorkflow.js';
 import {
@@ -14,6 +19,7 @@ import { getOAuthLoopbackCallbackServerState } from './localCallbackServer.js';
 import {
   getOAuthProviderDefinition,
   listOAuthProviderDefinitions,
+  type OAuthProviderId,
   type OAuthProviderDefinition,
 } from './providers.js';
 import { ensureOauthProviderSite } from './oauthSiteRegistry.js';
@@ -47,6 +53,19 @@ type OAuthStartInstructions = {
   manualCallbackDelayMs: number;
   sshTunnelCommand?: string;
   sshTunnelKeyCommand?: string;
+};
+
+type ImportedNativeOauthJson = {
+  type?: unknown;
+  access_token?: unknown;
+  refresh_token?: unknown;
+  id_token?: unknown;
+  email?: unknown;
+  account_id?: unknown;
+  account_key?: unknown;
+  expired?: unknown;
+  disabled?: unknown;
+  last_refresh?: unknown;
 };
 
 function isLoopbackHost(hostname: string): boolean {
@@ -128,6 +147,193 @@ function asNonEmptyString(value: unknown): string | undefined {
   return trimmed || undefined;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function asPositiveInteger(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.trunc(value);
+  }
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return undefined;
+}
+
+function decodeJwtPayload(token?: string): Record<string, unknown> | null {
+  const raw = asNonEmptyString(token);
+  if (!raw) return null;
+  const parts = raw.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(parts[1] || '', 'base64url').toString('utf8')) as unknown;
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function mapImportedOauthProvider(platform: string): OAuthProviderId | null {
+  const normalized = platform.trim().toLowerCase();
+  if (normalized === 'codex') return 'codex';
+  if (normalized === 'claude') return 'claude';
+  if (normalized === 'gemini-cli') return 'gemini-cli';
+  if (normalized === 'antigravity') return 'antigravity';
+  if (normalized === 'openai') return 'codex';
+  if (normalized === 'anthropic' || normalized === 'claude') return 'claude';
+  if (normalized === 'gemini' || normalized === 'gemini-cli') return 'gemini-cli';
+  if (normalized === 'antigravity') return 'antigravity';
+  return null;
+}
+
+function resolveImportedOauthIdentity(
+  provider: OAuthProviderId,
+  credentials: Record<string, unknown>,
+): {
+  accessToken: string;
+  refreshToken?: string;
+  tokenExpiresAt?: number;
+  idToken?: string;
+  email?: string;
+  accountKey?: string;
+  accountId?: string;
+  planType?: string;
+  projectId?: string;
+  providerData?: Record<string, unknown>;
+} {
+  const idToken = asNonEmptyString(credentials.id_token);
+  const claims = decodeJwtPayload(idToken);
+  const openAiAuth = isRecord(claims?.['https://api.openai.com/auth'])
+    ? claims?.['https://api.openai.com/auth'] as Record<string, unknown>
+    : null;
+  const accessToken = asNonEmptyString(credentials.access_token)
+    || asNonEmptyString(credentials.session_token);
+  if (!accessToken) {
+    throw new Error('oauth credentials missing access_token/session_token');
+  }
+
+  const email = asNonEmptyString(credentials.email)
+    || asNonEmptyString(claims?.email);
+  const accountKey = asNonEmptyString(credentials.chatgpt_account_id)
+    || asNonEmptyString(credentials.account_key)
+    || asNonEmptyString(credentials.account_id)
+    || asNonEmptyString(openAiAuth?.chatgpt_account_id)
+    || email;
+  const planType = asNonEmptyString(credentials.plan_type)
+    || asNonEmptyString(openAiAuth?.chatgpt_plan_type);
+  const tokenExpiresAt = asPositiveInteger(credentials.expires_at)
+    || asPositiveInteger(credentials.token_expires_at);
+  const providerData = isRecord(credentials.provider_data)
+    ? credentials.provider_data as Record<string, unknown>
+    : undefined;
+  const projectId = asNonEmptyString(credentials.project_id)
+    || asNonEmptyString(credentials.cloudaicompanionProject);
+
+  return {
+    accessToken,
+    ...(asNonEmptyString(credentials.refresh_token) ? { refreshToken: asNonEmptyString(credentials.refresh_token) } : {}),
+    ...(tokenExpiresAt ? { tokenExpiresAt } : {}),
+    ...(idToken ? { idToken } : {}),
+    ...(email ? { email } : {}),
+    ...(accountKey ? { accountKey, accountId: accountKey } : {}),
+    ...(planType ? { planType } : {}),
+    ...(projectId ? { projectId } : {}),
+    ...(providerData ? { providerData } : {}),
+  };
+}
+
+function parseImportedOauthExpiry(value: unknown): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.trunc(value);
+  }
+  if (typeof value !== 'string') {
+    throw new Error('invalid oauth expired timestamp');
+  }
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (/^\d+$/.test(trimmed)) {
+    const parsedNumeric = Number.parseInt(trimmed, 10);
+    if (Number.isFinite(parsedNumeric) && parsedNumeric > 0) {
+      return parsedNumeric;
+    }
+  }
+  const parsed = Date.parse(trimmed);
+  if (Number.isNaN(parsed)) {
+    throw new Error('invalid oauth expired timestamp');
+  }
+  return parsed;
+}
+
+function resolveImportedNativeOauthIdentity(
+  payload: ImportedNativeOauthJson,
+): {
+  provider: OAuthProviderId;
+  disabled: boolean;
+  exchange: {
+    accessToken: string;
+    refreshToken?: string;
+    tokenExpiresAt?: number;
+    email?: string;
+    accountKey?: string;
+    accountId?: string;
+    planType?: string;
+    idToken?: string;
+    providerData?: Record<string, unknown>;
+  };
+  name: string;
+} {
+  const rawType = asNonEmptyString(payload.type);
+  const payloadRecord = payload as Record<string, unknown>;
+  if (rawType === 'sub2api-data' || rawType === 'sub2api-bundle' || Array.isArray(payloadRecord.accounts)) {
+    throw new Error('native oauth json expected; sub2api envelopes are no longer supported');
+  }
+  if ('accounts' in payloadRecord || 'proxies' in payloadRecord || 'version' in payloadRecord || 'exported_at' in payloadRecord) {
+    throw new Error('native oauth json expected; sub2api envelopes are no longer supported');
+  }
+  const provider = rawType ? mapImportedOauthProvider(rawType) : null;
+  if (!provider) {
+    throw new Error(`unsupported oauth import type: ${rawType || 'unknown'}`);
+  }
+
+  const accessToken = asNonEmptyString(payload.access_token);
+  if (!accessToken) {
+    throw new Error('oauth credentials missing access_token');
+  }
+
+  const derived = resolveImportedOauthIdentity(provider, payload as Record<string, unknown>);
+  const explicitEmail = asNonEmptyString(payload.email);
+  const explicitAccountId = asNonEmptyString(payload.account_id);
+  const explicitAccountKey = asNonEmptyString(payload.account_key);
+  const tokenExpiresAt = parseImportedOauthExpiry(payload.expired);
+
+  const exchange = {
+    ...derived,
+    accessToken,
+    ...(asNonEmptyString(payload.refresh_token) ? { refreshToken: asNonEmptyString(payload.refresh_token) } : {}),
+    ...(tokenExpiresAt ? { tokenExpiresAt } : {}),
+    ...(explicitEmail ? { email: explicitEmail } : {}),
+    ...(explicitAccountId ? { accountId: explicitAccountId } : {}),
+    ...(explicitAccountKey ? { accountKey: explicitAccountKey } : {}),
+  };
+
+  if (!exchange.accountKey && exchange.accountId) {
+    exchange.accountKey = exchange.accountId;
+  }
+  if (!exchange.accountId && exchange.accountKey) {
+    exchange.accountId = exchange.accountKey;
+  }
+
+  return {
+    provider,
+    disabled: payload.disabled === true,
+    exchange,
+    name: explicitEmail || explicitAccountKey || explicitAccountId || derived.email || derived.accountKey || derived.accountId || provider,
+  };
+}
+
 function buildUsername(input: {
   email?: string;
   accountKey?: string;
@@ -202,6 +408,8 @@ async function upsertOauthAccount(input: {
   };
   rebindAccountId?: number;
   proxyUrl?: string | null;
+  useSystemProxy?: boolean;
+  persistedStatus?: 'active' | 'disabled';
 }) {
   const site = await ensureOauthSite(input.definition);
   const existing = await findExistingOauthAccount({
@@ -231,6 +439,7 @@ async function upsertOauthAccount(input: {
   const extraConfig = mergeAccountExtraConfig(existing?.extraConfig, {
     credentialMode: 'session',
     ...(input.proxyUrl !== undefined ? { proxyUrl: input.proxyUrl } : {}),
+    ...(input.useSystemProxy !== undefined ? { useSystemProxy: input.useSystemProxy } : {}),
     oauth: buildStoredOauthState(oauth),
   });
 
@@ -241,7 +450,7 @@ async function upsertOauthAccount(input: {
       accessToken: input.exchange.accessToken,
       apiToken: null,
       checkinEnabled: false,
-      status: 'disabled',
+      status: input.persistedStatus ?? 'disabled',
       oauthProvider: input.definition.metadata.provider,
       oauthAccountKey: oauth.accountKey || oauth.accountId || null,
       oauthProjectId: oauth.projectId || null,
@@ -265,7 +474,7 @@ async function upsertOauthAccount(input: {
       accessToken: input.exchange.accessToken,
       apiToken: null,
       checkinEnabled: false,
-      status: 'active',
+      status: input.persistedStatus ?? 'active',
       oauthProvider: input.definition.metadata.provider,
       oauthAccountKey: oauth.accountKey || oauth.accountId || null,
       oauthProjectId: oauth.projectId || null,
@@ -294,6 +503,7 @@ export async function startOauthProviderFlow(input: {
   rebindAccountId?: number;
   projectId?: string;
   proxyUrl?: string | null;
+  useSystemProxy?: boolean;
   requestOrigin?: string;
 }) {
   const definition = getOAuthProviderDefinition(input.provider);
@@ -311,6 +521,7 @@ export async function startOauthProviderFlow(input: {
     rebindAccountId: input.rebindAccountId,
     projectId: input.projectId,
     proxyUrl: input.proxyUrl,
+    useSystemProxy: input.useSystemProxy,
   });
   return {
     provider: input.provider,
@@ -366,9 +577,11 @@ export async function handleOauthCallback(input: {
   }
 
   try {
-    const resolvedProxyUrl = session.proxyUrl == null
-      ? await resolveOauthProviderProxyUrl(input.provider)
-      : session.proxyUrl;
+    const resolvedProxyUrl = session.proxyUrl
+      ? session.proxyUrl
+      : session.useSystemProxy
+        ? resolveProxyUrlFromExtraConfig({ useSystemProxy: true })
+        : await resolveOauthProviderProxyUrl(input.provider);
     const exchange = await definition.exchangeAuthorizationCode({
       code,
       state: input.state,
@@ -382,6 +595,7 @@ export async function handleOauthCallback(input: {
       exchange,
       rebindAccountId: session.rebindAccountId,
       proxyUrl: session.proxyUrl,
+      useSystemProxy: session.useSystemProxy,
     });
     if (!account) {
       markOauthSessionError(input.state, 'failed to persist oauth account');
@@ -549,6 +763,7 @@ export async function listOauthConnections(options: {
       lastModelSyncAt: oauth.lastModelSyncAt,
       lastModelSyncError: oauth.lastModelSyncError,
       proxyUrl: getProxyUrlFromExtraConfig(row.accounts.extraConfig),
+      useSystemProxy: getUseSystemProxyFromExtraConfig(row.accounts.extraConfig),
       site: {
         id: row.sites.id,
         name: row.sites.name,
@@ -582,11 +797,103 @@ export async function refreshOauthConnectionQuota(accountId: number) {
   return { success: true, quota };
 }
 
+export async function refreshOauthConnectionQuotaBatch(accountIds: number[]) {
+  const uniqueIds = Array.from(new Set(accountIds.filter((id) => Number.isFinite(id) && id > 0)));
+  const items: Array<{
+    accountId: number;
+    success: boolean;
+    quota?: ReturnType<typeof buildQuotaSnapshotFromOauthInfo>;
+    error?: string;
+  }> = [];
+
+  for (const accountId of uniqueIds) {
+    try {
+      const { quota } = await refreshOauthConnectionQuota(accountId);
+      items.push({
+        accountId,
+        success: true,
+        quota,
+      });
+    } catch (error: any) {
+      items.push({
+        accountId,
+        success: false,
+        error: error?.message || 'oauth quota refresh failed',
+      });
+    }
+  }
+
+  const refreshed = items.filter((item) => item.success).length;
+  const failed = items.length - refreshed;
+  return {
+    success: failed === 0,
+    refreshed,
+    failed,
+    items,
+  };
+}
+
+export async function importOauthConnectionsFromNativeJson(data: unknown) {
+  if (!isRecord(data)) {
+    throw new Error('data must be a native oauth json object');
+  }
+
+  const payload = data as ImportedNativeOauthJson;
+
+  const items: Array<{
+    name: string;
+    status: 'imported' | 'skipped' | 'failed';
+    accountId?: number;
+    provider?: string;
+    message?: string;
+  }> = [];
+  const changedAccountIds: number[] = [];
+  try {
+    const resolved = resolveImportedNativeOauthIdentity(payload);
+    const definition = getOAuthProviderDefinition(resolved.provider);
+    if (!definition) {
+      throw new Error(`unsupported oauth provider: ${resolved.provider}`);
+    }
+    const persisted = await upsertOauthAccount({
+      definition,
+      exchange: resolved.exchange,
+      persistedStatus: resolved.disabled ? 'disabled' : 'active',
+    });
+    changedAccountIds.push(persisted.account.id);
+    items.push({
+      name: resolved.name,
+      status: 'imported',
+      provider: resolved.provider,
+      accountId: persisted.account.id,
+    });
+  } catch (error: any) {
+    items.push({
+      name: asNonEmptyString(payload.email) || asNonEmptyString(payload.account_key) || asNonEmptyString(payload.account_id) || asNonEmptyString(payload.type) || 'unknown',
+      status: 'failed',
+      provider: asNonEmptyString(payload.type) || undefined,
+      message: error?.message || 'oauth import failed',
+    });
+    throw error;
+  }
+
+  if (changedAccountIds.length > 0) {
+    await routeRefreshWorkflow.rebuildRoutesOnly();
+  }
+
+  return {
+    success: true,
+    imported: 1,
+    skipped: 0,
+    failed: 0,
+    items,
+  };
+}
+
 export async function startOauthRebindFlow(
   accountId: number,
-  options?: { requestOrigin?: string; proxyUrl?: string | null },
+  options?: { requestOrigin?: string; proxyUrl?: string | null; useSystemProxy?: boolean },
 ) {
-  const { requestOrigin, proxyUrl } = options ?? {};
+  const { requestOrigin, proxyUrl, useSystemProxy } = options ?? {};
   const account = await db.select().from(schema.accounts)
     .where(eq(schema.accounts.id, accountId))
     .get();
@@ -604,6 +911,9 @@ export async function startOauthRebindFlow(
     proxyUrl: proxyUrl !== undefined
       ? proxyUrl
       : (getProxyUrlFromExtraConfig(account.extraConfig) ?? undefined),
+    useSystemProxy: useSystemProxy !== undefined
+      ? useSystemProxy
+      : (getUseSystemProxyFromExtraConfig(account.extraConfig) || undefined),
     requestOrigin,
   });
 }

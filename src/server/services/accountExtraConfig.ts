@@ -1,3 +1,4 @@
+import { config } from '../config.js';
 import type { SubscriptionPlanSummary, SubscriptionSummary } from './platforms/base.js';
 
 type AutoReloginConfig = {
@@ -29,6 +30,7 @@ const VALID_CREDENTIAL_MODES = new Set<AccountCredentialMode>([
 type AccountExtraConfig = {
   platformUserId?: unknown;
   credentialMode?: unknown;
+  useSystemProxy?: unknown;
   oauth?: {
     provider?: unknown;
     [key: string]: unknown;
@@ -134,6 +136,21 @@ export function normalizeCredentialMode(raw: unknown): AccountCredentialMode | u
 export function getProxyUrlFromExtraConfig(extraConfig?: ExtraConfigInput): string | null {
   const parsed = parseExtraConfig(extraConfig);
   return normalizeNonEmptyString(parsed.proxyUrl) ?? null;
+}
+
+export function getUseSystemProxyFromExtraConfig(extraConfig?: ExtraConfigInput): boolean {
+  const parsed = parseExtraConfig(extraConfig);
+  return parsed.useSystemProxy === true;
+}
+
+export function resolveProxyUrlFromExtraConfig(
+  extraConfig?: ExtraConfigInput,
+  systemProxyUrl = config.systemProxyUrl,
+): string | null {
+  const explicitProxyUrl = getProxyUrlFromExtraConfig(extraConfig);
+  if (explicitProxyUrl) return explicitProxyUrl;
+  if (!getUseSystemProxyFromExtraConfig(extraConfig)) return null;
+  return normalizeNonEmptyString(systemProxyUrl) ?? null;
 }
 
 export function getPlatformUserIdFromExtraConfig(extraConfig?: ExtraConfigInput): number | undefined {

@@ -8,10 +8,10 @@ import { refreshBalance } from './balanceService.js';
 import { parseCheckinRewardAmount } from './checkinRewardParser.js';
 import {
   getAutoReloginConfig,
-  getProxyUrlFromExtraConfig,
   getPlatformUserIdFromExtraConfig,
   guessPlatformUserIdFromUsername,
   mergeAccountExtraConfig,
+  resolveProxyUrlFromExtraConfig,
   resolvePlatformUserId,
 } from './accountExtraConfig.js';
 import { decryptAccountPassword } from './accountCredentialService.js';
@@ -103,7 +103,7 @@ async function tryAutoRelogin(account: any, site: any): Promise<string | null> {
   if (!password) return null;
 
   const result = await withAccountProxyOverride(
-    getProxyUrlFromExtraConfig(account.extraConfig),
+    resolveProxyUrlFromExtraConfig(account.extraConfig),
     () => adapter.login(site.url, relogin.username, password),
   );
   if (!result.success || !result.accessToken) return null;
@@ -177,7 +177,7 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
     : guessPlatformUserIdFromUsername(account.username);
   const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
 
-  const accountProxyUrl = getProxyUrlFromExtraConfig(account.extraConfig);
+  const accountProxyUrl = resolveProxyUrlFromExtraConfig(account.extraConfig);
   let activeAccessToken = account.accessToken;
   let result = await withAccountProxyOverride(accountProxyUrl,
     () => adapter.checkin(site.url, activeAccessToken, platformUserId));

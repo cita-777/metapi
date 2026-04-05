@@ -7,9 +7,9 @@ import {
   buildStoredSub2ApiSubscriptionSummary,
   getAutoReloginConfig,
   getCredentialModeFromExtraConfig,
-  getProxyUrlFromExtraConfig,
   getSub2ApiAuthFromExtraConfig,
   mergeAccountExtraConfig,
+  resolveProxyUrlFromExtraConfig,
   resolvePlatformUserId,
 } from './accountExtraConfig.js';
 import { decryptAccountPassword } from './accountCredentialService.js';
@@ -201,7 +201,7 @@ async function refreshSub2ApiManagedSession(params: {
       method: 'POST',
       headers,
       body: JSON.stringify({ refresh_token: refreshToken }),
-    }, getProxyUrlFromExtraConfig(params.account.extraConfig)));
+    }, resolveProxyUrlFromExtraConfig(params.account.extraConfig)));
     payload = await response.json().catch(() => null);
   } catch (err: any) {
     throw new Error(err?.message || 'sub2api token refresh request failed');
@@ -319,7 +319,7 @@ async function tryAutoRelogin(account: any, site: any): Promise<string | null> {
   if (!password) return null;
 
   const loginResult = await withAccountProxyOverride(
-    getProxyUrlFromExtraConfig(account.extraConfig),
+    resolveProxyUrlFromExtraConfig(account.extraConfig),
     () => adapter.login(site.url, relogin.username, password),
   );
   if (!loginResult.success || !loginResult.accessToken) return null;
@@ -382,7 +382,7 @@ export async function refreshBalance(accountId: number) {
   let activeExtraConfig = account.extraConfig;
   let balanceInfo: BalanceInfo | null = null;
 
-  const accountProxyUrl = getProxyUrlFromExtraConfig(account.extraConfig);
+  const accountProxyUrl = resolveProxyUrlFromExtraConfig(account.extraConfig);
 
   if (isSub2ApiPlatform(site.platform)) {
     const managedAuth = getSub2ApiAuthFromExtraConfig(activeExtraConfig);
