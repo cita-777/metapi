@@ -297,10 +297,20 @@ export default function Sites() {
   );
   const primarySiteUrlAnalysis = useMemo(() => analyzePrimarySiteUrl(form.url), [form.url]);
   const latestPrimarySiteUrlRef = useRef(form.url);
+  const latestPlatformRef = useRef(form.platform);
+  const latestInitializationPresetIdRef = useRef(selectedInitializationPresetId);
 
   useEffect(() => {
     latestPrimarySiteUrlRef.current = form.url;
   }, [form.url]);
+
+  useEffect(() => {
+    latestPlatformRef.current = form.platform;
+  }, [form.platform]);
+
+  useEffect(() => {
+    latestInitializationPresetIdRef.current = selectedInitializationPresetId;
+  }, [selectedInitializationPresetId]);
 
   const disabledModelSet = useMemo(() => new Set(disabledModels), [disabledModels]);
 
@@ -706,6 +716,8 @@ export default function Sites() {
 
   const handleDetect = async () => {
     const requestedUrl = form.url.trim();
+    const requestedPlatform = form.platform.trim();
+    const requestedInitializationPresetId = selectedInitializationPresetId;
     if (!requestedUrl) {
       toast.error('请先输入 URL');
       return;
@@ -714,7 +726,11 @@ export default function Sites() {
     setDetecting(true);
     try {
       const result = await api.detectSite(requestedUrl);
-      if (latestPrimarySiteUrlRef.current.trim() !== requestedUrl) {
+      if (
+        latestPrimarySiteUrlRef.current.trim() !== requestedUrl
+        || latestPlatformRef.current.trim() !== requestedPlatform
+        || latestInitializationPresetIdRef.current !== requestedInitializationPresetId
+      ) {
         return;
       }
       if (result?.platform) {

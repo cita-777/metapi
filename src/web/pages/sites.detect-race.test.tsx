@@ -155,4 +155,75 @@ describe('Sites detect race handling', () => {
       root?.unmount();
     }
   });
+
+  it('ignores blur-started detect results after the operator manually selects a platform', async () => {
+    const pendingDetect = deferred<{
+      platform: string;
+      url: string;
+      initializationPresetId: string | null;
+    }>();
+    apiMock.detectSite.mockReturnValueOnce(pendingDetect.promise);
+
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/sites']}>
+            <ToastProvider>
+              <Sites />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const openAddButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && typeof node.props.className === 'string'
+        && node.props.className.includes('btn btn-primary')
+        && JSON.stringify(node.props.children).includes('添加站点')
+      ));
+
+      await act(async () => {
+        openAddButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const urlInput = findPrimarySiteUrlInput(root);
+      await act(async () => {
+        urlInput.props.onChange({ target: { value: 'https://blur.example.com/v1' } });
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        urlInput.props.onBlur();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.detectSite).toHaveBeenCalledWith('https://blur.example.com/v1');
+
+      const platformSelect = findPlatformSelect(root);
+      await act(async () => {
+        platformSelect.props.onChange('claude');
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        pendingDetect.resolve({
+          platform: 'openai',
+          url: 'https://blur.example.com',
+          initializationPresetId: 'codingplan-openai',
+        });
+        await pendingDetect.promise;
+      });
+      await flushMicrotasks();
+
+      expect(findPlatformSelect(root).props.value).toBe('claude');
+      expect(toastMock.info).not.toHaveBeenCalledWith(expect.stringContaining('https://blur.example.com'));
+      expect(toastMock.success).not.toHaveBeenCalled();
+    } finally {
+      root?.unmount();
+    }
+  });
 });
