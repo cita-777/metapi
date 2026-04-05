@@ -206,6 +206,40 @@ function PriorityRailNewLayerRow({
   );
 }
 
+function PriorityBucketHeader({
+  label,
+  testId,
+}: {
+  label: string;
+  testId?: string;
+}) {
+  return (
+    <div
+      data-testid={testId}
+      className="route-priority-bucket-header"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        flexWrap: 'wrap',
+        padding: '0 2px',
+        fontSize: 11,
+        color: 'var(--color-text-secondary)',
+      }}
+    >
+      <span
+        style={{
+          fontSize: 11,
+          fontWeight: 600,
+          color: 'var(--color-text-secondary)',
+        }}
+      >
+        {label}
+      </span>
+    </div>
+  );
+}
+
 function PriorityDragPreview({
   channel,
   displayPriority,
@@ -402,28 +436,7 @@ function SortableChannelShell({
       }}
     >
       {compact && showCompactRailHeader ? (
-        <div
-          className="route-priority-bucket-header"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            flexWrap: 'wrap',
-            padding: '0 2px',
-            fontSize: 11,
-            color: 'var(--color-text-secondary)',
-          }}
-        >
-          <span
-            style={{
-              fontSize: 11,
-              fontWeight: 600,
-              color: 'var(--color-text-secondary)',
-            }}
-          >
-            {mobileRailLabel}
-          </span>
-        </div>
+        <PriorityBucketHeader label={mobileRailLabel} />
       ) : null}
 
       {!compact ? (
@@ -1121,29 +1134,10 @@ function RouteCardInner({
                   return (
                     <Fragment key={`${route.id}-priority-bucket-${bucket.priority}-${bucketIndex}`}>
                       {showStandaloneCompactRailHeader ? (
-                        <div
-                          data-testid="route-priority-bucket-header"
-                          className="route-priority-bucket-header"
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 6,
-                            flexWrap: 'wrap',
-                            padding: '0 2px',
-                            fontSize: 11,
-                            color: 'var(--color-text-secondary)',
-                          }}
-                        >
-                          <span
-                            style={{
-                              fontSize: 11,
-                              fontWeight: 600,
-                              color: 'var(--color-text-secondary)',
-                            }}
-                          >
-                            {mobileRailLabel}
-                          </span>
-                        </div>
+                        <PriorityBucketHeader
+                          label={mobileRailLabel}
+                          testId="route-priority-bucket-header"
+                        />
                       ) : null}
 
                       {bucket.channels.map((channel, channelIndex) => {

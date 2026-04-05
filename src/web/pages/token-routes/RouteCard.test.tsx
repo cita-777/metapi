@@ -1,6 +1,27 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, create, type ReactTestInstance } from 'react-test-renderer';
 import { SortableContext } from '@dnd-kit/sortable';
+
+const sortableState = vi.hoisted(() => ({
+  activeId: null as number | string | null,
+}));
+
+vi.mock('@dnd-kit/sortable', async () => {
+  const actual = await vi.importActual<typeof import('@dnd-kit/sortable')>('@dnd-kit/sortable');
+  return {
+    ...actual,
+    useSortable: ({ id }: { id: number | string }) => ({
+      attributes: {},
+      listeners: {},
+      setNodeRef: vi.fn(),
+      setActivatorNodeRef: vi.fn(),
+      transform: null,
+      transition: null,
+      isDragging: sortableState.activeId === id,
+    }),
+  };
+});
+
 import RouteCard from './RouteCard.js';
 import type { RouteChannel, RouteSummaryRow } from './types.js';
 import { getRouteRoutingStrategyDescription } from './routingStrategy.js';
@@ -12,6 +33,10 @@ function collectText(node: ReactTestInstance): string {
     return collectText(child);
   }).join('');
 }
+
+afterEach(() => {
+  sortableState.activeId = null;
+});
 
 const LONG_REGEX_PATTERN = 're:(?:.*|.*/)(minimax-m2.1)$';
 
@@ -439,12 +464,20 @@ describe('RouteCard', () => {
     ));
 
     act(() => {
+      sortableState.activeId = 12;
       dndContext.props.onDragStart?.({
         active: { id: 12 },
       });
     });
 
     expect(collectText(root.root)).toContain('放到新档位');
+    const shells = root.root.findAll((node) => (
+      node.type === 'div'
+      && node.props['data-testid'] === 'route-channel-shell'
+    ));
+    const activeShell = shells.find((node) => node.props['data-channel-id'] === 12);
+    expect(activeShell).toBeDefined();
+    expect(activeShell?.props.style.visibility).toBe('hidden');
 
     const newLayerTarget = root.root.find((node) => (
       node.type === 'div'
@@ -510,8 +543,9 @@ describe('RouteCard', () => {
       'P0 · 2 通道',
       'P1 · 1 通道',
     ]);
-    expect(shells[0] ? collectText(shells[0]) : '').not.toContain('P0 · 2 通道');
-    expect(shells[2] ? collectText(shells[2]) : '').not.toContain('P1 · 1 通道');
+    expect(shells).toHaveLength(3);
+    expect(collectText(shells[0]!)).not.toContain('P0 · 2 通道');
+    expect(collectText(shells[2]!)).not.toContain('P1 · 1 通道');
   });
 
   it('renders desktop channel rows in sortable shell order within a single sortable list', () => {
