@@ -21,6 +21,8 @@ concurrency:
 
 env:
   NODE_VERSION: 25
+  # Non-desktop CI jobs do not need the Electron runtime binary.
+  ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
 
 jobs:
   changes:
@@ -129,6 +131,8 @@ jobs:
           cache: npm
 
       - name: Install dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: ''
         run: npm ci --prefer-offline --no-audit --no-fund
 
       - name: Build desktop
