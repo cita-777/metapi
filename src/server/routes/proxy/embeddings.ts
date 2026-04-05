@@ -183,6 +183,7 @@ export async function embeddingsProxyRoute(app: FastifyInstance) {
           null,
           clientContext,
           downstreamPath,
+          null,
           false,
           firstByteLatencyMs,
         );

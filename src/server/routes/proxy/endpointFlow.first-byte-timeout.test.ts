@@ -15,15 +15,20 @@ function buildDelayedResponse(
   bodyText: string,
   delayMs: number,
   status = 200,
-  _signal?: AbortSignal,
+  signal?: AbortSignal,
 ): Response {
   const encoder = new TextEncoder();
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
-      setTimeout(() => {
+      const timer = setTimeout(() => {
+        if (signal?.aborted) return;
         controller.enqueue(encoder.encode(bodyText));
         controller.close();
       }, delayMs);
+
+      signal?.addEventListener('abort', () => {
+        clearTimeout(timer);
+      }, { once: true });
     },
   });
   return new Response(body, {

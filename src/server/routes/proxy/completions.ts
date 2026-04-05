@@ -248,6 +248,7 @@ export async function completionsProxyRoute(app: FastifyInstance) {
             null,
             clientContext,
             downstreamPath,
+            null,
             isStream,
             firstByteLatencyMs,
           );
@@ -340,6 +341,7 @@ export async function completionsProxyRoute(app: FastifyInstance) {
           null,
           clientContext,
           downstreamPath,
+          null,
           isStream,
           firstByteLatencyMs,
         );
