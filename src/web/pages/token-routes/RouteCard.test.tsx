@@ -416,7 +416,7 @@ describe('RouteCard', () => {
   });
 
   it('shows a new-layer drop target while dragging inside compact desktop detail panels', () => {
-    const root = create(
+    const renderCard = () => (
       <RouteCard
         route={buildRoute()}
         brand={null}
@@ -454,8 +454,9 @@ describe('RouteCard', () => {
         onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
-      />,
+      />
     );
+    const root = create(renderCard());
 
     const dndContext = root.root.find((node) => (
       typeof node.props.onDragStart === 'function'
@@ -468,6 +469,7 @@ describe('RouteCard', () => {
       dndContext.props.onDragStart?.({
         active: { id: 12 },
       });
+      root.update(renderCard());
     });
 
     expect(collectText(root.root)).toContain('放到新档位');
