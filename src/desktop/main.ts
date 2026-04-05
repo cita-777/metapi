@@ -22,7 +22,7 @@ import {
   waitForServerReady,
 } from './runtime.js';
 import { getDesktopRuntimeIconPath, getDesktopTrayIconPath } from './iconAssets.js';
-import { attachDesktopNavigationGuard } from './navigationGuard.js';
+import { attachDesktopNavigationGuard, createSafeOpenExternal } from './navigationGuard.js';
 
 const { autoUpdater } = electronUpdater;
 
@@ -157,7 +157,12 @@ async function createMainWindow() {
 
   attachDesktopNavigationGuard({
     appUrl: frontendUrl,
-    openExternal: (url) => shell.openExternal(url),
+    openExternal: createSafeOpenExternal({
+      openExternal: (url) => shell.openExternal(url),
+      onError: (url, error) => {
+        log.error('Failed to open external URL', { url, error });
+      },
+    }),
     webContents: mainWindow.webContents,
   });
 

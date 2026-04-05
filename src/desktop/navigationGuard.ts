@@ -20,8 +20,13 @@ export type DesktopWebContentsLike = {
 
 export type AttachDesktopNavigationGuardInput = {
   appUrl: string;
-  openExternal: (url: string) => void | Promise<void>;
+  openExternal: (url: string) => void;
   webContents: DesktopWebContentsLike;
+};
+
+export type CreateSafeOpenExternalInput = {
+  openExternal: (url: string) => Promise<void>;
+  onError: (url: string, error: unknown) => void;
 };
 
 export function resolveDesktopNavigationAction(
@@ -35,7 +40,7 @@ export function resolveDesktopNavigationAction(
     appLocation = new URL(appUrl);
     targetLocation = new URL(targetUrl, appLocation);
   } catch {
-    return 'allow';
+    return 'deny';
   }
 
   if (targetLocation.protocol === 'about:') {
@@ -43,6 +48,16 @@ export function resolveDesktopNavigationAction(
   }
 
   return targetLocation.origin === appLocation.origin ? 'allow' : 'deny';
+}
+
+export function createSafeOpenExternal(
+  input: CreateSafeOpenExternalInput,
+): (url: string) => void {
+  return (url: string) => {
+    void input.openExternal(url).catch((error) => {
+      input.onError(url, error);
+    });
+  };
 }
 
 export function attachDesktopNavigationGuard(

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   attachDesktopNavigationGuard,
+  createSafeOpenExternal,
   resolveDesktopNavigationAction,
   type DesktopWebContentsLike,
   type DesktopWillNavigateEvent,
@@ -45,6 +46,11 @@ describe('desktop navigation guard', () => {
   it('keeps same-origin popup links inside the desktop app', () => {
     expect(resolveDesktopNavigationAction('/monitor-proxy/ldoh/', appUrl)).toBe('allow');
     expect(resolveDesktopNavigationAction('about:blank', appUrl)).toBe('allow');
+  });
+
+  it('denies malformed navigation targets by default', () => {
+    expect(resolveDesktopNavigationAction('https://example.com', 'not a valid app url')).toBe('deny');
+    expect(resolveDesktopNavigationAction('http://[::1', appUrl)).toBe('deny');
   });
 
   it('opens cross-origin window.open targets externally and denies the popup', () => {
@@ -97,5 +103,19 @@ describe('desktop navigation guard', () => {
 
     expect(preventDefault).not.toHaveBeenCalled();
     expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it('reports external-open failures instead of leaving a rejected promise behind', async () => {
+    const error = new Error('failed to open');
+    const onError = vi.fn();
+    const safeOpenExternal = createSafeOpenExternal({
+      openExternal: vi.fn().mockRejectedValue(error),
+      onError,
+    });
+
+    safeOpenExternal('https://example.com/docs');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(onError).toHaveBeenCalledWith('https://example.com/docs', error);
   });
 });
