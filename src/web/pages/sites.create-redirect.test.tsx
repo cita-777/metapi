@@ -116,7 +116,7 @@ async function createSiteAndClickModalChoice(
     await flushMicrotasks();
 
     const targetButton = choice === 'session'
-      ? findClickableButtonByText(root, '添加账号（用户名密码登录）')
+      ? findClickableButtonByText(root, createdSite.platform === 'codex' ? '添加 OAuth 连接' : '添加账号（用户名密码登录）')
       : choice === 'apikey'
         ? findClickableButtonByText(root, '添加 API Key')
         : findClickableButtonByText(root, '稍后配置');

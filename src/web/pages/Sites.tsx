@@ -94,6 +94,12 @@ function formatUsd(value?: number | null): string {
   return `$${(value || 0).toFixed(2)}`;
 }
 
+function resolveSiteCreatedSessionLabel(platform?: string | null): string {
+  const normalized = String(platform || '').trim().toLowerCase();
+  if (normalized === 'codex') return '添加 OAuth 连接';
+  return '添加账号（用户名密码登录）';
+}
+
 function formatSubscriptionDate(value?: string | null): string {
   if (!value) return '';
   const parsed = Date.parse(value);
@@ -1018,6 +1024,7 @@ export default function Sites() {
             getSiteInitializationPreset(createdSiteForChoice.initializationPresetId)?.initialSegment
             || resolveInitialConnectionSegment(createdSiteForChoice.platform)
           }
+          sessionLabel={resolveSiteCreatedSessionLabel(createdSiteForChoice.platform)}
           onChoice={handleSiteCreatedChoice}
           onClose={() => {
             setCreatedSiteForChoice(null);
@@ -1143,7 +1150,7 @@ export default function Sites() {
             </div>
           )}
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
-            请填写准确的主站点 URL。这里填写主站点/面板/登录地址；不要把 OpenAI/Gemini 请求路径直接填到主站点 URL；如果 API 请求地址和主站点不同，请在下面的 API 请求地址池里填写。
+            请填写准确的主站点 URL。这里填写主站点/面板/登录地址，用于登录、签到、面板接口和系统访问令牌管理；不要把 OpenAI/Gemini 请求路径直接填到主站点 URL；如果 API 请求地址和主站点不同，请在下面的 API 请求地址池里填写。
           </div>
           {primarySiteUrlAnalysis.action === 'auto_strip_known_api_suffix' && primarySiteUrlAnalysis.persistedUrl ? (
             <div className="alert alert-info animate-scale-in">

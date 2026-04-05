@@ -207,7 +207,7 @@ export async function requireSiteApiBaseUrl(
 ): Promise<string> {
   const baseUrl = await resolveSiteApiBaseUrl(site, now);
   if (baseUrl) return baseUrl;
-  throw new Error('当前站点的 AI 请求地址均不可用');
+  throw new Error('当前站点的 API 请求地址均不可用');
 }
 
 export async function recordSiteApiEndpointFailure(
@@ -258,11 +258,11 @@ export async function runWithSiteApiEndpointPool<T>(
     const target = await selectSiteApiEndpointTarget(site);
     if (!target) {
       if (lastError) throw lastError;
-      throw new Error('当前站点的 AI 请求地址均不可用');
+      throw new Error('当前站点的 API 请求地址均不可用');
     }
     if (target.endpointId && attemptedEndpointIds.has(target.endpointId)) {
       if (lastError) throw lastError;
-      throw new Error('当前站点的 AI 请求地址均不可用');
+      throw new Error('当前站点的 API 请求地址均不可用');
     }
 
     try {

@@ -115,6 +115,20 @@ const BLOCKED_PASSTHROUGH_HEADERS = new Set([
   'sec-websocket-version',
   'sec-websocket-extensions',
 ]);
+const GENERIC_PASSTHROUGH_ALLOWED_HEADERS = new Set([
+  'accept',
+  'accept-language',
+  'conversation-id',
+  'conversation_id',
+  'openai-beta',
+  'originator',
+  'session-id',
+  'session_id',
+  'user-agent',
+  'x-codex-beta-features',
+  'x-codex-turn-metadata',
+  'x-codex-turn-state',
+]);
 const METAPI_INTERNAL_HEADER_BLOCKLIST = new Set([
   'x-metapi-tester-request',
   'x-metapi-tester-forced-channel-id',
@@ -128,6 +142,7 @@ function shouldSkipPassthroughHeader(key: string): boolean {
   if (HOP_BY_HOP_HEADERS.has(key) || BLOCKED_PASSTHROUGH_HEADERS.has(key)) return true;
   if (METAPI_INTERNAL_HEADER_BLOCKLIST.has(key)) return true;
   if (key.startsWith('x-metapi-')) return true;
+  if (!GENERIC_PASSTHROUGH_ALLOWED_HEADERS.has(key)) return true;
   return false;
 }
 
@@ -186,6 +201,28 @@ function extractResponsesPassthroughHeaders(
       || key.startsWith('x-stainless-')
       || key.startsWith('chatgpt-')
       || key === 'originator'
+    );
+    if (!shouldForward) continue;
+
+    const value = headerValueToString(rawValue);
+    if (!value) continue;
+    forwarded[key] = value;
+  }
+
+  return forwarded;
+}
+
+function extractCodexPassthroughHeaders(
+  headers?: Record<string, unknown>,
+): Record<string, string> {
+  if (!headers) return {};
+
+  const forwarded: Record<string, string> = {};
+  for (const [rawKey, rawValue] of Object.entries(headers)) {
+    const key = rawKey.toLowerCase();
+    const shouldForward = (
+      key === 'version'
+      || key === 'x-responsesapi-include-timing-metrics'
     );
     if (!shouldForward) continue;
 
@@ -725,8 +762,12 @@ export function buildUpstreamEndpointRequest(input: {
   };
 
   const passthroughHeaders = extractSafePassthroughHeaders(input.downstreamHeaders);
+  const codexPassthroughHeaders = sitePlatform === 'codex'
+    ? extractCodexPassthroughHeaders(input.downstreamHeaders)
+    : {};
   const commonHeaders: Record<string, string> = {
     ...passthroughHeaders,
+    ...codexPassthroughHeaders,
     'Content-Type': 'application/json',
     ...(input.providerHeaders || {}),
   };

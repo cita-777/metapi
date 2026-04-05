@@ -3455,6 +3455,24 @@ textarea {
   flex-wrap: wrap;
 }
 
+.site-created-summary,
+.site-created-helper-text {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.site-created-helper-text {
+  color: var(--color-text-muted);
+}
+
+.site-created-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-muted);
+}
+
 .responsive-form-grid {
   display: grid;
   gap: 12px;

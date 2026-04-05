@@ -150,7 +150,7 @@ describe('chat proxy site api endpoint rotation', () => {
   it('rotates to the next configured ai endpoint for retryable /v1/chat/completions failures', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'nihao-panel',
-      url: 'https://nih.cc',
+      url: 'https://console.example.com',
       platform: 'openai',
       status: 'active',
     }).returning().get();
@@ -168,13 +168,13 @@ describe('chat proxy site api endpoint rotation', () => {
     await db.insert(schema.siteApiEndpoints).values([
       {
         siteId: site.id,
-        url: 'https://api-a.nih.cc',
+        url: 'https://api-a.example.com',
         enabled: true,
         sortOrder: 0,
       },
       {
         siteId: site.id,
-        url: 'https://api-b.nih.cc',
+        url: 'https://api-b.example.com',
         enabled: true,
         sortOrder: 1,
       },
@@ -222,10 +222,10 @@ describe('chat proxy site api endpoint rotation', () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()?.choices?.[0]?.message?.content).toBe('ok via api-b');
     expect(fetchMock).toHaveBeenCalledTimes(4);
-    expect(String(fetchMock.mock.calls[0]?.[0] || '')).toBe('https://api-a.nih.cc/v1/chat/completions');
-    expect(String(fetchMock.mock.calls[1]?.[0] || '')).toBe('https://api-a.nih.cc/v1/responses');
-    expect(String(fetchMock.mock.calls[2]?.[0] || '')).toBe('https://api-a.nih.cc/v1/messages');
-    expect(String(fetchMock.mock.calls[3]?.[0] || '')).toBe('https://api-b.nih.cc/v1/chat/completions');
+    expect(String(fetchMock.mock.calls[0]?.[0] || '')).toBe('https://api-a.example.com/v1/chat/completions');
+    expect(String(fetchMock.mock.calls[1]?.[0] || '')).toBe('https://api-a.example.com/v1/responses');
+    expect(String(fetchMock.mock.calls[2]?.[0] || '')).toBe('https://api-a.example.com/v1/messages');
+    expect(String(fetchMock.mock.calls[3]?.[0] || '')).toBe('https://api-b.example.com/v1/chat/completions');
     expect(selectNextChannelMock).not.toHaveBeenCalled();
     expect(recordFailureMock).not.toHaveBeenCalled();
     expect(recordSuccessMock).toHaveBeenCalledTimes(1);
@@ -235,7 +235,7 @@ describe('chat proxy site api endpoint rotation', () => {
       .orderBy(asc(schema.siteApiEndpoints.sortOrder), asc(schema.siteApiEndpoints.id))
       .all();
     expect(storedEndpoints[0]).toMatchObject({
-      url: 'https://api-a.nih.cc',
+      url: 'https://api-a.example.com',
       lastFailureReason: 'HTTP 502: [upstream:/v1/messages] Upstream returned HTTP 502: bad gateway via messages',
     });
     expect(storedEndpoints[0]?.cooldownUntil).toBeTruthy();

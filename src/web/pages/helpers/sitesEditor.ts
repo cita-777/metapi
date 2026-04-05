@@ -225,7 +225,7 @@ export function serializeSiteApiEndpoints(fields: SiteApiEndpointField[]): {
       return {
         valid: false,
         apiEndpoints: [],
-        error: `AI 请求地址 "${normalizedUrl}" 重复了`,
+        error: `API 请求地址 "${normalizedUrl}" 重复了`,
       };
     }
     seen.add(normalizedUrl);

@@ -10,7 +10,7 @@ function collectText(node: ReactTestInstance): string {
 }
 
 describe('SiteCreatedModal', () => {
-  it('routes native dialog cancel events through onClose cleanup', async () => {
+  it('uses the shared centered modal shell and close button instead of a native dialog skin', async () => {
     const onChoice = vi.fn();
     const onClose = vi.fn();
     const root = create(
@@ -21,15 +21,28 @@ describe('SiteCreatedModal', () => {
       />,
     );
 
-    const dialog = root.root.findByType('dialog');
-    expect(typeof dialog.props.onCancel).toBe('function');
+    expect(root.root.findAllByType('dialog')).toHaveLength(0);
 
-    const preventDefault = vi.fn();
+    const backdrop = root.root.find((node) => (
+      typeof node.props.className === 'string'
+      && node.props.className.includes('modal-backdrop')
+    ));
+    const footer = root.root.find((node) => (
+      typeof node.props.className === 'string'
+      && node.props.className.includes('modal-footer')
+    ));
+    const closeButton = root.root.find((node) => (
+      node.type === 'button'
+      && node.props['aria-label'] === '关闭弹框'
+    ));
+
+    expect(backdrop).toBeTruthy();
+    expect(footer).toBeTruthy();
+
     await act(async () => {
-      dialog.props.onCancel({ preventDefault });
+      closeButton.props.onClick();
     });
 
-    expect(preventDefault).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onChoice).not.toHaveBeenCalled();
   });
@@ -50,18 +63,43 @@ describe('SiteCreatedModal', () => {
     const choiceButtons = root.root.findAll((node) => (
       node.type === 'button'
       && typeof node.props.onClick === 'function'
+      && node.props['aria-label'] !== '关闭弹框'
       && collectText(node) !== '稍后配置'
     ));
 
-    expect(choiceButtons.map((button) => collectText(button))).toEqual([
-      '添加 API Key（推荐）',
-      '添加账号（用户名密码登录）',
-    ]);
+    expect(choiceButtons.map((button) => collectText(button))).toEqual(
+      expect.arrayContaining([
+        '添加 API Key（推荐）',
+        '添加账号（用户名密码登录）',
+      ]),
+    );
+    expect(choiceButtons.every((button) => !String(button.props.className || '').includes('btn-outline'))).toBe(true);
 
+    const sessionButton = choiceButtons.find((button) => collectText(button) === '添加账号（用户名密码登录）');
     await act(async () => {
-      choiceButtons[1]!.props.onClick();
+      sessionButton!.props.onClick();
     });
 
     expect(onChoice).toHaveBeenCalledWith('session');
+  });
+
+  it('uses the supplied session label for OAuth-style session actions', () => {
+    const root = create(
+      <SiteCreatedModal
+        siteName="Codex Site"
+        initialSegment="session"
+        sessionLabel="添加 OAuth 连接"
+        onChoice={() => {}}
+        onClose={() => {}}
+      />,
+    );
+
+    const buttons = root.root.findAll((node) => (
+      node.type === 'button'
+      && typeof node.props.onClick === 'function'
+      && node.props['aria-label'] !== '关闭弹框'
+    ));
+
+    expect(buttons.some((button) => collectText(button) === '添加 OAuth 连接')).toBe(true);
   });
 });
