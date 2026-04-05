@@ -165,6 +165,27 @@ describe('detectDownstreamClientContext', () => {
     });
   });
 
+  it('recognizes Claude Code from claude-cli request headers before Codex heuristics on /v1/messages', () => {
+    expect(detectDownstreamClientContext({
+      downstreamPath: '/v1/messages',
+      headers: {
+        'user-agent': 'claude-cli/2.1.63 (external, cli)',
+        'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20',
+        'anthropic-version': '2023-06-01',
+        'x-app': 'cli',
+        'x-stainless-lang': 'js',
+      },
+      body: {
+        model: 'claude-sonnet-4-5',
+      },
+    })).toEqual({
+      clientKind: 'claude_code',
+      clientAppId: 'claude_code',
+      clientAppName: 'Claude Code',
+      clientConfidence: 'exact',
+    });
+  });
+
   it('falls back to generic when Claude metadata.user_id is missing or invalid', () => {
     expect(detectDownstreamClientContext({
       downstreamPath: '/v1/messages',
@@ -250,6 +271,26 @@ describe('detectDownstreamClientContext', () => {
       clientKind: 'generic',
       clientAppId: 'cherry_studio',
       clientAppName: 'Cherry Studio',
+      clientConfidence: 'heuristic',
+    });
+  });
+
+  it('marks OpenCode anthropic prompts as an app-level heuristic without changing protocol family', () => {
+    expect(detectDownstreamClientContext({
+      downstreamPath: '/v1/messages',
+      body: {
+        model: 'claude-sonnet-4-5',
+        system: [
+          {
+            type: 'text',
+            text: 'You are OpenCode, an interactive CLI tool that helps users with software engineering tasks. If the current working directory contains a file called OpenCode.md, it will be automatically added to your context.',
+          },
+        ],
+      },
+    })).toEqual({
+      clientKind: 'generic',
+      clientAppId: 'opencode',
+      clientAppName: 'OpenCode',
       clientConfidence: 'heuristic',
     });
   });

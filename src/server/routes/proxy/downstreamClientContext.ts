@@ -21,6 +21,7 @@ type NormalizedClientHeaders = Record<string, string[]>;
 type DownstreamClientBodySummary = {
   topLevelKeys: string[];
   metadataUserId: string | null;
+  hasOpenCodeSystemPrompt: boolean;
 };
 
 type DownstreamClientFingerprintInput = {
@@ -122,20 +123,55 @@ function buildBodySummary(body: unknown): DownstreamClientBodySummary {
     return {
       topLevelKeys: [],
       metadataUserId: null,
+      hasOpenCodeSystemPrompt: false,
     };
   }
 
   const metadataUserId = isRecord(body.metadata) && typeof body.metadata.user_id === 'string'
     ? body.metadata.user_id.trim() || null
     : null;
+  const systemPromptTexts = Array.isArray(body.system)
+    ? body.system
+      .map((entry) => {
+        if (typeof entry === 'string') return entry;
+        if (!isRecord(entry)) return '';
+        return typeof entry.text === 'string' ? entry.text : '';
+      })
+      .filter((entry) => entry.trim().length > 0)
+    : [];
+  const normalizedSystemPrompt = systemPromptTexts
+    .join('\n')
+    .trim()
+    .toLowerCase();
+  const hasOpenCodeSystemPrompt = normalizedSystemPrompt.includes('you are opencode, an interactive cli tool')
+    || normalizedSystemPrompt.includes('file called opencode.md');
 
   return {
     topLevelKeys: Object.keys(body).sort((left, right) => left.localeCompare(right)),
     metadataUserId,
+    hasOpenCodeSystemPrompt,
   };
 }
 
 const appFingerprintRegistry: DownstreamClientFingerprintRule[] = [
+  {
+    id: 'opencode',
+    name: 'OpenCode',
+    priority: 110,
+    match(input) {
+      const hasTitle = headerIncludes(input.headers, 'x-title', 'opencode');
+      const hasReferer = headerIncludes(input.headers, 'http-referer', 'opencode.ai')
+        || headerIncludes(input.headers, 'referer', 'opencode.ai')
+        || headerIncludes(input.headers, 'origin', 'opencode.ai');
+      const hasUserAgent = headerIncludes(input.headers, 'user-agent', 'opencode/');
+
+      if (hasTitle || hasReferer || hasUserAgent) {
+        return 'exact';
+      }
+
+      return input.bodySummary.hasOpenCodeSystemPrompt ? 'heuristic' : null;
+    },
+  },
   {
     id: 'cherry_studio',
     name: 'Cherry Studio',

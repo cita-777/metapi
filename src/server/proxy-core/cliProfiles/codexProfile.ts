@@ -131,8 +131,7 @@ function matchesHeaderPrefixes(value: string | string[] | null, prefixes: readon
 function isCodexPath(path: string): boolean {
   const normalizedPath = path.trim().toLowerCase();
   return normalizedPath.startsWith('/v1/responses')
-    || normalizedPath === '/v1/chat/completions'
-    || normalizedPath.startsWith('/v1/messages');
+    || normalizedPath === '/v1/chat/completions';
 }
 
 export function detectCodexOfficialClientApp(

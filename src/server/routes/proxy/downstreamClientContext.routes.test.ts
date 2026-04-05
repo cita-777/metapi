@@ -245,6 +245,42 @@ describe('downstream client context route logging', () => {
     expect(insertedLog.errorMessage).toContain('[downstream:/v1/messages]');
   });
 
+  it('keeps claude-cli header-based /v1/messages requests on the Claude Code family even when metadata.user_id is absent', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      error: {
+        message: 'messages failed',
+        type: 'upstream_error',
+      },
+    }), {
+      status: 400,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/messages',
+      headers: {
+        'user-agent': 'claude-cli/2.1.63 (external, cli)',
+        'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20',
+        'anthropic-version': '2023-06-01',
+        'x-app': 'cli',
+        'x-stainless-lang': 'js',
+      },
+      payload: {
+        model: 'claude-opus-4-6',
+        max_tokens: 256,
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(dbValuesMock).toHaveBeenCalled();
+    const insertedLog = dbValuesMock.mock.calls.at(-1)?.[0];
+    expect(insertedLog.errorMessage).toContain('[client:claude_code]');
+    expect(insertedLog.errorMessage).toContain('[downstream:/v1/messages]');
+    expect(insertedLog.errorMessage).not.toContain('[client:codex]');
+  });
+
   it('keeps invalid Claude metadata.user_id requests generic in failure logs', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({
       error: {

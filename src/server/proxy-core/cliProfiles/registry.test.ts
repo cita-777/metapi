@@ -95,6 +95,34 @@ describe('detectCliProfile', () => {
     });
   });
 
+  it('detects Claude Code messages requests from claude-cli headers even when metadata.user_id is unavailable', () => {
+    expect(detectCliProfile({
+      downstreamPath: '/v1/messages',
+      headers: {
+        'user-agent': 'claude-cli/2.1.63 (external, cli)',
+        'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20',
+        'anthropic-version': '2023-06-01',
+        'x-app': 'cli',
+        'x-stainless-lang': 'js',
+      },
+      body: {
+        model: 'claude-sonnet-4-5',
+      },
+    })).toEqual({
+      id: 'claude_code',
+      clientAppId: 'claude_code',
+      clientAppName: 'Claude Code',
+      clientConfidence: 'exact',
+      capabilities: {
+        supportsResponsesCompact: false,
+        supportsResponsesWebsocketIncremental: false,
+        preservesContinuation: true,
+        supportsCountTokens: true,
+        echoesTurnState: false,
+      },
+    });
+  });
+
   it('detects Gemini CLI internal routes and exposes Gemini CLI capability flags', () => {
     expect(detectCliProfile({
       downstreamPath: '/v1internal:countTokens',
