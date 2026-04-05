@@ -3,7 +3,7 @@ import { db, schema } from '../../db/index.js';
 import { getInsertedRowId } from '../../db/insertHelpers.js';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { detectSite } from '../../services/siteDetector.js';
-import { invalidateSiteProxyCache, normalizeSiteUrl, parseSiteProxyUrlInput } from '../../services/siteProxy.js';
+import { invalidateSiteProxyCache, parseSiteProxyUrlInput } from '../../services/siteProxy.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { invalidateTokenRouterCache } from '../../services/tokenRouter.js';
 import { parseSiteCustomHeadersInput } from '../../services/siteCustomHeaders.js';
@@ -17,6 +17,7 @@ import {
 } from '../../contracts/siteRoutePayloads.js';
 import { getSiteInitializationPreset } from '../../../shared/siteInitializationPresets.js';
 import { normalizeSiteApiEndpointBaseUrl } from '../../services/siteApiEndpointService.js';
+import { analyzePrimarySiteUrl } from '../../../shared/sitePrimaryUrl.js';
 
 function normalizeSiteStatus(input: unknown): 'active' | 'disabled' | null {
   if (input === undefined || input === null) return null;
@@ -93,9 +94,7 @@ type ErrorLike = {
 };
 
 function normalizeCanonicalSiteUrl(value: string): string {
-  const trimmed = value.trim();
-  const withScheme = trimmed.includes('://') ? trimmed : `https://${trimmed}`;
-  return normalizeSiteUrl(withScheme);
+  return analyzePrimarySiteUrl(value).persistedUrl;
 }
 
 function normalizeSitePlatform(value: string | undefined): string | null {
@@ -520,7 +519,9 @@ export async function sitesRoutes(app: FastifyInstance) {
 
     const existingSites = await db.select().from(schema.sites).all();
     const maxSortOrder = existingSites.reduce((max, site) => Math.max(max, site.sortOrder || 0), -1);
-    const canonicalUrl = normalizeCanonicalSiteUrl(url);
+    const analyzedPrimarySiteUrl = analyzePrimarySiteUrl(url);
+    const canonicalUrl = analyzedPrimarySiteUrl.persistedUrl || normalizeCanonicalSiteUrl(url);
+    const detectionUrl = analyzedPrimarySiteUrl.canonicalUrl || canonicalUrl;
     const canonicalPlatform = normalizeSitePlatform(platform);
     let detectedPlatform = canonicalPlatform;
     let responseInitializationPresetId: string | null = explicitInitializationPreset?.id || null;
@@ -528,7 +529,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       if (explicitInitializationPreset) {
         detectedPlatform = explicitInitializationPreset.platform;
       } else {
-        const detected = await detectSite(canonicalUrl);
+        const detected = await detectSite(detectionUrl);
         detectedPlatform = detected?.platform ?? null;
         responseInitializationPresetId = detected?.initializationPresetId || null;
       }

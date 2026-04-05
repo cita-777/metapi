@@ -35,6 +35,7 @@ import {
   getSiteInitializationPreset,
   listSiteInitializationPresets,
 } from '../../shared/siteInitializationPresets.js';
+import { analyzePrimarySiteUrl } from '../../shared/sitePrimaryUrl.js';
 
 type SiteSubscriptionSummary = {
   activeCount: number;
@@ -288,6 +289,7 @@ export default function Sites() {
     () => getSiteInitializationPreset(selectedInitializationPresetId),
     [selectedInitializationPresetId],
   );
+  const primarySiteUrlAnalysis = useMemo(() => analyzePrimarySiteUrl(form.url), [form.url]);
 
   const disabledModelSet = useMemo(() => new Set(disabledModels), [disabledModels]);
 
@@ -517,13 +519,13 @@ export default function Sites() {
     }
     const serializedApiEndpoints = serializeSiteApiEndpoints(form.apiEndpoints);
     if (!serializedApiEndpoints.valid) {
-      toast.error(serializedApiEndpoints.error || 'AI 请求地址格式不正确');
+      toast.error(serializedApiEndpoints.error || 'API 请求地址格式不正确');
       return;
     }
 
     const payload = {
       name: form.name.trim(),
-      url: form.url.trim(),
+      url: primarySiteUrlAnalysis.persistedUrl || form.url.trim(),
       externalCheckinUrl: form.externalCheckinUrl.trim(),
       platform: form.platform.trim(),
       initializationPresetId: selectedInitializationPresetId,
@@ -544,6 +546,13 @@ export default function Sites() {
       if (action.kind === 'add') {
         const created = await api.addSite(action.payload);
         toast.success(`站点 "${payload.name}" 已添加`);
+        if (
+          primarySiteUrlAnalysis.action === 'auto_strip_known_api_suffix'
+          && typeof created?.url === 'string'
+          && created.url.trim()
+        ) {
+          toast.info(`已自动规范化主站点 URL 为 ${created.url.trim()}`);
+        }
         const createdSiteId = Number(created?.id) || 0;
         if (createdSiteId > 0) {
           const createdPlatform = typeof created?.platform === 'string' && created.platform.trim()
@@ -561,8 +570,15 @@ export default function Sites() {
           });
         }
       } else {
-        await api.updateSite(action.id, action.payload);
+        const updated = await api.updateSite(action.id, action.payload);
         toast.success(`站点 "${payload.name}" 已更新`);
+        if (
+          primarySiteUrlAnalysis.action === 'auto_strip_known_api_suffix'
+          && typeof updated?.url === 'string'
+          && updated.url.trim()
+        ) {
+          toast.info(`已自动规范化主站点 URL 为 ${updated.url.trim()}`);
+        }
       }
       closeEditor();
       await load();
@@ -682,18 +698,34 @@ export default function Sites() {
       toast.error('请先输入 URL');
       return;
     }
+    const currentPrimarySiteUrl = analyzePrimarySiteUrl(form.url);
     setDetecting(true);
     try {
       const result = await api.detectSite(form.url.trim());
       if (result?.platform) {
         const detectedPreset = getSiteInitializationPreset(result?.initializationPresetId);
-        setForm((prev) => ({ ...prev, platform: result.platform }));
+        setForm((prev) => ({
+          ...prev,
+          platform: result.platform,
+          url: currentPrimarySiteUrl.action === 'auto_strip_known_api_suffix'
+            && typeof result?.url === 'string'
+            && result.url.trim()
+            ? result.url.trim()
+            : prev.url,
+        }));
         setSelectedInitializationPresetId((current) => {
           if (detectedPreset) return detectedPreset.id;
           const activePreset = getSiteInitializationPreset(current);
           if (activePreset && activePreset.platform !== result.platform) return null;
           return current;
         });
+        if (
+          currentPrimarySiteUrl.action === 'auto_strip_known_api_suffix'
+          && typeof result?.url === 'string'
+          && result.url.trim()
+        ) {
+          toast.info(`已自动规范化主站点 URL 为 ${result.url.trim()}`);
+        }
         toast.success(
           detectedPreset
             ? `检测到平台: ${result.platform}（${detectedPreset.label}）`
@@ -1028,7 +1060,7 @@ export default function Sites() {
             <div style={{ display: 'flex', gap: 8, flexDirection: isMobile ? 'column' : 'row' }}>
               <input
                 data-testid="site-primary-url-input"
-                placeholder="站点 URL（面板/登录/签到地址，如 https://nih.cc）"
+                placeholder="准确主站点 URL（面板/登录/签到地址，如 https://nih.cc）"
                 value={form.url}
                 onChange={(e) => setForm((prev) => ({ ...prev, url: e.target.value }))}
                 onBlur={() => {
@@ -1102,8 +1134,32 @@ export default function Sites() {
             </div>
           )}
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
-            主站点 URL 用于登录、签到、面板接口和系统访问令牌管理；如果 AI 请求地址和主站点不同，请在下面的 AI 请求地址池里填写。
+            请填写准确的主站点 URL。这里填写主站点/面板/登录地址；不要把 OpenAI/Gemini 请求路径直接填到主站点 URL；如果 API 请求地址和主站点不同，请在下面的 API 请求地址池里填写。
           </div>
+          {primarySiteUrlAnalysis.action === 'auto_strip_known_api_suffix' && primarySiteUrlAnalysis.persistedUrl ? (
+            <div className="alert alert-info animate-scale-in">
+              <div className="alert-title">检测到常见 API 路径后缀</div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.7 }}>
+                保存或自动检测时会将主站点 URL 规范化为 {primarySiteUrlAnalysis.persistedUrl}。
+              </div>
+            </div>
+          ) : null}
+          {primarySiteUrlAnalysis.action === 'preserve_api_path' && primarySiteUrlAnalysis.persistedUrl ? (
+            <div className="alert alert-warning animate-scale-in">
+              <div className="alert-title">请确认主站点 URL</div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.7 }}>
+                当前 URL 含 /api 路径，将原样保留。请确认这就是准确的主站点 URL；如果这是 API 请求地址，请填到下方的 API 请求地址池。
+              </div>
+            </div>
+          ) : null}
+          {primarySiteUrlAnalysis.action === 'preserve_unknown_path' && primarySiteUrlAnalysis.persistedUrl ? (
+            <div className="alert alert-warning animate-scale-in">
+              <div className="alert-title">请确认主站点 URL</div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.7 }}>
+                当前 URL 含额外路径，将原样保留。请确认这就是准确的主站点 URL；如果这是 API 请求地址，请填到下方的 API 请求地址池。
+              </div>
+            </div>
+          ) : null}
           <div
             style={{
               display: 'flex',
@@ -1117,7 +1173,7 @@ export default function Sites() {
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <div style={{ fontSize: 13, fontWeight: 600 }}>
-                AI 请求地址池
+                API 请求地址池
               </div>
               <button
                 type="button"
@@ -1125,7 +1181,7 @@ export default function Sites() {
                 className="btn btn-ghost"
                 style={{ border: '1px solid var(--color-border)' }}
               >
-                + 添加 AI 地址
+                + 添加 API 地址
               </button>
             </div>
             <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.7 }}>
@@ -1146,7 +1202,7 @@ export default function Sites() {
               >
                 <div style={{ display: 'flex', gap: 8, flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'stretch' : 'center' }}>
                   <input
-                    placeholder="AI 请求地址（如 https://api.nih.cc）"
+                    placeholder="API 请求地址（如 https://api.nih.cc）"
                     value={endpoint.url}
                     onChange={(e) => updateApiEndpointRow(index, { url: e.target.value })}
                     style={{ ...formInputStyle, flex: 1, fontFamily: 'var(--font-mono)' }}
@@ -1405,7 +1461,7 @@ export default function Sites() {
                 style={formInputStyle}
               />
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-                这里只是 HTTP/SOCKS 代理地址，不是上游 AI API 地址。填写后优先使用站点代理；留空则使用系统代理或直连(取决于设置开关状态)。
+                这里只是 HTTP/SOCKS 代理地址，不是上游 API 请求地址。填写后优先使用站点代理；留空则使用系统代理或直连(取决于设置开关状态)。
               </div>
             </div>
             <label style={{
@@ -1556,7 +1612,7 @@ export default function Sites() {
                           ) : '-'}
                         />
                         <MobileField
-                          label="AI 请求地址"
+                          label="API 请求地址"
                           stacked
                           value={(
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -1716,7 +1772,7 @@ export default function Sites() {
                           </span>
                         ) : null}
                         <span className={`badge ${getConfiguredSiteApiEndpoints(site).length > 0 ? 'badge-warning' : 'badge-muted'}`} style={{ fontSize: 11 }}>
-                          AI 地址: {buildSiteApiEndpointSummary(site)}
+                          API 地址: {buildSiteApiEndpointSummary(site)}
                         </span>
                       </div>
                     </td>

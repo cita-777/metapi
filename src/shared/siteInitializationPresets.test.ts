@@ -190,4 +190,15 @@ describe('siteInitializationPresets', () => {
       platform: 'openai',
     });
   });
+
+  it('reselects openai presets from canonicalized root urls when platform is already known', () => {
+    expect(detectSiteInitializationPreset('https://api.deepseek.com', 'openai')).toMatchObject({
+      id: 'deepseek-openai',
+      platform: 'openai',
+    });
+    expect(detectSiteInitializationPreset('https://coding.dashscope.aliyuncs.com', 'openai')).toMatchObject({
+      id: 'codingplan-openai',
+      platform: 'openai',
+    });
+  });
 });

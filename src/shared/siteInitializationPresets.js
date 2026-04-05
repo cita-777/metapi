@@ -1,3 +1,5 @@
+import { analyzePrimarySiteUrl } from './sitePrimaryUrl.js';
+
 function normalizeUrlCandidate(url) {
   return typeof url === 'string' ? url.trim() : '';
 }
@@ -298,5 +300,17 @@ export function detectSiteInitializationPreset(url, platform) {
     if (normalizedPlatform && preset.platform !== normalizedPlatform) continue;
     if (preset.matches(url)) return clonePreset(preset);
   }
+
+  if (!normalizedPlatform) return null;
+
+  const analyzed = analyzePrimarySiteUrl(url);
+  for (const preset of SITE_INITIALIZATION_PRESETS) {
+    if (preset.platform !== normalizedPlatform) continue;
+    if (!preset.defaultUrl) continue;
+    const presetAnalyzed = analyzePrimarySiteUrl(preset.defaultUrl);
+    if (!presetAnalyzed.persistedUrl) continue;
+    if (presetAnalyzed.persistedUrl === analyzed.persistedUrl) return clonePreset(preset);
+  }
+
   return null;
 }

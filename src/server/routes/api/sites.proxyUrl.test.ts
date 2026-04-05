@@ -514,7 +514,7 @@ describe('sites proxy settings', () => {
     });
   });
 
-  it('canonicalizes create payload url and platform before persistence and conflict checks', async () => {
+  it('canonicalizes create payload url, strips known non-api api suffixes, and normalizes platform before persistence and conflict checks', async () => {
     const created = await app.inject({
       method: 'POST',
       url: '/api/sites',
@@ -528,7 +528,7 @@ describe('sites proxy settings', () => {
     expect(created.statusCode).toBe(200);
     expect(created.json()).toMatchObject({
       name: 'Aliyun Generic OpenAI',
-      url: 'https://coding.dashscope.aliyuncs.com/v1',
+      url: 'https://coding.dashscope.aliyuncs.com',
       platform: 'openai',
     });
 
@@ -537,7 +537,7 @@ describe('sites proxy settings', () => {
       url: '/api/sites',
       payload: {
         name: 'Aliyun Generic OpenAI Duplicate',
-        url: 'https://coding.dashscope.aliyuncs.com/v1',
+        url: 'https://coding.dashscope.aliyuncs.com',
         platform: 'openai',
       },
     });
@@ -546,7 +546,7 @@ describe('sites proxy settings', () => {
     expect((duplicate.json() as { error?: string }).error).toContain('already exists');
   });
 
-  it('canonicalizes update payload url and platform before saving', async () => {
+  it('canonicalizes update payload url, strips known non-api api suffixes, and normalizes platform before saving', async () => {
     const created = await app.inject({
       method: 'POST',
       url: '/api/sites',
@@ -569,7 +569,75 @@ describe('sites proxy settings', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
-      url: 'https://coding.dashscope.aliyuncs.com/v1',
+      url: 'https://coding.dashscope.aliyuncs.com',
+      platform: 'openai',
+    });
+  });
+
+  it('preserves /api-prefixed main site paths instead of auto-stripping them', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'API Path Site',
+        url: 'https://panel.example.com/api/v1/models',
+        platform: 'openai',
+      },
+    });
+
+    expect(created.statusCode).toBe(200);
+    expect(created.json()).toMatchObject({
+      url: 'https://panel.example.com/api/v1/models',
+      platform: 'openai',
+    });
+  });
+
+  it('preserves known semantic paths like codex backend-api roots', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'Codex Site',
+        url: 'https://chatgpt.com/backend-api/codex',
+        platform: 'codex',
+      },
+    });
+
+    expect(created.statusCode).toBe(200);
+    expect(created.json()).toMatchObject({
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+    });
+  });
+
+  it('returns canonical root urls for detect requests that hit known non-api api suffixes', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites/detect',
+      payload: {
+        url: 'https://api.openai.com/v1/messages',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      url: 'https://api.openai.com',
+      platform: 'openai',
+    });
+  });
+
+  it('does not strip /api-prefixed paths from detect responses', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites/detect',
+      payload: {
+        url: 'https://api.openai.com/api/v1/models',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      url: 'https://api.openai.com/api/v1/models',
       platform: 'openai',
     });
   });
