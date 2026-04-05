@@ -90,4 +90,12 @@ describe('downstreamApiKeyTrendService', () => {
     });
     expect(trend.buckets[1]?.totalCost).toBeCloseTo(0.002, 6);
   });
+
+  it('normalizes trend time zones consistently for explicit and invalid values', () => {
+    const fallback = trendService.resolveDownstreamTrendTimeZone();
+
+    expect(trendService.resolveDownstreamTrendTimeZone('UTC')).toBe('UTC');
+    expect(trendService.resolveDownstreamTrendTimeZone('Invalid/Zone')).toBe(fallback);
+    expect(trendService.resolveDownstreamTrendTimeZone('  ')).toBe(fallback);
+  });
 });

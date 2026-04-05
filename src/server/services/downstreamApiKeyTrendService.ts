@@ -85,7 +85,7 @@ function resolveBucketTsExpression(bucketSeconds: number) {
   return buildBucketTsExpressionForDialect(runtimeDbDialect, schema.proxyLogs.createdAt, bucketSeconds);
 }
 
-function normalizeTrendTimeZone(raw?: string | null): string {
+export function resolveDownstreamTrendTimeZone(raw?: string | null): string {
   const text = String(raw || '').trim();
   if (text) {
     try {
@@ -314,7 +314,7 @@ export async function readDownstreamApiKeyTrendBuckets(input: {
 }> {
   const bucketSeconds = resolveDownstreamTrendBucketSeconds(input.range);
   const sinceUtc = resolveDownstreamTrendRangeSinceUtc(input.range);
-  const timeZone = normalizeTrendTimeZone(input.timeZone);
+  const timeZone = resolveDownstreamTrendTimeZone(input.timeZone);
   const buckets = input.range === 'all'
     ? await readAllRangeTrendBuckets(input.downstreamApiKeyId, bucketSeconds, timeZone, sinceUtc)
     : await readWindowedTrendBuckets(input.downstreamApiKeyId, bucketSeconds, sinceUtc);

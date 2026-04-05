@@ -15,6 +15,7 @@ import {
   readDownstreamApiKeyTrendBuckets,
   resolveDownstreamTrendBucketSeconds,
   resolveDownstreamTrendRangeSinceUtc,
+  resolveDownstreamTrendTimeZone,
   type DownstreamKeyTrendRange,
 } from '../../services/downstreamApiKeyTrendService.js';
 import {
@@ -442,7 +443,7 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
         range,
         item: { id: item.id, name: item.name },
         bucketSeconds: resolveDownstreamTrendBucketSeconds(range),
-        timeZone: request.query?.timeZone ?? null,
+        timeZone: resolveDownstreamTrendTimeZone(request.query?.timeZone),
         buckets: [],
       };
     }
