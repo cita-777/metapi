@@ -63,6 +63,7 @@ type RuntimeSettings = {
   logCleanupRetentionDays: number;
   modelAvailabilityProbeEnabled: boolean;
   codexUpstreamWebsocketEnabled: boolean;
+  responsesCompactFallbackToResponsesEnabled: boolean;
   disableCrossProtocolFallback: boolean;
   proxySessionChannelConcurrencyLimit: number;
   proxySessionChannelQueueWaitMs: number;
@@ -241,6 +242,7 @@ export default function Settings() {
     logCleanupRetentionDays: 30,
     modelAvailabilityProbeEnabled: false,
     codexUpstreamWebsocketEnabled: false,
+    responsesCompactFallbackToResponsesEnabled: false,
     disableCrossProtocolFallback: false,
     proxySessionChannelConcurrencyLimit: 2,
     proxySessionChannelQueueWaitMs: 1500,
@@ -629,6 +631,7 @@ export default function Settings() {
           : 30,
         modelAvailabilityProbeEnabled: !!runtimeInfo.modelAvailabilityProbeEnabled,
         codexUpstreamWebsocketEnabled: !!runtimeInfo.codexUpstreamWebsocketEnabled,
+        responsesCompactFallbackToResponsesEnabled: !!runtimeInfo.responsesCompactFallbackToResponsesEnabled,
         disableCrossProtocolFallback: !!runtimeInfo.disableCrossProtocolFallback,
         proxySessionChannelConcurrencyLimit: Number(runtimeInfo.proxySessionChannelConcurrencyLimit) >= 0
           ? Math.trunc(Number(runtimeInfo.proxySessionChannelConcurrencyLimit))
@@ -850,6 +853,7 @@ export default function Settings() {
     try {
       const res = await api.updateRuntimeSettings({
         codexUpstreamWebsocketEnabled: runtime.codexUpstreamWebsocketEnabled,
+        responsesCompactFallbackToResponsesEnabled: runtime.responsesCompactFallbackToResponsesEnabled,
         proxySessionChannelConcurrencyLimit: runtime.proxySessionChannelConcurrencyLimit,
         proxySessionChannelQueueWaitMs: runtime.proxySessionChannelQueueWaitMs,
       });
@@ -858,6 +862,9 @@ export default function Settings() {
         codexUpstreamWebsocketEnabled: typeof res?.codexUpstreamWebsocketEnabled === 'boolean'
           ? res.codexUpstreamWebsocketEnabled
           : prev.codexUpstreamWebsocketEnabled,
+        responsesCompactFallbackToResponsesEnabled: typeof res?.responsesCompactFallbackToResponsesEnabled === 'boolean'
+          ? res.responsesCompactFallbackToResponsesEnabled
+          : prev.responsesCompactFallbackToResponsesEnabled,
         proxySessionChannelConcurrencyLimit: Number(res?.proxySessionChannelConcurrencyLimit) >= 0
           ? Math.trunc(Number(res.proxySessionChannelConcurrencyLimit))
           : prev.proxySessionChannelConcurrencyLimit,
@@ -1591,6 +1598,20 @@ export default function Settings() {
               type="checkbox"
               checked={runtime.codexUpstreamWebsocketEnabled}
               onChange={(e) => setRuntime((prev) => ({ ...prev, codexUpstreamWebsocketEnabled: e.target.checked }))}
+              style={{ width: 16, height: 16, marginTop: 2, flexShrink: 0 }}
+            />
+          </label>
+          <label style={settingsModernToggleStyle}>
+            <div style={settingsModernToggleCopyStyle}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-secondary)' }}>Compact 明确不支持时回退到普通 Responses</span>
+              <span style={{ fontSize: 12, lineHeight: 1.7, color: 'var(--color-text-muted)' }}>
+                仅对 `/v1/responses/compact` 生效。当上游明确返回 compact 不支持时，允许自动回退到普通 `/responses`。
+              </span>
+            </div>
+            <input
+              type="checkbox"
+              checked={runtime.responsesCompactFallbackToResponsesEnabled}
+              onChange={(e) => setRuntime((prev) => ({ ...prev, responsesCompactFallbackToResponsesEnabled: e.target.checked }))}
               style={{ width: 16, height: 16, marginTop: 2, flexShrink: 0 }}
             />
           </label>
