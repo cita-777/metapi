@@ -43,6 +43,8 @@ function isJsonLikeColumn(columnName: string): boolean {
     || normalizedColumn.includes('mapping')
     || normalizedColumn.includes('headers')
     || normalizedColumn.includes('config')
+    || normalizedColumn.endsWith('_site_ids')
+    || normalizedColumn.includes('credential_refs')
     || normalizedColumn.includes('details')
     || normalizedColumn.includes('meta')
     || normalizedColumn.includes('models')

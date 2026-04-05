@@ -350,6 +350,8 @@ export const downstreamApiKeys = sqliteTable('downstream_api_keys', {
   supportedModels: text('supported_models'), // JSON array<string>
   allowedRouteIds: text('allowed_route_ids'), // JSON array<number>
   siteWeightMultipliers: text('site_weight_multipliers'), // JSON object { [siteId]: multiplier }
+  excludedSiteIds: text('excluded_site_ids'), // JSON array<number>
+  excludedCredentialRefs: text('excluded_credential_refs'), // JSON array<DownstreamExcludedCredentialRef>
   lastUsedAt: text('last_used_at'),
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),

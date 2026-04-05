@@ -9,6 +9,8 @@ const { apiMock } = vi.hoisted(() => ({
     getDownstreamApiKeysSummary: vi.fn(),
     getDownstreamApiKeys: vi.fn(),
     getRoutesLite: vi.fn(),
+    getAccounts: vi.fn(),
+    getAccountTokens: vi.fn(),
     getDownstreamApiKeyOverview: vi.fn(),
     getDownstreamApiKeyTrend: vi.fn(),
     createDownstreamApiKey: vi.fn(),
@@ -134,6 +136,50 @@ beforeEach(() => {
   apiMock.getRoutesLite.mockResolvedValue([
     { id: 11, modelPattern: 'claude-*', displayName: '默认群组', enabled: true },
     { id: 12, modelPattern: 'gpt-4.1-mini', displayName: 'GPT 4.1 Mini', enabled: true },
+  ]);
+  apiMock.getAccounts.mockResolvedValue([
+    {
+      id: 101,
+      username: '站点A账号',
+      apiToken: 'sk-default-a',
+      status: 'active',
+      credentialMode: 'session',
+      site: {
+        id: 201,
+        name: '站点A',
+        status: 'active',
+      },
+    },
+    {
+      id: 102,
+      username: '站点B账号',
+      apiToken: 'sk-default-b',
+      status: 'active',
+      credentialMode: 'session',
+      site: {
+        id: 202,
+        name: '站点B',
+        status: 'active',
+      },
+    },
+  ]);
+  apiMock.getAccountTokens.mockResolvedValue([
+    {
+      id: 301,
+      accountId: 101,
+      name: 'token-a',
+      tokenGroup: 'group-a',
+      enabled: true,
+      valueStatus: 'ready',
+      account: {
+        id: 101,
+        username: '站点A账号',
+      },
+      site: {
+        id: 201,
+        name: '站点A',
+      },
+    },
   ]);
   apiMock.getDownstreamApiKeyOverview.mockResolvedValue({
     success: true,
@@ -771,6 +817,87 @@ describe('DownstreamKeys page', () => {
         groupName: '统一项目组',
         tagOperation: 'append',
         tags: ['批量标签'],
+      }));
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('lazy loads exclusion sources and submits excluded sites and credentials', async () => {
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/downstream-keys']}>
+            <ToastProvider>
+              <DownstreamKeys />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getAccounts).not.toHaveBeenCalled();
+      expect(apiMock.getAccountTokens).not.toHaveBeenCalled();
+
+      const createBtn = root!.root.findAll((node) => node.type === 'button' && collectText(node).includes('新增下游密钥'))[0];
+      await act(async () => {
+        createBtn.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getAccounts).toHaveBeenCalledTimes(1);
+      expect(apiMock.getAccountTokens).toHaveBeenCalledTimes(1);
+
+      const advancedBtn = root!.root.findAll((node) => node.type === 'button' && collectText(node).includes('高级配置'))[0];
+      await act(async () => {
+        advancedBtn.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const text = collectText(root!.root);
+      expect(text).toContain('排除站点');
+      expect(text).toContain('排除 API Key/令牌');
+      expect(text).toContain('默认 API Key');
+      expect(text).toContain('group-a');
+
+      const inputs = root!.root.findAllByType('input');
+      const nameInput = inputs.find((node) => node.props.placeholder === '例如：项目 A / 移动端');
+      const keyInput = inputs.find((node) => node.props.placeholder === 'sk-...');
+      await act(async () => {
+        nameInput!.props.onChange({ target: { value: 'excluded-key' } });
+        keyInput!.props.onChange({ target: { value: 'sk-excluded-key-0405' } });
+      });
+      await flushMicrotasks();
+
+      const siteLabel = root!.root.findAll((node) => node.type === 'label' && collectText(node).includes('站点B'))[0];
+      const tokenLabel = root!.root.findAll((node) => node.type === 'label' && collectText(node).includes('token-a'))[0];
+      const defaultApiKeyLabel = root!.root.findAll((node) => node.type === 'label' && collectText(node).includes('默认 API Key'))[0];
+      const siteCheckbox = siteLabel.findByType('input');
+      const tokenCheckbox = tokenLabel.findByType('input');
+      const defaultApiKeyCheckbox = defaultApiKeyLabel.findByType('input');
+
+      await act(async () => {
+        siteCheckbox.props.onChange({ target: { checked: true } });
+        tokenCheckbox.props.onChange({ target: { checked: true } });
+        defaultApiKeyCheckbox.props.onChange({ target: { checked: true } });
+      });
+      await flushMicrotasks();
+
+      const saveBtn = root!.root.findAll((node) => node.type === 'button' && collectText(node).includes('创建密钥'))[0];
+      await act(async () => {
+        saveBtn.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.createDownstreamApiKey).toHaveBeenCalledWith(expect.objectContaining({
+        name: 'excluded-key',
+        key: 'sk-excluded-key-0405',
+        excludedSiteIds: [202],
+        excludedCredentialRefs: [
+          { kind: 'account_token', siteId: 201, accountId: 101, tokenId: 301 },
+          { kind: 'default_api_key', siteId: 201, accountId: 101 },
+        ],
       }));
     } finally {
       root?.unmount();

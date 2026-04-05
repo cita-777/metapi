@@ -1,5 +1,19 @@
 import { z } from 'zod';
 
+const downstreamExcludedCredentialRefSchema = z.union([
+  z.object({
+    kind: z.literal('account_token'),
+    siteId: z.union([z.number(), z.string()]),
+    accountId: z.union([z.number(), z.string()]),
+    tokenId: z.union([z.number(), z.string()]),
+  }),
+  z.object({
+    kind: z.literal('default_api_key'),
+    siteId: z.union([z.number(), z.string()]),
+    accountId: z.union([z.number(), z.string()]),
+  }),
+]);
+
 const downstreamApiKeyPayloadSchema = z.object({
   name: z.string().optional(),
   key: z.string().optional(),
@@ -16,6 +30,8 @@ const downstreamApiKeyPayloadSchema = z.object({
     z.string(),
     z.record(z.string(), z.union([z.number(), z.string()])),
   ]).optional(),
+  excludedSiteIds: z.union([z.string(), z.array(z.union([z.number(), z.string()]))]).optional(),
+  excludedCredentialRefs: z.union([z.string(), z.array(downstreamExcludedCredentialRefSchema)]).optional(),
 }).passthrough();
 
 const downstreamApiKeyBatchPayloadSchema = z.object({
@@ -75,6 +91,12 @@ function formatDownstreamApiKeyPayloadError(error: z.ZodError): string {
   }
   if (firstPath === 'siteWeightMultipliers') {
     return 'Invalid siteWeightMultipliers. Expected JSON object or string.';
+  }
+  if (firstPath === 'excludedSiteIds') {
+    return 'Invalid excludedSiteIds. Expected string or array.';
+  }
+  if (firstPath === 'excludedCredentialRefs') {
+    return 'Invalid excludedCredentialRefs. Expected JSON string or array.';
   }
   if (firstPath === 'ids') {
     return 'Invalid ids. Expected number[].';

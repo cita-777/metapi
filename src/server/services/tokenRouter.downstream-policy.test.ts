@@ -365,4 +365,201 @@ describe('TokenRouter downstream policy', () => {
     expect(claudePick?.channel.routeId).toBe(claudeGroupRoute.id);
     expect(gptPick?.channel.routeId).toBe(gptExactRoute.id);
   });
+
+  it('excludes candidates from excluded sites before route selection', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'site-excluded',
+      url: 'https://excluded.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'user-excluded',
+      accessToken: 'access-excluded',
+      apiToken: 'sk-excluded',
+      status: 'active',
+    }).returning().get();
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4o-mini',
+      enabled: true,
+    }).returning().get();
+
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: null,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    const policy: any = {
+      allowedRouteIds: [route.id],
+      supportedModels: [],
+      siteWeightMultipliers: {},
+      excludedSiteIds: [site.id],
+      excludedCredentialRefs: [],
+    };
+
+    const pick = await router.selectChannel('gpt-4o-mini', policy);
+    const decision = await router.explainSelectionForRoute(route.id, 'gpt-4o-mini', [], policy);
+    const candidate = decision.candidates.find((item) => item.channelId === channel.id);
+
+    expect(pick).toBeNull();
+    expect(candidate?.eligible).toBe(false);
+    expect(candidate?.reason).toContain('站点已被下游密钥排除');
+  });
+
+  it('excludes explicitly bound tokens by downstream credential refs', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'site-token',
+      url: 'https://token.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const blockedAccount = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'user-blocked',
+      accessToken: 'access-blocked',
+      apiToken: 'sk-blocked-default',
+      status: 'active',
+    }).returning().get();
+    const allowedAccount = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'user-allowed',
+      accessToken: 'access-allowed',
+      apiToken: 'sk-allowed-default',
+      status: 'active',
+    }).returning().get();
+
+    const blockedToken = await db.insert(schema.accountTokens).values({
+      accountId: blockedAccount.id,
+      name: 'blocked-token',
+      token: 'sk-blocked-token',
+      enabled: true,
+      isDefault: true,
+      valueStatus: 'ready',
+    }).returning().get();
+    const allowedToken = await db.insert(schema.accountTokens).values({
+      accountId: allowedAccount.id,
+      name: 'allowed-token',
+      token: 'sk-allowed-token',
+      enabled: true,
+      isDefault: true,
+      valueStatus: 'ready',
+    }).returning().get();
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'claude-sonnet-4-6',
+      enabled: true,
+    }).returning().get();
+
+    const blockedChannel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: blockedAccount.id,
+      tokenId: blockedToken.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+    const allowedChannel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: allowedAccount.id,
+      tokenId: allowedToken.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    const policy: any = {
+      allowedRouteIds: [route.id],
+      supportedModels: [],
+      siteWeightMultipliers: {},
+      excludedSiteIds: [],
+      excludedCredentialRefs: [
+        { kind: 'account_token', siteId: site.id, accountId: blockedAccount.id, tokenId: blockedToken.id },
+      ],
+    };
+
+    const pick = await router.selectChannel('claude-sonnet-4-6', policy);
+    const decision = await router.explainSelectionForRoute(route.id, 'claude-sonnet-4-6', [], policy);
+    const blockedCandidate = decision.candidates.find((item) => item.channelId === blockedChannel.id);
+    const allowedCandidate = decision.candidates.find((item) => item.channelId === allowedChannel.id);
+
+    expect(pick?.channel.id).toBe(allowedChannel.id);
+    expect(blockedCandidate?.eligible).toBe(false);
+    expect(blockedCandidate?.reason).toContain('API Key/令牌已被下游密钥排除');
+    expect(allowedCandidate?.eligible).toBe(true);
+  });
+
+  it('excludes default api key channels by downstream credential refs', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'site-default',
+      url: 'https://default.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const blockedAccount = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'user-blocked',
+      accessToken: 'access-blocked',
+      apiToken: 'sk-blocked-default',
+      status: 'active',
+    }).returning().get();
+    const allowedAccount = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'user-allowed',
+      accessToken: 'access-allowed',
+      apiToken: 'sk-allowed-default',
+      status: 'active',
+    }).returning().get();
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5-mini',
+      enabled: true,
+    }).returning().get();
+
+    const blockedChannel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: blockedAccount.id,
+      tokenId: null,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+    const allowedChannel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: allowedAccount.id,
+      tokenId: null,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    const policy: any = {
+      allowedRouteIds: [route.id],
+      supportedModels: [],
+      siteWeightMultipliers: {},
+      excludedSiteIds: [],
+      excludedCredentialRefs: [
+        { kind: 'default_api_key', siteId: site.id, accountId: blockedAccount.id },
+      ],
+    };
+
+    const pick = await router.selectChannel('gpt-5-mini', policy);
+    const decision = await router.explainSelectionForRoute(route.id, 'gpt-5-mini', [], policy);
+    const blockedCandidate = decision.candidates.find((item) => item.channelId === blockedChannel.id);
+
+    expect(pick?.channel.id).toBe(allowedChannel.id);
+    expect(blockedCandidate?.eligible).toBe(false);
+    expect(blockedCandidate?.reason).toContain('API Key/令牌已被下游密钥排除');
+  });
 });

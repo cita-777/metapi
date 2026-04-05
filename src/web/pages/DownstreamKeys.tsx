@@ -9,6 +9,13 @@ import { useToast } from '../components/Toast.js';
 import ModernSelect from '../components/ModernSelect.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import { tr } from '../i18n.js';
+import DownstreamKeyEditorModal, {
+  TagInput,
+  type DownstreamCredentialOption,
+  type DownstreamExcludedCredentialRef,
+  type DownstreamKeyEditorForm,
+  type DownstreamSiteOption,
+} from './downstream-keys/DownstreamKeyEditorModal.js';
 import DownstreamKeyDrawer from './downstream-keys/DownstreamKeyDrawer.js';
 import {
   formatCompactTokens,
@@ -20,9 +27,7 @@ import {
   type Range,
   type SummaryItem,
 } from './downstream-keys/shared.js';
-import { generateDownstreamSkKey } from './helpers/generateDownstreamSkKey.js';
 
-const PROXY_TOKEN_PREFIX = 'sk-';
 type Status = 'all' | 'enabled' | 'disabled';
 
 type DownstreamApiKeyItem = {
@@ -42,6 +47,8 @@ type DownstreamApiKeyItem = {
   supportedModels: string[];
   allowedRouteIds: number[];
   siteWeightMultipliers: Record<number, number>;
+  excludedSiteIds: number[];
+  excludedCredentialRefs: DownstreamExcludedCredentialRef[];
   lastUsedAt: string | null;
 };
 
@@ -54,21 +61,6 @@ type RouteSelectorItem = {
   modelPattern: string;
   displayName?: string | null;
   enabled: boolean;
-};
-
-type EditorForm = {
-  name: string;
-  key: string;
-  description: string;
-  groupName: string;
-  tags: string[];
-  maxCost: string;
-  maxRequests: string;
-  expiresAt: string;
-  enabled: boolean;
-  selectedModels: string[];
-  selectedGroupRouteIds: number[];
-  siteWeightMultipliersText: string;
 };
 
 type DeleteConfirmState =
@@ -85,7 +77,7 @@ type BatchMetadataForm = {
   tags: string[];
 };
 
-type DefaultRouteSelections = Pick<EditorForm, 'selectedModels' | 'selectedGroupRouteIds'>;
+type DefaultRouteSelections = Pick<DownstreamKeyEditorForm, 'selectedModels' | 'selectedGroupRouteIds'>;
 function toDateTimeLocal(isoString: string | null | undefined): string {
   if (!isoString) return '';
   const ts = Date.parse(isoString);
@@ -137,6 +129,41 @@ function normalizeTags(values: string[]): string[] {
 
 function uniqIds(values: number[]): number[] {
   return [...new Set(values.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0).map((value) => Math.trunc(value)))];
+}
+
+function buildExcludedCredentialRefKey(ref: DownstreamExcludedCredentialRef): string {
+  return ref.kind === 'account_token'
+    ? `${ref.kind}:${ref.siteId}:${ref.accountId}:${ref.tokenId}`
+    : `${ref.kind}:${ref.siteId}:${ref.accountId}`;
+}
+
+function normalizeExcludedSiteIds(values: number[]): number[] {
+  return uniqIds(values).sort((left, right) => left - right);
+}
+
+function normalizeExcludedCredentialRefs(values: DownstreamExcludedCredentialRef[]): DownstreamExcludedCredentialRef[] {
+  const deduped = new Map<string, DownstreamExcludedCredentialRef>();
+  for (const value of values) {
+    if (!value || !Number.isFinite(value.siteId) || !Number.isFinite(value.accountId)) continue;
+    if (value.kind === 'account_token') {
+      if (!Number.isFinite(value.tokenId)) continue;
+      const normalized: DownstreamExcludedCredentialRef = {
+        kind: 'account_token',
+        siteId: Math.trunc(value.siteId),
+        accountId: Math.trunc(value.accountId),
+        tokenId: Math.trunc(value.tokenId),
+      };
+      deduped.set(buildExcludedCredentialRefKey(normalized), normalized);
+      continue;
+    }
+    const normalized: DownstreamExcludedCredentialRef = {
+      kind: 'default_api_key',
+      siteId: Math.trunc(value.siteId),
+      accountId: Math.trunc(value.accountId),
+    };
+    deduped.set(buildExcludedCredentialRefKey(normalized), normalized);
+  }
+  return Array.from(deduped.values()).sort((left, right) => buildExcludedCredentialRefKey(left).localeCompare(buildExcludedCredentialRefKey(right)));
 }
 
 function buildDefaultRouteSelections(routeOptions: RouteSelectorItem[]): DefaultRouteSelections {
@@ -299,7 +326,7 @@ function buildEditorForm(
   item?: ManagedItem | DownstreamApiKeyItem | null,
   routeOptions: RouteSelectorItem[] = [],
   selectAllByDefault = false,
-): EditorForm {
+): DownstreamKeyEditorForm {
   const defaultSelections = selectAllByDefault
     ? buildDefaultRouteSelections(routeOptions)
     : { selectedModels: [], selectedGroupRouteIds: [] };
@@ -323,6 +350,8 @@ function buildEditorForm(
     selectedModels: uniqStrings(selectedModels),
     selectedGroupRouteIds: uniqIds(selectedGroupRouteIds),
     siteWeightMultipliersText: JSON.stringify(item?.siteWeightMultipliers || {}, null, 2),
+    excludedSiteIds: normalizeExcludedSiteIds(Array.isArray(item?.excludedSiteIds) ? item.excludedSiteIds : []),
+    excludedCredentialRefs: normalizeExcludedCredentialRefs(Array.isArray(item?.excludedCredentialRefs) ? item.excludedCredentialRefs : []),
   };
 }
 
@@ -354,90 +383,6 @@ function summarizeTags(tags: string[]): string {
   if (!Array.isArray(tags) || tags.length === 0) return '无标签';
   if (tags.length === 1) return tags[0];
   return `${tags[0]} +${tags.length - 1}`;
-}
-
-function TagInput({
-  tags,
-  onChange,
-  suggestions = [],
-  placeholder,
-}: {
-  tags: string[];
-  onChange: (tags: string[]) => void;
-  suggestions?: string[];
-  placeholder?: string;
-}) {
-  const [draft, setDraft] = useState('');
-
-  useEffect(() => {
-    setDraft('');
-  }, [tags.length]);
-
-  const commitDraft = () => {
-    const nextTags = normalizeTags([...tags, ...parseTagText(draft)]);
-    if (nextTags.length !== tags.length) {
-      onChange(nextTags);
-    }
-    setDraft('');
-  };
-
-  const removeTag = (target: string) => {
-    onChange(tags.filter((tag) => tag !== target));
-  };
-
-  const suggestionPool = suggestions.filter((tag) => !tags.some((current) => current.toLowerCase() === tag.toLowerCase())).slice(0, 12);
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <div style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg)', padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {tags.map((tag) => (
-            <button
-              key={tag}
-              type="button"
-              onClick={() => removeTag(tag)}
-              style={{ ...tagChipStyle('accent'), cursor: 'pointer' }}
-              title={`移除 ${tag}`}
-            >
-              <span>{tag}</span>
-              <span aria-hidden="true">×</span>
-            </button>
-          ))}
-        </div>
-        <input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commitDraft}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ',') {
-              e.preventDefault();
-              commitDraft();
-            } else if (e.key === 'Backspace' && !draft && tags.length > 0) {
-              e.preventDefault();
-              onChange(tags.slice(0, -1));
-            }
-          }}
-          placeholder={placeholder || '输入标签后按回车或逗号'}
-          style={{ width: '100%', border: 'none', outline: 'none', background: 'transparent', color: 'var(--color-text-primary)', padding: 0, fontSize: 13, lineHeight: 1.45 }}
-        />
-      </div>
-      {suggestionPool.length > 0 ? (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {suggestionPool.map((tag) => (
-            <button
-              key={tag}
-              type="button"
-              className="btn btn-ghost"
-              style={{ ...tagChipStyle(), cursor: 'pointer' }}
-              onClick={() => onChange(normalizeTags([...tags, tag]))}
-            >
-              {tag}
-            </button>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 function SummaryMetric({
@@ -508,332 +453,6 @@ function InlineToggle({
   );
 }
 
-function EditorModal({
-  open,
-  editingItem,
-  form,
-  onChange,
-  onClose,
-  onSave,
-  saving,
-  routeOptions,
-  groupSuggestions,
-  tagSuggestions,
-}: {
-  open: boolean;
-  editingItem: ManagedItem | null;
-  form: EditorForm;
-  onChange: (updater: (prev: EditorForm) => EditorForm) => void;
-  onClose: () => void;
-  onSave: () => void;
-  saving: boolean;
-  routeOptions: RouteSelectorItem[];
-  groupSuggestions: string[];
-  tagSuggestions: string[];
-}) {
-  const [modelSearch, setModelSearch] = useState('');
-  const [groupSearch, setGroupSearch] = useState('');
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-
-  useEffect(() => {
-    if (!open) {
-      setModelSearch('');
-      setGroupSearch('');
-      setAdvancedOpen(false);
-    }
-  }, [open]);
-
-  const exactModels = useMemo(
-    () => uniqStrings(routeOptions.filter((item) => isExactModelPattern(item.modelPattern)).map((item) => item.modelPattern)).sort((a, b) => a.localeCompare(b)),
-    [routeOptions],
-  );
-  const groupRouteOptions = useMemo(
-    () => routeOptions.filter(isGroupRouteOption),
-    [routeOptions],
-  );
-  const validGroupRouteIdSet = useMemo(
-    () => new Set(groupRouteOptions.map((route) => route.id)),
-    [groupRouteOptions],
-  );
-  const normalizedSelectedGroupRouteIds = useMemo(
-    () => uniqIds(form.selectedGroupRouteIds.filter((id) => validGroupRouteIdSet.has(id))),
-    [form.selectedGroupRouteIds, validGroupRouteIdSet],
-  );
-
-  const filteredModels = useMemo(() => {
-    const keyword = modelSearch.trim().toLowerCase();
-    if (!keyword) return exactModels;
-    return exactModels.filter((model) => model.toLowerCase().includes(keyword));
-  }, [exactModels, modelSearch]);
-
-  const filteredGroups = useMemo(() => {
-    const keyword = groupSearch.trim().toLowerCase();
-    if (!keyword) return groupRouteOptions;
-    return groupRouteOptions.filter((route) => {
-      const title = routeTitle(route).toLowerCase();
-      return title.includes(keyword) || route.modelPattern.toLowerCase().includes(keyword);
-    });
-  }, [groupRouteOptions, groupSearch]);
-
-  const selectedModelCount = form.selectedModels.length;
-  const selectedGroupCount = normalizedSelectedGroupRouteIds.length;
-  const inputStyle: React.CSSProperties = {
-    width: '100%',
-    padding: '10px 12px',
-    border: '1px solid var(--color-border)',
-    borderRadius: 'var(--radius-sm)',
-    background: 'var(--color-bg)',
-    color: 'var(--color-text-primary)',
-    fontSize: 13,
-    lineHeight: 1.45,
-  };
-
-  return (
-    <CenteredModal
-      open={open}
-      onClose={onClose}
-      title={editingItem ? '编辑下游密钥' : '新增下游密钥'}
-      maxWidth={860}
-      bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 12 }}
-      footer={(
-        <>
-          <button onClick={onClose} className="btn btn-ghost" disabled={saving}>取消</button>
-          <button onClick={onSave} className="btn btn-primary" disabled={saving}>
-            {saving
-              ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</>
-              : (editingItem ? '保存修改' : '创建密钥')}
-          </button>
-        </>
-      )}
-    >
-      <div className="info-tip" style={{ marginBottom: 0 }}>
-        支持为每个下游密钥独立配置分组、标签、额度与有效期。高级限制项可按需展开。
-      </div>
-
-      <div className="downstream-key-modal-grid" style={{ gridTemplateColumns: '1fr' }}>
-        <div className="downstream-key-modal-field downstream-key-modal-field-full">
-          <div className="downstream-key-modal-label">名称</div>
-          <input value={form.name} onChange={(e) => onChange((prev) => ({ ...prev, name: e.target.value }))} placeholder="例如：项目 A / 移动端" style={inputStyle} />
-        </div>
-        <div className="downstream-key-modal-field">
-          <div className="downstream-key-modal-label">下游密钥</div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'stretch', minWidth: 0 }}>
-            <input
-              value={form.key}
-              onChange={(e) => onChange((prev) => ({ ...prev, key: e.target.value }))}
-              placeholder="sk-..."
-              style={{ ...inputStyle, flex: 1, minWidth: 0, fontFamily: 'var(--font-mono)' }}
-            />
-            <button
-              type="button"
-              className="btn btn-ghost"
-              style={{ flexShrink: 0, whiteSpace: 'nowrap', alignSelf: 'stretch' }}
-              onClick={() => onChange((prev) => ({ ...prev, key: generateDownstreamSkKey(PROXY_TOKEN_PREFIX) }))}
-            >
-              随机
-            </button>
-          </div>
-        </div>
-        <div className="downstream-key-modal-field">
-          <div className="downstream-key-modal-label">主分组</div>
-          <input
-            value={form.groupName}
-            onChange={(e) => onChange((prev) => ({ ...prev, groupName: e.target.value }))}
-            placeholder="例如：VIP / 内部项目 / A组"
-            list="downstream-group-suggestions"
-            style={inputStyle}
-          />
-        </div>
-        <div className="downstream-key-modal-field">
-          <div className="downstream-key-modal-label">请求额度</div>
-          <input value={form.maxRequests} onChange={(e) => onChange((prev) => ({ ...prev, maxRequests: e.target.value }))} placeholder="留空表示不限" style={inputStyle} />
-        </div>
-        <div className="downstream-key-modal-field">
-          <div className="downstream-key-modal-label">成本额度</div>
-          <input value={form.maxCost} onChange={(e) => onChange((prev) => ({ ...prev, maxCost: e.target.value }))} placeholder="留空表示不限" style={inputStyle} />
-        </div>
-        <div className="downstream-key-modal-field">
-          <div className="downstream-key-modal-label">过期时间</div>
-          <input type="datetime-local" value={form.expiresAt} onChange={(e) => onChange((prev) => ({ ...prev, expiresAt: e.target.value }))} style={inputStyle} />
-        </div>
-        <label
-          className="downstream-key-modal-toggle"
-        >
-          <input type="checkbox" checked={form.enabled} onChange={(e) => onChange((prev) => ({ ...prev, enabled: e.target.checked }))} />
-          <div>
-            <div className="downstream-key-modal-toggle-title">创建后立即启用</div>
-            <div className="downstream-key-modal-help">关闭后该密钥将无法继续分发请求</div>
-          </div>
-        </label>
-      </div>
-
-      <div className="downstream-key-modal-field downstream-key-modal-field-full">
-        <div className="downstream-key-modal-label">备注说明</div>
-        <textarea
-          value={form.description}
-          onChange={(e) => onChange((prev) => ({ ...prev, description: e.target.value }))}
-          placeholder="填写业务场景、负责人或限制说明"
-          style={{ ...inputStyle, minHeight: 84, resize: 'vertical' }}
-        />
-      </div>
-
-      <div className="downstream-key-modal-field downstream-key-modal-field-full">
-        <div className="downstream-key-modal-label">标签</div>
-        <TagInput
-          tags={form.tags}
-          onChange={(tags) => onChange((prev) => ({ ...prev, tags }))}
-          suggestions={tagSuggestions}
-          placeholder="输入标签后按回车或逗号，例如：移动端、VIP、项目A"
-        />
-        <div className="downstream-key-modal-help">标签用于搜索、筛选和辅助归类，不影响路由与权限。</div>
-      </div>
-
-      <div className="downstream-key-advanced">
-        <button type="button" className={`downstream-key-advanced-toggle ${advancedOpen ? 'is-open' : ''}`.trim()} onClick={() => setAdvancedOpen((value) => !value)}>
-          <span>高级配置</span>
-          <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{advancedOpen ? '收起' : '展开'}</span>
-        </button>
-        {advancedOpen ? (
-          <div className="downstream-key-advanced-content">
-            <div className="downstream-key-modal-field downstream-key-modal-field-full">
-              <div className="downstream-key-modal-label">站点倍率 JSON</div>
-              <textarea
-                value={form.siteWeightMultipliersText}
-                onChange={(e) => onChange((prev) => ({ ...prev, siteWeightMultipliersText: e.target.value }))}
-                placeholder={'例如：{\n  "1": 1.2,\n  "7": 0.8\n}'}
-                style={{ ...inputStyle, minHeight: 96, resize: 'vertical', fontFamily: 'var(--font-mono)' }}
-              />
-              <div className="downstream-key-modal-help">用于对特定站点做分发倍率微调；留空或 `{}` 表示走默认倍率。</div>
-            </div>
-
-            <div className="downstream-key-advanced-grid" style={{ gridTemplateColumns: '1fr' }}>
-              <div className="downstream-key-advanced-panel">
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                  <div>
-                    <div className="downstream-key-modal-section-title">模型白名单</div>
-                    <div className="downstream-key-modal-help">只展示精确模型；未勾选时默认不允许任何精确模型，可点“全选”一次性放开。</div>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      style={{ border: '1px solid var(--color-border)' }}
-                      onClick={() => onChange((prev) => ({ ...prev, selectedModels: exactModels }))}
-                    >
-                      全选
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      style={{ border: '1px solid var(--color-border)' }}
-                      onClick={() => onChange((prev) => ({ ...prev, selectedModels: [] }))}
-                    >
-                      清空
-                    </button>
-                  </div>
-                </div>
-                <div className="downstream-key-modal-meta">已选 {selectedModelCount} 个模型</div>
-                <div className="toolbar-search" style={{ maxWidth: '100%' }}>
-                  <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
-                  <input value={modelSearch} onChange={(e) => setModelSearch(e.target.value)} placeholder="搜索模型" />
-                </div>
-                <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {filteredModels.length === 0 ? (
-                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>暂无匹配模型</div>
-                  ) : filteredModels.map((model) => {
-                    const checked = form.selectedModels.includes(model);
-                    return (
-                      <label key={model} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', padding: '8px 10px', borderRadius: 10, border: '1px solid var(--color-border-light)', background: checked ? 'color-mix(in srgb, var(--color-primary) 10%, var(--color-bg-card))' : 'var(--color-bg-card)' }}>
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => onChange((prev) => ({
-                            ...prev,
-                            selectedModels: checked ? prev.selectedModels.filter((item) => item !== model) : [...prev.selectedModels, model],
-                          }))}
-                        />
-                        <code style={{ color: 'var(--color-text-primary)', fontSize: 12 }}>{model}</code>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="downstream-key-advanced-panel">
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                  <div>
-                    <div className="downstream-key-modal-section-title">群组范围</div>
-                    <div className="downstream-key-modal-help">限制可访问的群组路由；未勾选时默认不允许任何群组，可点“全选”一次性放开。</div>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      style={{ border: '1px solid var(--color-border)' }}
-                      onClick={() => onChange((prev) => ({ ...prev, selectedGroupRouteIds: groupRouteOptions.map((route) => route.id) }))}
-                    >
-                      全选
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      style={{ border: '1px solid var(--color-border)' }}
-                      onClick={() => onChange((prev) => ({ ...prev, selectedGroupRouteIds: [] }))}
-                    >
-                      清空
-                    </button>
-                  </div>
-                </div>
-                <div className="downstream-key-modal-meta">已选 {selectedGroupCount} 个群组</div>
-                <div className="toolbar-search" style={{ maxWidth: '100%' }}>
-                  <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
-                  <input value={groupSearch} onChange={(e) => setGroupSearch(e.target.value)} placeholder="搜索群组或模型模式" />
-                </div>
-                <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {filteredGroups.length === 0 ? (
-                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>暂无匹配群组</div>
-                  ) : filteredGroups.map((route) => {
-                    const checked = normalizedSelectedGroupRouteIds.includes(route.id);
-                    return (
-                      <label key={route.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', padding: '8px 10px', borderRadius: 10, border: '1px solid var(--color-border-light)', background: checked ? 'color-mix(in srgb, var(--color-primary) 10%, var(--color-bg-card))' : 'var(--color-bg-card)' }}>
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => onChange((prev) => ({
-                            ...prev,
-                            selectedGroupRouteIds: checked
-                              ? prev.selectedGroupRouteIds.filter((item) => item !== route.id)
-                              : uniqIds([...prev.selectedGroupRouteIds.filter((item) => validGroupRouteIdSet.has(item)), route.id]),
-                          }))}
-                          style={{ marginTop: 2 }}
-                        />
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ color: 'var(--color-text-primary)', fontSize: 13, fontWeight: 600 }}>
-                            {routeTitle(route)}
-                            {!route.enabled ? <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--color-danger)' }}>已禁用</span> : null}
-                          </div>
-                          <code style={{ display: 'block', marginTop: 4, fontSize: 11, color: 'var(--color-text-muted)' }}>{route.modelPattern}</code>
-                        </div>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          </div>
-        ) : null}
-      </div>
-      <datalist id="downstream-group-suggestions">
-        {groupSuggestions.map((group) => <option key={group} value={group} />)}
-      </datalist>
-    </CenteredModal>
-  );
-}
-
 export default function DownstreamKeys() {
   const toast = useToast();
   const [range, setRange] = useState<Range>('24h');
@@ -852,8 +471,12 @@ export default function DownstreamKeys() {
   const [rowLoading, setRowLoading] = useState<Record<string, boolean>>({});
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [editorForm, setEditorForm] = useState<EditorForm>(() => buildEditorForm());
+  const [editorForm, setEditorForm] = useState<DownstreamKeyEditorForm>(() => buildEditorForm());
   const [createDefaultsPending, setCreateDefaultsPending] = useState(false);
+  const [exclusionSourceLoading, setExclusionSourceLoading] = useState(false);
+  const [exclusionSourceLoaded, setExclusionSourceLoaded] = useState(false);
+  const [exclusionSiteOptions, setExclusionSiteOptions] = useState<DownstreamSiteOption[]>([]);
+  const [exclusionCredentialOptions, setExclusionCredentialOptions] = useState<DownstreamCredentialOption[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
@@ -891,9 +514,93 @@ export default function DownstreamKeys() {
     }
   };
 
+  const loadExclusionSources = async () => {
+    if (exclusionSourceLoading || exclusionSourceLoaded) return;
+    setExclusionSourceLoading(true);
+    try {
+      const [accountsRes, tokensRes] = await Promise.all([
+        api.getAccounts(),
+        api.getAccountTokens(),
+      ]);
+
+      const accountRows = Array.isArray(accountsRes) ? accountsRes : [];
+      const tokenRows = Array.isArray(tokensRes) ? tokensRes : [];
+
+      const siteMap = new Map<number, { siteId: number; siteName: string; accountIds: Set<number> }>();
+      for (const account of accountRows) {
+        const siteId = Number(account?.site?.id);
+        const accountId = Number(account?.id);
+        if (!Number.isFinite(siteId) || siteId <= 0 || !Number.isFinite(accountId) || accountId <= 0) continue;
+        const siteName = String(account?.site?.name || `站点 ${siteId}`).trim() || `站点 ${siteId}`;
+        if (!siteMap.has(siteId)) {
+          siteMap.set(siteId, { siteId, siteName, accountIds: new Set<number>() });
+        }
+        siteMap.get(siteId)!.accountIds.add(accountId);
+      }
+
+      const siteOptions = Array.from(siteMap.values())
+        .map((item) => ({
+          siteId: item.siteId,
+          siteName: item.siteName,
+          accountCount: item.accountIds.size,
+        }))
+        .sort((left, right) => left.siteName.localeCompare(right.siteName));
+
+      const credentialOptions: DownstreamCredentialOption[] = [];
+      for (const account of accountRows) {
+        const siteId = Number(account?.site?.id);
+        const accountId = Number(account?.id);
+        const apiToken = String(account?.apiToken || '').trim();
+        if (!Number.isFinite(siteId) || siteId <= 0 || !Number.isFinite(accountId) || accountId <= 0 || !apiToken) continue;
+        credentialOptions.push({
+          key: `default_api_key:${siteId}:${accountId}`,
+          ref: { kind: 'default_api_key', siteId: Math.trunc(siteId), accountId: Math.trunc(accountId) },
+          siteName: String(account?.site?.name || `站点 ${siteId}`).trim() || `站点 ${siteId}`,
+          accountName: String(account?.username || `账号 ${accountId}`).trim() || `账号 ${accountId}`,
+          label: '默认 API Key',
+          detail: `使用账号默认 API Key (${apiToken.slice(0, 6)}...)`,
+        });
+      }
+
+      for (const token of tokenRows) {
+        const siteId = Number(token?.site?.id);
+        const accountId = Number(token?.account?.id ?? token?.accountId);
+        const tokenId = Number(token?.id);
+        if (!Number.isFinite(siteId) || siteId <= 0 || !Number.isFinite(accountId) || accountId <= 0 || !Number.isFinite(tokenId) || tokenId <= 0) continue;
+        credentialOptions.push({
+          key: `account_token:${siteId}:${accountId}:${tokenId}`,
+          ref: { kind: 'account_token', siteId: Math.trunc(siteId), accountId: Math.trunc(accountId), tokenId: Math.trunc(tokenId) },
+          siteName: String(token?.site?.name || `站点 ${siteId}`).trim() || `站点 ${siteId}`,
+          accountName: String(token?.account?.username || `账号 ${accountId}`).trim() || `账号 ${accountId}`,
+          label: String(token?.name || `token-${tokenId}`).trim() || `token-${tokenId}`,
+          detail: String(token?.tokenGroup || 'default').trim() || 'default',
+        });
+      }
+
+      setExclusionSiteOptions(siteOptions);
+      setExclusionCredentialOptions(
+        credentialOptions.sort((left, right) => (
+          `${left.siteName}:${left.accountName}:${left.label}:${left.detail}`.localeCompare(
+            `${right.siteName}:${right.accountName}:${right.label}:${right.detail}`,
+          )
+        )),
+      );
+      setExclusionSourceLoaded(true);
+    } catch (err: any) {
+      toast.error(err?.message || '加载可排除站点与令牌失败');
+    } finally {
+      setExclusionSourceLoading(false);
+    }
+  };
+
   useEffect(() => {
     void load();
   }, [range]);
+
+  useEffect(() => {
+    if (!editorOpen) return;
+    void loadExclusionSources();
+  }, [editorOpen]);
 
   const rawItemMap = useMemo(() => new Map(rawItems.map((item) => [item.id, item])), [rawItems]);
   const routeMap = useMemo(() => new Map(routeOptions.map((item) => [item.id, item])), [routeOptions]);
@@ -917,6 +624,8 @@ export default function DownstreamKeys() {
         supportedModels: raw?.supportedModels ?? item.supportedModels,
         allowedRouteIds: raw?.allowedRouteIds ?? item.allowedRouteIds,
         siteWeightMultipliers: raw?.siteWeightMultipliers ?? item.siteWeightMultipliers,
+        excludedSiteIds: raw?.excludedSiteIds ?? item.excludedSiteIds,
+        excludedCredentialRefs: raw?.excludedCredentialRefs ?? item.excludedCredentialRefs,
         lastUsedAt: raw?.lastUsedAt ?? item.lastUsedAt,
       };
     })
@@ -1125,6 +834,8 @@ export default function DownstreamKeys() {
         supportedModels: uniqStrings(editorForm.selectedModels),
         allowedRouteIds: uniqIds(editorForm.selectedGroupRouteIds).filter((id) => routeMap.has(id) && isGroupRouteOption(routeMap.get(id)!)),
         siteWeightMultipliers,
+        excludedSiteIds: normalizeExcludedSiteIds(editorForm.excludedSiteIds),
+        excludedCredentialRefs: normalizeExcludedCredentialRefs(editorForm.excludedCredentialRefs),
       };
       if (editingId) {
         await api.updateDownstreamApiKey(editingId, payload);
@@ -1555,7 +1266,7 @@ export default function DownstreamKeys() {
         )}
       </div>
 
-      <EditorModal
+      <DownstreamKeyEditorModal
         open={editorOpen}
         editingItem={editingItem}
         form={editorForm}
@@ -1566,6 +1277,9 @@ export default function DownstreamKeys() {
         routeOptions={routeOptions}
         groupSuggestions={groupSuggestions}
         tagSuggestions={tagSuggestions}
+        exclusionSourceLoading={exclusionSourceLoading}
+        siteOptions={exclusionSiteOptions}
+        credentialOptions={exclusionCredentialOptions}
       />
 
       <CenteredModal

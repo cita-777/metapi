@@ -378,6 +378,8 @@ describe('databaseMigrationService', () => {
           supportedModels: ['gpt-4o-mini'],
           allowedRouteIds: [3],
           siteWeightMultipliers: { 1: 1.5 },
+          excludedSiteIds: [1],
+          excludedCredentialRefs: [{ kind: 'default_api_key', siteId: 1, accountId: 2 }],
           enabled: true,
         }],
         events: [],
@@ -404,6 +406,8 @@ describe('databaseMigrationService', () => {
     expect(downstreamKeyStatement?.values[downstreamKeyStatement.columns.indexOf('supported_models')]).toBe('["gpt-4o-mini"]');
     expect(downstreamKeyStatement?.values[downstreamKeyStatement.columns.indexOf('allowed_route_ids')]).toBe('[3]');
     expect(downstreamKeyStatement?.values[downstreamKeyStatement.columns.indexOf('site_weight_multipliers')]).toBe('{"1":1.5}');
+    expect(downstreamKeyStatement?.values[downstreamKeyStatement.columns.indexOf('excluded_site_ids')]).toBe('[1]');
+    expect(downstreamKeyStatement?.values[downstreamKeyStatement.columns.indexOf('excluded_credential_refs')]).toBe('[{"kind":"default_api_key","siteId":1,"accountId":2}]');
   });
 
   it('uses schema logical types to serialize JSON columns instead of String(value)', () => {

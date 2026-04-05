@@ -1260,6 +1260,7 @@ type CandidateEligibilityOptions = {
   bypassSourceModelCheck?: boolean;
   excludeChannelIds?: number[];
   nowIso?: string;
+  downstreamPolicy?: DownstreamRoutingPolicy;
 };
 
 type CostSignal = {
@@ -1819,6 +1820,7 @@ export class TokenRouter {
       match,
       requestedModel,
       normalizedPreferredChannelId,
+      downstreamPolicy,
       excludeChannelIds,
     );
   }
@@ -1936,6 +1938,7 @@ export class TokenRouter {
         bypassSourceModelCheck,
         excludeChannelIds,
         nowIso,
+        downstreamPolicy,
       });
 
       const recentlyFailed = routeStrategy !== 'round_robin'
@@ -2629,6 +2632,7 @@ export class TokenRouter {
         bypassSourceModelCheck,
         excludeChannelIds,
         nowIso,
+        downstreamPolicy,
       }).length === 0
     ));
 
@@ -2763,6 +2767,7 @@ export class TokenRouter {
     match: RouteMatch,
     requestedModel: string,
     preferredChannelId: number,
+    downstreamPolicy: DownstreamRoutingPolicy,
     excludeChannelIds: number[] = [],
     recordSelection = true,
   ): Promise<SelectedChannel | null> {
@@ -2782,6 +2787,7 @@ export class TokenRouter {
         bypassSourceModelCheck,
         excludeChannelIds,
         nowIso,
+        downstreamPolicy,
       }).length === 0
     ));
 
@@ -2891,6 +2897,55 @@ export class TokenRouter {
     return null;
   }
 
+  private resolveDownstreamExclusionReason(
+    candidate: RouteChannelCandidate,
+    downstreamPolicy?: DownstreamRoutingPolicy,
+  ): string | null {
+    if (!downstreamPolicy) return null;
+
+    const excludedSiteIds = Array.isArray(downstreamPolicy.excludedSiteIds)
+      ? downstreamPolicy.excludedSiteIds
+      : [];
+    if (excludedSiteIds.includes(candidate.site.id)) {
+      return '站点已被下游密钥排除';
+    }
+
+    const excludedCredentialRefs = Array.isArray(downstreamPolicy.excludedCredentialRefs)
+      ? downstreamPolicy.excludedCredentialRefs
+      : [];
+    if (excludedCredentialRefs.length <= 0) {
+      return null;
+    }
+
+    for (const ref of excludedCredentialRefs) {
+      if (ref.kind === 'account_token') {
+        if (
+          candidate.channel.tokenId === ref.tokenId
+          && candidate.token?.id === ref.tokenId
+          && candidate.account.id === ref.accountId
+          && candidate.site.id === ref.siteId
+        ) {
+          return 'API Key/令牌已被下游密钥排除';
+        }
+        continue;
+      }
+
+      if (
+        candidate.channel.tokenId == null
+        && candidate.account.id === ref.accountId
+        && candidate.site.id === ref.siteId
+      ) {
+        const resolvedTokenValue = this.resolveChannelTokenValue(candidate);
+        const accountApiToken = candidate.account.apiToken?.trim() || '';
+        if (resolvedTokenValue && accountApiToken && resolvedTokenValue === accountApiToken) {
+          return 'API Key/令牌已被下游密钥排除';
+        }
+      }
+    }
+
+    return null;
+  }
+
   private getCandidateEligibilityReasons(
     candidate: RouteChannelCandidate,
     options: CandidateEligibilityOptions,
@@ -2916,6 +2971,11 @@ export class TokenRouter {
 
     if (isSiteDisabled(candidate.site.status)) {
       reasonParts.push(`站点状态=${candidate.site.status || 'disabled'}`);
+    }
+
+    const downstreamExclusionReason = this.resolveDownstreamExclusionReason(candidate, options.downstreamPolicy);
+    if (downstreamExclusionReason) {
+      reasonParts.push(downstreamExclusionReason);
     }
 
     if (excludeChannelIds.includes(candidate.channel.id)) {

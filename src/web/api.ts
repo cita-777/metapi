@@ -660,6 +660,32 @@ export type OAuthConnectionsResponse = {
   offset: number;
 };
 
+export type OAuthQuotaBatchRefreshResponse = {
+  success: boolean;
+  refreshed: number;
+  failed: number;
+  items: Array<{
+    accountId: number;
+    success: boolean;
+    quota?: OAuthQuotaInfo;
+    error?: string;
+  }>;
+};
+
+export type OAuthImportResponse = {
+  success: boolean;
+  imported: number;
+  skipped: number;
+  failed: number;
+  items: Array<{
+    name: string;
+    status: 'imported' | 'skipped' | 'failed';
+    accountId?: number;
+    provider?: string;
+    message?: string;
+  }>;
+};
+
 export const api = {
   // Sites
   getSites: () => request('/api/sites'),
@@ -673,7 +699,7 @@ export const api = {
   getSiteAvailableModels: (siteId: number) => request(`/api/sites/${siteId}/available-models`),
 
   // Accounts
-  getAccounts: () => request('/api/accounts'),
+  getAccounts: (params?: { includeOauth?: boolean }) => request(`/api/accounts${buildQueryString(params)}`),
   addAccount: (data: any) => request('/api/accounts', { method: 'POST', body: JSON.stringify(data) }),
   loginAccount: (data: { siteId: number; username: string; password: string }) => request('/api/accounts/login', { method: 'POST', body: JSON.stringify(data) }),
   verifyToken: (data: { siteId: number; accessToken: string; platformUserId?: number; credentialMode?: 'auto' | 'session' | 'apikey' }) => request('/api/accounts/verify-token', { method: 'POST', body: JSON.stringify(data) }),
@@ -798,6 +824,10 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({}),
   }) as Promise<{ success: true; quota: OAuthQuotaInfo }>,
+  refreshOAuthConnectionQuotaBatch: (accountIds: number[]) => request('/api/oauth/connections/quota/refresh-batch', {
+    method: 'POST',
+    body: JSON.stringify({ accountIds }),
+  }) as Promise<OAuthQuotaBatchRefreshResponse>,
   rebindOAuthConnection: (accountId: number, data?: { proxyUrl?: string | null }) => request(`/api/oauth/connections/${accountId}/rebind`, {
     method: 'POST',
     body: JSON.stringify(data || {}),
@@ -805,6 +835,10 @@ export const api = {
   deleteOAuthConnection: (accountId: number) => request(`/api/oauth/connections/${accountId}`, {
     method: 'DELETE',
   }) as Promise<{ success: true }>,
+  importOAuthConnections: (data: Record<string, unknown>) => request('/api/oauth/import', {
+    method: 'POST',
+    body: JSON.stringify({ data }),
+  }) as Promise<OAuthImportResponse>,
 
   // Events
   getEvents: (params?: string) => request(`/api/events${params ? '?' + params : ''}`),

@@ -97,6 +97,8 @@ type BackupDownstreamApiKeyRow = Pick<DownstreamApiKeyRow,
   | 'supportedModels'
   | 'allowedRouteIds'
   | 'siteWeightMultipliers'
+  | 'excludedSiteIds'
+  | 'excludedCredentialRefs'
 > & Partial<Pick<DownstreamApiKeyRow, 'usedCost' | 'usedRequests' | 'lastUsedAt'>>;
 
 interface AccountsBackupSection {
@@ -1769,6 +1771,8 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
           supportedModels: row.supportedModels ?? null,
           allowedRouteIds: row.allowedRouteIds ?? null,
           siteWeightMultipliers: row.siteWeightMultipliers ?? null,
+          excludedSiteIds: row.excludedSiteIds ?? null,
+          excludedCredentialRefs: row.excludedCredentialRefs ?? null,
           lastUsedAt: runtimeDownstream?.lastUsedAt ?? row.lastUsedAt ?? null,
         }).run();
         const downstreamApiKeyId = requireInsertedRowId(

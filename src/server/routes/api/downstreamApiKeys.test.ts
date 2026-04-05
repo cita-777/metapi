@@ -224,6 +224,198 @@ describe('downstream api keys routes', () => {
     });
   });
 
+  it('roundtrips excluded sites and excluded credentials through create, update, and list', async () => {
+    const siteA = await db.insert(schema.sites).values({
+      name: 'site-a',
+      url: 'https://site-a.example.com',
+      status: 'active',
+      platform: 'new-api',
+    }).returning().get();
+    const siteB = await db.insert(schema.sites).values({
+      name: 'site-b',
+      url: 'https://site-b.example.com',
+      status: 'active',
+      platform: 'new-api',
+    }).returning().get();
+
+    const accountA = await db.insert(schema.accounts).values({
+      siteId: siteA.id,
+      username: 'account-a',
+      accessToken: 'access-a',
+      apiToken: 'sk-default-a',
+      status: 'active',
+    }).returning().get();
+    const accountB = await db.insert(schema.accounts).values({
+      siteId: siteB.id,
+      username: 'account-b',
+      accessToken: 'access-b',
+      apiToken: 'sk-default-b',
+      status: 'active',
+    }).returning().get();
+
+    const tokenA = await db.insert(schema.accountTokens).values({
+      accountId: accountA.id,
+      name: 'token-a',
+      token: 'sk-token-a',
+      enabled: true,
+      isDefault: true,
+      valueStatus: 'ready',
+    }).returning().get();
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.2',
+      displayName: 'portal-route',
+      enabled: true,
+    }).returning().get();
+
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/downstream-keys',
+      payload: {
+        name: 'exclude-key',
+        key: 'sk-exclude-key-001',
+        allowedRouteIds: [route.id],
+        excludedSiteIds: [siteB.id],
+        excludedCredentialRefs: [
+          { kind: 'default_api_key', siteId: siteB.id, accountId: accountB.id },
+          { kind: 'account_token', siteId: siteA.id, accountId: accountA.id, tokenId: tokenA.id },
+        ],
+      },
+    });
+
+    expect(createRes.statusCode).toBe(200);
+    expect(createRes.json()).toMatchObject({
+      success: true,
+      item: {
+        excludedSiteIds: [siteB.id],
+        excludedCredentialRefs: [
+          { kind: 'account_token', siteId: siteA.id, accountId: accountA.id, tokenId: tokenA.id },
+          { kind: 'default_api_key', siteId: siteB.id, accountId: accountB.id },
+        ],
+      },
+    });
+
+    const keyId = createRes.json().item.id as number;
+    const updateRes = await app.inject({
+      method: 'PUT',
+      url: `/api/downstream-keys/${keyId}`,
+      payload: {
+        excludedSiteIds: [siteB.id, siteA.id, siteB.id],
+        excludedCredentialRefs: [
+          { kind: 'default_api_key', siteId: siteB.id, accountId: accountB.id },
+          { kind: 'account_token', siteId: siteA.id, accountId: accountA.id, tokenId: tokenA.id },
+          { kind: 'account_token', siteId: siteA.id, accountId: accountA.id, tokenId: tokenA.id },
+        ],
+      },
+    });
+
+    expect(updateRes.statusCode).toBe(200);
+    expect(updateRes.json()).toMatchObject({
+      success: true,
+      item: {
+        excludedSiteIds: [siteA.id, siteB.id],
+        excludedCredentialRefs: [
+          { kind: 'account_token', siteId: siteA.id, accountId: accountA.id, tokenId: tokenA.id },
+          { kind: 'default_api_key', siteId: siteB.id, accountId: accountB.id },
+        ],
+      },
+    });
+
+    const listRes = await app.inject({
+      method: 'GET',
+      url: '/api/downstream-keys',
+    });
+
+    expect(listRes.statusCode).toBe(200);
+    expect(listRes.json()).toMatchObject({
+      success: true,
+      items: [
+        expect.objectContaining({
+          id: keyId,
+          excludedSiteIds: [siteA.id, siteB.id],
+          excludedCredentialRefs: [
+            { kind: 'account_token', siteId: siteA.id, accountId: accountA.id, tokenId: tokenA.id },
+            { kind: 'default_api_key', siteId: siteB.id, accountId: accountB.id },
+          ],
+        }),
+      ],
+    });
+  });
+
+  it('rejects unknown or mismatched exclusion references', async () => {
+    const siteA = await db.insert(schema.sites).values({
+      name: 'site-a',
+      url: 'https://site-a.example.com',
+      status: 'active',
+      platform: 'new-api',
+    }).returning().get();
+    const siteB = await db.insert(schema.sites).values({
+      name: 'site-b',
+      url: 'https://site-b.example.com',
+      status: 'active',
+      platform: 'new-api',
+    }).returning().get();
+    const accountA = await db.insert(schema.accounts).values({
+      siteId: siteA.id,
+      username: 'account-a',
+      accessToken: 'access-a',
+      apiToken: 'sk-default-a',
+      status: 'active',
+    }).returning().get();
+    const accountB = await db.insert(schema.accounts).values({
+      siteId: siteB.id,
+      username: 'account-b',
+      accessToken: 'access-b',
+      apiToken: null,
+      status: 'active',
+    }).returning().get();
+    const tokenA = await db.insert(schema.accountTokens).values({
+      accountId: accountA.id,
+      name: 'token-a',
+      token: 'sk-token-a',
+      enabled: true,
+      isDefault: true,
+      valueStatus: 'ready',
+    }).returning().get();
+
+    const unknownSiteRes = await app.inject({
+      method: 'POST',
+      url: '/api/downstream-keys',
+      payload: {
+        name: 'bad-site',
+        key: 'sk-bad-site-001',
+        excludedSiteIds: [999999],
+      },
+    });
+    expect(unknownSiteRes.statusCode).toBe(400);
+
+    const mismatchedTokenRes = await app.inject({
+      method: 'POST',
+      url: '/api/downstream-keys',
+      payload: {
+        name: 'bad-token',
+        key: 'sk-bad-token-001',
+        excludedCredentialRefs: [
+          { kind: 'account_token', siteId: siteB.id, accountId: accountA.id, tokenId: tokenA.id },
+        ],
+      },
+    });
+    expect(mismatchedTokenRes.statusCode).toBe(400);
+
+    const missingDefaultApiKeyRes = await app.inject({
+      method: 'POST',
+      url: '/api/downstream-keys',
+      payload: {
+        name: 'bad-default',
+        key: 'sk-bad-default-001',
+        excludedCredentialRefs: [
+          { kind: 'default_api_key', siteId: siteB.id, accountId: accountB.id },
+        ],
+      },
+    });
+    expect(missingDefaultApiKeyRes.statusCode).toBe(400);
+  });
+
   it('supports batch enable/disable/reset/delete operations', async () => {
     const inserted = await db.insert(schema.downstreamApiKeys).values([
       {
@@ -644,7 +836,7 @@ describe('downstream api keys routes', () => {
     expect(updateRes.statusCode).toBe(400);
     expect(updateRes.json()).toMatchObject({
       success: false,
-      message: 'siteWeightMultipliers 包含不存在的站点: 999',
+      message: '策略中包含不存在的站点: 999',
     });
 
     const filteredSummaryRes = await app.inject({

@@ -6,24 +6,17 @@ import ChangeKeyModal from '../components/ChangeKeyModal.js';
 import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import ModernSelect from '../components/ModernSelect.js';
 import ResponsiveFormGrid from '../components/ResponsiveFormGrid.js';
-import DownstreamApiKeyModal from './settings/DownstreamApiKeyModal.js';
 import FactoryResetModal from './settings/FactoryResetModal.js';
 import ModelAvailabilityProbeConfirmModal from './settings/ModelAvailabilityProbeConfirmModal.js';
-import RouteSelectorModal from './settings/RouteSelectorModal.js';
 import UpdateCenterSection from './settings/UpdateCenterSection.js';
 import {
   applyRoutingProfilePreset,
   resolveRoutingProfilePreset,
   type RoutingWeights,
 } from './helpers/routingProfiles.js';
-import { fuzzyMatch } from './helpers/fuzzySearch.js';
 import { clearAuthSession } from '../authSession.js';
 import { clearAppInstallationState } from '../appLocalState.js';
 import { tr } from '../i18n.js';
-import {
-  isExactModelPattern,
-  resolveRouteTitle,
-} from './token-routes/utils.js';
 import { generateDownstreamSkKey } from './helpers/generateDownstreamSkKey.js';
 
 const PROXY_TOKEN_PREFIX = 'sk-';
@@ -86,42 +79,6 @@ type SystemProxyTestState =
   | { kind: 'success'; text: string }
   | { kind: 'error'; text: string }
   | null;
-
-type DownstreamApiKeyItem = {
-  id: number;
-  name: string;
-  key: string;
-  keyMasked: string;
-  description: string | null;
-  enabled: boolean;
-  expiresAt: string | null;
-  maxCost: number | null;
-  usedCost: number;
-  maxRequests: number | null;
-  usedRequests: number;
-  supportedModels: string[];
-  allowedRouteIds: number[];
-  lastUsedAt: string | null;
-};
-
-type DownstreamCreateForm = {
-  name: string;
-  key: string;
-  description: string;
-  maxCost: string;
-  maxRequests: string;
-  expiresAt: string;
-  selectedModels: string[];
-  selectedGroupRouteIds: number[];
-};
-
-type RouteSelectorItem = {
-  id: number;
-  modelPattern: string;
-  displayName?: string | null;
-  displayIcon?: string | null;
-  enabled: boolean;
-};
 
 type DatabaseMigrationSummary = {
   dialect: DbDialect;
@@ -300,15 +257,6 @@ export default function Settings() {
   const [migrationSummary, setMigrationSummary] = useState<DatabaseMigrationSummary | null>(null);
   const [runtimeDatabaseState, setRuntimeDatabaseState] = useState<RuntimeDatabaseState | null>(null);
   const [showChangeKey, setShowChangeKey] = useState(false);
-  const [downstreamKeys, setDownstreamKeys] = useState<DownstreamApiKeyItem[]>([]);
-  const [downstreamLoading, setDownstreamLoading] = useState(false);
-  const [downstreamSaving, setDownstreamSaving] = useState(false);
-  const [downstreamOps, setDownstreamOps] = useState<Record<number, boolean>>({});
-  const [editingDownstreamId, setEditingDownstreamId] = useState<number | null>(null);
-  const [downstreamModalOpen, setDownstreamModalOpen] = useState(false);
-  const downstreamModalPresence = useAnimatedVisibility(downstreamModalOpen, 220);
-  const [selectorOpen, setSelectorOpen] = useState(false);
-  const selectorModalPresence = useAnimatedVisibility(selectorOpen, 220);
   const [modelAvailabilityProbeConfirmOpen, setModelAvailabilityProbeConfirmOpen] = useState(false);
   const modelAvailabilityProbeConfirmPresence = useAnimatedVisibility(modelAvailabilityProbeConfirmOpen, 220);
   const [modelAvailabilityProbeConfirmationInput, setModelAvailabilityProbeConfirmationInput] = useState('');
@@ -317,55 +265,12 @@ export default function Settings() {
   const factoryResetPresence = useAnimatedVisibility(factoryResetOpen, 220);
   const [factoryResetting, setFactoryResetting] = useState(false);
   const [factoryResetSecondsLeft, setFactoryResetSecondsLeft] = useState(FACTORY_RESET_CONFIRM_SECONDS);
-  const [selectorLoading, setSelectorLoading] = useState(false);
-  const [selectorRoutes, setSelectorRoutes] = useState<RouteSelectorItem[]>([]);
-  const [selectorModelSearch, setSelectorModelSearch] = useState('');
-  const [selectorGroupSearch, setSelectorGroupSearch] = useState('');
-  const [downstreamCreate, setDownstreamCreate] = useState<DownstreamCreateForm>({
-    name: '',
-    key: '',
-    description: '',
-    maxCost: '',
-    maxRequests: '',
-    expiresAt: '',
-    selectedModels: [],
-    selectedGroupRouteIds: [],
-  });
   const toast = useToast();
 
   const activeRoutingProfile = useMemo(
     () => resolveRoutingProfilePreset(runtime.routingWeights),
     [runtime.routingWeights],
   );
-
-  const exactModelOptions = useMemo(() => (
-    selectorRoutes
-      .filter((route) => isExactModelPattern(route.modelPattern))
-      .map((route) => route.modelPattern.trim())
-      .filter((item, index, arr) => item.length > 0 && arr.indexOf(item) === index)
-      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
-  ), [selectorRoutes]);
-
-  const groupRouteOptions = useMemo(() => (
-    selectorRoutes
-      .filter((route) => !isExactModelPattern(route.modelPattern))
-      .sort((a, b) => resolveRouteTitle(a).localeCompare(resolveRouteTitle(b), undefined, { sensitivity: 'base' }))
-  ), [selectorRoutes]);
-
-  const filteredExactModelOptions = useMemo(() => {
-    const query = selectorModelSearch.trim();
-    if (!query) return exactModelOptions;
-    return exactModelOptions.filter((modelName) => fuzzyMatch(modelName, query));
-  }, [exactModelOptions, selectorModelSearch]);
-
-  const filteredGroupRouteOptions = useMemo(() => {
-    const query = selectorGroupSearch.trim();
-    if (!query) return groupRouteOptions;
-    return groupRouteOptions.filter((route) => {
-      const matchText = `${resolveRouteTitle(route)} ${route.modelPattern}`;
-      return fuzzyMatch(matchText, query);
-    });
-  }, [groupRouteOptions, selectorGroupSearch]);
 
   const generatedConnectionString = useMemo(() => (
     buildShorthandConnectionString(migrationDialect, shorthandConnection)
@@ -560,58 +465,12 @@ export default function Settings() {
       ? '已启用'
       : '已关闭';
 
-  const toDateTimeLocal = (isoString: string | null | undefined): string => {
-    if (!isoString) return '';
-    const ts = Date.parse(isoString);
-    if (!Number.isFinite(ts)) return '';
-    const date = new Date(ts);
-    const yyyy = date.getFullYear();
-    const mm = String(date.getMonth() + 1).padStart(2, '0');
-    const dd = String(date.getDate()).padStart(2, '0');
-    const hh = String(date.getHours()).padStart(2, '0');
-    const mi = String(date.getMinutes()).padStart(2, '0');
-    return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
-  };
-
-  const loadDownstreamKeys = async () => {
-    setDownstreamLoading(true);
-    try {
-      const res = await api.getDownstreamApiKeys();
-      const items = Array.isArray(res?.items) ? res.items : [];
-      setDownstreamKeys(items);
-    } catch (err: any) {
-      toast.error(err?.message || '加载下游 API Key 失败');
-    } finally {
-      setDownstreamLoading(false);
-    }
-  };
-
-  const loadRouteSelectorRoutes = async () => {
-    setSelectorLoading(true);
-    try {
-      const rows = await api.getRoutesLite();
-      setSelectorRoutes((Array.isArray(rows) ? rows : []).map((row: any) => ({
-        id: row.id,
-        modelPattern: row.modelPattern,
-        displayName: row.displayName,
-        displayIcon: row.displayIcon,
-        enabled: !!row.enabled,
-      })));
-    } catch (err: any) {
-      toast.error(err?.message || '加载路由列表失败');
-    } finally {
-      setSelectorLoading(false);
-    }
-  };
-
   const loadSettings = async () => {
     setLoading(true);
     try {
-      const [authInfo, runtimeInfo, downstreamInfo, routeRows, runtimeDatabaseInfo] = await Promise.all([
+      const [authInfo, runtimeInfo, runtimeDatabaseInfo] = await Promise.all([
         api.getAuthInfo(),
         api.getRuntimeSettings(),
-        api.getDownstreamApiKeys(),
-        api.getRoutesLite(),
         api.getRuntimeDatabaseConfig(),
       ]);
       setMaskedToken(authInfo.masked || '****');
@@ -677,14 +536,6 @@ export default function Settings() {
           ? runtimeInfo.adminIpAllowlist.join('\n')
           : '',
       );
-      setDownstreamKeys(Array.isArray(downstreamInfo?.items) ? downstreamInfo.items : []);
-      setSelectorRoutes((Array.isArray(routeRows) ? routeRows : []).map((row: any) => ({
-        id: row.id,
-        modelPattern: row.modelPattern,
-        displayName: row.displayName,
-        displayIcon: row.displayIcon,
-        enabled: !!row.enabled,
-      })));
       if (runtimeDatabaseInfo?.active?.dialect) {
         const preferredDialect = (runtimeDatabaseInfo?.saved?.dialect || runtimeDatabaseInfo.active.dialect) as DbDialect;
         setMigrationDialect(preferredDialect);
@@ -930,163 +781,6 @@ export default function Settings() {
     } finally {
       setSavingProxyFailureRules(false);
     }
-  };
-
-  const resetDownstreamForm = () => {
-    setEditingDownstreamId(null);
-    setDownstreamCreate({
-      name: '',
-      key: '',
-      description: '',
-      maxCost: '',
-      maxRequests: '',
-      expiresAt: '',
-      selectedModels: [],
-      selectedGroupRouteIds: [],
-    });
-  };
-
-  const openCreateDownstreamModal = () => {
-    resetDownstreamForm();
-    setDownstreamModalOpen(true);
-  };
-
-  const closeDownstreamModal = () => {
-    setDownstreamModalOpen(false);
-    resetDownstreamForm();
-  };
-
-  const closeSelectorModal = () => {
-    setSelectorOpen(false);
-    setSelectorModelSearch('');
-    setSelectorGroupSearch('');
-  };
-
-  const beginEditDownstream = (item: DownstreamApiKeyItem) => {
-    setEditingDownstreamId(item.id);
-    setDownstreamCreate({
-      name: item.name || '',
-      key: item.key || '',
-      description: item.description || '',
-      maxCost: item.maxCost === null || item.maxCost === undefined ? '' : String(item.maxCost),
-      maxRequests: item.maxRequests === null || item.maxRequests === undefined ? '' : String(item.maxRequests),
-      expiresAt: toDateTimeLocal(item.expiresAt),
-      selectedModels: Array.isArray(item.supportedModels)
-        ? [...new Set(item.supportedModels.map((model) => String(model).trim()).filter((model) => model.length > 0))]
-        : [],
-      selectedGroupRouteIds: Array.isArray(item.allowedRouteIds)
-        ? [...new Set(item.allowedRouteIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0).map((id) => Math.trunc(id)))]
-        : [],
-    });
-    setDownstreamModalOpen(true);
-  };
-
-  const saveDownstreamKey = async () => {
-    const name = downstreamCreate.name.trim();
-    const rawKey = downstreamCreate.key.trim();
-    if (!name) {
-      toast.info('Please enter a name');
-      return;
-    }
-    if (!rawKey) {
-      toast.info('请填写 API Key');
-      return;
-    }
-    if (!rawKey.startsWith(PROXY_TOKEN_PREFIX)) {
-      toast.info('API Key must start with sk-');
-      return;
-    }
-
-    setDownstreamSaving(true);
-    try {
-      const payload = {
-        name,
-        key: rawKey,
-        description: downstreamCreate.description.trim(),
-        expiresAt: downstreamCreate.expiresAt ? new Date(downstreamCreate.expiresAt).toISOString() : null,
-        maxCost: downstreamCreate.maxCost.trim() ? Number(downstreamCreate.maxCost.trim()) : null,
-        maxRequests: downstreamCreate.maxRequests.trim() ? Number(downstreamCreate.maxRequests.trim()) : null,
-        supportedModels: downstreamCreate.selectedModels,
-        allowedRouteIds: downstreamCreate.selectedGroupRouteIds,
-      };
-
-      if (editingDownstreamId) {
-        await api.updateDownstreamApiKey(editingDownstreamId, payload);
-        toast.success('Downstream API Key updated');
-      } else {
-        await api.createDownstreamApiKey(payload);
-        toast.success('Downstream API Key created');
-      }
-      setDownstreamModalOpen(false);
-      resetDownstreamForm();
-      await loadDownstreamKeys();
-    } catch (err: any) {
-      toast.error(err?.message || '保存下游 API Key 失败');
-    } finally {
-      setDownstreamSaving(false);
-    }
-  };
-
-  const toggleModelSelection = (modelName: string) => {
-    setDownstreamCreate((prev) => {
-      const exists = prev.selectedModels.includes(modelName);
-      return {
-        ...prev,
-        selectedModels: exists
-          ? prev.selectedModels.filter((item) => item !== modelName)
-          : [...prev.selectedModels, modelName],
-      };
-    });
-  };
-
-  const toggleGroupRouteSelection = (routeId: number) => {
-    setDownstreamCreate((prev) => {
-      const exists = prev.selectedGroupRouteIds.includes(routeId);
-      return {
-        ...prev,
-        selectedGroupRouteIds: exists
-          ? prev.selectedGroupRouteIds.filter((item) => item !== routeId)
-          : [...prev.selectedGroupRouteIds, routeId],
-      };
-    });
-  };
-
-  const runDownstreamOp = async (id: number, action: () => Promise<void>) => {
-    setDownstreamOps((prev) => ({ ...prev, [id]: true }));
-    try {
-      await action();
-    } finally {
-      setDownstreamOps((prev) => ({ ...prev, [id]: false }));
-    }
-  };
-
-  const toggleDownstreamEnabled = async (item: DownstreamApiKeyItem) => {
-    await runDownstreamOp(item.id, async () => {
-      await api.updateDownstreamApiKey(item.id, { enabled: !item.enabled });
-      await loadDownstreamKeys();
-      toast.success(item.enabled ? 'Disabled' : 'Enabled');
-    });
-  };
-
-  const resetDownstreamUsage = async (item: DownstreamApiKeyItem) => {
-    await runDownstreamOp(item.id, async () => {
-      await api.resetDownstreamApiKeyUsage(item.id);
-      await loadDownstreamKeys();
-      toast.success('Usage reset');
-    });
-  };
-
-  const deleteDownstreamKey = async (item: DownstreamApiKeyItem) => {
-    if (!window.confirm('Confirm delete API Key?')) return;
-    await runDownstreamOp(item.id, async () => {
-      await api.deleteDownstreamApiKey(item.id);
-      if (editingDownstreamId === item.id) {
-        setDownstreamModalOpen(false);
-        resetDownstreamForm();
-      }
-      await loadDownstreamKeys();
-      toast.success('Deleted');
-    });
   };
 
   const saveRouting = async () => {
@@ -2419,22 +2113,6 @@ export default function Settings() {
           </div>
         </div>
       </div>
-      <DownstreamApiKeyModal
-        presence={downstreamModalPresence}
-        editingDownstreamId={editingDownstreamId}
-        downstreamCreate={downstreamCreate}
-        downstreamSaving={downstreamSaving}
-        inputStyle={inputStyle}
-        onChange={(updater) => setDownstreamCreate((prev) => updater(prev))}
-        onOpenSelector={async () => {
-          if (selectorRoutes.length === 0) await loadRouteSelectorRoutes();
-          setSelectorModelSearch('');
-          setSelectorGroupSearch('');
-          setSelectorOpen(true);
-        }}
-        onClose={closeDownstreamModal}
-        onSave={saveDownstreamKey}
-      />
       <FactoryResetModal
         presence={factoryResetPresence}
         factoryResetting={factoryResetting}
@@ -2451,26 +2129,6 @@ export default function Settings() {
         onConfirmationInputChange={setModelAvailabilityProbeConfirmationInput}
         onClose={closeModelAvailabilityProbeConfirmModal}
         onConfirm={handleConfirmModelAvailabilityProbe}
-      />
-      <RouteSelectorModal
-        presence={selectorModalPresence}
-        loading={selectorLoading}
-        exactModelOptions={exactModelOptions}
-        filteredExactModelOptions={filteredExactModelOptions}
-        groupRouteOptions={groupRouteOptions}
-        filteredGroupRouteOptions={filteredGroupRouteOptions}
-        selectorModelSearch={selectorModelSearch}
-        selectorGroupSearch={selectorGroupSearch}
-        onSelectorModelSearchChange={setSelectorModelSearch}
-        onSelectorGroupSearchChange={setSelectorGroupSearch}
-        selection={{
-          selectedModels: downstreamCreate.selectedModels,
-          selectedGroupRouteIds: downstreamCreate.selectedGroupRouteIds,
-        }}
-        onToggleModelSelection={toggleModelSelection}
-        onToggleGroupRouteSelection={toggleGroupRouteSelection}
-        onClose={closeSelectorModal}
-        inputStyle={inputStyle}
       />
     </div>
   );
