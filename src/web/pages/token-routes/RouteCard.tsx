@@ -1,6 +1,8 @@
-import { Fragment, memo, useState, type CSSProperties } from 'react';
+import { Fragment, memo, useState, type CSSProperties, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import {
   DndContext,
+  DragOverlay,
   KeyboardSensor,
   PointerSensor,
   closestCenter,
@@ -101,16 +103,71 @@ type RouteCardProps = {
 function PriorityRailNewLayerRow({
   id,
   highlighted,
+  compact = false,
 }: {
   id: string;
   highlighted: boolean;
+  compact?: boolean;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id });
   const active = highlighted || isOver;
 
+  if (compact) {
+    return (
+      <div
+        ref={setNodeRef}
+        data-testid="route-priority-new-layer-target"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          minHeight: 34,
+          padding: '0 2px',
+        }}
+      >
+        <div
+          style={{
+            flex: 1,
+            borderTop: `1px dashed ${active ? 'var(--color-primary)' : 'var(--color-border)'}`,
+            opacity: active ? 1 : 0.7,
+            transition: 'border-color 0.16s ease, opacity 0.16s ease',
+          }}
+        />
+        <div
+          style={{
+            minWidth: 84,
+            padding: '5px 10px',
+            borderRadius: 999,
+            border: `1px dashed ${active ? 'var(--color-primary)' : 'var(--color-border)'}`,
+            background: active
+              ? 'color-mix(in srgb, var(--color-primary) 10%, var(--color-bg-card))'
+              : 'color-mix(in srgb, var(--color-bg-card) 96%, white 4%)',
+            color: active ? 'var(--color-primary)' : 'var(--color-text-muted)',
+            fontSize: 11,
+            fontWeight: 600,
+            textAlign: 'center',
+            lineHeight: 1.2,
+            transition: 'border-color 0.16s ease, background 0.16s ease, color 0.16s ease',
+          }}
+        >
+          {tr('放到新档位')}
+        </div>
+        <div
+          style={{
+            flex: 1,
+            borderTop: `1px dashed ${active ? 'var(--color-primary)' : 'var(--color-border)'}`,
+            opacity: active ? 1 : 0.7,
+            transition: 'border-color 0.16s ease, opacity 0.16s ease',
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div
       ref={setNodeRef}
+      data-testid="route-priority-new-layer-target"
       style={{
         display: 'grid',
         gridTemplateColumns: '86px minmax(0, 1fr)',
@@ -149,6 +206,98 @@ function PriorityRailNewLayerRow({
   );
 }
 
+function PriorityDragPreview({
+  channel,
+  displayPriority,
+  width,
+}: {
+  channel: RouteChannel;
+  displayPriority: number;
+  width?: number | null;
+}) {
+  const resolvedWidth = Number.isFinite(width ?? Number.NaN) ? width ?? undefined : undefined;
+  const effectiveTokenName = channel.token?.name || `account-${channel.accountId}`;
+
+  return (
+    <div
+      data-testid="route-channel-drag-overlay"
+      style={{
+        width: resolvedWidth,
+        height: '100%',
+        maxWidth: 'calc(100vw - 32px)',
+        boxSizing: 'border-box',
+        display: 'grid',
+        gridTemplateColumns: 'minmax(0, 1fr) auto',
+        gap: 10,
+        alignItems: 'center',
+        padding: '10px 12px',
+        borderRadius: 16,
+        border: '1px solid color-mix(in srgb, var(--color-info) 36%, var(--color-border-light))',
+        background: 'color-mix(in srgb, var(--color-bg-card) 80%, var(--color-info) 20%)',
+        boxShadow: '0 18px 34px rgba(15, 23, 42, 0.14)',
+        color: 'var(--color-text-primary)',
+        pointerEvents: 'none',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0, flexWrap: 'wrap' }}>
+        <span
+          className="badge"
+          style={{
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: 0.1,
+            ...buildPriorityRailNodeStyle(displayPriority, true),
+          }}
+        >
+          P{displayPriority}
+        </span>
+        <span style={{ fontWeight: 600, minWidth: 0 }}>
+          {channel.account?.username || `account-${channel.accountId}`}
+        </span>
+        <span className="badge badge-muted" style={{ fontSize: 10 }}>
+          {channel.site?.name || 'unknown'}
+        </span>
+        <span
+          className="badge"
+          style={{
+            fontSize: 10,
+            background: 'var(--color-info-soft)',
+            color: 'var(--color-info)',
+            maxWidth: 200,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          当前生效：{effectiveTokenName}
+        </span>
+        {channel.sourceModel ? (
+          <span className="badge badge-info" style={{ fontSize: 10 }}>
+            {channel.sourceModel}
+          </span>
+        ) : null}
+        {channel.manualOverride ? (
+          <span className="badge badge-warning" style={{ fontSize: 10 }}>
+            手动配置
+          </span>
+        ) : null}
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>
+        成功/失败 <span style={{ color: 'var(--color-success)', fontWeight: 600 }}>{channel.successCount || 0}</span>
+        <span style={{ color: 'var(--color-text-muted)', margin: '0 2px' }}>/</span>
+        <span style={{ color: 'var(--color-danger)', fontWeight: 600 }}>{channel.failCount || 0}</span>
+      </div>
+    </div>
+  );
+}
+
+function renderDragOverlayNode(node: ReactNode) {
+  if (typeof document === 'undefined' || !document.body) {
+    return node;
+  }
+  return createPortal(node, document.body);
+}
+
 type SortableChannelShellProps = {
   channel: RouteChannel;
   bucketIndex: number;
@@ -175,6 +324,8 @@ type SortableChannelShellProps = {
   railLabel: string;
   mobileRailLabel: string;
   railNodeStyle: CSSProperties;
+  showCompactRailHeader: boolean;
+  useDragOverlay: boolean;
 };
 
 function SortableChannelShell({
@@ -203,6 +354,8 @@ function SortableChannelShell({
   railLabel,
   mobileRailLabel,
   railNodeStyle,
+  showCompactRailHeader,
+  useDragOverlay,
 }: SortableChannelShellProps) {
   const {
     attributes,
@@ -236,6 +389,7 @@ function SortableChannelShell({
       data-testid="route-channel-shell"
       data-channel-id={channel.id}
       style={{
+        visibility: useDragOverlay && isDragging ? 'hidden' : undefined,
         transform: CSS.Translate.toString(translatedTransform),
         transition: shellTransition || undefined,
         zIndex: isDragging ? 10 : undefined,
@@ -247,7 +401,7 @@ function SortableChannelShell({
         alignItems: 'stretch',
       }}
     >
-      {compact && channelIndex === 0 ? (
+      {compact && showCompactRailHeader ? (
         <div
           className="route-priority-bucket-header"
           style={{
@@ -429,20 +583,30 @@ function RouteCardInner({
   const priorityBuckets = buildPriorityBuckets(channels || []);
   const priorityRailSections = buildPriorityRailSections(channels || []);
   const [activeDragChannelId, setActiveDragChannelId] = useState<number | null>(null);
+  const [activeDragRowWidth, setActiveDragRowWidth] = useState<number | null>(null);
+  const useDragOverlay = compact && detailPanel;
 
   const clearDragState = () => {
     setActiveDragChannelId(null);
+    setActiveDragRowWidth(null);
   };
 
   const handleDragStart = (event: DragStartEvent) => {
     const nextId = Number(event.active.id);
     setActiveDragChannelId(Number.isFinite(nextId) ? nextId : null);
+    setActiveDragRowWidth(event.active.rect?.current?.initial?.width ?? null);
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
     onChannelDragEnd(route.id, event);
     clearDragState();
   };
+  const activeDragChannel = activeDragChannelId == null
+    ? null
+    : (channels || []).find((channel) => channel.id === activeDragChannelId) || null;
+  const activeDragBucketIndex = activeDragChannel == null
+    ? -1
+    : priorityBuckets.findIndex((bucket) => bucket.channels.some((channel) => channel.id === activeDragChannel.id));
   const renderClearCooldownButton = () => {
     if (readOnlyRoute) return null;
     return (
@@ -949,10 +1113,39 @@ function RouteCardInner({
                   const railLabel = `P${bucketIndex} · ${bucket.channels.length}`;
                   const mobileRailLabel = `${railLabel} ${tr('通道')}`;
                   const railNodeStyle = buildPriorityRailNodeStyle(bucketIndex, false);
-                  const showNewLayerTarget = !compact && activeDragChannelId != null && !readOnlyRoute;
+                  const showStandaloneCompactRailHeader = compact && detailPanel;
+                  const showNewLayerTarget = activeDragChannelId != null
+                    && !readOnlyRoute
+                    && (!compact || detailPanel);
 
                   return (
                     <Fragment key={`${route.id}-priority-bucket-${bucket.priority}-${bucketIndex}`}>
+                      {showStandaloneCompactRailHeader ? (
+                        <div
+                          data-testid="route-priority-bucket-header"
+                          className="route-priority-bucket-header"
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 6,
+                            flexWrap: 'wrap',
+                            padding: '0 2px',
+                            fontSize: 11,
+                            color: 'var(--color-text-secondary)',
+                          }}
+                        >
+                          <span
+                            style={{
+                              fontSize: 11,
+                              fontWeight: 600,
+                              color: 'var(--color-text-secondary)',
+                            }}
+                          >
+                            {mobileRailLabel}
+                          </span>
+                        </div>
+                      ) : null}
+
                       {bucket.channels.map((channel, channelIndex) => {
                         return (
                           <SortableChannelShell
@@ -982,6 +1175,8 @@ function RouteCardInner({
                             railLabel={railSection ? `P${bucketIndex} · ${railSection.channelCount}` : railLabel}
                             mobileRailLabel={mobileRailLabel}
                             railNodeStyle={railNodeStyle}
+                            showCompactRailHeader={!showStandaloneCompactRailHeader && channelIndex === 0}
+                            useDragOverlay={useDragOverlay}
                           />
                         );
                       })}
@@ -990,6 +1185,7 @@ function RouteCardInner({
                         <PriorityRailNewLayerRow
                           id={createPriorityRailNewLayerId(bucket.priority)}
                           highlighted={false}
+                          compact={compact}
                         />
                       ) : null}
                     </Fragment>
@@ -997,6 +1193,17 @@ function RouteCardInner({
                 })}
               </div>
             </SortableContext>
+            {useDragOverlay ? renderDragOverlayNode(
+              <DragOverlay>
+                {activeDragChannel ? (
+                  <PriorityDragPreview
+                    channel={activeDragChannel}
+                    displayPriority={Math.max(0, activeDragBucketIndex)}
+                    width={activeDragRowWidth}
+                  />
+                ) : null}
+              </DragOverlay>,
+            ) : null}
           </DndContext>
         </div>
       ) : (

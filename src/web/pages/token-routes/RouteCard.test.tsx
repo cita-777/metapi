@@ -390,6 +390,130 @@ describe('RouteCard', () => {
     expect(sortableContext.props.strategy).toBe(translateOnlyRectSortingStrategy);
   });
 
+  it('shows a new-layer drop target while dragging inside compact desktop detail panels', () => {
+    const root = create(
+      <RouteCard
+        route={buildRoute()}
+        brand={null}
+        expanded
+        compact
+        detailPanel
+        onToggleExpand={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggleEnabled={vi.fn()}
+        onClearCooldown={vi.fn()}
+        clearingCooldown={false}
+        onRoutingStrategyChange={vi.fn()}
+        updatingRoutingStrategy={false}
+        channels={[
+          buildChannel({ id: 11, priority: 0 }),
+          buildChannel({ id: 12, accountId: 102, tokenId: 1002, priority: 0 }),
+        ]}
+        loadingChannels={false}
+        routeDecision={null}
+        loadingDecision={false}
+        candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
+        channelTokenDraft={{}}
+        updatingChannel={{}}
+        savingPriority={false}
+        onTokenDraftChange={vi.fn()}
+        onSaveToken={vi.fn()}
+        onDeleteChannel={vi.fn()}
+        onToggleChannelEnabled={vi.fn()}
+        onChannelDragEnd={vi.fn()}
+        missingTokenSiteItems={[]}
+        missingTokenGroupItems={[]}
+        onCreateTokenForMissing={vi.fn()}
+        onAddChannel={vi.fn()}
+        onSiteBlockModel={vi.fn()}
+        expandedSourceGroupMap={{}}
+        onToggleSourceGroup={vi.fn()}
+      />,
+    );
+
+    const dndContext = root.root.find((node) => (
+      typeof node.props.onDragStart === 'function'
+      && typeof node.props.onDragEnd === 'function'
+      && typeof node.props.onDragCancel === 'function'
+    ));
+
+    act(() => {
+      dndContext.props.onDragStart?.({
+        active: { id: 12 },
+      });
+    });
+
+    expect(collectText(root.root)).toContain('放到新档位');
+
+    const newLayerTarget = root.root.find((node) => (
+      node.type === 'div'
+      && node.props['data-testid'] === 'route-priority-new-layer-target'
+    ));
+    expect(newLayerTarget.props.style.display).toBe('flex');
+    expect(newLayerTarget.props.style.minHeight).toBe(34);
+  });
+
+  it('keeps compact desktop detail bucket headers outside draggable channel shells', () => {
+    const root = create(
+      <RouteCard
+        route={buildRoute()}
+        brand={null}
+        expanded
+        compact
+        detailPanel
+        onToggleExpand={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggleEnabled={vi.fn()}
+        onClearCooldown={vi.fn()}
+        clearingCooldown={false}
+        onRoutingStrategyChange={vi.fn()}
+        updatingRoutingStrategy={false}
+        channels={[
+          buildChannel({ id: 11, priority: 0 }),
+          buildChannel({ id: 12, accountId: 102, tokenId: 1002, priority: 0 }),
+          buildChannel({ id: 21, accountId: 103, tokenId: 1003, priority: 1 }),
+        ]}
+        loadingChannels={false}
+        routeDecision={null}
+        loadingDecision={false}
+        candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
+        channelTokenDraft={{}}
+        updatingChannel={{}}
+        savingPriority={false}
+        onTokenDraftChange={vi.fn()}
+        onSaveToken={vi.fn()}
+        onDeleteChannel={vi.fn()}
+        onToggleChannelEnabled={vi.fn()}
+        onChannelDragEnd={vi.fn()}
+        missingTokenSiteItems={[]}
+        missingTokenGroupItems={[]}
+        onCreateTokenForMissing={vi.fn()}
+        onAddChannel={vi.fn()}
+        onSiteBlockModel={vi.fn()}
+        expandedSourceGroupMap={{}}
+        onToggleSourceGroup={vi.fn()}
+      />,
+    );
+
+    const bucketHeaders = root.root.findAll((node) => (
+      node.type === 'div'
+      && node.props['data-testid'] === 'route-priority-bucket-header'
+    ));
+    const shells = root.root.findAll((node) => (
+      node.type === 'div'
+      && node.props['data-testid'] === 'route-channel-shell'
+    ));
+
+    expect(bucketHeaders.map((node) => collectText(node))).toEqual([
+      'P0 · 2 通道',
+      'P1 · 1 通道',
+    ]);
+    expect(shells[0] ? collectText(shells[0]) : '').not.toContain('P0 · 2 通道');
+    expect(shells[2] ? collectText(shells[2]) : '').not.toContain('P1 · 1 通道');
+  });
+
   it('renders desktop channel rows in sortable shell order within a single sortable list', () => {
     const root = create(
       <RouteCard
