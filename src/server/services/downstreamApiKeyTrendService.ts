@@ -20,6 +20,7 @@ export type DownstreamKeyTrendBucket = {
 };
 
 type DownstreamTrendLogRow = {
+  id: number;
   createdAt: StoredUtcDateTimeInput;
   status: string | null;
   totalTokens: number | null;
@@ -42,6 +43,11 @@ type TimeZoneDateTimeParts = {
   hour: number;
   minute: number;
   second: number;
+};
+
+type DownstreamTrendCursor = {
+  createdAt: StoredUtcDateTimeInput;
+  id: number;
 };
 
 const ALL_RANGE_CHUNK_SIZE = 5_000;
@@ -205,6 +211,13 @@ function finalizeTrendBuckets(accumulator: Map<string, DownstreamTrendBucketAccu
     }));
 }
 
+function buildTrendCursorClause(cursor: DownstreamTrendCursor): SQL {
+  return sql`(
+    ${schema.proxyLogs.createdAt} > ${cursor.createdAt}
+    or (${schema.proxyLogs.createdAt} = ${cursor.createdAt} and ${schema.proxyLogs.id} > ${cursor.id})
+  )`;
+}
+
 async function readAllRangeTrendBuckets(
   downstreamApiKeyId: number,
   bucketSeconds: number,
@@ -212,15 +225,19 @@ async function readAllRangeTrendBuckets(
   sinceUtc: string | null,
 ): Promise<DownstreamKeyTrendBucket[]> {
   const accumulator = new Map<string, DownstreamTrendBucketAccumulator>();
-  let offset = 0;
+  let cursor: DownstreamTrendCursor | null = null;
 
   for (;;) {
     const whereClauses: SQL[] = [eq(schema.proxyLogs.downstreamApiKeyId, downstreamApiKeyId)];
     if (sinceUtc) {
       whereClauses.push(sql`${schema.proxyLogs.createdAt} >= ${sinceUtc}`);
     }
+    if (cursor) {
+      whereClauses.push(buildTrendCursorClause(cursor));
+    }
 
     const rows = await db.select({
+      id: schema.proxyLogs.id,
       createdAt: schema.proxyLogs.createdAt,
       status: schema.proxyLogs.status,
       totalTokens: schema.proxyLogs.totalTokens,
@@ -230,13 +247,16 @@ async function readAllRangeTrendBuckets(
       .where(and(...whereClauses))
       .orderBy(asc(schema.proxyLogs.createdAt), asc(schema.proxyLogs.id))
       .limit(ALL_RANGE_CHUNK_SIZE)
-      .offset(offset)
       .all();
 
     if (rows.length <= 0) break;
     accumulateTrendRows(accumulator, rows, bucketSeconds, timeZone);
-    if (rows.length < ALL_RANGE_CHUNK_SIZE) break;
-    offset += rows.length;
+    const lastRow = rows.at(-1);
+    if (rows.length < ALL_RANGE_CHUNK_SIZE || !lastRow) break;
+    cursor = {
+      createdAt: lastRow.createdAt,
+      id: lastRow.id,
+    };
   }
 
   return finalizeTrendBuckets(accumulator);

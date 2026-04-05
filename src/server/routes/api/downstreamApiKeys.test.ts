@@ -41,11 +41,11 @@ describe('downstream api keys routes', () => {
   });
 
   it('builds postgres trend buckets by casting text timestamps before date_trunc', async () => {
-    const routesModule = await import('./downstreamApiKeys.js') as Record<string, any>;
+    const trendServiceModule = await import('../../services/downstreamApiKeyTrendService.js') as Record<string, any>;
 
-    expect(typeof routesModule.buildBucketTsExpressionForDialect).toBe('function');
+    expect(typeof trendServiceModule.buildBucketTsExpressionForDialect).toBe('function');
 
-    const expression = routesModule.buildBucketTsExpressionForDialect('postgres', schema.proxyLogs.createdAt, 3600);
+    const expression = trendServiceModule.buildBucketTsExpressionForDialect('postgres', schema.proxyLogs.createdAt, 3600);
     const rendered = new PgDialect().sqlToQuery(expression).sql;
 
     expect(rendered).toContain('date_trunc');

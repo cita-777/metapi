@@ -12,7 +12,6 @@ import {
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import type { DownstreamExcludedCredentialRef } from '../../services/downstreamPolicyTypes.js';
 import {
-  buildBucketTsExpressionForDialect,
   readDownstreamApiKeyTrendBuckets,
   resolveDownstreamTrendBucketSeconds,
   resolveDownstreamTrendRangeSinceUtc,
@@ -22,8 +21,6 @@ import {
   parseDownstreamApiKeyBatchPayload,
   parseDownstreamApiKeyPayload,
 } from '../../contracts/downstreamApiKeyRoutePayloads.js';
-
-export { buildBucketTsExpressionForDialect };
 
 function parseRouteId(raw: string): number | null {
   const id = Number.parseInt(raw, 10);
