@@ -259,6 +259,48 @@ describe('Sub2ApiAdapter', () => {
     expect(models).toEqual(['gpt-4o', 'claude-3-opus']);
   });
 
+  it('fetches gemini models via /v1beta/models when ai base url already targets gemini endpoint', async () => {
+    await startServer((req, res) => {
+      if (req.url === '/v1beta/models') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          models: [
+            { name: 'models/gemini-2.5-flash' },
+            { name: 'models/gemini-2.5-pro' },
+          ],
+        }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    const models = await adapter.getModels(`${baseUrl}/v1beta`, 'gemini-key');
+    expect(models).toEqual(['gemini-2.5-flash', 'gemini-2.5-pro']);
+  });
+
+  it('falls back to /v1beta/models when openai-compatible model endpoints are unavailable', async () => {
+    await startServer((req, res) => {
+      if (req.url === '/v1/models' || req.url === '/api/v1/models') {
+        res.writeHead(404).end();
+        return;
+      }
+      if (req.url === '/v1beta/models') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          models: [
+            { name: 'models/gemini-2.5-flash-lite' },
+            { name: 'models/gemini-3-pro-preview' },
+          ],
+        }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    const models = await adapter.getModels(baseUrl, 'gemini-key');
+    expect(models).toEqual(['gemini-2.5-flash-lite', 'gemini-3-pro-preview']);
+  });
+
   it('fetches models via api key discovered from /api/v1/keys when JWT cannot call /v1/models directly', async () => {
     await startServer((req, res) => {
       const auth = req.headers.authorization || '';
@@ -297,6 +339,50 @@ describe('Sub2ApiAdapter', () => {
 
     const models = await adapter.getModels(baseUrl, 'jwt-token');
     expect(models).toEqual(['gpt-4o-mini', 'claude-3-5-sonnet']);
+  });
+
+  it('discovers an api key for gemini /v1beta/models when session JWT cannot call the endpoint directly', async () => {
+    await startServer((req, res) => {
+      const auth = req.headers.authorization || '';
+      if (req.url === '/v1beta/models' && auth === 'Bearer jwt-token') {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          error: {
+            code: 401,
+            message: 'API key is required',
+            status: 'UNAUTHENTICATED',
+          },
+        }));
+        return;
+      }
+      if (req.url === '/api/v1/keys?page=1&page_size=100' && auth === 'Bearer jwt-token') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 0,
+          message: 'success',
+          data: {
+            items: [
+              { id: 1, key: 'sk-sub2-gemini', name: 'gemini', status: 'active' },
+            ],
+          },
+        }));
+        return;
+      }
+      if (req.url === '/v1beta/models' && auth === 'Bearer sk-sub2-gemini') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          models: [
+            { name: 'models/gemini-2.5-flash' },
+            { name: 'models/gemini-3.1-pro-preview' },
+          ],
+        }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    const models = await adapter.getModels(`${baseUrl}/v1beta`, 'jwt-token');
+    expect(models).toEqual(['gemini-2.5-flash', 'gemini-3.1-pro-preview']);
   });
 
   it('handles non-zero code as error in /api/v1/auth/me', async () => {

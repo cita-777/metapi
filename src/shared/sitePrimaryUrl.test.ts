@@ -3,6 +3,42 @@ import { describe, expect, it } from 'vitest';
 import { analyzePrimarySiteUrl } from './sitePrimaryUrl.js';
 
 describe('sitePrimaryUrl', () => {
+  it('returns unchanged for empty, nullish, and invalid inputs', () => {
+    expect(analyzePrimarySiteUrl('')).toMatchObject({
+      canonicalUrl: '',
+      persistedUrl: '',
+      action: 'unchanged',
+      matchedPath: '',
+    });
+    expect(analyzePrimarySiteUrl(null as unknown as string)).toMatchObject({
+      canonicalUrl: '',
+      persistedUrl: '',
+      action: 'unchanged',
+      matchedPath: '',
+    });
+    expect(analyzePrimarySiteUrl(undefined as unknown as string)).toMatchObject({
+      canonicalUrl: '',
+      persistedUrl: '',
+      action: 'unchanged',
+      matchedPath: '',
+    });
+    expect(analyzePrimarySiteUrl(' not a valid url/// ')).toMatchObject({
+      canonicalUrl: 'not a valid url',
+      persistedUrl: 'not a valid url',
+      action: 'unchanged',
+      matchedPath: '',
+    });
+  });
+
+  it('returns unchanged for root-only urls', () => {
+    expect(analyzePrimarySiteUrl('https://example.com/')).toMatchObject({
+      canonicalUrl: 'https://example.com',
+      persistedUrl: 'https://example.com',
+      action: 'unchanged',
+      matchedPath: '/',
+    });
+  });
+
   it('auto-strips known non-api request suffixes to the host root', () => {
     expect(analyzePrimarySiteUrl('https://api.openai.com/v1/messages?trace=1#frag')).toMatchObject({
       canonicalUrl: 'https://api.openai.com/v1/messages',

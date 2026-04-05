@@ -436,10 +436,61 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
     })();
 
     const models = rawModels
-      .map((item: any) => (typeof item === 'string' ? item : item?.id))
+      .map((item: any) => (typeof item === 'string' ? item : item?.id ?? item?.name))
       .map((value: unknown) => String(value || '').trim())
+      .map((value: string) => value.replace(/^models\//i, ''))
       .filter(Boolean);
     return Array.from(new Set(models));
+  }
+
+  private resolveModelEndpoints(baseUrl: string): string[] {
+    const normalizedBase = normalizeBaseUrl(baseUrl);
+    if (!normalizedBase) return [];
+    if (/\/models$/i.test(normalizedBase)) return [normalizedBase];
+    if (/\/(?:antigravity\/)?v\d+(?:\.\d+)?(?:beta)?$/i.test(normalizedBase)) {
+      return [`${normalizedBase}/models`];
+    }
+    if (/\/antigravity$/i.test(normalizedBase)) {
+      return [
+        `${normalizedBase}/v1/models`,
+        `${normalizedBase}/v1beta/models`,
+      ];
+    }
+    return [
+      `${normalizedBase}/v1/models`,
+      `${normalizedBase}/api/v1/models`,
+      `${normalizedBase}/v1beta/models`,
+      `${normalizedBase}/antigravity/v1beta/models`,
+    ];
+  }
+
+  private resolveManagementBaseUrl(baseUrl: string): string {
+    let normalizedBase = normalizeBaseUrl(baseUrl);
+    if (!normalizedBase) return normalizedBase;
+
+    const suffixes = [
+      '/models',
+      '/antigravity/v1beta',
+      '/antigravity/v1',
+      '/api/v1',
+      '/v1beta',
+      '/v1',
+    ];
+
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const suffix of suffixes) {
+        if (!normalizedBase.toLowerCase().endsWith(suffix)) continue;
+        const trimmed = normalizeBaseUrl(normalizedBase.slice(0, -suffix.length));
+        if (!trimmed || trimmed === normalizedBase) continue;
+        normalizedBase = trimmed;
+        changed = true;
+        break;
+      }
+    }
+
+    return normalizedBase;
   }
 
   private async listApiKeys(baseUrl: string, accessToken: string): Promise<Array<{ id: number; key: string; name: string; enabled: boolean; tokenGroup: string | null }>> {
@@ -467,10 +518,9 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
     const authToken = this.normalizeTokenKeyForCompare(token);
     if (!authToken) return [];
 
-    const endpoints = ['/v1/models', '/api/v1/models'];
-    for (const endpoint of endpoints) {
+    for (const url of this.resolveModelEndpoints(baseUrl)) {
       try {
-        const res = await this.fetchJson<any>(`${baseUrl}${endpoint}`, {
+        const res = await this.fetchJson<any>(url, {
           headers: { Authorization: `Bearer ${authToken}` },
         });
         const models = this.extractModelIds(res);
@@ -679,11 +729,12 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
   // --- Models: Standard OpenAI-compatible endpoint ---
   async getModels(baseUrl: string, apiToken: string): Promise<string[]> {
     const normalizedBase = normalizeBaseUrl(baseUrl);
+    const managementBase = this.resolveManagementBaseUrl(normalizedBase);
     const directModels = await this.fetchModelsByToken(normalizedBase, apiToken);
     if (directModels.length > 0) return directModels;
 
     // Session JWT cannot access /v1/models directly; discover a user key first.
-    const discoveredApiToken = await this.getApiToken(normalizedBase, apiToken);
+    const discoveredApiToken = await this.getApiToken(managementBase, apiToken);
     if (!discoveredApiToken) return [];
     if (this.normalizeTokenKeyForCompare(discoveredApiToken) === this.normalizeTokenKeyForCompare(apiToken)) {
       return [];

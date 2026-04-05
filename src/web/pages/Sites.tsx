@@ -290,6 +290,11 @@ export default function Sites() {
     [selectedInitializationPresetId],
   );
   const primarySiteUrlAnalysis = useMemo(() => analyzePrimarySiteUrl(form.url), [form.url]);
+  const latestPrimarySiteUrlRef = useRef(form.url);
+
+  useEffect(() => {
+    latestPrimarySiteUrlRef.current = form.url;
+  }, [form.url]);
 
   const disabledModelSet = useMemo(() => new Set(disabledModels), [disabledModels]);
 
@@ -694,20 +699,24 @@ export default function Sites() {
   };
 
   const handleDetect = async () => {
-    if (!form.url.trim()) {
+    const requestedUrl = form.url.trim();
+    if (!requestedUrl) {
       toast.error('请先输入 URL');
       return;
     }
-    const currentPrimarySiteUrl = analyzePrimarySiteUrl(form.url);
+    const requestedPrimarySiteUrl = analyzePrimarySiteUrl(requestedUrl);
     setDetecting(true);
     try {
-      const result = await api.detectSite(form.url.trim());
+      const result = await api.detectSite(requestedUrl);
+      if (latestPrimarySiteUrlRef.current.trim() !== requestedUrl) {
+        return;
+      }
       if (result?.platform) {
         const detectedPreset = getSiteInitializationPreset(result?.initializationPresetId);
         setForm((prev) => ({
           ...prev,
           platform: result.platform,
-          url: currentPrimarySiteUrl.action === 'auto_strip_known_api_suffix'
+          url: requestedPrimarySiteUrl.action === 'auto_strip_known_api_suffix'
             && typeof result?.url === 'string'
             && result.url.trim()
             ? result.url.trim()
@@ -720,7 +729,7 @@ export default function Sites() {
           return current;
         });
         if (
-          currentPrimarySiteUrl.action === 'auto_strip_known_api_suffix'
+          requestedPrimarySiteUrl.action === 'auto_strip_known_api_suffix'
           && typeof result?.url === 'string'
           && result.url.trim()
         ) {

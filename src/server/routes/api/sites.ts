@@ -520,7 +520,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     const existingSites = await db.select().from(schema.sites).all();
     const maxSortOrder = existingSites.reduce((max, site) => Math.max(max, site.sortOrder || 0), -1);
     const analyzedPrimarySiteUrl = analyzePrimarySiteUrl(url);
-    const canonicalUrl = analyzedPrimarySiteUrl.persistedUrl || normalizeCanonicalSiteUrl(url);
+    const canonicalUrl = analyzedPrimarySiteUrl.persistedUrl;
     const detectionUrl = analyzedPrimarySiteUrl.canonicalUrl || canonicalUrl;
     const canonicalPlatform = normalizeSitePlatform(platform);
     let detectedPlatform = canonicalPlatform;
