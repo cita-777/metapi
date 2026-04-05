@@ -1,5 +1,4 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { RateLimiterMemory, RateLimiterRes } from 'rate-limiter-flexible';
 
 type RateLimitOptions = {
   bucket: string;
@@ -8,8 +7,13 @@ type RateLimitOptions = {
   message?: string;
 };
 
+type RateLimitEntry = {
+  count: number;
+  resetAt: number;
+};
+
 const DEFAULT_MESSAGE = '请求过于频繁，请稍后再试';
-let rateLimiterGeneration = 0;
+const rateLimitStore = new Map<string, RateLimitEntry>();
 
 function normalizeIp(rawIp: string | null | undefined): string {
   const ip = (rawIp || '').trim();
@@ -19,61 +23,62 @@ function normalizeIp(rawIp: string | null | undefined): string {
   return ip;
 }
 
-export function resetRequestRateLimitStore(): void {
-  rateLimiterGeneration += 1;
-}
-
-type RateLimitGuard = ((request: FastifyRequest, reply: FastifyReply) => Promise<void>) & {
-  __metapiLimiter?: RateLimiterMemory;
-  __metapiLimiterGeneration?: number;
-};
-
-function buildRateLimiter(options: RateLimitOptions): RateLimiterMemory {
-  return new RateLimiterMemory({
-    keyPrefix: options.bucket,
-    points: Math.max(1, Math.trunc(options.max)),
-    duration: Math.max(1, Math.ceil(options.windowMs / 1000)),
-  });
-}
-
-function getGuardLimiter(guard: RateLimitGuard, options: RateLimitOptions): RateLimiterMemory {
-  if (!guard.__metapiLimiter || guard.__metapiLimiterGeneration !== rateLimiterGeneration) {
-    guard.__metapiLimiter = buildRateLimiter(options);
-    guard.__metapiLimiterGeneration = rateLimiterGeneration;
+function extractClientIp(request: FastifyRequest): string {
+  const forwarded = request.headers['x-forwarded-for'];
+  if (Array.isArray(forwarded)) {
+    const first = forwarded.find((value) => typeof value === 'string' && value.trim().length > 0);
+    if (first) return normalizeIp(first.split(',')[0]);
   }
-  return guard.__metapiLimiter;
+
+  if (typeof forwarded === 'string' && forwarded.trim().length > 0) {
+    return normalizeIp(forwarded.split(',')[0]);
+  }
+
+  return normalizeIp(request.ip);
+}
+
+function getRateLimitKey(bucket: string, request: FastifyRequest): string {
+  return `${bucket}:${extractClientIp(request)}`;
+}
+
+function pruneExpiredEntries(nowMs: number): void {
+  for (const [key, entry] of rateLimitStore.entries()) {
+    if (entry.resetAt > nowMs) continue;
+    rateLimitStore.delete(key);
+  }
+}
+
+export function resetRequestRateLimitStore(): void {
+  rateLimitStore.clear();
 }
 
 export function createRateLimitGuard(options: RateLimitOptions) {
   const message = options.message || DEFAULT_MESSAGE;
-  const rateLimitGuard: RateLimitGuard = async (request, reply) => {
-    const limiter = getGuardLimiter(rateLimitGuard, options);
-    const forwarded = request.headers['x-forwarded-for'];
-    let key = request.ip;
-    if (Array.isArray(forwarded)) {
-      const first = forwarded.find((value) => typeof value === 'string' && value.trim().length > 0);
-      if (first) {
-        key = first.split(',')[0] || key;
-      }
-    } else if (typeof forwarded === 'string' && forwarded.trim().length > 0) {
-      key = forwarded.split(',')[0] || key;
-    }
-    key = normalizeIp(key);
+  return async function rateLimitGuard(request: FastifyRequest, reply: FastifyReply) {
+    const nowMs = Date.now();
+    pruneExpiredEntries(nowMs);
 
-    try {
-      await limiter.consume(key);
-    } catch (error) {
-      const retryState = error instanceof RateLimiterRes ? error : null;
-      const retryAfterSec = Math.max(
-        1,
-        Math.ceil((retryState?.msBeforeNext ?? options.windowMs) / 1000),
-      );
+    const key = getRateLimitKey(options.bucket, request);
+    const current = rateLimitStore.get(key);
+
+    if (!current || current.resetAt <= nowMs) {
+      rateLimitStore.set(key, {
+        count: 1,
+        resetAt: nowMs + options.windowMs,
+      });
+      return;
+    }
+
+    if (current.count >= options.max) {
+      const retryAfterSec = Math.max(1, Math.ceil((current.resetAt - nowMs) / 1000));
       reply
         .code(429)
         .header('retry-after', String(retryAfterSec))
         .send({ success: false, message });
+      return;
     }
-  };
 
-  return rateLimitGuard;
+    current.count += 1;
+    rateLimitStore.set(key, current);
+  };
 }

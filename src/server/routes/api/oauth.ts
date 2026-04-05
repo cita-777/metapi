@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { RateLimiterMemory, RateLimiterRes } from 'rate-limiter-flexible';
 import { createRateLimitGuard } from '../../middleware/requestRateLimit.js';
 import {
   deleteOauthConnection,
@@ -56,6 +57,12 @@ const limitOauthConnectionMutate = createRateLimitGuard({
   bucket: 'oauth-connection-mutate',
   max: 20,
   windowMs: 60_000,
+});
+
+const oauthSensitiveRouteLimiter = new RateLimiterMemory({
+  keyPrefix: 'oauth-connection-sensitive',
+  points: 20,
+  duration: 60,
 });
 
 const limitOauthCallback = createRateLimitGuard({
@@ -298,6 +305,14 @@ export async function oauthRoutes(app: FastifyInstance) {
     '/api/oauth/connections/quota/refresh-batch',
     { preHandler: [limitOauthConnectionMutate] },
     async (request, reply) => {
+      try {
+        await oauthSensitiveRouteLimiter.consume(request.ip);
+      } catch (error) {
+        const retryState = error instanceof RateLimiterRes ? error : null;
+        const retryAfterSec = Math.max(1, Math.ceil((retryState?.msBeforeNext ?? 60_000) / 1000));
+        return reply.code(429).header('retry-after', String(retryAfterSec))
+          .send({ message: '请求过于频繁，请稍后再试' });
+      }
       const parsedBody = parseOauthQuotaBatchRefreshPayload(request.body);
       if (!parsedBody.success) {
         return reply.code(400).send({ message: parsedBody.error });
@@ -314,6 +329,14 @@ export async function oauthRoutes(app: FastifyInstance) {
     '/api/oauth/import',
     { preHandler: [limitOauthConnectionMutate] },
     async (request, reply) => {
+      try {
+        await oauthSensitiveRouteLimiter.consume(request.ip);
+      } catch (error) {
+        const retryState = error instanceof RateLimiterRes ? error : null;
+        const retryAfterSec = Math.max(1, Math.ceil((retryState?.msBeforeNext ?? 60_000) / 1000));
+        return reply.code(429).header('retry-after', String(retryAfterSec))
+          .send({ message: '请求过于频繁，请稍后再试' });
+      }
       const parsedBody = parseOauthImportPayload(request.body);
       if (!parsedBody.success) {
         return reply.code(400).send({ message: parsedBody.error });
