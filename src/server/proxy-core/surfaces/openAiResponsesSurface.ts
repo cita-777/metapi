@@ -14,6 +14,7 @@ import {
 import {
   buildUpstreamEndpointRequest,
   resolveUpstreamEndpointCandidates,
+  type UpstreamEndpoint,
 } from '../../services/upstreamEndpointRuntime.js';
 import {
   getUpstreamEndpointRuntimeStateSnapshot,
@@ -415,7 +416,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
       const responsesConversationFileSummary = summarizeConversationFileInputsInResponsesBody(normalizedResponsesBody);
       const requiresNativeResponsesFileUrl = responsesConversationFileSummary.hasRemoteDocumentUrl
         || carriesResponsesFileUrlInput(normalizedResponsesBody.input);
-      const endpointCandidates = isCompactRequest
+      const endpointCandidates: UpstreamEndpoint[] = isCompactRequest
         ? ['responses']
         : await resolveUpstreamEndpointCandidates(
           {
