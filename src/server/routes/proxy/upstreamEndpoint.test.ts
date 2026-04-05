@@ -744,6 +744,45 @@ describe('buildUpstreamEndpointRequest', () => {
     expect(request.headers['x-test-header']).toBeUndefined();
   });
 
+  it('preserves codex compatibility headers while stripping browser and ip passthrough headers', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'responses',
+      modelName: 'gpt-5.2-codex',
+      stream: false,
+      tokenValue: 'oauth-access-token',
+      oauthProvider: 'codex',
+      sitePlatform: 'codex',
+      siteUrl: 'https://chatgpt.com/backend-api/codex',
+      openaiBody: {
+        model: 'gpt-5.2-codex',
+        input: 'hello codex',
+      },
+      downstreamFormat: 'openai',
+      downstreamHeaders: {
+        'user-agent': 'OpenClaw/1.0',
+        version: '0.202.0',
+        session_id: 'session-from-client',
+        'x-responsesapi-include-timing-metrics': '1',
+        origin: 'https://openclaw.example',
+        referer: 'https://openclaw.example/app',
+        'x-forwarded-for': '203.0.113.1',
+        'x-real-ip': '203.0.113.2',
+      },
+      providerHeaders: {
+        Originator: 'codex_cli_rs',
+      },
+    } as any);
+
+    expect(request.headers.Version).toBe('0.202.0');
+    expect(request.headers.Session_id).toBe('session-from-client');
+    expect(request.headers['User-Agent']).toBe('OpenClaw/1.0');
+    expect(request.headers['x-responsesapi-include-timing-metrics']).toBe('1');
+    expect(request.headers.origin).toBeUndefined();
+    expect(request.headers.referer).toBeUndefined();
+    expect(request.headers['x-forwarded-for']).toBeUndefined();
+    expect(request.headers['x-real-ip']).toBeUndefined();
+  });
+
   it('builds codex responses requests against backend-api path and preserves oauth provider headers', () => {
     const request = buildUpstreamEndpointRequest({
       endpoint: 'responses',

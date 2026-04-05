@@ -212,6 +212,28 @@ function extractResponsesPassthroughHeaders(
   return forwarded;
 }
 
+function extractCodexPassthroughHeaders(
+  headers?: Record<string, unknown>,
+): Record<string, string> {
+  if (!headers) return {};
+
+  const forwarded: Record<string, string> = {};
+  for (const [rawKey, rawValue] of Object.entries(headers)) {
+    const key = rawKey.toLowerCase();
+    const shouldForward = (
+      key === 'version'
+      || key === 'x-responsesapi-include-timing-metrics'
+    );
+    if (!shouldForward) continue;
+
+    const value = headerValueToString(rawValue);
+    if (!value) continue;
+    forwarded[key] = value;
+  }
+
+  return forwarded;
+}
+
 function extractClaudeBetasFromBody(body: Record<string, unknown>): {
   body: Record<string, unknown>;
   betas: string[];
@@ -740,8 +762,12 @@ export function buildUpstreamEndpointRequest(input: {
   };
 
   const passthroughHeaders = extractSafePassthroughHeaders(input.downstreamHeaders);
+  const codexPassthroughHeaders = sitePlatform === 'codex'
+    ? extractCodexPassthroughHeaders(input.downstreamHeaders)
+    : {};
   const commonHeaders: Record<string, string> = {
     ...passthroughHeaders,
+    ...codexPassthroughHeaders,
     'Content-Type': 'application/json',
     ...(input.providerHeaders || {}),
   };
