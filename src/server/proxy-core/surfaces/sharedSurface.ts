@@ -478,6 +478,7 @@ export function createSurfaceFailureToolkit(input: {
     promptTokens?: number | null;
     completionTokens?: number | null;
     totalTokens?: number | null;
+    usageSource?: 'upstream' | 'self-log' | 'unknown';
     estimatedCost?: number;
     billingDetails?: unknown;
     upstreamPath?: string | null;
@@ -497,6 +498,7 @@ export function createSurfaceFailureToolkit(input: {
       promptTokens: args.promptTokens,
       completionTokens: args.completionTokens,
       totalTokens: args.totalTokens,
+      usageSource: args.usageSource,
       estimatedCost: args.estimatedCost,
       billingDetails: args.billingDetails,
       upstreamPath: args.upstreamPath,
