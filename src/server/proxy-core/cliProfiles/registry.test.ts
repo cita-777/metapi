@@ -70,6 +70,24 @@ describe('detectCliProfile', () => {
     });
   });
 
+  it('does not classify non-responses siblings as Codex requests', () => {
+    expect(detectCliProfile({
+      downstreamPath: '/v1/responsesfoo',
+      headers: {
+        'openai-beta': 'responses-2025-03-11',
+      },
+    })).toEqual({
+      id: 'generic',
+      capabilities: {
+        supportsResponsesCompact: false,
+        supportsResponsesWebsocketIncremental: false,
+        preservesContinuation: false,
+        supportsCountTokens: false,
+        echoesTurnState: false,
+      },
+    });
+  });
+
   it('detects Claude Code requests on the count_tokens surface and exposes token counting support', () => {
     expect(detectCliProfile({
       downstreamPath: '/v1/messages/count_tokens',

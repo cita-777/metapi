@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { extractClaudeCodeSessionId } from '../../proxy-core/cliProfiles/claudeCodeProfile.js';
 import { isCodexResponsesSurface } from '../../proxy-core/cliProfiles/codexProfile.js';
-import { detectDownstreamClientContext } from './downstreamClientContext.js';
+import { detectDownstreamClientContext } from '../../proxy-core/downstreamClientContext.js';
 
 describe('extractClaudeCodeSessionId', () => {
   it('extracts session uuid from axonhub-compatible Claude Code user ids', () => {
@@ -286,6 +286,21 @@ describe('detectDownstreamClientContext', () => {
             text: 'You are OpenCode, an interactive CLI tool that helps users with software engineering tasks. If the current working directory contains a file called OpenCode.md, it will be automatically added to your context.',
           },
         ],
+      },
+    })).toEqual({
+      clientKind: 'generic',
+      clientAppId: 'opencode',
+      clientAppName: 'OpenCode',
+      clientConfidence: 'heuristic',
+    });
+  });
+
+  it('recognizes OpenCode anthropic prompts when system is provided as a plain string', () => {
+    expect(detectDownstreamClientContext({
+      downstreamPath: '/v1/messages',
+      body: {
+        model: 'claude-sonnet-4-5',
+        system: 'You are OpenCode, an interactive CLI tool that helps users with software engineering tasks. If the current working directory contains a file called OpenCode.md, it will be automatically added to your context.',
       },
     })).toEqual({
       clientKind: 'generic',

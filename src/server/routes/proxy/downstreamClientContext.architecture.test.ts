@@ -6,12 +6,12 @@ function readSource(relativePath: string): string {
 }
 
 describe('downstreamClientContext architecture boundaries', () => {
-  it('keeps protocol-level client metadata on cli profiles instead of importing individual profile helpers', () => {
-    const source = readSource('./downstreamClientContext.ts');
+  it('keeps shared downstream client detection outside the route layer and avoids individual profile helper imports', () => {
+    const source = readSource('../../proxy-core/downstreamClientContext.ts');
 
-    expect(source).toContain("from '../../proxy-core/cliProfiles/registry.js'");
-    expect(source).toContain("from '../../proxy-core/cliProfiles/types.js'");
-    expect(source).not.toContain("from '../../proxy-core/cliProfiles/codexProfile.js'");
-    expect(source).not.toContain("from '../../proxy-core/cliProfiles/claudeCodeProfile.js'");
+    expect(source).toContain("from './cliProfiles/registry.js'");
+    expect(source).toContain("from './cliProfiles/types.js'");
+    expect(source).not.toContain("from './cliProfiles/codexProfile.js'");
+    expect(source).not.toContain("from './cliProfiles/claudeCodeProfile.js'");
   });
 });

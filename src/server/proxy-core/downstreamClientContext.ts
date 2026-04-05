@@ -1,8 +1,8 @@
-import { detectCliProfile } from '../../proxy-core/cliProfiles/registry.js';
+import { detectCliProfile } from './cliProfiles/registry.js';
 import type {
   CliProfileClientConfidence,
   CliProfileId,
-} from '../../proxy-core/cliProfiles/types.js';
+} from './cliProfiles/types.js';
 
 export type DownstreamClientKind = CliProfileId;
 export type DownstreamClientConfidence = CliProfileClientConfidence;
@@ -130,15 +130,17 @@ function buildBodySummary(body: unknown): DownstreamClientBodySummary {
   const metadataUserId = isRecord(body.metadata) && typeof body.metadata.user_id === 'string'
     ? body.metadata.user_id.trim() || null
     : null;
-  const systemPromptTexts = Array.isArray(body.system)
-    ? body.system
-      .map((entry) => {
-        if (typeof entry === 'string') return entry;
-        if (!isRecord(entry)) return '';
-        return typeof entry.text === 'string' ? entry.text : '';
-      })
-      .filter((entry) => entry.trim().length > 0)
-    : [];
+  const systemPromptTexts = (
+    typeof body.system === 'string'
+      ? [body.system]
+      : Array.isArray(body.system)
+        ? body.system.map((entry) => {
+          if (typeof entry === 'string') return entry;
+          if (!isRecord(entry)) return '';
+          return typeof entry.text === 'string' ? entry.text : '';
+        })
+        : []
+  ).filter((entry) => entry.trim().length > 0);
   const normalizedSystemPrompt = systemPromptTexts
     .join('\n')
     .trim()
