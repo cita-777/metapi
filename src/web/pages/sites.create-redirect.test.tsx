@@ -106,9 +106,17 @@ async function createSiteAndClickModalChoice(
     });
     await flushMicrotasks();
 
-    // Find the modal dialog and click the appropriate button
-    const modalDialog = root.root.find((node) => node.type === 'dialog');
-    const modalButtons = modalDialog.findAll((node) => node.type === 'button');
+    // Find the created-site modal and click the appropriate button
+    const modalContent = root.root.find((node) => (
+      typeof node.props.className === 'string'
+      && node.props.className.includes('modal-content')
+      && collectText(node).includes('站点创建成功')
+    ));
+    const modalButtons = modalContent.findAll((node) => (
+      node.type === 'button'
+      && typeof node.props.onClick === 'function'
+      && node.props['aria-label'] !== '关闭弹框'
+    ));
 
     // Find the button based on choice
     let targetButton;
