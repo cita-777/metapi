@@ -17,14 +17,24 @@ export function shouldFallbackCompactResponsesToResponses(input: {
 }): boolean {
   const status = Number.isFinite(Number(input.status)) ? Number(input.status) : 0;
   const compact = asTrimmedString(input.rawErrText).toLowerCase();
+  const hasCompactHint = (
+    compact.includes('/responses/compact')
+    || compact.includes('responses/compact')
+    || compact.includes('compact endpoint')
+    || /(^|[^a-z])compact([^a-z]|$)/.test(compact)
+  );
 
   if (status === 404 || status === 405 || status === 501) return true;
 
   return (
     compact.includes("unknown parameter: 'stream'")
     || compact.includes('invalid url')
-    || compact.includes('not supported')
-    || compact.includes('unsupported')
-    || compact.includes('/responses/compact')
+    || (
+      hasCompactHint
+      && (
+        compact.includes('not supported')
+        || compact.includes('unsupported')
+      )
+    )
   );
 }

@@ -260,6 +260,50 @@ describe('responses proxy compact upstream routing', () => {
     });
   });
 
+  it('does not fall back for unrelated unsupported errors that do not mention compact', async () => {
+    config.responsesCompactFallbackToResponsesEnabled = true;
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'generic-openai-site', url: 'https://upstream.example.com', platform: 'openai' },
+      account: { id: 33, username: 'demo-user' },
+      tokenName: 'default',
+      tokenValue: 'sk-demo',
+      actualModel: 'upstream-gpt',
+    });
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: {
+          message: 'Model not supported for this account',
+          type: 'invalid_request_error',
+        },
+      }), {
+        status: 422,
+        headers: { 'content-type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'resp_ignored',
+        object: 'response',
+        output_text: 'should not fallback',
+        usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses/compact',
+      payload: {
+        model: 'gpt-5.2',
+        input: 'hello',
+      },
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0] || '')).toContain('/v1/responses/compact');
+  });
+
   it('strips stream fields when forwarding compact requests to codex upstreams', async () => {
     selectChannelMock.mockReturnValue({
       channel: { id: 11, routeId: 22 },
