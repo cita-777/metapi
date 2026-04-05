@@ -949,6 +949,244 @@ describe('refreshModelsForAccount credential discovery', () => {
     ]);
   });
 
+  it('refreshes claude oauth access token during cloud model discovery through singleflight and retries with the refreshed account state', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockRejectedValue(new Error('claude oauth discovery should not call adapter.getModels'));
+    refreshOauthAccessTokenSingleflightMock.mockImplementation(async (accountId: number) => {
+      const refreshedExtraConfig = JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'claude',
+          email: 'claude-refreshed-user@example.com',
+          accountKey: 'claude-refreshed-user@example.com',
+          refreshToken: 'claude-refresh-token-next',
+        },
+      });
+
+      await db.update(schema.accounts).set({
+        accessToken: 'claude-access-token-refreshed',
+        oauthProvider: 'claude',
+        oauthAccountKey: 'claude-refreshed-user@example.com',
+        extraConfig: refreshedExtraConfig,
+        status: 'active',
+        updatedAt: '2026-03-21T00:00:00.000Z',
+      }).where(eq(schema.accounts.id, accountId)).run();
+
+      return {
+        accountId,
+        accessToken: 'claude-access-token-refreshed',
+        accountKey: 'claude-refreshed-user@example.com',
+        extraConfig: refreshedExtraConfig,
+      };
+    });
+    undiciFetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ error: 'expired' }),
+        text: async () => 'expired',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: [
+            { id: 'claude-sonnet-4-5-20250929' },
+          ],
+        }),
+        text: async () => JSON.stringify({ ok: true }),
+      });
+
+    const site = await db.insert(schema.sites).values({
+      name: 'claude-refresh-site',
+      url: 'https://api.anthropic.com',
+      platform: 'claude',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'claude-user@example.com',
+      accessToken: 'claude-access-token-expired',
+      apiToken: null,
+      status: 'active',
+      oauthProvider: 'claude',
+      oauthAccountKey: 'claude-user@example.com',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'claude',
+          email: 'claude-user@example.com',
+          accountKey: 'claude-user@example.com',
+          refreshToken: 'claude-refresh-token',
+        },
+      }),
+    }).returning().get();
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      status: 'success',
+      modelCount: 1,
+      modelsPreview: ['claude-sonnet-4-5-20250929'],
+      discoveredByCredential: true,
+    });
+    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(account.id);
+    expect(undiciFetchMock).toHaveBeenCalledTimes(2);
+    expect(String(undiciFetchMock.mock.calls[0]?.[0] || '')).toBe('https://api.anthropic.com/v1/models');
+    expect(undiciFetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: 'GET',
+      headers: expect.objectContaining({
+        Authorization: 'Bearer claude-access-token-expired',
+      }),
+    });
+    expect(String(undiciFetchMock.mock.calls[1]?.[0] || '')).toBe('https://api.anthropic.com/v1/models');
+    expect(undiciFetchMock.mock.calls[1]?.[1]).toMatchObject({
+      method: 'GET',
+      headers: expect.objectContaining({
+        Authorization: 'Bearer claude-access-token-refreshed',
+      }),
+    });
+
+    const latest = await db.select().from(schema.accounts)
+      .where(eq(schema.accounts.id, account.id))
+      .get();
+    expect(latest).toMatchObject({
+      accessToken: 'claude-access-token-refreshed',
+      oauthProvider: 'claude',
+      oauthAccountKey: 'claude-refreshed-user@example.com',
+    });
+    const parsed = JSON.parse(latest!.extraConfig || '{}');
+    expect(parsed.oauth).toMatchObject({
+      email: 'claude-refreshed-user@example.com',
+      refreshToken: 'claude-refresh-token-next',
+      modelDiscoveryStatus: 'healthy',
+    });
+    expect(parsed.oauth).not.toHaveProperty('provider');
+  });
+
+  it('refreshes codex oauth access token during cloud model discovery through singleflight and retries with the refreshed account state', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockRejectedValue(new Error('codex oauth discovery should not call adapter.getModels'));
+    refreshOauthAccessTokenSingleflightMock.mockImplementation(async (accountId: number) => {
+      const refreshedExtraConfig = JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          email: 'codex-refreshed-user@example.com',
+          accountId: 'chatgpt-account-refreshed',
+          planType: 'plus',
+          refreshToken: 'codex-refresh-token-next',
+        },
+      });
+
+      await db.update(schema.accounts).set({
+        accessToken: 'codex-access-token-refreshed',
+        oauthProvider: 'codex',
+        oauthAccountKey: 'chatgpt-account-refreshed',
+        extraConfig: refreshedExtraConfig,
+        status: 'active',
+        updatedAt: '2026-03-21T00:00:00.000Z',
+      }).where(eq(schema.accounts.id, accountId)).run();
+
+      return {
+        accountId,
+        accessToken: 'codex-access-token-refreshed',
+        accountKey: 'chatgpt-account-refreshed',
+        extraConfig: refreshedExtraConfig,
+      };
+    });
+    undiciFetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ error: 'expired' }),
+        text: async () => 'expired',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          models: [
+            { id: 'gpt-5.4' },
+          ],
+        }),
+        text: async () => JSON.stringify({ ok: true }),
+      });
+
+    const site = await db.insert(schema.sites).values({
+      name: 'codex-refresh-site',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'codex-user@example.com',
+      accessToken: 'codex-access-token-expired',
+      apiToken: null,
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-account-original',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          email: 'codex-user@example.com',
+          accountId: 'chatgpt-account-original',
+          planType: 'plus',
+          refreshToken: 'codex-refresh-token',
+        },
+      }),
+    }).returning().get();
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      status: 'success',
+      modelCount: 1,
+      modelsPreview: ['gpt-5.4'],
+      discoveredByCredential: true,
+    });
+    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(account.id);
+    expect(undiciFetchMock).toHaveBeenCalledTimes(2);
+    expect(String(undiciFetchMock.mock.calls[0]?.[0] || '')).toBe('https://chatgpt.com/backend-api/codex/models?client_version=1.0.0');
+    expect(undiciFetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: 'GET',
+      headers: expect.objectContaining({
+        Authorization: 'Bearer codex-access-token-expired',
+      }),
+    });
+    expect(String(undiciFetchMock.mock.calls[1]?.[0] || '')).toBe('https://chatgpt.com/backend-api/codex/models?client_version=1.0.0');
+    expect(undiciFetchMock.mock.calls[1]?.[1]).toMatchObject({
+      method: 'GET',
+      headers: expect.objectContaining({
+        Authorization: 'Bearer codex-access-token-refreshed',
+      }),
+    });
+
+    const latest = await db.select().from(schema.accounts)
+      .where(eq(schema.accounts.id, account.id))
+      .get();
+    expect(latest).toMatchObject({
+      accessToken: 'codex-access-token-refreshed',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-account-refreshed',
+    });
+    const parsed = JSON.parse(latest!.extraConfig || '{}');
+    expect(parsed.oauth).toMatchObject({
+      email: 'codex-refreshed-user@example.com',
+      refreshToken: 'codex-refresh-token-next',
+      modelDiscoveryStatus: 'healthy',
+    });
+    expect(parsed.oauth).not.toHaveProperty('provider');
+  });
+
   it('marks codex oauth account abnormal when upstream cloud discovery fails', async () => {
     getApiTokenMock.mockResolvedValue(null);
     getModelsMock.mockRejectedValue(new Error('codex plan discovery should not call adapter.getModels'));
@@ -1305,6 +1543,144 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(parsed.oauth).toMatchObject({
       email: 'gemini-refreshed-user@example.com',
       refreshToken: 'gemini-refresh-token-next',
+      modelDiscoveryStatus: 'healthy',
+    });
+    expect(parsed.oauth).not.toHaveProperty('provider');
+    expect(parsed.oauth).not.toHaveProperty('projectId');
+  });
+
+  it('refreshes antigravity oauth access token during model discovery through singleflight and retries with the refreshed account state', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockRejectedValue(new Error('antigravity oauth discovery should not call adapter.getModels'));
+    refreshOauthAccessTokenSingleflightMock.mockImplementation(async (accountId: number) => {
+      const refreshedExtraConfig = JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'antigravity',
+          email: 'antigravity-refreshed-user@example.com',
+          accountId: 'antigravity-refreshed-user@example.com',
+          accountKey: 'antigravity-refreshed-user@example.com',
+          projectId: 'project-refresh-demo',
+          refreshToken: 'antigravity-refresh-token-next',
+        },
+      });
+
+      await db.update(schema.accounts).set({
+        accessToken: 'antigravity-access-token-refreshed',
+        oauthProvider: 'antigravity',
+        oauthAccountKey: 'antigravity-refreshed-user@example.com',
+        oauthProjectId: 'project-refresh-demo',
+        extraConfig: refreshedExtraConfig,
+        status: 'active',
+        updatedAt: '2026-03-21T00:00:00.000Z',
+      }).where(eq(schema.accounts.id, accountId)).run();
+
+      return {
+        accountId,
+        accessToken: 'antigravity-access-token-refreshed',
+        accountKey: 'antigravity-refreshed-user@example.com',
+        extraConfig: refreshedExtraConfig,
+      };
+    });
+    undiciFetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ error: 'expired' }),
+        text: async () => 'expired',
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ error: 'expired' }),
+        text: async () => 'expired',
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ error: 'expired' }),
+        text: async () => 'expired',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          models: {
+            'gemini-3-pro-preview': { displayName: 'Gemini 3 Pro Preview' },
+          },
+        }),
+        text: async () => JSON.stringify({ ok: true }),
+      });
+
+    const site = await db.insert(schema.sites).values({
+      name: 'antigravity-refresh-site',
+      url: 'https://cloudcode-pa.googleapis.com',
+      platform: 'antigravity',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'antigravity-user@example.com',
+      accessToken: 'antigravity-access-token-expired',
+      apiToken: null,
+      status: 'active',
+      oauthProvider: 'antigravity',
+      oauthAccountKey: 'antigravity-user@example.com',
+      oauthProjectId: 'project-refresh-demo',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'antigravity',
+          email: 'antigravity-user@example.com',
+          accountId: 'antigravity-user@example.com',
+          accountKey: 'antigravity-user@example.com',
+          projectId: 'project-refresh-demo',
+          refreshToken: 'antigravity-refresh-token',
+        },
+      }),
+    }).returning().get();
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      status: 'success',
+      modelCount: 1,
+      modelsPreview: ['gemini-3-pro-preview'],
+      discoveredByCredential: true,
+    });
+    expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(account.id);
+    expect(undiciFetchMock).toHaveBeenCalledTimes(4);
+    expect(String(undiciFetchMock.mock.calls[0]?.[0] || '')).toBe('https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels');
+    expect(undiciFetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: 'POST',
+      headers: expect.objectContaining({
+        Authorization: 'Bearer antigravity-access-token-expired',
+      }),
+    });
+    expect(String(undiciFetchMock.mock.calls[3]?.[0] || '')).toBe('https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels');
+    expect(undiciFetchMock.mock.calls[3]?.[1]).toMatchObject({
+      method: 'POST',
+      headers: expect.objectContaining({
+        Authorization: 'Bearer antigravity-access-token-refreshed',
+      }),
+    });
+
+    const latest = await db.select().from(schema.accounts)
+      .where(eq(schema.accounts.id, account.id))
+      .get();
+    expect(latest).toMatchObject({
+      accessToken: 'antigravity-access-token-refreshed',
+      oauthProvider: 'antigravity',
+      oauthAccountKey: 'antigravity-refreshed-user@example.com',
+      oauthProjectId: 'project-refresh-demo',
+    });
+    const parsed = JSON.parse(latest!.extraConfig || '{}');
+    expect(parsed.oauth).toMatchObject({
+      email: 'antigravity-refreshed-user@example.com',
+      refreshToken: 'antigravity-refresh-token-next',
       modelDiscoveryStatus: 'healthy',
     });
     expect(parsed.oauth).not.toHaveProperty('provider');

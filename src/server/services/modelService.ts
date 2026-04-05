@@ -108,6 +108,8 @@ export type ModelRefreshResult =
   | ModelRefreshFailureResult
   | ModelRefreshSuccessResult;
 
+type ModelDiscoveryAccountRow = typeof schema.accounts.$inferSelect;
+
 function looksLikeHtmlJsonParseError(message: string): boolean {
   const lowered = String(message || '').trim().toLowerCase();
   return (
@@ -303,6 +305,38 @@ function shouldRetryModelDiscoveryWithOauthRefresh(error: unknown): boolean {
     || message.includes('unauthenticated');
 }
 
+async function retryOauthModelDiscoveryWithRefresh<T>(input: {
+  account: ModelDiscoveryAccountRow;
+  attempt: (account: ModelDiscoveryAccountRow) => Promise<T>;
+}): Promise<{ result: T; account: ModelDiscoveryAccountRow }> {
+  let discoveryAccount = input.account;
+
+  try {
+    return {
+      result: await input.attempt(discoveryAccount),
+      account: discoveryAccount,
+    };
+  } catch (error) {
+    if (!shouldRetryModelDiscoveryWithOauthRefresh(error)) {
+      throw error;
+    }
+
+    await refreshOauthAccessTokenSingleflight(discoveryAccount.id);
+    const refreshedAccount = await db.select().from(schema.accounts)
+      .where(eq(schema.accounts.id, discoveryAccount.id))
+      .get();
+    if (!refreshedAccount) {
+      throw error;
+    }
+
+    discoveryAccount = refreshedAccount;
+    return {
+      result: await input.attempt(discoveryAccount),
+      account: discoveryAccount,
+    };
+  }
+}
+
 export async function refreshModelsForAccount(
   accountId: number,
   options?: { allowInactive?: boolean },
@@ -405,13 +439,18 @@ export async function refreshModelsForAccount(
   if (oauth?.provider === 'codex') {
     const checkedAt = new Date().toISOString();
     const startedAt = Date.now();
+    let discoveryAccount = account;
     try {
-      const codexModels = await withTimeout(
-        () => withAccountProxyOverride(accountProxyUrl,
-          () => discoverCodexModelsFromCloud({ site, account })),
-        MODEL_DISCOVERY_TIMEOUT_MS,
-        `codex model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
-      );
+      const { result: codexModels, account: refreshedAccount } = await retryOauthModelDiscoveryWithRefresh({
+        account,
+        attempt: async (candidateAccount) => withTimeout(
+          () => withAccountProxyOverride(accountProxyUrl,
+            () => discoverCodexModelsFromCloud({ site, account: candidateAccount })),
+          MODEL_DISCOVERY_TIMEOUT_MS,
+          `codex model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
+        ),
+      });
+      discoveryAccount = refreshedAccount;
       if (codexModels.length === 0) {
         throw new Error('未获取到可用模型');
       }
@@ -429,7 +468,7 @@ export async function refreshModelsForAccount(
         ).run();
       }
       await updateOauthModelDiscoveryState({
-        account,
+        account: discoveryAccount,
         checkedAt,
         status: 'healthy',
         lastDiscoveredModels: codexModels,
@@ -453,7 +492,7 @@ export async function refreshModelsForAccount(
       const errorCode = classifyModelDiscoveryError(rawMessage);
       const errorMessage = `Codex 模型获取失败（${rawMessage}）`;
       await updateOauthModelDiscoveryState({
-        account,
+        account: discoveryAccount,
         checkedAt,
         status: 'abnormal',
         lastModelSyncError: errorMessage,
@@ -480,13 +519,18 @@ export async function refreshModelsForAccount(
   if (oauth?.provider === 'claude') {
     const checkedAt = new Date().toISOString();
     const startedAt = Date.now();
+    let discoveryAccount = account;
     try {
-      const claudeModels = await withTimeout(
-        () => withAccountProxyOverride(accountProxyUrl,
-          () => discoverClaudeModelsFromCloud({ site, account })),
-        MODEL_DISCOVERY_TIMEOUT_MS,
-        `claude oauth model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
-      );
+      const { result: claudeModels, account: refreshedAccount } = await retryOauthModelDiscoveryWithRefresh({
+        account,
+        attempt: async (candidateAccount) => withTimeout(
+          () => withAccountProxyOverride(accountProxyUrl,
+            () => discoverClaudeModelsFromCloud({ site, account: candidateAccount })),
+          MODEL_DISCOVERY_TIMEOUT_MS,
+          `claude oauth model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
+        ),
+      });
+      discoveryAccount = refreshedAccount;
       if (claudeModels.length === 0) {
         throw new Error('未获取到可用模型');
       }
@@ -503,7 +547,7 @@ export async function refreshModelsForAccount(
         ).run();
       }
       await updateOauthModelDiscoveryState({
-        account,
+        account: discoveryAccount,
         checkedAt,
         status: 'healthy',
         lastDiscoveredModels: claudeModels,
@@ -527,7 +571,7 @@ export async function refreshModelsForAccount(
       const errorCode = classifyModelDiscoveryError(rawMessage);
       const errorMessage = `Claude OAuth 模型获取失败（${rawMessage}）`;
       await updateOauthModelDiscoveryState({
-        account,
+        account: discoveryAccount,
         checkedAt,
         status: 'abnormal',
         lastModelSyncError: errorMessage,
@@ -647,13 +691,18 @@ export async function refreshModelsForAccount(
   if (oauth?.provider === 'antigravity') {
     const checkedAt = new Date().toISOString();
     const startedAt = Date.now();
+    let discoveryAccount = account;
     try {
-      const antigravityModels = await withTimeout(
-        () => withAccountProxyOverride(accountProxyUrl,
-          () => discoverAntigravityModelsFromCloud({ site, account })),
-        MODEL_DISCOVERY_TIMEOUT_MS,
-        `antigravity model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
-      );
+      const { result: antigravityModels, account: refreshedAccount } = await retryOauthModelDiscoveryWithRefresh({
+        account,
+        attempt: async (candidateAccount) => withTimeout(
+          () => withAccountProxyOverride(accountProxyUrl,
+            () => discoverAntigravityModelsFromCloud({ site, account: candidateAccount })),
+          MODEL_DISCOVERY_TIMEOUT_MS,
+          `antigravity model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
+        ),
+      });
+      discoveryAccount = refreshedAccount;
       if (antigravityModels.length === 0) {
         throw new Error('未获取到可用模型');
       }
@@ -671,7 +720,7 @@ export async function refreshModelsForAccount(
         ).run();
       }
       await updateOauthModelDiscoveryState({
-        account,
+        account: discoveryAccount,
         checkedAt,
         status: 'healthy',
         lastDiscoveredModels: antigravityModels,
@@ -695,7 +744,7 @@ export async function refreshModelsForAccount(
       const errorCode = classifyModelDiscoveryError(rawMessage);
       const errorMessage = `Antigravity 模型获取失败（${rawMessage}）`;
       await updateOauthModelDiscoveryState({
-        account,
+        account: discoveryAccount,
         checkedAt,
         status: 'abnormal',
         lastModelSyncError: errorMessage,
