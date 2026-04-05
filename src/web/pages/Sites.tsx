@@ -517,7 +517,7 @@ export default function Sites() {
     }
     const serializedApiEndpoints = serializeSiteApiEndpoints(form.apiEndpoints);
     if (!serializedApiEndpoints.valid) {
-      toast.error(serializedApiEndpoints.error || 'AI 请求地址格式不正确');
+      toast.error(serializedApiEndpoints.error || 'API 请求地址格式不正确');
       return;
     }
 
@@ -1102,7 +1102,7 @@ export default function Sites() {
             </div>
           )}
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
-            主站点 URL 用于登录、签到、面板接口和系统访问令牌管理；如果 AI 请求地址和主站点不同，请在下面的 AI 请求地址池里填写。
+            主站点 URL 用于登录、签到、面板接口和系统访问令牌管理；如果 API 请求地址和主站点不同，请在下面的 API 请求地址池里填写。
           </div>
           <div
             style={{
@@ -1117,7 +1117,7 @@ export default function Sites() {
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <div style={{ fontSize: 13, fontWeight: 600 }}>
-                AI 请求地址池
+                API 请求地址池
               </div>
               <button
                 type="button"
@@ -1125,7 +1125,7 @@ export default function Sites() {
                 className="btn btn-ghost"
                 style={{ border: '1px solid var(--color-border)' }}
               >
-                + 添加 AI 地址
+                + 添加 API 地址
               </button>
             </div>
             <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.7 }}>
@@ -1146,7 +1146,7 @@ export default function Sites() {
               >
                 <div style={{ display: 'flex', gap: 8, flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'stretch' : 'center' }}>
                   <input
-                    placeholder="AI 请求地址（如 https://api.nih.cc）"
+                    placeholder="API 请求地址（如 https://api.nih.cc）"
                     value={endpoint.url}
                     onChange={(e) => updateApiEndpointRow(index, { url: e.target.value })}
                     style={{ ...formInputStyle, flex: 1, fontFamily: 'var(--font-mono)' }}
@@ -1405,7 +1405,7 @@ export default function Sites() {
                 style={formInputStyle}
               />
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-                这里只是 HTTP/SOCKS 代理地址，不是上游 AI API 地址。填写后优先使用站点代理；留空则使用系统代理或直连(取决于设置开关状态)。
+                这里只是 HTTP/SOCKS 代理地址，不是上游 API 请求地址。填写后优先使用站点代理；留空则使用系统代理或直连(取决于设置开关状态)。
               </div>
             </div>
             <label style={{
@@ -1556,7 +1556,7 @@ export default function Sites() {
                           ) : '-'}
                         />
                         <MobileField
-                          label="AI 请求地址"
+                          label="API 请求地址"
                           stacked
                           value={(
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -1716,7 +1716,7 @@ export default function Sites() {
                           </span>
                         ) : null}
                         <span className={`badge ${getConfiguredSiteApiEndpoints(site).length > 0 ? 'badge-warning' : 'badge-muted'}`} style={{ fontSize: 11 }}>
-                          AI 地址: {buildSiteApiEndpointSummary(site)}
+                          API 地址: {buildSiteApiEndpointSummary(site)}
                         </span>
                       </div>
                     </td>

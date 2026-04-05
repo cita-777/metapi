@@ -28,7 +28,7 @@ npm run docs:build
 |------|--------|------------|
 | 对外第一印象、产品定位、核心入口 | [文档首页](/) | 需要调整公开落地页信息架构、首页 CTA 或首屏导航时 |
 | 新用户部署与首条请求 | [快速上手](./getting-started.md) | 新安装流程、默认端口、首次调用步骤变化时 |
-| 上游平台选择与接法 | [上游接入](./upstream-integration.md) | 平台支持范围、官方预设、AI 请求地址池、自动识别规则变化时 |
+| 上游平台选择与接法 | [上游接入](./upstream-integration.md) | 平台支持范围、官方预设、API 请求地址池、自动识别规则变化时 |
 | Provider OAuth 授权 | [OAuth 管理](./oauth.md) | 支持的 OAuth provider、授权流程、回调方式或自动重绑能力变化时 |
 | 生产部署与回滚 | [部署指南](./deployment.md) | Docker Compose、反向代理、升级回滚策略变更时 |
 | K3s / Helm 高级升级面板 | [K3s 更新中心（高级）](./k3s-update-center.md) | 需要说明谁适合使用更新中心、helper 怎么配、K3s/Helm 发布链路怎么接入时 |

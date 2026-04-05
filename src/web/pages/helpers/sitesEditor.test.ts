@@ -191,7 +191,7 @@ describe('buildSiteSaveAction', () => {
     ])).toEqual({
       valid: false,
       apiEndpoints: [],
-      error: 'AI 请求地址 "https://api.example.com" 重复了',
+      error: 'API 请求地址 "https://api.example.com" 重复了',
     });
   });
 });

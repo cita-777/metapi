@@ -228,7 +228,7 @@ curl -sS "${METAPI_ADMIN_BASE_URL}/api/sites/detect" \
 | `isPinned` | `boolean` | 否 | 是否置顶 |
 | `sortOrder` | `number` | 否 | 排序值，非负整数 |
 | `globalWeight` | `number` | 否 | 站点全局权重，必须为正数 |
-| `apiEndpoints` | `array` | 否 | 仅用于 AI 请求的数据面地址池；不替代主站点 URL |
+| `apiEndpoints` | `array` | 否 | 仅用于 API 请求的数据面地址池；不替代主站点 URL |
 
 示例：
 
