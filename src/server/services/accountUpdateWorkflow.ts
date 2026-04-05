@@ -17,6 +17,11 @@ type AccountUpdateWorkflowInput = {
 };
 
 export async function applyAccountUpdateWorkflow(input: AccountUpdateWorkflowInput) {
+  const isExpiredApiKeyRecoveryFlow = Boolean(
+    input.preserveExpiredStatus
+    && input.allowInactiveModelRefresh
+    && input.reactivateAfterSuccessfulModelRefresh,
+  );
   const persistedUpdates: Partial<typeof schema.accounts.$inferInsert> = {
     ...input.updates,
     ...(input.preserveExpiredStatus ? { status: 'expired' } : {}),
@@ -51,7 +56,11 @@ export async function applyAccountUpdateWorkflow(input: AccountUpdateWorkflowInp
       .run();
   }
 
-  await rebuildRoutesBestEffort();
+  const shouldRebuildRoutes = !isExpiredApiKeyRecoveryFlow
+    || convergence.modelRefreshResult?.status === 'success';
+  if (shouldRebuildRoutes) {
+    await rebuildRoutesBestEffort();
+  }
 
   const account = await db.select()
     .from(schema.accounts)

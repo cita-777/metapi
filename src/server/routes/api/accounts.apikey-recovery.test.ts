@@ -175,6 +175,21 @@ describe('accounts api key recovery', { timeout: 15_000 }, () => {
       checkedAt: '2026-04-01T10:00:00.000Z',
     }).run();
 
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4.1',
+      enabled: true,
+    }).returning().get();
+
+    const seededChannel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: null,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      manualOverride: false,
+    }).returning().get();
+
     const response = await app.inject({
       method: 'PUT',
       url: `/api/accounts/${account.id}`,
@@ -211,6 +226,11 @@ describe('accounts api key recovery', { timeout: 15_000 }, () => {
     });
 
     const routeChannels = await db.select().from(schema.routeChannels).all();
-    expect(routeChannels.some((channel) => channel.accountId === account.id)).toBe(false);
+    expect(routeChannels).toContainEqual(expect.objectContaining({
+      id: seededChannel.id,
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: null,
+    }));
   });
 });
