@@ -384,6 +384,9 @@ describe('sqlite migrate bootstrap', () => {
       '0011_downstream_api_key_metadata',
       '0012_account_token_value_status',
       '0013_oauth_multi_provider',
+      // 0008 creates downstream_api_keys, so later table-dependent migrations
+      // must stay missing in this partial-journal fixture too.
+      '0020_downstream_api_key_exclusions',
     ]);
     const appliedEntries = journalEntries.filter((entry) => !missingTags.has(entry.tag));
 
