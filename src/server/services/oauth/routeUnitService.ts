@@ -54,6 +54,19 @@ function assertRouteUnitStrategy(value: unknown): OAuthRouteUnitStrategy {
   return normalized;
 }
 
+function isOauthRouteUnitAccountUniqueConflict(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const code = String((error as { code?: unknown }).code || '');
+  const lowered = String((error as { message?: unknown }).message || '').toLowerCase();
+  return (
+    ((code === 'SQLITE_CONSTRAINT' || code === 'SQLITE_CONSTRAINT_UNIQUE')
+      && lowered.includes('oauth_route_unit_members.account_id'))
+    || (code === 'ER_DUP_ENTRY' && lowered.includes('oauth_route_unit_members_account_unique'))
+    || (lowered.includes('duplicate key value violates unique constraint')
+      && lowered.includes('oauth_route_unit_members_account_unique'))
+  );
+}
+
 export async function listOauthRouteUnitsByAccountIds(accountIds: number[]): Promise<Map<number, OAuthRouteUnitAccountParticipation>> {
   const uniqueIds = uniquePositiveIds(accountIds);
   if (uniqueIds.length === 0) return new Map();
@@ -161,15 +174,6 @@ export async function createOauthRouteUnit(input: {
     throw new Error('oauth route unit accounts not found');
   }
 
-  const existingMembers = await db.select({
-    accountId: schema.oauthRouteUnitMembers.accountId,
-  }).from(schema.oauthRouteUnitMembers)
-    .where(inArray(schema.oauthRouteUnitMembers.accountId, accountIds))
-    .all();
-  if (existingMembers.length > 0) {
-    throw new Error('oauth route unit accounts already grouped');
-  }
-
   const first = rows[0]!;
   const expectedSiteId = first.accounts.siteId;
   const expectedProvider = (first.accounts.oauthProvider || '').trim();
@@ -186,21 +190,41 @@ export async function createOauthRouteUnit(input: {
     }
   }
 
-  const created = await db.insert(schema.oauthRouteUnits).values({
-    siteId: expectedSiteId,
-    provider: expectedProvider,
-    name,
-    strategy,
-    enabled: true,
-  }).returning().get();
+  let created;
+  try {
+    created = await db.transaction(async (tx) => {
+      const existingMembers = await tx.select({
+        accountId: schema.oauthRouteUnitMembers.accountId,
+      }).from(schema.oauthRouteUnitMembers)
+        .where(inArray(schema.oauthRouteUnitMembers.accountId, accountIds))
+        .all();
+      if (existingMembers.length > 0) {
+        throw new Error('oauth route unit accounts already grouped');
+      }
 
-  await db.insert(schema.oauthRouteUnitMembers).values(
-    accountIds.map((accountId, index) => ({
-      unitId: created.id,
-      accountId,
-      sortOrder: index,
-    })),
-  ).run();
+      const inserted = await tx.insert(schema.oauthRouteUnits).values({
+        siteId: expectedSiteId,
+        provider: expectedProvider,
+        name,
+        strategy,
+        enabled: true,
+      }).returning().get();
+
+      await tx.insert(schema.oauthRouteUnitMembers).values(
+        accountIds.map((accountId, index) => ({
+          unitId: inserted.id,
+          accountId,
+          sortOrder: index,
+        })),
+      ).run();
+      return inserted;
+    });
+  } catch (error) {
+    if ((error as Error)?.message === 'oauth route unit accounts already grouped' || isOauthRouteUnitAccountUniqueConflict(error)) {
+      throw new Error('oauth route unit accounts already grouped');
+    }
+    throw error;
+  }
 
   await routeRefreshWorkflow.rebuildRoutesOnly();
 

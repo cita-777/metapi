@@ -466,7 +466,14 @@ function resolveConnectionRouteParticipation(
   connection: OAuthConnectionInfo,
 ): OAuthRouteParticipation {
   if (connection.routeParticipation?.kind === 'route_unit') {
-    return connection.routeParticipation;
+    return {
+      ...connection.routeParticipation,
+      id: connection.routeParticipation.id ?? connection.routeUnit?.id,
+      routeUnitId: connection.routeParticipation.routeUnitId
+        ?? connection.routeParticipation.id
+        ?? connection.routeUnit?.routeUnitId
+        ?? connection.routeUnit?.id,
+    };
   }
   if (connection.routeParticipation?.kind === 'single') {
     return connection.routeParticipation;
@@ -892,8 +899,20 @@ export default function OAuthManagement() {
       item.kind === 'route_unit'
       && (item.routeUnitId ?? item.id) === routeUnitId
     ));
-    return allSameRouteUnit ? first : null;
-  }, [selectedConnections]);
+    if (!allSameRouteUnit) return null;
+
+    const totalRouteUnitMembers = connections.filter((connection) => {
+      const participation = resolveConnectionRouteParticipation(connection);
+      return participation.kind === 'route_unit'
+        && (participation.routeUnitId ?? participation.id) === routeUnitId;
+    }).length;
+    if (totalRouteUnitMembers !== selectedConnections.length) return null;
+
+    return {
+      ...first,
+      memberCount: Math.max(first.memberCount, totalRouteUnitMembers),
+    };
+  }, [connections, selectedConnections]);
 
   const canMergeSelectedIntoRouteUnit = useMemo(() => {
     if (selectedConnections.length < 2) return false;

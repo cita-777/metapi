@@ -727,6 +727,153 @@ describe('OAuthManagement page', () => {
     }
   });
 
+  it('only enables splitting when the full route pool is selected and falls back to routeUnit ids', async () => {
+    apiMock.getOAuthProviders.mockResolvedValue({
+      providers: [
+        {
+          provider: 'codex',
+          label: 'Codex',
+          platform: 'codex',
+          enabled: true,
+          loginType: 'oauth',
+          requiresProjectId: false,
+          supportsDirectAccountRouting: true,
+          supportsCloudValidation: true,
+          supportsNativeProxy: true,
+        },
+      ],
+    });
+    apiMock.getOAuthConnections.mockResolvedValue({
+      items: [
+        {
+          accountId: 41,
+          siteId: 8,
+          provider: 'codex',
+          email: 'partial-a@example.com',
+          planType: 'team',
+          modelCount: 2,
+          modelsPreview: ['gpt-5.4'],
+          status: 'healthy',
+          routeParticipation: {
+            kind: 'route_unit',
+            name: 'Large Pool',
+            strategy: 'round_robin',
+            memberCount: 3,
+          },
+          routeUnit: {
+            id: 97,
+            name: 'Large Pool',
+            strategy: 'round_robin',
+            memberCount: 3,
+          },
+          site: {
+            id: 8,
+            name: 'ChatGPT Codex OAuth',
+            url: 'https://chatgpt.com/backend-api/codex',
+            platform: 'codex',
+          },
+        },
+        {
+          accountId: 42,
+          siteId: 8,
+          provider: 'codex',
+          email: 'partial-b@example.com',
+          planType: 'team',
+          modelCount: 2,
+          modelsPreview: ['gpt-5.4'],
+          status: 'healthy',
+          routeParticipation: {
+            kind: 'route_unit',
+            name: 'Large Pool',
+            strategy: 'round_robin',
+            memberCount: 3,
+          },
+          routeUnit: {
+            id: 97,
+            name: 'Large Pool',
+            strategy: 'round_robin',
+            memberCount: 3,
+          },
+          site: {
+            id: 8,
+            name: 'ChatGPT Codex OAuth',
+            url: 'https://chatgpt.com/backend-api/codex',
+            platform: 'codex',
+          },
+        },
+        {
+          accountId: 43,
+          siteId: 8,
+          provider: 'codex',
+          email: 'partial-c@example.com',
+          planType: 'team',
+          modelCount: 2,
+          modelsPreview: ['gpt-5.4'],
+          status: 'healthy',
+          routeParticipation: {
+            kind: 'route_unit',
+            name: 'Large Pool',
+            strategy: 'round_robin',
+            memberCount: 3,
+          },
+          routeUnit: {
+            id: 97,
+            name: 'Large Pool',
+            strategy: 'round_robin',
+            memberCount: 3,
+          },
+          site: {
+            id: 8,
+            name: 'ChatGPT Codex OAuth',
+            url: 'https://chatgpt.com/backend-api/codex',
+            platform: 'codex',
+          },
+        },
+      ],
+      total: 3,
+      limit: 100,
+      offset: 0,
+    });
+    apiMock.deleteOAuthRouteUnit.mockResolvedValue({ success: true });
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <MemoryRouter>
+              <OAuthManagement />
+            </MemoryRouter>
+          </ToastProvider>,
+        );
+      });
+      await flushMicrotasks();
+
+      const checkboxes = root.root.findAll((node) => (
+        node.type === 'input'
+        && node.props.type === 'checkbox'
+      ));
+      expect(checkboxes).toHaveLength(4);
+
+      await act(async () => {
+        checkboxes[1]?.props.onChange({ target: { checked: true } });
+        checkboxes[2]?.props.onChange({ target: { checked: true } });
+      });
+
+      expect(collectText(root.root)).not.toContain('拆回单体');
+
+      await act(async () => {
+        checkboxes[3]?.props.onChange({ target: { checked: true } });
+      });
+
+      await clickButton(root, '拆回单体');
+
+      expect(apiMock.deleteOAuthRouteUnit).toHaveBeenCalledWith(97);
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('renders supported quota windows without duplicating raw counters beside the percent', async () => {
     apiMock.getOAuthProviders.mockResolvedValue({
       providers: [

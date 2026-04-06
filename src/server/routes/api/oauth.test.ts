@@ -1373,6 +1373,119 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     });
   });
 
+  it('rolls back a codex rebind when route rebuild fails after model discovery succeeds', async () => {
+    const originalJwt = buildJwt({
+      email: 'codex-existing@example.com',
+      'https://api.openai.com/auth': {
+        chatgpt_account_id: 'chatgpt-account-existing',
+        chatgpt_plan_type: 'team',
+      },
+    });
+    const site = await db.insert(schema.sites).values({
+      name: 'ChatGPT Codex OAuth',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+    const existing = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'codex-existing@example.com',
+      accessToken: 'stable-access-token',
+      apiToken: null,
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-account-existing',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          accountId: 'chatgpt-account-existing',
+          accountKey: 'chatgpt-account-existing',
+          email: 'codex-existing@example.com',
+          planType: 'team',
+          refreshToken: 'stable-refresh-token',
+          idToken: originalJwt,
+        },
+      }),
+    }).returning().get();
+
+    const reboundJwt = buildJwt({
+      email: 'codex-existing@example.com',
+      'https://api.openai.com/auth': {
+        chatgpt_account_id: 'chatgpt-account-rebound',
+        chatgpt_plan_type: 'plus',
+      },
+    });
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          access_token: 'rebound-access-token',
+          refresh_token: 'rebound-refresh-token',
+          id_token: reboundJwt,
+          expires_in: 3600,
+          token_type: 'Bearer',
+        }),
+        text: async () => JSON.stringify({ ok: true }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          models: [{ id: 'gpt-5.4' }],
+        }),
+        text: async () => JSON.stringify({ ok: true }),
+      });
+
+    const routeRefreshWorkflow = await import('../../services/routeRefreshWorkflow.js');
+    const rebuildSpy = vi.spyOn(routeRefreshWorkflow, 'rebuildRoutesOnly');
+    rebuildSpy.mockImplementationOnce(async () => {
+      throw new Error('route rebuild failed');
+    });
+
+    try {
+      const startResponse = await app.inject({
+        method: 'POST',
+        url: '/api/oauth/providers/codex/start',
+        headers: {
+          host: 'metapi.example',
+          'x-forwarded-proto': 'https',
+        },
+        payload: {
+          accountId: existing.id,
+        },
+      });
+      const startBody = startResponse.json() as { state: string };
+
+      const callbackResponse = await app.inject({
+        method: 'POST',
+        url: `/api/oauth/sessions/${encodeURIComponent(startBody.state)}/manual-callback`,
+        payload: {
+          callbackUrl: `http://localhost:1455/auth/callback?state=${encodeURIComponent(startBody.state)}&code=oauth-code-rebind-route-rebuild-fail`,
+        },
+      });
+
+      expect(callbackResponse.statusCode).toBe(500);
+
+      const stored = await db.select().from(schema.accounts).where(eq(schema.accounts.id, existing.id)).get();
+      expect(stored).toMatchObject({
+        id: existing.id,
+        status: 'active',
+        accessToken: 'stable-access-token',
+        oauthAccountKey: 'chatgpt-account-existing',
+      });
+      expect(JSON.parse(stored?.extraConfig || '{}')).toMatchObject({
+        oauth: {
+          refreshToken: 'stable-refresh-token',
+          idToken: originalJwt,
+        },
+      });
+    } finally {
+      rebuildSpy.mockRestore();
+    }
+  });
+
   it('fails codex oauth onboarding when token exchange does not expose chatgpt_account_id', async () => {
     const jwt = buildJwt({
       email: 'codex-no-account@example.com',
@@ -3236,21 +3349,23 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       items: expect.arrayContaining([
         expect.objectContaining({
           accountId: accountA.id,
-          routeParticipation: {
+          routeParticipation: expect.objectContaining({
             kind: 'route_unit',
+            routeUnitId: expect.any(Number),
             name: 'Codex Pool',
             strategy: 'round_robin',
             memberCount: 2,
-          },
+          }),
         }),
         expect.objectContaining({
           accountId: accountB.id,
-          routeParticipation: {
+          routeParticipation: expect.objectContaining({
             kind: 'route_unit',
+            routeUnitId: expect.any(Number),
             name: 'Codex Pool',
             strategy: 'round_robin',
             memberCount: 2,
-          },
+          }),
         }),
       ]),
     });

@@ -195,4 +195,202 @@ describe('TokenRouter oauth route units', () => {
     expect(third?.channel.id).toBe(channel.id);
     expect(third?.account.id).toBe(accountB.id);
   });
+
+  it('fails closed when a pooled channel has no loaded members', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'ChatGPT Codex OAuth',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'missing-members@example.com',
+      accessToken: 'oauth-access-token-missing-members',
+      apiToken: null,
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-missing-members',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: { provider: 'codex', accountId: 'chatgpt-missing-members', email: 'missing-members@example.com' },
+      }),
+    }).returning().get();
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.4',
+      enabled: true,
+    }).returning().get();
+    const routeUnit = await db.insert(schema.oauthRouteUnits).values({
+      siteId: site.id,
+      provider: 'codex',
+      name: 'Broken Pool',
+      strategy: 'round_robin',
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: null,
+      oauthRouteUnitId: routeUnit.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      manualOverride: false,
+    }).run();
+
+    const router = new TokenRouter();
+    const selected = await router.selectChannel('gpt-5.4');
+
+    expect(selected).toBeNull();
+  });
+
+  it('uses the api token fallback for pooled oauth members when the access token is blank', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'ChatGPT Codex OAuth',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+
+    const accountA = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'fallback-a@example.com',
+      accessToken: '   ',
+      apiToken: 'oauth-api-token-a',
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-fallback-a',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: { provider: 'codex', accountId: 'chatgpt-fallback-a', email: 'fallback-a@example.com' },
+      }),
+    }).returning().get();
+    const accountB = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'fallback-b@example.com',
+      accessToken: 'oauth-access-token-b',
+      apiToken: null,
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-fallback-b',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: { provider: 'codex', accountId: 'chatgpt-fallback-b', email: 'fallback-b@example.com' },
+      }),
+    }).returning().get();
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.4',
+      enabled: true,
+    }).returning().get();
+    const routeUnit = await db.insert(schema.oauthRouteUnits).values({
+      siteId: site.id,
+      provider: 'codex',
+      name: 'Fallback Pool',
+      strategy: 'round_robin',
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.oauthRouteUnitMembers).values([
+      { unitId: routeUnit.id, accountId: accountA.id, sortOrder: 0 },
+      { unitId: routeUnit.id, accountId: accountB.id, sortOrder: 1 },
+    ]).run();
+    await db.insert(schema.modelAvailability).values([
+      { accountId: accountA.id, modelName: 'gpt-5.4', available: true },
+      { accountId: accountB.id, modelName: 'gpt-5.4', available: true },
+    ]).run();
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountA.id,
+      tokenId: null,
+      oauthRouteUnitId: routeUnit.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      manualOverride: false,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    const selected = await router.selectChannel('gpt-5.4');
+
+    expect(selected?.channel.id).toBe(channel.id);
+    expect(selected?.account.id).toBe(accountA.id);
+    expect(selected?.tokenValue).toBe('oauth-api-token-a');
+  });
+
+  it('does not immediately retry the same pooled member during failover when it just failed', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'ChatGPT Codex OAuth',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+
+    const accountA = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'failover-a@example.com',
+      accessToken: 'oauth-access-token-a',
+      apiToken: null,
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-failover-a',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: { provider: 'codex', accountId: 'chatgpt-failover-a', email: 'failover-a@example.com' },
+      }),
+    }).returning().get();
+    const accountB = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'failover-b@example.com',
+      accessToken: 'oauth-access-token-b',
+      apiToken: null,
+      status: 'disabled',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-failover-b',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: { provider: 'codex', accountId: 'chatgpt-failover-b', email: 'failover-b@example.com' },
+      }),
+    }).returning().get();
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.4',
+      enabled: true,
+    }).returning().get();
+    const routeUnit = await db.insert(schema.oauthRouteUnits).values({
+      siteId: site.id,
+      provider: 'codex',
+      name: 'Failover Pool',
+      strategy: 'round_robin',
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.oauthRouteUnitMembers).values([
+      { unitId: routeUnit.id, accountId: accountA.id, sortOrder: 0 },
+      { unitId: routeUnit.id, accountId: accountB.id, sortOrder: 1 },
+    ]).run();
+    await db.insert(schema.modelAvailability).values([
+      { accountId: accountA.id, modelName: 'gpt-5.4', available: true },
+      { accountId: accountB.id, modelName: 'gpt-5.4', available: true },
+    ]).run();
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountA.id,
+      tokenId: null,
+      oauthRouteUnitId: routeUnit.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      manualOverride: false,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    const first = await router.selectChannel('gpt-5.4');
+    expect(first?.account.id).toBe(accountA.id);
+
+    await router.recordFailure(channel.id, { status: 503, errorText: 'upstream unavailable' }, accountA.id);
+    const failover = await router.selectNextChannel('gpt-5.4', [channel.id]);
+
+    expect(failover).toBeNull();
+  });
 });

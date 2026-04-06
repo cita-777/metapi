@@ -1504,7 +1504,7 @@ function compareNullableTimeDesc(left?: string | null, right?: string | null): n
 }
 
 function isOauthRouteUnitCandidate(candidate: RouteChannelCandidate): boolean {
-  return !!candidate.routeUnit && candidate.routeUnitMembers.length > 0;
+  return !!candidate.routeUnit || !!candidate.channel.oauthRouteUnitId;
 }
 
 function isOauthRouteUnitMemberCoolingDown(
@@ -2856,6 +2856,10 @@ export class TokenRouter {
         recordSelection,
         nowIso,
         nowMs,
+        undefined,
+        undefined,
+        false,
+        excludeChannelIds,
       );
     }
 
@@ -2901,6 +2905,7 @@ export class TokenRouter {
         rotationKey,
         `${rotationKey}:observe`,
         shouldUseObservation,
+        excludeChannelIds,
       );
     }
 
@@ -2932,6 +2937,10 @@ export class TokenRouter {
         recordSelection,
         nowIso,
         nowMs,
+        undefined,
+        undefined,
+        false,
+        excludeChannelIds,
       );
       if (resolved) return resolved;
     }
@@ -2990,6 +2999,7 @@ export class TokenRouter {
       routeStrategy === 'stable_first' ? this.buildStableFirstRotationKey(match.route.id, requestedModel) : undefined,
       routeStrategy === 'stable_first' ? `${this.buildStableFirstRotationKey(match.route.id, requestedModel)}:observe` : undefined,
       false,
+      excludeChannelIds,
     );
   }
 
@@ -3150,6 +3160,7 @@ export class TokenRouter {
     downstreamPolicy: DownstreamRoutingPolicy,
     nowIso: string,
     nowMs: number,
+    excludeChannelIds: number[] = [],
   ): RouteChannelCandidate['routeUnitMembers'][number] | null {
     if (!isOauthRouteUnitCandidate(candidate)) return null;
     const eligibleMembers = this.getEligibleRouteUnitMembers(candidate, {
@@ -3161,15 +3172,19 @@ export class TokenRouter {
     });
     if (eligibleMembers.length === 0) return null;
 
-    const healthyMembers = filterRecentlyFailedCandidates(
-      eligibleMembers.map((memberCandidate) => ({
-        memberCandidate,
-        channel: memberCandidate.member,
-      })),
-      nowMs,
-    ).map((item) => item.memberCandidate);
-
-    const candidateMembers = healthyMembers.length > 0 ? healthyMembers : eligibleMembers;
+    const isRouteUnitFailover = excludeChannelIds.includes(candidate.channel.id);
+    const healthyMembers = isRouteUnitFailover
+      ? eligibleMembers.filter((memberCandidate) => !isChannelRecentlyFailed(memberCandidate.member, nowMs))
+      : filterRecentlyFailedCandidates(
+        eligibleMembers.map((memberCandidate) => ({
+          memberCandidate,
+          channel: memberCandidate.member,
+        })),
+        nowMs,
+      ).map((item) => item.memberCandidate);
+    const candidateMembers = healthyMembers.length > 0
+      ? healthyMembers
+      : (isRouteUnitFailover ? [] : eligibleMembers);
     if (candidate.routeUnit?.strategy === 'stick_until_unavailable') {
       const sticky = this.getStickyPreferredRouteUnitMember(candidateMembers);
       if (sticky) return sticky;
@@ -3402,18 +3417,28 @@ export class TokenRouter {
     stableFirstRotationKey?: string,
     stableFirstObservationKey?: string,
     usedObservation = false,
+    excludeChannelIds: number[] = [],
   ): Promise<SelectedChannel | null> {
     let dispatchCandidate = selected;
+    let resolvedRouteUnitMemberTokenValue: string | null = null;
     if (isOauthRouteUnitCandidate(selected)) {
-      const member = this.selectRouteUnitMember(selected, requestedModel, downstreamPolicy, nowIso, nowMs);
+      const member = this.selectRouteUnitMember(
+        selected,
+        requestedModel,
+        downstreamPolicy,
+        nowIso,
+        nowMs,
+        excludeChannelIds,
+      );
       if (!member || !selected.routeUnit) return null;
+      resolvedRouteUnitMemberTokenValue = this.resolveRouteUnitMemberTokenValue(member);
       dispatchCandidate = this.buildRouteUnitMemberDispatchCandidate(selected, member);
       if (recordSelection) {
         await this.recordRouteUnitMemberSelection(selected.routeUnit.id, member.account.id);
       }
     }
 
-    const tokenValue = this.resolveChannelTokenValue(dispatchCandidate);
+    const tokenValue = resolvedRouteUnitMemberTokenValue ?? this.resolveChannelTokenValue(dispatchCandidate);
     if (!tokenValue) return null;
 
     if (recordSelection) {

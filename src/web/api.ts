@@ -896,13 +896,7 @@ export const api = {
   }) as Promise<{ success: true }>,
   importOAuthConnections: (data: Record<string, unknown>) => request('/api/oauth/import', {
     method: 'POST',
-    body: JSON.stringify(
-      Array.isArray(data.items)
-        || 'proxyUrl' in data
-        || 'useSystemProxy' in data
-        ? data
-        : { data },
-    ),
+    body: JSON.stringify(Array.isArray(data.items) ? data : { data }),
   }) as Promise<OAuthImportResponse>,
   createOAuthRouteUnit: (data: { accountIds: number[]; name: string; strategy: OAuthRouteUnitStrategy }) => request('/api/oauth/route-units', {
     method: 'POST',

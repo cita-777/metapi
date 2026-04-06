@@ -481,18 +481,28 @@ async function activatePersistedOauthAccount(input: {
     }
   }
 
-  if (input.activateExistingAfterRefresh && persisted.previousAccount) {
-    await db.update(schema.accounts).set({
-      status: 'active',
-      updatedAt: new Date().toISOString(),
-    }).where(eq(schema.accounts.id, persisted.account.id)).run();
-    persisted.account = await db.select().from(schema.accounts)
-      .where(eq(schema.accounts.id, persisted.account.id))
-      .get();
-  }
+  try {
+    if (input.activateExistingAfterRefresh && persisted.previousAccount) {
+      await db.update(schema.accounts).set({
+        status: 'active',
+        updatedAt: new Date().toISOString(),
+      }).where(eq(schema.accounts.id, persisted.account.id)).run();
+      persisted.account = await db.select().from(schema.accounts)
+        .where(eq(schema.accounts.id, persisted.account.id))
+        .get();
+    }
 
-  await routeRefreshWorkflow.rebuildRoutesOnly();
-  return persisted;
+    await routeRefreshWorkflow.rebuildRoutesOnly();
+    return persisted;
+  } catch (error) {
+    await revertPersistedOauthAccount({
+      accountId: persisted.account.id,
+      created: persisted.created,
+      previousAccount: persisted.previousAccount,
+    });
+    await routeRefreshWorkflow.rebuildRoutesOnly();
+    throw error;
+  }
 }
 
 async function ensureOauthSite(definition: OAuthProviderDefinition) {
@@ -885,6 +895,8 @@ export async function listOauthConnections(options: {
     const routeParticipation = routeUnit
       ? {
         kind: routeUnit.kind,
+        id: routeUnit.id,
+        routeUnitId: routeUnit.id,
         name: routeUnit.name,
         strategy: routeUnit.strategy,
         memberCount: routeUnit.memberCount,
