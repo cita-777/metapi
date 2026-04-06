@@ -3,13 +3,16 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const refreshSub2ApiManagedSessionMock = vi.fn();
+const refreshSub2ApiManagedSessionSingleflightMock = vi.fn();
+
+vi.mock('./sub2apiRefreshSingleflight.js', () => ({
+  refreshSub2ApiManagedSessionSingleflight: (...args: unknown[]) => refreshSub2ApiManagedSessionSingleflightMock(...args),
+}));
 
 vi.mock('./sub2apiManagedAuth.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./sub2apiManagedAuth.js')>();
   return {
     ...actual,
-    refreshSub2ApiManagedSession: (...args: unknown[]) => refreshSub2ApiManagedSessionMock(...args),
   };
 });
 
@@ -62,7 +65,7 @@ describe('sub2apiRefreshScheduler', () => {
 
   beforeEach(async () => {
     vi.useFakeTimers();
-    refreshSub2ApiManagedSessionMock.mockReset();
+    refreshSub2ApiManagedSessionSingleflightMock.mockReset();
     await stopSub2ApiManagedRefreshScheduler();
     await resetSub2ApiManagedRefreshSchedulerForTests();
 
@@ -183,7 +186,7 @@ describe('sub2apiRefreshScheduler', () => {
       accountIds[account.key] = inserted.id;
     }
 
-    refreshSub2ApiManagedSessionMock.mockResolvedValue({
+    refreshSub2ApiManagedSessionSingleflightMock.mockResolvedValue({
       accessToken: 'refreshed-access-token',
       extraConfig: buildSub2ApiExtraConfig({
         refreshToken: 'refreshed-refresh-token',
@@ -205,7 +208,7 @@ describe('sub2apiRefreshScheduler', () => {
     ].sort((a, b) => a - b));
     expect(result.failedAccountIds).toEqual([]);
     expect(
-      refreshSub2ApiManagedSessionMock.mock.calls
+      refreshSub2ApiManagedSessionSingleflightMock.mock.calls
         .map((call) => call[0]?.account?.id)
         .sort((a, b) => a - b),
     ).toEqual([

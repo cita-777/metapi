@@ -20,8 +20,8 @@ import { withAccountProxyOverride, withSiteProxyRequestInit, withSiteRecordProxy
 import {
   isManagedSub2ApiTokenDue,
   isSub2ApiPlatform,
-  refreshSub2ApiManagedSession,
 } from './sub2apiManagedAuth.js';
+import { refreshSub2ApiManagedSessionSingleflight } from './sub2apiRefreshSingleflight.js';
 
 function isSiteDisabled(status?: string | null): boolean {
   return (status || 'active') === 'disabled';
@@ -288,7 +288,7 @@ export async function refreshBalance(accountId: number) {
     const managedAuth = getSub2ApiAuthFromExtraConfig(activeExtraConfig);
     if (managedAuth?.refreshToken && isManagedSub2ApiTokenDue(managedAuth.tokenExpiresAt)) {
       try {
-        const refreshed = await refreshSub2ApiManagedSession({
+        const refreshed = await refreshSub2ApiManagedSessionSingleflight({
           account,
           site,
           currentAccessToken: activeAccessToken,
@@ -330,7 +330,7 @@ export async function refreshBalance(accountId: number) {
 
     if (canTryManagedSub2ApiRefresh) {
       try {
-        const refreshed = await refreshSub2ApiManagedSession({
+        const refreshed = await refreshSub2ApiManagedSessionSingleflight({
           account,
           site,
           currentAccessToken: activeAccessToken,

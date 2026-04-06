@@ -4,8 +4,8 @@ import { getSub2ApiAuthFromExtraConfig } from './accountExtraConfig.js';
 import {
   isManagedSub2ApiTokenDue,
   isSub2ApiPlatform,
-  refreshSub2ApiManagedSession,
 } from './sub2apiManagedAuth.js';
+import { refreshSub2ApiManagedSessionSingleflight } from './sub2apiRefreshSingleflight.js';
 
 const SUB2API_REFRESH_SCHEDULER_INTERVAL_MS = 60_000;
 
@@ -59,7 +59,7 @@ export async function executeSub2ApiManagedRefreshPass(input: {
     }
 
     try {
-      await refreshSub2ApiManagedSession({
+      await refreshSub2ApiManagedSessionSingleflight({
         account: row.accounts,
         site: row.sites,
         currentAccessToken: row.accounts.accessToken,
