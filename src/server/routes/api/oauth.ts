@@ -70,12 +70,20 @@ const limitOauthConnectionMutate = createRateLimitGuard({
   windowMs: 60_000,
 });
 
-const oauthSensitiveRouteLimiter = new RateLimiterMemory({
-  keyPrefix: 'oauth-connection-sensitive',
-  points: 20,
-  duration: 60,
-});
+function createOauthSensitiveRouteLimiter() {
+  return new RateLimiterMemory({
+    keyPrefix: 'oauth-connection-sensitive',
+    points: 20,
+    duration: 60,
+  });
+}
+
+let oauthSensitiveRouteLimiter = createOauthSensitiveRouteLimiter();
 const MAX_OAUTH_QUOTA_BATCH_SIZE = 100;
+
+export function resetOauthSensitiveRouteLimiterForTests(): void {
+  oauthSensitiveRouteLimiter = createOauthSensitiveRouteLimiter();
+}
 
 async function limitOauthSensitiveRoute(request: FastifyRequest, reply: FastifyReply) {
   try {
@@ -295,7 +303,7 @@ export async function oauthRoutes(app: FastifyInstance) {
 
   app.patch<{ Params: { accountId: string }; Body: unknown }>(
     '/api/oauth/connections/:accountId/proxy',
-    { preHandler: [limitOauthConnectionMutate] },
+    { preHandler: [limitOauthConnectionMutate, limitOauthSensitiveRoute] },
     async (request, reply) => {
       const parsedBody = parseOauthConnectionProxyUpdatePayload(request.body);
       if (!parsedBody.success) {
@@ -417,7 +425,7 @@ export async function oauthRoutes(app: FastifyInstance) {
 
   app.post<{ Body: unknown }>(
     '/api/oauth/route-units',
-    { preHandler: [limitOauthConnectionMutate] },
+    { preHandler: [limitOauthConnectionMutate, limitOauthSensitiveRoute] },
     async (request, reply) => {
       const parsedBody = parseOauthRouteUnitCreatePayload(request.body);
       if (!parsedBody.success) {
@@ -441,7 +449,7 @@ export async function oauthRoutes(app: FastifyInstance) {
 
   app.patch<{ Params: { routeUnitId: string }; Body: unknown }>(
     '/api/oauth/route-units/:routeUnitId',
-    { preHandler: [limitOauthConnectionMutate] },
+    { preHandler: [limitOauthConnectionMutate, limitOauthSensitiveRoute] },
     async (request, reply) => {
       const parsedBody = parseOauthRouteUnitUpdatePayload(request.body);
       if (!parsedBody.success) {
@@ -469,7 +477,7 @@ export async function oauthRoutes(app: FastifyInstance) {
 
   app.delete<{ Params: { routeUnitId: string } }>(
     '/api/oauth/route-units/:routeUnitId',
-    { preHandler: [limitOauthConnectionMutate] },
+    { preHandler: [limitOauthConnectionMutate, limitOauthSensitiveRoute] },
     async (request, reply) => {
       const routeUnitId = parsePositiveInteger(request.params.routeUnitId);
       if (routeUnitId === null) {

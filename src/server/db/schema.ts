@@ -210,7 +210,7 @@ export const routeChannels = sqliteTable('route_channels', {
   routeId: integer('route_id').notNull().references(() => tokenRoutes.id, { onDelete: 'cascade' }),
   accountId: integer('account_id').notNull().references(() => accounts.id, { onDelete: 'cascade' }),
   tokenId: integer('token_id').references(() => accountTokens.id, { onDelete: 'set null' }),
-  oauthRouteUnitId: integer('oauth_route_unit_id').references(() => oauthRouteUnits.id, { onDelete: 'cascade' }),
+  oauthRouteUnitId: integer('oauth_route_unit_id'),
   sourceModel: text('source_model'),
   priority: integer('priority').default(0),
   weight: integer('weight').default(10),

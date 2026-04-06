@@ -2597,17 +2597,6 @@
     {
       "table": "route_channels",
       "columns": [
-        "oauth_route_unit_id"
-      ],
-      "referencedTable": "oauth_route_units",
-      "referencedColumns": [
-        "id"
-      ],
-      "onDelete": "NO ACTION"
-    },
-    {
-      "table": "route_channels",
-      "columns": [
         "route_id"
       ],
       "referencedTable": "token_routes",

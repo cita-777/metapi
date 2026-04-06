@@ -37,5 +37,5 @@ CREATE TABLE `oauth_route_units` (
 --> statement-breakpoint
 CREATE INDEX `oauth_route_units_site_provider_idx` ON `oauth_route_units` (`site_id`,`provider`);--> statement-breakpoint
 CREATE INDEX `oauth_route_units_enabled_idx` ON `oauth_route_units` (`enabled`);--> statement-breakpoint
-ALTER TABLE `route_channels` ADD `oauth_route_unit_id` integer REFERENCES oauth_route_units(id);--> statement-breakpoint
+ALTER TABLE `route_channels` ADD `oauth_route_unit_id` integer;--> statement-breakpoint
 CREATE INDEX `route_channels_oauth_route_unit_id_idx` ON `route_channels` (`oauth_route_unit_id`);

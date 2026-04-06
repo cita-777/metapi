@@ -89,7 +89,9 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     undiciProxyAgentCtorMock.mockReset();
     config.systemProxyUrl = '';
     const { resetRequestRateLimitStore } = await import('../../middleware/requestRateLimit.js');
+    const { resetOauthSensitiveRouteLimiterForTests } = await import('./oauth.js');
     resetRequestRateLimitStore();
+    resetOauthSensitiveRouteLimiterForTests();
     await db.delete(schema.routeChannels).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();

@@ -2254,19 +2254,6 @@
           ],
           "onDelete": "set null",
           "onUpdate": "no action"
-        },
-        "route_channels_oauth_route_unit_id_oauth_route_units_id_fk": {
-          "name": "route_channels_oauth_route_unit_id_oauth_route_units_id_fk",
-          "tableFrom": "route_channels",
-          "tableTo": "oauth_route_units",
-          "columnsFrom": [
-            "oauth_route_unit_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
