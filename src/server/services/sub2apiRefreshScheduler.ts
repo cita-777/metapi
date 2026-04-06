@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { getSub2ApiAuthFromExtraConfig } from './accountExtraConfig.js';
 import {
@@ -8,6 +8,7 @@ import {
 import { refreshSub2ApiManagedSessionSingleflight } from './sub2apiRefreshSingleflight.js';
 
 const SUB2API_REFRESH_SCHEDULER_INTERVAL_MS = 60_000;
+const SUB2API_REFRESH_SCHEDULER_CONCURRENCY = 4;
 
 let sub2ApiRefreshSchedulerTimer: ReturnType<typeof setInterval> | null = null;
 let sub2ApiRefreshPassInFlight: Promise<void> | null = null;
@@ -42,37 +43,46 @@ export async function executeSub2ApiManagedRefreshPass(input: {
   const rows = await db.select()
     .from(schema.accounts)
     .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+    .where(and(
+      eq(schema.accounts.status, 'active'),
+      eq(schema.sites.status, 'active'),
+      eq(schema.sites.platform, 'sub2api'),
+    ))
     .all();
 
+  const refreshCandidates = rows.filter((row) => shouldRefreshManagedSub2ApiAccount({
+    account: row.accounts,
+    site: row.sites,
+    nowMs,
+  }));
   const refreshedAccountIds: number[] = [];
   const failedAccountIds: number[] = [];
-  let skipped = 0;
+  const skipped = rows.length - refreshCandidates.length;
 
-  for (const row of rows) {
-    if (!shouldRefreshManagedSub2ApiAccount({
-      account: row.accounts,
-      site: row.sites,
-      nowMs,
-    })) {
-      skipped += 1;
-      continue;
-    }
+  let cursor = 0;
+  const workerCount = Math.max(1, Math.min(SUB2API_REFRESH_SCHEDULER_CONCURRENCY, refreshCandidates.length || 1));
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (true) {
+      const row = refreshCandidates[cursor];
+      cursor += 1;
+      if (!row) return;
 
-    try {
-      await refreshSub2ApiManagedSessionSingleflight({
-        account: row.accounts,
-        site: row.sites,
-        currentAccessToken: row.accounts.accessToken,
-        currentExtraConfig: row.accounts.extraConfig,
-      });
-      refreshedAccountIds.push(row.accounts.id);
-    } catch (error) {
-      failedAccountIds.push(row.accounts.id);
-      console.warn(
-        `[sub2api-refresh] failed to refresh account ${row.accounts.id}: ${(error as Error)?.message || 'unknown error'}`,
-      );
+      try {
+        await refreshSub2ApiManagedSessionSingleflight({
+          account: row.accounts,
+          site: row.sites,
+          currentAccessToken: row.accounts.accessToken,
+          currentExtraConfig: row.accounts.extraConfig,
+        });
+        refreshedAccountIds.push(row.accounts.id);
+      } catch (error) {
+        failedAccountIds.push(row.accounts.id);
+        console.warn(
+          `[sub2api-refresh] failed to refresh account ${row.accounts.id}: ${(error as Error)?.message || 'unknown error'}`,
+        );
+      }
     }
-  }
+  }));
 
   return {
     scanned: rows.length,

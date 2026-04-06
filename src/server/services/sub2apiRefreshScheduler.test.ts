@@ -197,10 +197,10 @@ describe('sub2apiRefreshScheduler', () => {
     const result = await executeSub2ApiManagedRefreshPass({ nowMs });
 
     expect(result).toMatchObject({
-      scanned: 8,
+      scanned: 5,
       refreshed: 2,
       failed: 0,
-      skipped: 6,
+      skipped: 3,
     });
     expect(result.refreshedAccountIds.sort((a, b) => a - b)).toEqual([
       accountIds.due,
@@ -215,5 +215,61 @@ describe('sub2apiRefreshScheduler', () => {
       accountIds.due,
       accountIds.expired,
     ].sort((a, b) => a - b));
+  });
+
+  it('refreshes due sub2api accounts with bounded concurrency instead of serially', async () => {
+    vi.useRealTimers();
+    const nowMs = Date.parse('2026-04-06T02:00:00.000Z');
+    vi.setSystemTime(nowMs);
+
+    const activeSub2ApiSite = await db.insert(schema.sites).values({
+      name: 'sub2-concurrency-site',
+      url: 'https://sub2-concurrency.example.com',
+      platform: 'sub2api',
+      status: 'active',
+    }).returning().get();
+
+    for (const key of ['due-a', 'due-b', 'later']) {
+      await db.insert(schema.accounts).values({
+        siteId: activeSub2ApiSite.id,
+        username: `${key}@example.com`,
+        accessToken: `${key}-access-token`,
+        apiToken: null,
+        status: 'active',
+        extraConfig: buildSub2ApiExtraConfig({
+          refreshToken: `${key}-refresh-token`,
+          tokenExpiresAt: key === 'later' ? nowMs + (10 * 60 * 1000) : nowMs + 60_000,
+        }),
+      }).run();
+    }
+
+    const resolvers: Array<() => void> = [];
+    refreshSub2ApiManagedSessionSingleflightMock.mockImplementation(() => new Promise((resolve) => {
+      resolvers.push(() => resolve({
+        accessToken: 'refreshed-access-token',
+        extraConfig: buildSub2ApiExtraConfig({
+          refreshToken: 'refreshed-refresh-token',
+          tokenExpiresAt: nowMs + (60 * 60 * 1000),
+        }),
+      }));
+    }));
+
+    const passPromise = executeSub2ApiManagedRefreshPass({ nowMs });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(refreshSub2ApiManagedSessionSingleflightMock).toHaveBeenCalledTimes(2);
+
+    for (const resolve of resolvers) {
+      resolve();
+    }
+
+    const result = await passPromise;
+    expect(result).toMatchObject({
+      scanned: 3,
+      refreshed: 2,
+      failed: 0,
+      skipped: 1,
+    });
   });
 });
