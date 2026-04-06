@@ -1,14 +1,10 @@
 import type { PreparedProviderRequest, PrepareProviderRequestInput, ProviderAction, ProviderProfile } from './types.js';
+import { resolveAntigravityProviderAction } from './antigravityRuntime.js';
 
 const ANTIGRAVITY_RUNTIME_USER_AGENT = 'antigravity/1.19.6 darwin/arm64';
 
 function asTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
-}
-
-function resolveAction(action: ProviderAction | undefined, stream: boolean): ProviderAction {
-  if (action) return action;
-  return stream ? 'streamGenerateContent' : 'generateContent';
 }
 
 function resolvePath(action: ProviderAction): string {
@@ -20,7 +16,7 @@ function resolvePath(action: ProviderAction): string {
 export const antigravityProviderProfile: ProviderProfile = {
   id: 'antigravity',
   prepareRequest(input: PrepareProviderRequestInput): PreparedProviderRequest {
-    const action = resolveAction(input.action, input.stream);
+    const action = resolveAntigravityProviderAction(input.action, input.stream, input.modelName);
     const projectId = asTrimmedString(input.oauthProjectId);
     return {
       path: resolvePath(action),
@@ -38,7 +34,7 @@ export const antigravityProviderProfile: ProviderProfile = {
       runtime: {
         executor: 'antigravity',
         modelName: input.modelName,
-        stream: action === 'streamGenerateContent',
+        stream: input.stream,
         oauthProjectId: projectId,
         action,
       },

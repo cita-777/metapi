@@ -17,7 +17,7 @@ describe('dispatchRuntimeRequest', () => {
     fetchMock.mockReset();
   });
 
-  it('routes antigravity runtime requests through daily then sandbox base urls and rewrites the payload fingerprint', async () => {
+  it('routes standard antigravity runtime requests through daily then sandbox base urls and rewrites the payload fingerprint', async () => {
     const { dispatchRuntimeRequest } = await import('./runtimeExecutor.js');
     const request: BuiltEndpointRequest = {
       endpoint: 'chat',
@@ -29,7 +29,7 @@ describe('dispatchRuntimeRequest', () => {
       },
       body: {
         project: 'project-demo',
-        model: 'gemini-3-pro-preview',
+        model: 'gemini-2.5-pro',
         request: {
           contents: [
             {
@@ -41,7 +41,7 @@ describe('dispatchRuntimeRequest', () => {
       },
       runtime: {
         executor: 'antigravity',
-        modelName: 'gemini-3-pro-preview',
+        modelName: 'gemini-2.5-pro',
         stream: false,
       },
     };
@@ -86,7 +86,7 @@ describe('dispatchRuntimeRequest', () => {
     const upstreamBody = JSON.parse(String(firstInit.body));
     expect(upstreamBody).toMatchObject({
       project: 'project-demo',
-      model: 'gemini-3-pro-preview',
+      model: 'gemini-2.5-pro',
       userAgent: 'antigravity',
       requestType: 'agent',
       request: {
@@ -100,6 +100,99 @@ describe('dispatchRuntimeRequest', () => {
       },
     });
     expect(upstreamBody.requestId).toMatch(/^agent-[0-9a-f-]{36}$/i);
+  });
+
+  it('routes antigravity gemini-3-pro non-stream requests through the stream endpoint and aggregates SSE back to JSON', async () => {
+    const { dispatchRuntimeRequest } = await import('./runtimeExecutor.js');
+    const request: BuiltEndpointRequest = {
+      endpoint: 'chat',
+      path: '/v1internal:streamGenerateContent?alt=sse',
+      headers: {
+        Authorization: 'Bearer antigravity-token',
+        'Content-Type': 'application/json',
+      },
+      body: {
+        project: 'project-demo',
+        model: 'gemini-3-pro-low',
+        request: {
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: 'hello runtime executor' }],
+            },
+          ],
+        },
+      },
+      runtime: {
+        executor: 'antigravity',
+        modelName: 'gemini-3-pro-low',
+        stream: false,
+        action: 'streamGenerateContent',
+      },
+    };
+
+    fetchMock.mockResolvedValueOnce(new Response([
+      'data: {"response":{"responseId":"antigravity-stream-1","modelVersion":"gemini-3-pro-low","candidates":[{"content":{"role":"model","parts":[{"text":"hello "}]},"index":0}]}}',
+      '',
+      'data: {"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"from antigravity"}]},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":4,"totalTokenCount":9}}}',
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n'), {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+    }) as unknown as Awaited<ReturnType<typeof fetch>>);
+
+    const response = await dispatchRuntimeRequest({
+      siteUrl: 'https://cloudcode-pa.googleapis.com',
+      request,
+      buildInit: (_url, nextRequest) => ({
+        method: 'POST',
+        headers: nextRequest.headers,
+        body: JSON.stringify(nextRequest.body),
+      }),
+    });
+
+    expect(response.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse');
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(requestInit.headers).toMatchObject({
+      Authorization: 'Bearer antigravity-token',
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+      'User-Agent': 'antigravity/1.19.6 darwin/arm64',
+    });
+
+    const upstreamBody = JSON.parse(String(requestInit.body));
+    expect(upstreamBody).toMatchObject({
+      project: 'project-demo',
+      model: 'gemini-3-pro-low',
+      userAgent: 'antigravity',
+      requestType: 'agent',
+    });
+
+    expect(response.headers.get('content-type')).toContain('application/json');
+    await expect(response.json()).resolves.toEqual({
+      responseId: 'antigravity-stream-1',
+      modelVersion: 'gemini-3-pro-low',
+      candidates: [
+        {
+          index: 0,
+          content: {
+            role: 'model',
+            parts: [{ text: 'hello from antigravity' }],
+          },
+          finishReason: 'STOP',
+        },
+      ],
+      usageMetadata: {
+        promptTokenCount: 5,
+        candidatesTokenCount: 4,
+        totalTokenCount: 9,
+      },
+    });
   });
 
   it('keeps gemini-cli countTokens payload lean while forcing a model-aware user agent', async () => {
@@ -181,7 +274,7 @@ describe('dispatchRuntimeRequest', () => {
       },
       body: {
         project: 'project-demo',
-        model: 'gemini-3-pro-preview',
+        model: 'gemini-2.5-pro',
         request: {
           contents: [
             {
@@ -193,7 +286,7 @@ describe('dispatchRuntimeRequest', () => {
       },
       runtime: {
         executor: 'antigravity',
-        modelName: 'gemini-3-pro-preview',
+        modelName: 'gemini-2.5-pro',
         stream: false,
       },
     };

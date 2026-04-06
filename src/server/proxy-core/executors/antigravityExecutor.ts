@@ -1,10 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Response } from 'undici';
+import { geminiGenerateContentTransformer } from '../../transformers/gemini/generate-content/index.js';
 import type { RuntimeDispatchInput, RuntimeExecutor, RuntimeResponse } from './types.js';
 import {
   asTrimmedString,
   materializeErrorResponse,
   performFetch,
+  readRuntimeResponseText,
   withRequestBody,
 } from './types.js';
 
@@ -133,6 +135,56 @@ function antigravityNoCapacityRetryDelay(attempt: number): number {
   return Math.min((attempt + 1) * 250, 2000);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function unwrapAntigravityAggregatePayload(payload: unknown): unknown {
+  if (!isRecord(payload)) return payload;
+  return payload.response !== undefined ? payload.response : payload;
+}
+
+function antigravityUsesStreamEndpoint(request: RuntimeDispatchInput['request']): boolean {
+  return request.runtime?.action === 'streamGenerateContent'
+    || request.path.includes(':streamGenerateContent');
+}
+
+function antigravityShouldAggregateStreamResponse(request: RuntimeDispatchInput['request']): boolean {
+  return antigravityUsesStreamEndpoint(request) && request.runtime?.stream !== true;
+}
+
+async function materializeAntigravitySuccessResponse(
+  response: RuntimeResponse,
+  aggregateStreamResponse: boolean,
+): Promise<RuntimeResponse> {
+  if (!aggregateStreamResponse) return response;
+
+  const rawText = await readRuntimeResponseText(response);
+  const contentType = response.headers.get('content-type');
+  const parsed = geminiGenerateContentTransformer.stream.parseGeminiStreamPayload(rawText, contentType);
+  const aggregateState = geminiGenerateContentTransformer.stream.createAggregateState();
+
+  for (const event of parsed.events) {
+    geminiGenerateContentTransformer.stream.applyAggregate(
+      aggregateState,
+      unwrapAntigravityAggregatePayload(event),
+    );
+  }
+
+  const headers = new Headers(response.headers);
+  headers.set('content-type', 'application/json; charset=utf-8');
+  headers.delete('content-encoding');
+  headers.delete('content-length');
+
+  return new Response(
+    JSON.stringify(geminiGenerateContentTransformer.stream.serializeAggregateJsonPayload(aggregateState)),
+    {
+      status: response.status,
+      headers,
+    },
+  );
+}
+
 async function waitMs(ms: number): Promise<void> {
   if (ms <= 0) return;
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -147,6 +199,8 @@ export const antigravityExecutor: RuntimeExecutor = {
       input.request.runtime?.action,
     );
     const baseAttempts = 3;
+    const useStreamEndpoint = antigravityUsesStreamEndpoint(input.request);
+    const aggregateStreamResponse = antigravityShouldAggregateStreamResponse(input.request);
     let lastResponse: RuntimeResponse | null = null;
 
     attemptLoop:
@@ -156,7 +210,7 @@ export const antigravityExecutor: RuntimeExecutor = {
         const minimalHeaders: Record<string, string> = {
           Authorization: input.request.headers.Authorization || input.request.headers.authorization || '',
           'Content-Type': 'application/json',
-          Accept: input.request.runtime?.stream ? 'text/event-stream' : 'application/json',
+          Accept: useStreamEndpoint ? 'text/event-stream' : 'application/json',
           'User-Agent': 'antigravity/1.19.6 darwin/arm64',
         };
         let response: RuntimeResponse;
@@ -175,7 +229,9 @@ export const antigravityExecutor: RuntimeExecutor = {
           }
           throw error;
         }
-        if (response.ok) return response;
+        if (response.ok) {
+          return materializeAntigravitySuccessResponse(response, aggregateStreamResponse);
+        }
 
         const errorResponse = await materializeErrorResponse(response);
         const errorText = await errorResponse.text().catch(() => '');
@@ -205,7 +261,7 @@ export const antigravityExecutor: RuntimeExecutor = {
     return lastResponse || performFetch(input, withRequestBody(input.request, runtimeBody, {
       Authorization: input.request.headers.Authorization || input.request.headers.authorization || '',
       'Content-Type': 'application/json',
-      Accept: input.request.runtime?.stream ? 'text/event-stream' : 'application/json',
+      Accept: useStreamEndpoint ? 'text/event-stream' : 'application/json',
       'User-Agent': 'antigravity/1.19.6 darwin/arm64',
     }));
   },

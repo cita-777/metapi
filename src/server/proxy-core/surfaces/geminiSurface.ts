@@ -30,6 +30,7 @@ import {
 } from '../../transformers/gemini/generate-content/index.js';
 import { createChatEndpointStrategy } from '../../transformers/shared/chatEndpointStrategy.js';
 import { normalizeUpstreamFinalResponse } from '../../transformers/shared/normalized.js';
+import { resolveAntigravityProviderAction } from '../providers/antigravityRuntime.js';
 import {
   createGeminiCliStreamReader,
   unwrapGeminiCliPayload,
@@ -94,11 +95,10 @@ function isInternalGeminiPlatform(platform: unknown): boolean {
 }
 
 function buildGeminiCliActionPath(input: {
-  isStreamAction: boolean;
-  isCountTokensAction: boolean;
+  action: 'generateContent' | 'streamGenerateContent' | 'countTokens';
 }) {
-  if (input.isCountTokensAction) return '/v1internal:countTokens';
-  if (input.isStreamAction) return '/v1internal:streamGenerateContent?alt=sse';
+  if (input.action === 'countTokens') return '/v1internal:countTokens';
+  if (input.action === 'streamGenerateContent') return '/v1internal:streamGenerateContent?alt=sse';
   return '/v1internal:generateContent';
 }
 
@@ -656,8 +656,19 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             /^models\/[^:]+/,
             `models/${actualModel}`,
           );
+          const internalGeminiAction = isCountTokensAction
+            ? 'countTokens'
+            : (
+              isGeminiCli
+                ? (isStreamAction ? 'streamGenerateContent' : 'generateContent')
+                : resolveAntigravityProviderAction(
+                  isStreamAction ? 'streamGenerateContent' : 'generateContent',
+                  isStreamAction,
+                  actualModel,
+                )
+            );
           upstreamPath = isInternalGemini
-            ? buildGeminiCliActionPath({ isStreamAction, isCountTokensAction })
+            ? buildGeminiCliActionPath({ action: internalGeminiAction })
             : resolveUpstreamPath(apiVersion, actualModelAction);
           const query = new URLSearchParams(request.query as Record<string, string>).toString();
           const channelProxyUrl = resolveChannelProxyUrl(selected.site, selected.account.extraConfig);
@@ -676,7 +687,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             const requestHeaders = isInternalGemini
               ? {
                 'Content-Type': 'application/json',
-                ...(isStreamAction ? { Accept: 'text/event-stream' } : {}),
+                ...(internalGeminiAction === 'streamGenerateContent' ? { Accept: 'text/event-stream' } : {}),
                 Authorization: `Bearer ${selected.tokenValue}`,
                 ...buildOauthProviderHeaders({
                   account: selected.account,
@@ -720,9 +731,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
                         modelName: actualModel,
                         stream: isStreamAction,
                         oauthProjectId: oauth?.projectId || null,
-                        action: isCountTokensAction
-                          ? 'countTokens'
-                          : (isStreamAction ? 'streamGenerateContent' : 'generateContent'),
+                        action: internalGeminiAction,
                       },
                     },
                     buildInit: async (_requestUrl, requestForFetch) => withSiteRecordProxyRequestInit(selected.site, {

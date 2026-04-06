@@ -1211,11 +1211,18 @@ describe('buildUpstreamEndpointRequest', () => {
       },
     });
 
-    expect(request.path).toBe('/v1internal:generateContent');
+    expect(request.path).toBe('/v1internal:streamGenerateContent?alt=sse');
     expect(request.headers.Authorization).toBe('Bearer oauth-access-token');
+    expect(request.headers.Accept).toBe('text/event-stream');
     expect(request.headers['User-Agent']).toBe('antigravity/1.19.6 darwin/arm64');
     expect(request.headers['X-Goog-Api-Client']).toBeUndefined();
     expect(request.headers['Client-Metadata']).toBeUndefined();
+    expect(request.runtime).toMatchObject({
+      executor: 'antigravity',
+      modelName: 'gemini-3-pro-preview',
+      stream: false,
+      action: 'streamGenerateContent',
+    });
     expect(request.body).toEqual({
       project: 'project-demo',
       model: 'gemini-3-pro-preview',
