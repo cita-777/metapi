@@ -33,6 +33,8 @@ const TABLES_WITH_NUMERIC_ID = new Set([
   'token_routes',
   'route_group_sources',
   'route_channels',
+  'oauth_route_units',
+  'oauth_route_unit_members',
   'proxy_logs',
   'proxy_debug_traces',
   'proxy_debug_attempts',

@@ -81,6 +81,29 @@ describe('db proxy query wrapper', () => {
     });
   });
 
+  it('normalizes postgres inserts with returning ids for oauth route units', async () => {
+    const query = vi.fn(async () => ({
+      rows: [{ id: 7 }],
+      rowCount: 1,
+    }));
+    const executor = { query };
+
+    const result = await testUtils.pgProxyQuery(
+      executor as any,
+      'insert into "oauth_route_units" ("site_id", "provider", "name") values ($1, $2, $3)',
+      [1, 'codex', 'pool-a'],
+      'execute',
+    );
+
+    expect(query).toHaveBeenCalledWith({
+      text: 'insert into "oauth_route_units" ("site_id", "provider", "name") values ($1, $2, $3) returning id',
+      values: [1, 'codex', 'pool-a'],
+    });
+    expect(result).toEqual({
+      rows: [{ changes: 1, lastInsertRowid: 7 }],
+    });
+  });
+
   it('builds mysql pool options with jsonStrings enabled', () => {
     expect(testUtils.buildMysqlPoolOptions('mysql://root:pass@db.example.com:3306/metapi', false)).toMatchObject({
       uri: 'mysql://root:pass@db.example.com:3306/metapi',
