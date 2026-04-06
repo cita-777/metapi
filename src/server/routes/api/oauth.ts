@@ -70,25 +70,32 @@ const limitOauthConnectionMutate = createRateLimitGuard({
   windowMs: 60_000,
 });
 
-function createOauthSensitiveRouteLimiter() {
+function createOauthSensitiveRouteLimiter(keyPrefix: string, points = 20) {
   return new RateLimiterMemory({
-    keyPrefix: 'oauth-connection-sensitive',
-    points: 20,
+    keyPrefix,
+    points,
     duration: 60,
   });
 }
 
-let oauthSensitiveRouteLimiter = createOauthSensitiveRouteLimiter();
+let oauthQuotaBatchRefreshLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-quota-batch');
+let oauthProxyUpdateLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-proxy');
+let oauthImportLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-import');
+let oauthRouteUnitCreateLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-route-unit-create');
+let oauthRouteUnitUpdateLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-route-unit-update');
+let oauthRouteUnitDeleteLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-route-unit-delete');
 const MAX_OAUTH_QUOTA_BATCH_SIZE = 100;
 
 export function resetOauthSensitiveRouteLimiterForTests(options: {
   points?: number;
 } = {}): void {
-  oauthSensitiveRouteLimiter = new RateLimiterMemory({
-    keyPrefix: 'oauth-connection-sensitive',
-    points: options.points ?? 20,
-    duration: 60,
-  });
+  const points = options.points ?? 20;
+  oauthQuotaBatchRefreshLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-quota-batch', points);
+  oauthProxyUpdateLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-proxy', points);
+  oauthImportLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-import', points);
+  oauthRouteUnitCreateLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-route-unit-create', points);
+  oauthRouteUnitUpdateLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-route-unit-update', points);
+  oauthRouteUnitDeleteLimiter = createOauthSensitiveRouteLimiter('oauth-connection-sensitive-route-unit-delete', points);
 }
 
 function sendOauthSensitiveRateLimit(reply: FastifyReply, error: unknown): void {
@@ -100,7 +107,7 @@ function sendOauthSensitiveRateLimit(reply: FastifyReply, error: unknown): void 
 
 async function limitOauthSensitiveRoute(request: FastifyRequest, reply: FastifyReply) {
   try {
-    await oauthSensitiveRouteLimiter.consume(request.ip);
+    await oauthQuotaBatchRefreshLimiter.consume(request.ip);
   } catch (error) {
     sendOauthSensitiveRateLimit(reply, error);
   }
@@ -316,7 +323,7 @@ export async function oauthRoutes(app: FastifyInstance) {
     { preHandler: [limitOauthConnectionMutate] },
     async (request, reply) => {
       try {
-        await oauthSensitiveRouteLimiter.consume(request.ip);
+        await oauthProxyUpdateLimiter.consume(request.ip);
       } catch (error) {
         sendOauthSensitiveRateLimit(reply, error);
         return;
@@ -409,7 +416,7 @@ export async function oauthRoutes(app: FastifyInstance) {
     { preHandler: [limitOauthConnectionMutate] },
     async (request, reply) => {
       try {
-        await oauthSensitiveRouteLimiter.consume(request.ip);
+        await oauthImportLimiter.consume(request.ip);
       } catch (error) {
         sendOauthSensitiveRateLimit(reply, error);
         return;
@@ -450,7 +457,7 @@ export async function oauthRoutes(app: FastifyInstance) {
     { preHandler: [limitOauthConnectionMutate] },
     async (request, reply) => {
       try {
-        await oauthSensitiveRouteLimiter.consume(request.ip);
+        await oauthRouteUnitCreateLimiter.consume(request.ip);
       } catch (error) {
         sendOauthSensitiveRateLimit(reply, error);
         return;
@@ -492,7 +499,7 @@ export async function oauthRoutes(app: FastifyInstance) {
     { preHandler: [limitOauthConnectionMutate] },
     async (request, reply) => {
       try {
-        await oauthSensitiveRouteLimiter.consume(request.ip);
+        await oauthRouteUnitUpdateLimiter.consume(request.ip);
       } catch (error) {
         sendOauthSensitiveRateLimit(reply, error);
         return;
@@ -530,7 +537,7 @@ export async function oauthRoutes(app: FastifyInstance) {
     { preHandler: [limitOauthConnectionMutate] },
     async (request, reply) => {
       try {
-        await oauthSensitiveRouteLimiter.consume(request.ip);
+        await oauthRouteUnitDeleteLimiter.consume(request.ip);
       } catch (error) {
         sendOauthSensitiveRateLimit(reply, error);
         return;
