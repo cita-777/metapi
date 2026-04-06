@@ -270,11 +270,17 @@ export const antigravityExecutor: RuntimeExecutor = {
       }
     }
 
-    return lastResponse || performFetch(input, withRequestBody(input.request, runtimeBody, {
+    if (lastResponse) return lastResponse;
+
+    const fallbackResponse = await performFetch(input, withRequestBody(input.request, runtimeBody, {
       Authorization: input.request.headers.Authorization || input.request.headers.authorization || '',
       'Content-Type': 'application/json',
       Accept: useStreamEndpoint ? 'text/event-stream' : 'application/json',
       'User-Agent': 'antigravity/1.19.6 darwin/arm64',
     }));
+    if (fallbackResponse.ok) {
+      return materializeAntigravitySuccessResponse(fallbackResponse, aggregateStreamResponse);
+    }
+    return fallbackResponse;
   },
 };
