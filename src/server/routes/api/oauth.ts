@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { RateLimiterMemory, RateLimiterRes } from 'rate-limiter-flexible';
 import { createRateLimitGuard } from '../../middleware/requestRateLimit.js';
 import {
@@ -65,6 +65,17 @@ const oauthSensitiveRouteLimiter = new RateLimiterMemory({
   points: 20,
   duration: 60,
 });
+
+async function limitOauthSensitiveRoute(request: FastifyRequest, reply: FastifyReply) {
+  try {
+    await oauthSensitiveRouteLimiter.consume(request.ip);
+  } catch (error) {
+    const retryState = error instanceof RateLimiterRes ? error : null;
+    const retryAfterSec = Math.max(1, Math.ceil((retryState?.msBeforeNext ?? 60_000) / 1000));
+    reply.code(429).header('retry-after', String(retryAfterSec))
+      .send({ message: '请求过于频繁，请稍后再试' });
+  }
+}
 
 const limitOauthCallback = createRateLimitGuard({
   bucket: 'oauth-callback',
@@ -304,16 +315,8 @@ export async function oauthRoutes(app: FastifyInstance) {
 
   app.post<{ Body: unknown }>(
     '/api/oauth/connections/quota/refresh-batch',
-    { preHandler: [limitOauthConnectionMutate] },
+    { preHandler: [limitOauthConnectionMutate, limitOauthSensitiveRoute] },
     async (request, reply) => {
-      try {
-        await oauthSensitiveRouteLimiter.consume(request.ip);
-      } catch (error) {
-        const retryState = error instanceof RateLimiterRes ? error : null;
-        const retryAfterSec = Math.max(1, Math.ceil((retryState?.msBeforeNext ?? 60_000) / 1000));
-        return reply.code(429).header('retry-after', String(retryAfterSec))
-          .send({ message: '请求过于频繁，请稍后再试' });
-      }
       const parsedBody = parseOauthQuotaBatchRefreshPayload(request.body);
       if (!parsedBody.success) {
         return reply.code(400).send({ message: parsedBody.error });
@@ -328,16 +331,8 @@ export async function oauthRoutes(app: FastifyInstance) {
 
   app.post<{ Body: unknown }>(
     '/api/oauth/import',
-    { preHandler: [limitOauthConnectionMutate] },
+    { preHandler: [limitOauthConnectionMutate, limitOauthSensitiveRoute] },
     async (request, reply) => {
-      try {
-        await oauthSensitiveRouteLimiter.consume(request.ip);
-      } catch (error) {
-        const retryState = error instanceof RateLimiterRes ? error : null;
-        const retryAfterSec = Math.max(1, Math.ceil((retryState?.msBeforeNext ?? 60_000) / 1000));
-        return reply.code(429).header('retry-after', String(retryAfterSec))
-          .send({ message: '请求过于频繁，请稍后再试' });
-      }
       const parsedBody = parseOauthImportPayload(request.body);
       if (!parsedBody.success) {
         return reply.code(400).send({ message: parsedBody.error });
