@@ -998,6 +998,7 @@ export async function importOauthConnectionsFromNativeJson(input: {
   useSystemProxy?: boolean;
 }) {
   const payloadItems = normalizeImportedOauthJsonItems(input);
+  const continueOnItemFailure = Array.isArray(input.items);
   if (payloadItems.length <= 0) {
     throwOauthImportValidationError('data must be a native oauth json object');
   }
@@ -1018,42 +1019,52 @@ export async function importOauthConnectionsFromNativeJson(input: {
       throwOauthImportValidationError('data must be a native oauth json object');
     }
     const payload = rawPayload as ImportedNativeOauthJson;
+    let resolvedIdentity: ReturnType<typeof resolveImportedNativeOauthIdentity> | null = null;
     try {
-      const resolved = resolveImportedNativeOauthIdentity(payload);
-      const definition = getOAuthProviderDefinition(resolved.provider);
+      resolvedIdentity = resolveImportedNativeOauthIdentity(payload);
+      const definition = getOAuthProviderDefinition(resolvedIdentity.provider);
       if (!definition) {
-        throw new Error(`unsupported oauth provider: ${resolved.provider}`);
+        throw new Error(`unsupported oauth provider: ${resolvedIdentity.provider}`);
       }
       const persisted = await activatePersistedOauthAccount({
         definition,
-        exchange: resolved.exchange,
+        exchange: resolvedIdentity.exchange,
         proxyUrl: input.proxyUrl,
         useSystemProxy: input.useSystemProxy,
-        persistedStatus: resolved.disabled ? 'disabled' : 'active',
+        persistedStatus: resolvedIdentity.disabled ? 'disabled' : 'active',
       });
       imported += 1;
       items.push({
-        name: resolved.name,
+        name: resolvedIdentity.name,
         status: 'imported',
-        provider: resolved.provider,
+        provider: resolvedIdentity.provider,
         accountId: persisted.account?.id,
       });
     } catch (error: any) {
       items.push({
-        name: asNonEmptyString(payload.email) || asNonEmptyString(payload.account_key) || asNonEmptyString(payload.account_id) || asNonEmptyString(payload.type) || 'unknown',
+        name: resolvedIdentity?.name
+          || asNonEmptyString(payload.email)
+          || asNonEmptyString(payload.account_key)
+          || asNonEmptyString(payload.account_id)
+          || asNonEmptyString(payload.type)
+          || 'unknown',
         status: 'failed',
-        provider: asNonEmptyString(payload.type) || undefined,
+        provider: resolvedIdentity?.provider || asNonEmptyString(payload.type) || undefined,
         message: error?.message || 'oauth import failed',
       });
-      throw error;
+      if (!continueOnItemFailure) {
+        throw error;
+      }
     }
   }
 
+  const failed = items.filter((item) => item.status === 'failed').length;
+
   return {
-    success: true,
+    success: failed === 0,
     imported,
     skipped: 0,
-    failed: 0,
+    failed,
     items,
   };
 }

@@ -2808,6 +2808,126 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     expect(await db.select().from(schema.modelAvailability).all()).toHaveLength(0);
   });
 
+  it('continues batch oauth import after one item fails and returns a full summary', async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          models: [{ id: 'gpt-5.4' }],
+        }),
+        text: async () => JSON.stringify({ ok: true }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        json: async () => ({ error: 'unavailable' }),
+        text: async () => 'unavailable',
+      });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/import',
+      payload: {
+        items: [
+          {
+            type: 'codex',
+            access_token: 'batch-success-access-token',
+            refresh_token: 'batch-success-refresh-token',
+            id_token: buildJwt({
+              email: 'batch-success@example.com',
+              'https://api.openai.com/auth': {
+                chatgpt_account_id: 'batch-success-account',
+                chatgpt_plan_type: 'plus',
+              },
+            }),
+          },
+          {
+            type: 'codex',
+            access_token: 'batch-failed-access-token',
+            refresh_token: 'batch-failed-refresh-token',
+            id_token: buildJwt({
+              email: 'batch-failed@example.com',
+              'https://api.openai.com/auth': {
+                chatgpt_account_id: 'batch-failed-account',
+                chatgpt_plan_type: 'plus',
+              },
+            }),
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      success: false,
+      imported: 1,
+      failed: 1,
+      items: [
+        expect.objectContaining({
+          name: 'batch-success@example.com',
+          status: 'imported',
+        }),
+        expect.objectContaining({
+          name: 'batch-failed@example.com',
+          status: 'failed',
+          message: 'Codex 模型获取失败（HTTP 503: unavailable）',
+        }),
+      ],
+    });
+
+    const accounts = await db.select().from(schema.accounts).all();
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]?.username).toBe('batch-success@example.com');
+    expect(await db.select().from(schema.modelAvailability).all()).toHaveLength(1);
+  });
+
+  it('rate limits repeated oauth import requests', async () => {
+    const { resetOauthSensitiveRouteLimiterForTests } = await import('./oauth.js');
+    resetOauthSensitiveRouteLimiterForTests({ points: 1 });
+
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        models: [{ id: 'gpt-5.4' }],
+      }),
+      text: async () => JSON.stringify({ ok: true }),
+    });
+
+    const payload = {
+      data: {
+        type: 'codex',
+        access_token: 'limited-access-token',
+        refresh_token: 'limited-refresh-token',
+        id_token: buildJwt({
+          email: 'limited@example.com',
+          'https://api.openai.com/auth': {
+            chatgpt_account_id: 'limited-account',
+            chatgpt_plan_type: 'plus',
+          },
+        }),
+      },
+    };
+
+    const first = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/import',
+      payload,
+    });
+    const second = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/import',
+      payload,
+    });
+
+    expect(first.statusCode).toBe(200);
+    expect(second.statusCode).toBe(429);
+    expect(second.json()).toMatchObject({
+      message: '请求过于频繁，请稍后再试',
+    });
+  });
+
   it('creates and deletes an oauth route unit, collapsing grouped accounts into one route channel', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'ChatGPT Codex OAuth',

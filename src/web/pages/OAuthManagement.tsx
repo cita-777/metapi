@@ -1376,9 +1376,15 @@ export default function OAuthManagement() {
         });
 
       await loadConnections();
-      const successMessage = `已添加 ${result.imported} 个 OAuth 连接`;
-      toast.success(successMessage);
-      setSessionMessage(successMessage);
+      const importMessage = result.failed > 0
+        ? `批量导入完成，成功 ${result.imported} 个，失败 ${result.failed} 个`
+        : `已添加 ${result.imported} 个 OAuth 连接`;
+      if (result.failed > 0) {
+        toast.info(importMessage);
+      } else {
+        toast.success(importMessage);
+      }
+      setSessionMessage(importMessage);
       closeImportModal();
     } catch (error: any) {
       const message = error?.message || '导入 OAuth JSON 失败';

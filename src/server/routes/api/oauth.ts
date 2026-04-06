@@ -81,18 +81,28 @@ function createOauthSensitiveRouteLimiter() {
 let oauthSensitiveRouteLimiter = createOauthSensitiveRouteLimiter();
 const MAX_OAUTH_QUOTA_BATCH_SIZE = 100;
 
-export function resetOauthSensitiveRouteLimiterForTests(): void {
-  oauthSensitiveRouteLimiter = createOauthSensitiveRouteLimiter();
+export function resetOauthSensitiveRouteLimiterForTests(options: {
+  points?: number;
+} = {}): void {
+  oauthSensitiveRouteLimiter = new RateLimiterMemory({
+    keyPrefix: 'oauth-connection-sensitive',
+    points: options.points ?? 20,
+    duration: 60,
+  });
+}
+
+function sendOauthSensitiveRateLimit(reply: FastifyReply, error: unknown): void {
+  const retryState = error instanceof RateLimiterRes ? error : null;
+  const retryAfterSec = Math.max(1, Math.ceil((retryState?.msBeforeNext ?? 60_000) / 1000));
+  reply.code(429).header('retry-after', String(retryAfterSec))
+    .send({ message: '请求过于频繁，请稍后再试' });
 }
 
 async function limitOauthSensitiveRoute(request: FastifyRequest, reply: FastifyReply) {
   try {
     await oauthSensitiveRouteLimiter.consume(request.ip);
   } catch (error) {
-    const retryState = error instanceof RateLimiterRes ? error : null;
-    const retryAfterSec = Math.max(1, Math.ceil((retryState?.msBeforeNext ?? 60_000) / 1000));
-    reply.code(429).header('retry-after', String(retryAfterSec))
-      .send({ message: '请求过于频繁，请稍后再试' });
+    sendOauthSensitiveRateLimit(reply, error);
   }
 }
 
@@ -305,8 +315,12 @@ export async function oauthRoutes(app: FastifyInstance) {
     '/api/oauth/connections/:accountId/proxy',
     { preHandler: [limitOauthConnectionMutate] },
     async (request, reply) => {
-      await limitOauthSensitiveRoute(request, reply);
-      if (reply.sent) return;
+      try {
+        await oauthSensitiveRouteLimiter.consume(request.ip);
+      } catch (error) {
+        sendOauthSensitiveRateLimit(reply, error);
+        return;
+      }
       const parsedBody = parseOauthConnectionProxyUpdatePayload(request.body);
       if (!parsedBody.success) {
         return reply.code(400).send({ message: parsedBody.error });
@@ -392,8 +406,14 @@ export async function oauthRoutes(app: FastifyInstance) {
 
   app.post<{ Body: unknown }>(
     '/api/oauth/import',
-    { preHandler: [limitOauthConnectionMutate, limitOauthSensitiveRoute] },
+    { preHandler: [limitOauthConnectionMutate] },
     async (request, reply) => {
+      try {
+        await oauthSensitiveRouteLimiter.consume(request.ip);
+      } catch (error) {
+        sendOauthSensitiveRateLimit(reply, error);
+        return;
+      }
       const parsedBody = parseOauthImportPayload(request.body);
       if (!parsedBody.success) {
         return reply.code(400).send({ message: parsedBody.error });
@@ -429,8 +449,12 @@ export async function oauthRoutes(app: FastifyInstance) {
     '/api/oauth/route-units',
     { preHandler: [limitOauthConnectionMutate] },
     async (request, reply) => {
-      await limitOauthSensitiveRoute(request, reply);
-      if (reply.sent) return;
+      try {
+        await oauthSensitiveRouteLimiter.consume(request.ip);
+      } catch (error) {
+        sendOauthSensitiveRateLimit(reply, error);
+        return;
+      }
       const parsedBody = parseOauthRouteUnitCreatePayload(request.body);
       if (!parsedBody.success) {
         return reply.code(400).send({ message: parsedBody.error });
@@ -465,8 +489,14 @@ export async function oauthRoutes(app: FastifyInstance) {
 
   app.patch<{ Params: { routeUnitId: string }; Body: unknown }>(
     '/api/oauth/route-units/:routeUnitId',
-    { preHandler: [limitOauthConnectionMutate, limitOauthSensitiveRoute] },
+    { preHandler: [limitOauthConnectionMutate] },
     async (request, reply) => {
+      try {
+        await oauthSensitiveRouteLimiter.consume(request.ip);
+      } catch (error) {
+        sendOauthSensitiveRateLimit(reply, error);
+        return;
+      }
       const parsedBody = parseOauthRouteUnitUpdatePayload(request.body);
       if (!parsedBody.success) {
         return reply.code(400).send({ message: parsedBody.error });
@@ -497,8 +527,14 @@ export async function oauthRoutes(app: FastifyInstance) {
 
   app.delete<{ Params: { routeUnitId: string } }>(
     '/api/oauth/route-units/:routeUnitId',
-    { preHandler: [limitOauthConnectionMutate, limitOauthSensitiveRoute] },
+    { preHandler: [limitOauthConnectionMutate] },
     async (request, reply) => {
+      try {
+        await oauthSensitiveRouteLimiter.consume(request.ip);
+      } catch (error) {
+        sendOauthSensitiveRateLimit(reply, error);
+        return;
+      }
       const routeUnitId = parsePositiveInteger(request.params.routeUnitId);
       if (routeUnitId === null) {
         return reply.code(400).send({ message: 'invalid route unit id' });

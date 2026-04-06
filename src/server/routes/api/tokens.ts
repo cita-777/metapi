@@ -1,5 +1,6 @@
-﻿import { FastifyInstance } from 'fastify';
+﻿import { FastifyInstance, type FastifyReply } from 'fastify';
 import { and, eq, inArray } from 'drizzle-orm';
+import { RateLimiterMemory, RateLimiterRes } from 'rate-limiter-flexible';
 import { db, schema } from '../../db/index.js';
 import { requireInsertedRowId } from '../../db/insertHelpers.js';
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
@@ -40,6 +41,32 @@ import {
   parseTokenRouteCreatePayload,
   parseTokenRouteUpdatePayload,
 } from '../../contracts/tokenRoutePayloads.js';
+
+function createTokenRouteReadLimiter(keyPrefix: string, points = 60) {
+  return new RateLimiterMemory({
+    keyPrefix,
+    points,
+    duration: 60,
+  });
+}
+
+let routeSummaryReadLimiter = createTokenRouteReadLimiter('token-routes-summary-read');
+let routeListReadLimiter = createTokenRouteReadLimiter('token-routes-list-read');
+
+export function resetTokenRouteReadLimitersForTests(options: {
+  summaryPoints?: number;
+  listPoints?: number;
+} = {}): void {
+  routeSummaryReadLimiter = createTokenRouteReadLimiter('token-routes-summary-read', options.summaryPoints ?? 60);
+  routeListReadLimiter = createTokenRouteReadLimiter('token-routes-list-read', options.listPoints ?? 60);
+}
+
+function sendTokenRouteRateLimit(reply: FastifyReply, error: unknown): void {
+  const retryState = error instanceof RateLimiterRes ? error : null;
+  const retryAfterSec = Math.max(1, Math.ceil((retryState?.msBeforeNext ?? 60_000) / 1000));
+  reply.code(429).header('retry-after', String(retryAfterSec))
+    .send({ success: false, message: '请求过于频繁，请稍后再试' });
+}
 
 function isExactModelPattern(modelPattern: string): boolean {
   const normalized = modelPattern.trim();
@@ -768,7 +795,13 @@ export async function tokensRoutes(app: FastifyInstance) {
   });
 
   // Route summary (no channel details) for first-screen rendering
-  app.get('/api/routes/summary', async () => {
+  app.get('/api/routes/summary', async (request, reply) => {
+    try {
+      await routeSummaryReadLimiter.consume(request.ip);
+    } catch (error) {
+      sendTokenRouteRateLimit(reply, error);
+      return;
+    }
     const routes = await listRoutesWithSources();
     if (routes.length === 0) return [];
     const aggByRoute = await buildRouteChannelSummaryMap(routes);
@@ -892,7 +925,13 @@ export async function tokensRoutes(app: FastifyInstance) {
   });
 
   // List all routes
-  app.get('/api/routes', async () => {
+  app.get('/api/routes', async (request, reply) => {
+    try {
+      await routeListReadLimiter.consume(request.ip);
+    } catch (error) {
+      sendTokenRouteRateLimit(reply, error);
+      return;
+    }
     const routes = await listRoutesWithSources();
     if (routes.length === 0) return [];
 
