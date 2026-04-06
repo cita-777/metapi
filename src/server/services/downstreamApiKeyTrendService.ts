@@ -144,6 +144,8 @@ function resolveTargetBucketParts(parts: TimeZoneDateTimeParts, bucketSeconds: n
 
 function convertZonedPartsToUtcDate(parts: TimeZoneDateTimeParts, timeZone: string): Date | null {
   let candidateMs = toUtcComparableValue(parts);
+  // Iterate toward the UTC instant that renders back to the requested local wall time.
+  // Rare DST gaps/ambiguities may never converge; callers skip null buckets safely.
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const candidate = new Date(candidateMs);
     const rendered = formatDateTimePartsInTimeZone(candidate, timeZone);
@@ -266,7 +268,12 @@ async function readWindowedTrendBuckets(
   downstreamApiKeyId: number,
   bucketSeconds: number,
   sinceUtc: string | null,
+  timeZone: string,
 ): Promise<DownstreamKeyTrendBucket[]> {
+  if (timeZone.toUpperCase() !== 'UTC') {
+    return readAllRangeTrendBuckets(downstreamApiKeyId, bucketSeconds, timeZone, sinceUtc);
+  }
+
   const bucketTs = resolveBucketTsExpression(bucketSeconds);
   const whereClauses: SQL[] = [eq(schema.proxyLogs.downstreamApiKeyId, downstreamApiKeyId)];
   if (sinceUtc) {
@@ -317,7 +324,7 @@ export async function readDownstreamApiKeyTrendBuckets(input: {
   const timeZone = resolveDownstreamTrendTimeZone(input.timeZone);
   const buckets = input.range === 'all'
     ? await readAllRangeTrendBuckets(input.downstreamApiKeyId, bucketSeconds, timeZone, sinceUtc)
-    : await readWindowedTrendBuckets(input.downstreamApiKeyId, bucketSeconds, sinceUtc);
+    : await readWindowedTrendBuckets(input.downstreamApiKeyId, bucketSeconds, sinceUtc, timeZone);
 
   return {
     bucketSeconds,

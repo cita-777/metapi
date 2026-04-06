@@ -11,6 +11,7 @@ const INSERT_BATCH_SIZE = 100;
 describe('downstreamApiKeyTrendService', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
+  let closeDbConnections: DbModule['closeDbConnections'];
   let trendService: TrendServiceModule;
   let dataDir = '';
 
@@ -24,6 +25,7 @@ describe('downstreamApiKeyTrendService', () => {
 
     db = dbModule.db;
     schema = dbModule.schema;
+    closeDbConnections = dbModule.closeDbConnections;
     trendService = trendServiceModule;
   });
 
@@ -32,7 +34,8 @@ describe('downstreamApiKeyTrendService', () => {
     await db.delete(schema.downstreamApiKeys).run();
   });
 
-  afterAll(() => {
+  afterAll(async () => {
+    await closeDbConnections();
     delete process.env.DATA_DIR;
   });
 
@@ -98,4 +101,71 @@ describe('downstreamApiKeyTrendService', () => {
     expect(trendService.resolveDownstreamTrendTimeZone('Invalid/Zone')).toBe(fallback);
     expect(trendService.resolveDownstreamTrendTimeZone('  ')).toBe(fallback);
   });
+
+  it('uses local hour buckets for windowed ranges in half-hour offset time zones', async () => {
+    const inserted = await db.insert(schema.downstreamApiKeys).values({
+      name: 'windowed-local-hour-key',
+      key: 'sk-windowed-local-hour-key-001',
+      enabled: true,
+    }).returning().get();
+
+    const baseHour = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    baseHour.setUTCMinutes(0, 0, 0);
+    const firstCreatedAt = new Date(baseHour);
+    firstCreatedAt.setUTCMinutes(10, 0, 0);
+    const secondCreatedAt = new Date(baseHour);
+    secondCreatedAt.setUTCMinutes(40, 0, 0);
+
+    await db.insert(schema.proxyLogs).values([
+      {
+        downstreamApiKeyId: inserted.id,
+        status: 'success',
+        totalTokens: 10,
+        estimatedCost: 0.01,
+        createdAt: firstCreatedAt.toISOString(),
+      },
+      {
+        downstreamApiKeyId: inserted.id,
+        status: 'failed',
+        totalTokens: 20,
+        estimatedCost: 0.02,
+        createdAt: secondCreatedAt.toISOString(),
+      },
+    ]).run();
+
+    const trend = await trendService.readDownstreamApiKeyTrendBuckets({
+      downstreamApiKeyId: inserted.id,
+      range: '24h',
+      timeZone: 'Asia/Kolkata',
+    });
+
+    expect(trend.bucketSeconds).toBe(3600);
+    expect(trend.timeZone).toBe('Asia/Kolkata');
+    expect(trend.buckets).toMatchObject([
+      {
+        startUtc: expectedFixedOffsetHourBucketStartUtc(firstCreatedAt.toISOString(), 330),
+        totalRequests: 1,
+        successRequests: 1,
+        failedRequests: 0,
+        totalTokens: 10,
+        totalCost: 0.01,
+      },
+      {
+        startUtc: expectedFixedOffsetHourBucketStartUtc(secondCreatedAt.toISOString(), 330),
+        totalRequests: 1,
+        successRequests: 0,
+        failedRequests: 1,
+        totalTokens: 20,
+        totalCost: 0.02,
+      },
+    ]);
+  });
 });
+
+function expectedFixedOffsetHourBucketStartUtc(raw: string, offsetMinutes: number): string {
+  const parsed = new Date(raw);
+  const localMs = parsed.getTime() + offsetMinutes * 60_000;
+  const localBucketStart = new Date(localMs);
+  localBucketStart.setUTCMinutes(0, 0, 0);
+  return new Date(localBucketStart.getTime() - offsetMinutes * 60_000).toISOString();
+}
