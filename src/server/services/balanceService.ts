@@ -17,6 +17,11 @@ import { extractRuntimeHealth, setAccountRuntimeHealth } from './accountHealthSe
 import { updateTodayIncomeSnapshot } from './todayIncomeRewardService.js';
 import type { BalanceInfo } from './platforms/base.js';
 import { withAccountProxyOverride, withSiteProxyRequestInit, withSiteRecordProxyRequestInit } from './siteProxy.js';
+import {
+  isManagedSub2ApiTokenDue,
+  isSub2ApiPlatform,
+  refreshSub2ApiManagedSession,
+} from './sub2apiManagedAuth.js';
 
 function isSiteDisabled(status?: string | null): boolean {
   return (status || 'active') === 'disabled';
@@ -127,111 +132,6 @@ function extractLogTotal(payload: any): number | null {
 
 function resolveQuotaConversionFactor(platform?: string | null): number {
   return (platform || '').toLowerCase() === 'veloera' ? 1_000_000 : 500_000;
-}
-
-const SUB2API_TOKEN_REFRESH_BUFFER_MS = 120 * 1000;
-
-function isSub2ApiPlatform(platform?: string | null): boolean {
-  return (platform || '').trim().toLowerCase() === 'sub2api';
-}
-
-function isNearTokenExpiry(tokenExpiresAt?: number): boolean {
-  if (!(typeof tokenExpiresAt === 'number' && Number.isFinite(tokenExpiresAt) && tokenExpiresAt > 0)) {
-    return false;
-  }
-  return tokenExpiresAt - Date.now() <= SUB2API_TOKEN_REFRESH_BUFFER_MS;
-}
-
-type Sub2ApiRefreshedCredentials = {
-  accessToken: string;
-  refreshToken: string;
-  tokenExpiresAt: number;
-};
-
-function parseSub2ApiRefreshPayload(payload: unknown): Sub2ApiRefreshedCredentials | null {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
-  const body = payload as Record<string, unknown>;
-  const code = typeof body.code === 'number'
-    ? body.code
-    : (typeof body.code === 'string' ? Number.parseInt(body.code.trim(), 10) : NaN);
-  if (!Number.isFinite(code) || code !== 0) return null;
-  if (!body.data || typeof body.data !== 'object' || Array.isArray(body.data)) return null;
-  const data = body.data as Record<string, unknown>;
-
-  const accessToken = typeof data.access_token === 'string' ? data.access_token.trim() : '';
-  const refreshToken = typeof data.refresh_token === 'string' ? data.refresh_token.trim() : '';
-  const expiresInSeconds = typeof data.expires_in === 'number' && Number.isFinite(data.expires_in)
-    ? data.expires_in
-    : (typeof data.expires_in === 'string' ? Number.parseInt(data.expires_in.trim(), 10) : NaN);
-
-  if (!accessToken || !refreshToken || !Number.isFinite(expiresInSeconds) || expiresInSeconds <= 0) {
-    return null;
-  }
-
-  return {
-    accessToken,
-    refreshToken,
-    tokenExpiresAt: Date.now() + Math.trunc(expiresInSeconds) * 1000,
-  };
-}
-
-async function refreshSub2ApiManagedSession(params: {
-  account: typeof schema.accounts.$inferSelect;
-  site: typeof schema.sites.$inferSelect;
-  currentAccessToken: string;
-  currentExtraConfig: string | null;
-}): Promise<{ accessToken: string; extraConfig: string }> {
-  const managedAuth = getSub2ApiAuthFromExtraConfig(params.currentExtraConfig);
-  const refreshToken = managedAuth?.refreshToken || '';
-  if (!refreshToken) throw new Error('sub2api managed refresh token missing');
-
-  const endpoint = `${params.site.url.replace(/\/+$/, '')}/api/v1/auth/refresh`;
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-  const authHeaderToken = (params.currentAccessToken || '').trim();
-  if (authHeaderToken) {
-    headers.Authorization = `Bearer ${authHeaderToken}`;
-  }
-
-  const { fetch } = await import('undici');
-  let payload: unknown = null;
-  try {
-    const response = await fetch(endpoint, withSiteRecordProxyRequestInit(params.site, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    }, resolveProxyUrlFromExtraConfig(params.account.extraConfig)));
-    payload = await response.json().catch(() => null);
-  } catch (err: any) {
-    throw new Error(err?.message || 'sub2api token refresh request failed');
-  }
-
-  const refreshed = parseSub2ApiRefreshPayload(payload);
-  if (!refreshed) {
-    throw new Error('sub2api token refresh failed');
-  }
-
-  const nextExtraConfig = mergeAccountExtraConfig(params.currentExtraConfig, {
-    sub2apiAuth: {
-      refreshToken: refreshed.refreshToken,
-      tokenExpiresAt: refreshed.tokenExpiresAt,
-    },
-  });
-  await db.update(schema.accounts)
-    .set({
-      accessToken: refreshed.accessToken,
-      extraConfig: nextExtraConfig,
-      status: params.account.status === 'expired' ? 'active' : params.account.status,
-      updatedAt: new Date().toISOString(),
-    })
-    .where(eq(schema.accounts.id, params.account.id))
-    .run();
-
-  return {
-    accessToken: refreshed.accessToken,
-    extraConfig: nextExtraConfig,
-  };
 }
 
 async function fetchTodayIncomeFromLogs(params: {
@@ -386,14 +286,14 @@ export async function refreshBalance(accountId: number) {
 
   if (isSub2ApiPlatform(site.platform)) {
     const managedAuth = getSub2ApiAuthFromExtraConfig(activeExtraConfig);
-    if (managedAuth?.refreshToken && isNearTokenExpiry(managedAuth.tokenExpiresAt)) {
+    if (managedAuth?.refreshToken && isManagedSub2ApiTokenDue(managedAuth.tokenExpiresAt)) {
       try {
-        const refreshed = await withAccountProxyOverride(accountProxyUrl, () => refreshSub2ApiManagedSession({
+        const refreshed = await refreshSub2ApiManagedSession({
           account,
           site,
           currentAccessToken: activeAccessToken,
           currentExtraConfig: activeExtraConfig,
-        }));
+        });
         activeAccessToken = refreshed.accessToken;
         activeExtraConfig = refreshed.extraConfig;
       } catch {}
@@ -430,12 +330,12 @@ export async function refreshBalance(accountId: number) {
 
     if (canTryManagedSub2ApiRefresh) {
       try {
-        const refreshed = await withAccountProxyOverride(accountProxyUrl, () => refreshSub2ApiManagedSession({
+        const refreshed = await refreshSub2ApiManagedSession({
           account,
           site,
           currentAccessToken: activeAccessToken,
           currentExtraConfig: activeExtraConfig,
-        }));
+        });
         activeAccessToken = refreshed.accessToken;
         activeExtraConfig = refreshed.extraConfig;
         balanceInfo = await readBalance(activeAccessToken);

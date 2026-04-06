@@ -1,0 +1,130 @@
+import { eq } from 'drizzle-orm';
+import { db, schema } from '../db/index.js';
+import { getSub2ApiAuthFromExtraConfig } from './accountExtraConfig.js';
+import {
+  isManagedSub2ApiTokenDue,
+  isSub2ApiPlatform,
+  refreshSub2ApiManagedSession,
+} from './sub2apiManagedAuth.js';
+
+const SUB2API_REFRESH_SCHEDULER_INTERVAL_MS = 60_000;
+
+let sub2ApiRefreshSchedulerTimer: ReturnType<typeof setInterval> | null = null;
+let sub2ApiRefreshPassInFlight: Promise<void> | null = null;
+
+function clearSub2ApiRefreshSchedulerTimer(): void {
+  if (!sub2ApiRefreshSchedulerTimer) return;
+  clearInterval(sub2ApiRefreshSchedulerTimer);
+  sub2ApiRefreshSchedulerTimer = null;
+}
+
+function shouldRefreshManagedSub2ApiAccount(input: {
+  account: typeof schema.accounts.$inferSelect;
+  site: typeof schema.sites.$inferSelect;
+  nowMs: number;
+}): boolean {
+  if (!isSub2ApiPlatform(input.site.platform)) return false;
+  if ((input.account.status || 'active') !== 'active') return false;
+  if ((input.site.status || 'active') !== 'active') return false;
+
+  const managedAuth = getSub2ApiAuthFromExtraConfig(input.account.extraConfig);
+  if (!managedAuth?.refreshToken || !managedAuth.tokenExpiresAt) return false;
+
+  return isManagedSub2ApiTokenDue(managedAuth.tokenExpiresAt, input.nowMs);
+}
+
+export async function executeSub2ApiManagedRefreshPass(input: {
+  nowMs?: number;
+} = {}) {
+  const nowMs = typeof input.nowMs === 'number' && Number.isFinite(input.nowMs)
+    ? input.nowMs
+    : Date.now();
+  const rows = await db.select()
+    .from(schema.accounts)
+    .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+    .all();
+
+  const refreshedAccountIds: number[] = [];
+  const failedAccountIds: number[] = [];
+  let skipped = 0;
+
+  for (const row of rows) {
+    if (!shouldRefreshManagedSub2ApiAccount({
+      account: row.accounts,
+      site: row.sites,
+      nowMs,
+    })) {
+      skipped += 1;
+      continue;
+    }
+
+    try {
+      await refreshSub2ApiManagedSession({
+        account: row.accounts,
+        site: row.sites,
+        currentAccessToken: row.accounts.accessToken,
+        currentExtraConfig: row.accounts.extraConfig,
+      });
+      refreshedAccountIds.push(row.accounts.id);
+    } catch (error) {
+      failedAccountIds.push(row.accounts.id);
+      console.warn(
+        `[sub2api-refresh] failed to refresh account ${row.accounts.id}: ${(error as Error)?.message || 'unknown error'}`,
+      );
+    }
+  }
+
+  return {
+    scanned: rows.length,
+    refreshed: refreshedAccountIds.length,
+    failed: failedAccountIds.length,
+    skipped,
+    refreshedAccountIds,
+    failedAccountIds,
+  };
+}
+
+async function runScheduledSub2ApiRefreshPass(): Promise<void> {
+  if (sub2ApiRefreshPassInFlight) {
+    return sub2ApiRefreshPassInFlight;
+  }
+
+  sub2ApiRefreshPassInFlight = executeSub2ApiManagedRefreshPass()
+    .then(() => undefined)
+    .catch((error) => {
+      console.warn(`[sub2api-refresh] scheduled pass failed: ${(error as Error)?.message || 'unknown error'}`);
+    })
+    .finally(() => {
+      sub2ApiRefreshPassInFlight = null;
+    });
+
+  return sub2ApiRefreshPassInFlight;
+}
+
+export function startSub2ApiManagedRefreshScheduler(intervalMs = SUB2API_REFRESH_SCHEDULER_INTERVAL_MS) {
+  clearSub2ApiRefreshSchedulerTimer();
+
+  const safeIntervalMs = Math.max(SUB2API_REFRESH_SCHEDULER_INTERVAL_MS, Math.trunc(intervalMs || 0));
+  void runScheduledSub2ApiRefreshPass();
+  sub2ApiRefreshSchedulerTimer = setInterval(() => {
+    void runScheduledSub2ApiRefreshPass();
+  }, safeIntervalMs);
+  sub2ApiRefreshSchedulerTimer.unref?.();
+
+  return {
+    enabled: true,
+    intervalMs: safeIntervalMs,
+  };
+}
+
+export async function stopSub2ApiManagedRefreshScheduler() {
+  clearSub2ApiRefreshSchedulerTimer();
+  if (sub2ApiRefreshPassInFlight) {
+    await sub2ApiRefreshPassInFlight;
+  }
+}
+
+export async function __resetSub2ApiManagedRefreshSchedulerForTests() {
+  await stopSub2ApiManagedRefreshScheduler();
+  sub2ApiRefreshPassInFlight = null;
+}

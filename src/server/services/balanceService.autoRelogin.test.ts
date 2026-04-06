@@ -333,6 +333,53 @@ describe('balanceService auto relogin', () => {
     expect(reportTokenExpiredMock).not.toHaveBeenCalled();
   });
 
+  it('surfaces upstream sub2api refresh failure detail when managed refresh is rejected', async () => {
+    selectAllMock.mockReturnValue([
+      {
+        accounts: {
+          id: 8,
+          username: 'sub2-user',
+          accessToken: 'expired-access-token',
+          status: 'active',
+          extraConfig: JSON.stringify({
+            sub2apiAuth: {
+              refreshToken: 'refresh-token-invalid',
+            },
+          }),
+        },
+        sites: {
+          id: 9,
+          name: 'sub2',
+          url: 'https://sub2.example.com',
+          platform: 'sub2api',
+        },
+      },
+    ]);
+
+    adapterMock.getBalance.mockRejectedValueOnce(new Error('HTTP 401: unauthorized'));
+    undiciFetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      text: async () => JSON.stringify({
+        code: 401,
+        message: 'invalid refresh token',
+        reason: 'REFRESH_TOKEN_INVALID',
+      }),
+      json: async () => ({
+        code: 401,
+        message: 'invalid refresh token',
+        reason: 'REFRESH_TOKEN_INVALID',
+      }),
+    });
+
+    const { refreshBalance } = await import('./balanceService.js');
+    await expect(refreshBalance(8)).rejects.toThrow(
+      'sub2api token refresh failed: HTTP 401: invalid refresh token (REFRESH_TOKEN_INVALID)',
+    );
+
+    expect(adapterMock.login).not.toHaveBeenCalled();
+  });
+
   it('skips balance refresh for api-key-only accounts without expiring them', async () => {
     selectAllMock.mockReturnValue([
       {
