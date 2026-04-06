@@ -195,6 +195,76 @@ describe('dispatchRuntimeRequest', () => {
     });
   });
 
+  it('aggregates an unterminated trailing SSE event for antigravity non-stream stream-endpoint requests', async () => {
+    const { dispatchRuntimeRequest } = await import('./runtimeExecutor.js');
+    const request: BuiltEndpointRequest = {
+      endpoint: 'chat',
+      path: '/v1internal:streamGenerateContent?alt=sse',
+      headers: {
+        Authorization: 'Bearer antigravity-token',
+        'Content-Type': 'application/json',
+      },
+      body: {
+        project: 'project-demo',
+        model: 'gemini-3-pro-low',
+        request: {
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: 'hello runtime executor' }],
+            },
+          ],
+        },
+      },
+      runtime: {
+        executor: 'antigravity',
+        modelName: 'gemini-3-pro-low',
+        stream: false,
+        action: 'streamGenerateContent',
+      },
+    };
+
+    fetchMock.mockResolvedValueOnce(new Response([
+      'data: {"response":{"responseId":"antigravity-stream-tail","modelVersion":"gemini-3-pro-low","candidates":[{"content":{"role":"model","parts":[{"text":"hello "}]},"index":0}]}}',
+      '',
+      'data: {"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"tail"}]},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":5,"totalTokenCount":12}}}',
+    ].join('\n'), {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+    }) as unknown as Awaited<ReturnType<typeof fetch>>);
+
+    const response = await dispatchRuntimeRequest({
+      siteUrl: 'https://cloudcode-pa.googleapis.com',
+      request,
+      buildInit: (_url, nextRequest) => ({
+        method: 'POST',
+        headers: nextRequest.headers,
+        body: JSON.stringify(nextRequest.body),
+      }),
+    });
+
+    expect(response.ok).toBe(true);
+    await expect(response.json()).resolves.toEqual({
+      responseId: 'antigravity-stream-tail',
+      modelVersion: 'gemini-3-pro-low',
+      candidates: [
+        {
+          index: 0,
+          content: {
+            role: 'model',
+            parts: [{ text: 'hello tail' }],
+          },
+          finishReason: 'STOP',
+        },
+      ],
+      usageMetadata: {
+        promptTokenCount: 7,
+        candidatesTokenCount: 5,
+        totalTokenCount: 12,
+      },
+    });
+  });
+
   it('keeps gemini-cli countTokens payload lean while forcing a model-aware user agent', async () => {
     const { dispatchRuntimeRequest } = await import('./runtimeExecutor.js');
     const request: BuiltEndpointRequest = {

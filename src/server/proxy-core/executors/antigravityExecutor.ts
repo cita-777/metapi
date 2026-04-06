@@ -170,6 +170,18 @@ async function materializeAntigravitySuccessResponse(
       unwrapAntigravityAggregatePayload(event),
     );
   }
+  if (parsed.rest.trim()) {
+    const trailingPayload = geminiGenerateContentTransformer.stream.parseGeminiStreamPayload(
+      `${parsed.rest}\n\n`,
+      'text/event-stream',
+    );
+    for (const event of trailingPayload.events) {
+      geminiGenerateContentTransformer.stream.applyAggregate(
+        aggregateState,
+        unwrapAntigravityAggregatePayload(event),
+      );
+    }
+  }
 
   const headers = new Headers(response.headers);
   headers.set('content-type', 'application/json; charset=utf-8');
