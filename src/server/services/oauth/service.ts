@@ -42,6 +42,7 @@ import { buildQuotaSnapshotFromOauthInfo, refreshOauthQuotaSnapshot } from './qu
 
 type OAuthProviderMetadata = ReturnType<typeof listOauthProviders>[number];
 const MANUAL_CALLBACK_DELAY_MS = 15_000;
+const OAUTH_QUOTA_BATCH_REFRESH_CONCURRENCY = 4;
 type OauthProviderHeaderAccountInput = OauthIdentityCarrierLike & {
   extraConfig?: OauthExtraConfigInput;
 };
@@ -67,6 +68,17 @@ type ImportedNativeOauthJson = {
   disabled?: unknown;
   last_refresh?: unknown;
 };
+
+export class OauthImportValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OauthImportValidationError';
+  }
+}
+
+function throwOauthImportValidationError(message: string): never {
+  throw new OauthImportValidationError(message);
+}
 
 function isLoopbackHost(hostname: string): boolean {
   const normalized = hostname.trim().toLowerCase();
@@ -211,7 +223,7 @@ function resolveImportedOauthIdentity(
   const accessToken = asNonEmptyString(credentials.access_token)
     || asNonEmptyString(credentials.session_token);
   if (!accessToken) {
-    throw new Error('oauth credentials missing access_token/session_token');
+    throwOauthImportValidationError('oauth credentials missing access_token/session_token');
   }
 
   const email = asNonEmptyString(credentials.email)
@@ -250,7 +262,7 @@ function parseImportedOauthExpiry(value: unknown): number | undefined {
     return Math.trunc(value);
   }
   if (typeof value !== 'string') {
-    throw new Error('invalid oauth expired timestamp');
+    throwOauthImportValidationError('invalid oauth expired timestamp');
   }
   const trimmed = value.trim();
   if (!trimmed) return undefined;
@@ -262,7 +274,7 @@ function parseImportedOauthExpiry(value: unknown): number | undefined {
   }
   const parsed = Date.parse(trimmed);
   if (Number.isNaN(parsed)) {
-    throw new Error('invalid oauth expired timestamp');
+    throwOauthImportValidationError('invalid oauth expired timestamp');
   }
   return parsed;
 }
@@ -288,19 +300,19 @@ function resolveImportedNativeOauthIdentity(
   const rawType = asNonEmptyString(payload.type);
   const payloadRecord = payload as Record<string, unknown>;
   if (rawType === 'sub2api-data' || rawType === 'sub2api-bundle' || Array.isArray(payloadRecord.accounts)) {
-    throw new Error('native oauth json expected; sub2api envelopes are no longer supported');
+    throwOauthImportValidationError('native oauth json expected; sub2api envelopes are no longer supported');
   }
   if ('accounts' in payloadRecord || 'proxies' in payloadRecord || 'version' in payloadRecord || 'exported_at' in payloadRecord) {
-    throw new Error('native oauth json expected; sub2api envelopes are no longer supported');
+    throwOauthImportValidationError('native oauth json expected; sub2api envelopes are no longer supported');
   }
   const provider = rawType ? mapImportedOauthProvider(rawType) : null;
   if (!provider) {
-    throw new Error(`unsupported oauth import type: ${rawType || 'unknown'}`);
+    throwOauthImportValidationError(`unsupported oauth import type: ${rawType || 'unknown'}`);
   }
 
   const accessToken = asNonEmptyString(payload.access_token);
   if (!accessToken) {
-    throw new Error('oauth credentials missing access_token');
+    throwOauthImportValidationError('oauth credentials missing access_token');
   }
 
   const derived = resolveImportedOauthIdentity(provider, payload as Record<string, unknown>);
@@ -347,6 +359,55 @@ async function getNextAccountSortOrder(): Promise<number> {
     maxSortOrder: sql<number>`COALESCE(MAX(${schema.accounts.sortOrder}), -1)`,
   }).from(schema.accounts).get();
   return (row?.maxSortOrder ?? -1) + 1;
+}
+
+async function revertPersistedOauthAccount(input: {
+  accountId: number;
+  created: boolean;
+  previousAccount: typeof schema.accounts.$inferSelect | null;
+}) {
+  if (input.created) {
+    await db.delete(schema.accounts).where(eq(schema.accounts.id, input.accountId)).run();
+    return;
+  }
+
+  if (!input.previousAccount) return;
+  await db.update(schema.accounts).set({
+    siteId: input.previousAccount.siteId,
+    username: input.previousAccount.username,
+    accessToken: input.previousAccount.accessToken,
+    apiToken: input.previousAccount.apiToken,
+    checkinEnabled: input.previousAccount.checkinEnabled,
+    status: input.previousAccount.status,
+    oauthProvider: input.previousAccount.oauthProvider,
+    oauthAccountKey: input.previousAccount.oauthAccountKey,
+    oauthProjectId: input.previousAccount.oauthProjectId,
+    extraConfig: input.previousAccount.extraConfig,
+    updatedAt: input.previousAccount.updatedAt,
+  }).where(eq(schema.accounts.id, input.previousAccount.id)).run();
+}
+
+async function mapWithConcurrency<T, TResult>(
+  items: readonly T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<TResult>,
+): Promise<TResult[]> {
+  if (items.length === 0) return [];
+
+  const results = new Array<TResult>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(Math.trunc(concurrency), items.length));
+
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (true) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      if (currentIndex >= items.length) return;
+      results[currentIndex] = await mapper(items[currentIndex]!, currentIndex);
+    }
+  }));
+
+  return results;
 }
 
 async function ensureOauthSite(definition: OAuthProviderDefinition) {
@@ -607,23 +668,11 @@ export async function handleOauthCallback(input: {
       previousAccount ? { allowInactive: true } : undefined,
     );
     if (refreshResult.status !== 'success') {
-      if (created) {
-        await db.delete(schema.accounts).where(eq(schema.accounts.id, account.id)).run();
-      } else if (previousAccount) {
-        await db.update(schema.accounts).set({
-          siteId: previousAccount.siteId,
-          username: previousAccount.username,
-          accessToken: previousAccount.accessToken,
-          apiToken: previousAccount.apiToken,
-          checkinEnabled: previousAccount.checkinEnabled,
-          status: previousAccount.status,
-          oauthProvider: previousAccount.oauthProvider,
-          oauthAccountKey: previousAccount.oauthAccountKey,
-          oauthProjectId: previousAccount.oauthProjectId,
-          extraConfig: previousAccount.extraConfig,
-          updatedAt: previousAccount.updatedAt,
-        }).where(eq(schema.accounts.id, previousAccount.id)).run();
-      }
+      await revertPersistedOauthAccount({
+        accountId: account.id,
+        created,
+        previousAccount,
+      });
       await routeRefreshWorkflow.rebuildRoutesOnly();
       const errorMessage = refreshResult.errorMessage || `${input.provider} model discovery failed`;
       markOauthSessionError(input.state, errorMessage);
@@ -799,29 +848,27 @@ export async function refreshOauthConnectionQuota(accountId: number) {
 
 export async function refreshOauthConnectionQuotaBatch(accountIds: number[]) {
   const uniqueIds = Array.from(new Set(accountIds.filter((id) => Number.isFinite(id) && id > 0)));
-  const items: Array<{
+  const items = await mapWithConcurrency(uniqueIds, OAUTH_QUOTA_BATCH_REFRESH_CONCURRENCY, async (accountId) => {
+    try {
+      const { quota } = await refreshOauthConnectionQuota(accountId);
+      return {
+        accountId,
+        success: true,
+        quota,
+      };
+    } catch (error: any) {
+      return {
+        accountId,
+        success: false,
+        error: error?.message || 'oauth quota refresh failed',
+      };
+    }
+  }) satisfies Array<{
     accountId: number;
     success: boolean;
     quota?: ReturnType<typeof buildQuotaSnapshotFromOauthInfo>;
     error?: string;
-  }> = [];
-
-  for (const accountId of uniqueIds) {
-    try {
-      const { quota } = await refreshOauthConnectionQuota(accountId);
-      items.push({
-        accountId,
-        success: true,
-        quota,
-      });
-    } catch (error: any) {
-      items.push({
-        accountId,
-        success: false,
-        error: error?.message || 'oauth quota refresh failed',
-      });
-    }
-  }
+  }>;
 
   const refreshed = items.filter((item) => item.success).length;
   const failed = items.length - refreshed;
@@ -835,7 +882,7 @@ export async function refreshOauthConnectionQuotaBatch(accountIds: number[]) {
 
 export async function importOauthConnectionsFromNativeJson(data: unknown) {
   if (!isRecord(data)) {
-    throw new Error('data must be a native oauth json object');
+    throwOauthImportValidationError('data must be a native oauth json object');
   }
 
   const payload = data as ImportedNativeOauthJson;
@@ -848,8 +895,11 @@ export async function importOauthConnectionsFromNativeJson(data: unknown) {
     message?: string;
   }> = [];
   const changedAccountIds: number[] = [];
+  let resolvedProvider: OAuthProviderId | null = null;
+  let persistedAccount: Awaited<ReturnType<typeof upsertOauthAccount>> | null = null;
   try {
     const resolved = resolveImportedNativeOauthIdentity(payload);
+    resolvedProvider = resolved.provider;
     const definition = getOAuthProviderDefinition(resolved.provider);
     if (!definition) {
       throw new Error(`unsupported oauth provider: ${resolved.provider}`);
@@ -859,6 +909,7 @@ export async function importOauthConnectionsFromNativeJson(data: unknown) {
       exchange: resolved.exchange,
       persistedStatus: resolved.disabled ? 'disabled' : 'active',
     });
+    persistedAccount = persisted;
     changedAccountIds.push(persisted.account.id);
     items.push({
       name: resolved.name,
@@ -877,6 +928,22 @@ export async function importOauthConnectionsFromNativeJson(data: unknown) {
   }
 
   if (changedAccountIds.length > 0) {
+    const importedAccountId = changedAccountIds[0]!;
+    if (persistedAccount && (persistedAccount.account.status || 'active') === 'active') {
+      const refreshResult = await refreshModelsForAccount(
+        importedAccountId,
+        persistedAccount.previousAccount ? { allowInactive: true } : undefined,
+      );
+      if (refreshResult.status !== 'success') {
+        await revertPersistedOauthAccount({
+          accountId: importedAccountId,
+          created: persistedAccount.created,
+          previousAccount: persistedAccount.previousAccount,
+        });
+        await routeRefreshWorkflow.rebuildRoutesOnly();
+        throw new Error(refreshResult.errorMessage || `${resolvedProvider || 'oauth'} model discovery failed`);
+      }
+    }
     await routeRefreshWorkflow.rebuildRoutesOnly();
   }
 

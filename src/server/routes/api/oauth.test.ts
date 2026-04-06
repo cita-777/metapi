@@ -1867,6 +1867,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       'https://chatgpt.com/backend-api/codex/responses',
       expect.objectContaining({
         method: 'POST',
+        signal: expect.any(AbortSignal),
         headers: expect.objectContaining({
           Authorization: 'Bearer oauth-access-token',
           Originator: 'codex_cli_rs',
@@ -2024,9 +2025,118 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       ]),
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      signal: expect.any(AbortSignal),
+    });
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
+      signal: expect.any(AbortSignal),
+    });
+  });
+
+  it('runs batch quota refresh probes with bounded concurrency instead of fully serializing them', async () => {
+    const codexSite = await db.insert(schema.sites).values({
+      name: 'ChatGPT Codex OAuth',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+
+    const firstAccount = await db.insert(schema.accounts).values({
+      siteId: codexSite.id,
+      username: 'codex-concurrency-a@example.com',
+      accessToken: 'oauth-access-token-a',
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-concurrency-account-a',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          accountId: 'chatgpt-concurrency-account-a',
+          email: 'codex-concurrency-a@example.com',
+          planType: 'plus',
+        },
+      }),
+    }).returning().get();
+
+    const secondAccount = await db.insert(schema.accounts).values({
+      siteId: codexSite.id,
+      username: 'codex-concurrency-b@example.com',
+      accessToken: 'oauth-access-token-b',
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-concurrency-account-b',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          accountId: 'chatgpt-concurrency-account-b',
+          email: 'codex-concurrency-b@example.com',
+          planType: 'plus',
+        },
+      }),
+    }).returning().get();
+
+    const firstProbe = createDeferred<ReturnType<typeof buildCodexQuotaProbeResponse>>();
+    const secondProbe = createDeferred<ReturnType<typeof buildCodexQuotaProbeResponse>>();
+    fetchMock
+      .mockImplementationOnce(() => firstProbe.promise)
+      .mockImplementationOnce(() => secondProbe.promise);
+
+    const batchRefreshPromise = app.inject({
+      method: 'POST',
+      url: '/api/oauth/connections/quota/refresh-batch',
+      payload: {
+        accountIds: [firstAccount.id, secondAccount.id],
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    firstProbe.resolve(buildCodexQuotaProbeResponse({
+      headers: {
+        'x-codex-primary-used-percent': '51',
+        'x-codex-primary-reset-after-seconds': '3600',
+        'x-codex-primary-window-minutes': '10080',
+        'x-codex-secondary-used-percent': '11',
+        'x-codex-secondary-reset-after-seconds': '900',
+        'x-codex-secondary-window-minutes': '300',
+      },
+    }));
+    secondProbe.resolve(buildCodexQuotaProbeResponse({
+      headers: {
+        'x-codex-primary-used-percent': '61',
+        'x-codex-primary-reset-after-seconds': '7200',
+        'x-codex-primary-window-minutes': '10080',
+        'x-codex-secondary-used-percent': '19',
+        'x-codex-secondary-reset-after-seconds': '1200',
+        'x-codex-secondary-window-minutes': '300',
+      },
+    }));
+
+    const batchRefresh = await batchRefreshPromise;
+    expect(batchRefresh.statusCode).toBe(200);
+    expect(batchRefresh.json()).toMatchObject({
+      success: true,
+      refreshed: 2,
+      failed: 0,
+    });
   });
 
   it('imports a native codex oauth json object', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        models: [
+          { id: 'gpt-5.4' },
+        ],
+      }),
+      text: async () => JSON.stringify({ ok: true }),
+    });
+
     const response = await app.inject({
       method: 'POST',
       url: '/api/oauth/import',
@@ -2083,6 +2193,24 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       planType: 'plus',
     });
     expect(parsedExtra.oauth?.tokenExpiresAt).toBe(Date.parse('2026-04-12T11:26:13+08:00'));
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://chatgpt.com/backend-api/codex/models?client_version=1.0.0',
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer imported-access-token',
+          Originator: 'codex_cli_rs',
+        }),
+      }),
+    );
+    const modelRows = await db.select().from(schema.modelAvailability).all();
+    expect(modelRows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        accountId: accounts[0]?.id,
+        modelName: 'gpt-5.4',
+        available: true,
+      }),
+    ]));
   });
 
   it('prefers explicit identity fields from native oauth json and preserves disabled status', async () => {
@@ -2202,6 +2330,41 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     expect(response.json()).toMatchObject({
       message: 'data must be a native oauth json object',
     });
+  });
+
+  it('returns 500 and rolls back a newly imported oauth account when initial model discovery fails', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      json: async () => ({ error: 'unavailable' }),
+      text: async () => 'unavailable',
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/import',
+      payload: {
+        data: {
+          type: 'codex',
+          access_token: 'broken-imported-access-token',
+          refresh_token: 'broken-imported-refresh-token',
+          id_token: buildJwt({
+            email: 'broken-import@example.com',
+            'https://api.openai.com/auth': {
+              chatgpt_account_id: 'broken-import-account',
+              chatgpt_plan_type: 'plus',
+            },
+          }),
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toMatchObject({
+      message: 'Codex 模型获取失败（HTTP 503: unavailable）',
+    });
+    expect(await db.select().from(schema.accounts).all()).toHaveLength(0);
+    expect(await db.select().from(schema.modelAvailability).all()).toHaveLength(0);
   });
 
   it('keeps multiple codex team workspaces with the same email as separate oauth connections', async () => {

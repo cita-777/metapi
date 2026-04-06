@@ -53,6 +53,13 @@ const CODEX_QUOTA_PROBE_VERSION = '0.101.0';
 const CODEX_QUOTA_PROBE_USER_AGENT = 'codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464';
 const CODEX_QUOTA_PROBE_BETA = 'responses-2025-03-11';
 const CODEX_QUOTA_PROBE_INSTRUCTIONS = 'You are a helpful assistant.';
+const CODEX_QUOTA_PROBE_TIMEOUT_MS = 10_000;
+const QUOTA_HEADER_SNAPSHOT_DEDUPE_WINDOW_MS = 30_000;
+const recentQuotaHeaderSnapshotByAccount = new Map<number, {
+  fingerprint: string;
+  recordedAtMs: number;
+}>();
+const pendingQuotaHeaderSnapshotKeys = new Set<string>();
 
 function asTrimmedString(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
@@ -238,6 +245,13 @@ function normalizeCodexQuotaHeaders(snapshot: CodexQuotaHeaderSnapshot): Normali
     || normalized.sevenDay?.resetAfterSeconds !== undefined
   );
   return hasData ? normalized : null;
+}
+
+function buildCodexQuotaHeadersFingerprint(headers: HeaderSource): string | null {
+  const parsed = parseCodexQuotaHeaders(headers, 'fingerprint');
+  if (!parsed) return null;
+  const { capturedAt: _capturedAt, ...stableFields } = parsed;
+  return JSON.stringify(stableFields);
 }
 
 function buildCodexWindowFromNormalized(input: {
@@ -487,9 +501,35 @@ export async function recordOauthQuotaHeadersSnapshot(input: {
   const oauth = getOauthInfoFromAccount(account);
   if (!oauth || oauth.provider !== 'codex') return null;
 
+  const fingerprint = buildCodexQuotaHeadersFingerprint(input.headers);
+  if (!fingerprint) return null;
+  const nowMs = Date.now();
+  const lastRecorded = recentQuotaHeaderSnapshotByAccount.get(input.accountId);
+  if (
+    lastRecorded
+    && lastRecorded.fingerprint === fingerprint
+    && nowMs - lastRecorded.recordedAtMs < QUOTA_HEADER_SNAPSHOT_DEDUPE_WINDOW_MS
+  ) {
+    return buildQuotaSnapshotFromOauthInfo(oauth);
+  }
+  const pendingKey = `${input.accountId}:${fingerprint}`;
+  if (pendingQuotaHeaderSnapshotKeys.has(pendingKey)) {
+    return buildQuotaSnapshotFromOauthInfo(oauth);
+  }
+
   const snapshot = buildCodexQuotaSnapshotFromHeaders(oauth, input.headers);
   if (!snapshot) return null;
-  return persistQuotaSnapshot(input.accountId, snapshot);
+  pendingQuotaHeaderSnapshotKeys.add(pendingKey);
+  try {
+    const persisted = await persistQuotaSnapshot(input.accountId, snapshot);
+    recentQuotaHeaderSnapshotByAccount.set(input.accountId, {
+      fingerprint,
+      recordedAtMs: nowMs,
+    });
+    return persisted;
+  } finally {
+    pendingQuotaHeaderSnapshotKeys.delete(pendingKey);
+  }
 }
 
 function buildCodexQuotaProbePayload(): Record<string, unknown> {
@@ -554,17 +594,30 @@ async function probeCodexQuotaSnapshot(input: {
   const requestBody = JSON.stringify(buildCodexQuotaProbePayload());
 
   return runWithSiteApiEndpointPool(site, async (target) => {
-    const response = await fetch(
-      buildCodexQuotaProbeUrl(target.baseUrl),
-      withExplicitProxyRequestInit(proxyUrl, {
-        method: 'POST',
-        headers: buildCodexQuotaProbeHeaders({
-          accessToken,
-          accountId: input.oauth.accountId || input.oauth.accountKey,
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), CODEX_QUOTA_PROBE_TIMEOUT_MS);
+    let response: Awaited<ReturnType<typeof fetch>>;
+    try {
+      response = await fetch(
+        buildCodexQuotaProbeUrl(target.baseUrl),
+        withExplicitProxyRequestInit(proxyUrl, {
+          method: 'POST',
+          headers: buildCodexQuotaProbeHeaders({
+            accessToken,
+            accountId: input.oauth.accountId || input.oauth.accountKey,
+          }),
+          body: requestBody,
+          signal: controller.signal,
         }),
-        body: requestBody,
-      }),
-    );
+      );
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new Error(`codex quota probe timeout (${Math.round(CODEX_QUOTA_PROBE_TIMEOUT_MS / 1000)}s)`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
 
     const snapshot = buildCodexQuotaSnapshotFromHeaders(input.oauth, response.headers, input.syncedAt);
     if (snapshot) {

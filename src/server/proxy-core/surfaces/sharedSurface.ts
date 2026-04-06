@@ -9,7 +9,7 @@ import { isTokenExpiredError } from '../../services/alertRules.js';
 import { shouldRetryProxyRequest } from '../../services/proxyRetryPolicy.js';
 import { composeProxyLogMessage } from '../../routes/proxy/logPathMeta.js';
 import { resolveProxyLogBilling } from '../../routes/proxy/proxyBilling.js';
-import type { DownstreamClientContext } from '../../routes/proxy/downstreamClientContext.js';
+import type { DownstreamClientContext } from '../downstreamClientContext.js';
 import { insertProxyLog } from '../../services/proxyLogStore.js';
 import { dispatchRuntimeRequest } from '../../services/runtimeDispatch.js';
 import type { BuiltEndpointRequest } from '../orchestration/endpointFlow.js';

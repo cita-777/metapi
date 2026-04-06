@@ -1031,7 +1031,7 @@ body {
   font-weight: 600;
   color: var(--color-text-primary);
   line-height: 1.3;
-  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .mobile-card-subtitle {
@@ -1135,7 +1135,7 @@ body {
   font-weight: 600;
   color: var(--color-text-primary);
   line-height: 1.3;
-  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 /* ===== Mobile Drawer ===== */
@@ -1803,7 +1803,7 @@ body {
   font-size: 13px;
   color: var(--color-text-secondary);
   line-height: 1.7;
-  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .announcement-rich-content > :first-child {
@@ -2015,7 +2015,7 @@ body {
 .token-table th,
 .token-table td {
   white-space: normal;
-  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .token-table-actions-col {
@@ -2054,7 +2054,7 @@ body {
 .accounts-table th,
 .accounts-table td {
   white-space: normal;
-  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .accounts-actions-col {
@@ -3465,7 +3465,7 @@ textarea {
   font-size: 12px;
   font-weight: 600;
   color: var(--color-text-primary);
-  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .oauth-import-preview-badge {
@@ -3530,7 +3530,7 @@ textarea {
   display: block;
   font-size: 12px;
   color: var(--color-text-secondary);
-  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .oauth-import-result-title {
@@ -3664,7 +3664,7 @@ textarea {
   font-size: 12px;
   font-weight: 600;
   color: var(--color-text-primary);
-  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .oauth-import-result-metrics {

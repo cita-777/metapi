@@ -8,6 +8,7 @@ import {
   handleOauthCallback,
   listOauthConnections,
   listOauthProviders,
+  OauthImportValidationError,
   refreshOauthConnectionQuotaBatch,
   refreshOauthConnectionQuota,
   startOauthProviderFlow,
@@ -348,7 +349,12 @@ export async function oauthRoutes(app: FastifyInstance) {
       try {
         return await importOauthConnectionsFromNativeJson(data);
       } catch (error: any) {
-        return reply.code(400).send({ message: error?.message || 'oauth import failed' });
+        const message = error?.message || 'oauth import failed';
+        if (error instanceof OauthImportValidationError) {
+          return reply.code(400).send({ message });
+        }
+        request.log.error({ err: error }, 'oauth import failed');
+        return reply.code(500).send({ message });
       }
     },
   );
