@@ -1,1 +1,10 @@
--- no schema changes detected for mysql
+CREATE TABLE IF NOT EXISTS `oauth_route_units` (`id` INT AUTO_INCREMENT NOT NULL PRIMARY KEY, `site_id` INT NOT NULL, `provider` TEXT NOT NULL, `name` TEXT NOT NULL, `strategy` VARCHAR(191) NOT NULL DEFAULT 'round_robin', `enabled` BOOLEAN DEFAULT true, `created_at` VARCHAR(191) DEFAULT (DATE_FORMAT(NOW(), '%Y-%m-%d %H:%i:%s')), `updated_at` VARCHAR(191) DEFAULT (DATE_FORMAT(NOW(), '%Y-%m-%d %H:%i:%s')), FOREIGN KEY (`site_id`) REFERENCES `sites`(`id`) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS `oauth_route_unit_members` (`id` INT AUTO_INCREMENT NOT NULL PRIMARY KEY, `unit_id` INT NOT NULL, `account_id` INT NOT NULL, `sort_order` INT DEFAULT 0, `success_count` INT DEFAULT 0, `fail_count` INT DEFAULT 0, `total_latency_ms` INT DEFAULT 0, `total_cost` DOUBLE DEFAULT 0, `last_used_at` VARCHAR(191), `last_selected_at` VARCHAR(191), `last_fail_at` VARCHAR(191), `consecutive_fail_count` INT NOT NULL DEFAULT 0, `cooldown_level` INT NOT NULL DEFAULT 0, `cooldown_until` VARCHAR(191), `created_at` VARCHAR(191) DEFAULT (DATE_FORMAT(NOW(), '%Y-%m-%d %H:%i:%s')), `updated_at` VARCHAR(191) DEFAULT (DATE_FORMAT(NOW(), '%Y-%m-%d %H:%i:%s')), FOREIGN KEY (`account_id`) REFERENCES `accounts`(`id`) ON DELETE CASCADE, FOREIGN KEY (`unit_id`) REFERENCES `oauth_route_units`(`id`) ON DELETE CASCADE);
+ALTER TABLE `route_channels` ADD COLUMN `oauth_route_unit_id` INT;
+CREATE UNIQUE INDEX `oauth_route_unit_members_account_unique` ON `oauth_route_unit_members` (`account_id`);
+CREATE UNIQUE INDEX `oauth_route_unit_members_unit_account_unique` ON `oauth_route_unit_members` (`unit_id`, `account_id`);
+CREATE INDEX `oauth_route_unit_members_unit_cooldown_idx` ON `oauth_route_unit_members` (`unit_id`, `cooldown_until`);
+CREATE INDEX `oauth_route_unit_members_unit_sort_idx` ON `oauth_route_unit_members` (`unit_id`, `sort_order`);
+CREATE INDEX `oauth_route_units_enabled_idx` ON `oauth_route_units` (`enabled`);
+CREATE INDEX `oauth_route_units_site_provider_idx` ON `oauth_route_units` (`site_id`, `provider`(191));
+CREATE INDEX `route_channels_oauth_route_unit_id_idx` ON `route_channels` (`oauth_route_unit_id`);

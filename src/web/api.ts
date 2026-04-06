@@ -581,6 +581,31 @@ export type OAuthProviderInfo = {
   supportsNativeProxy: boolean;
 };
 
+export type OAuthProvidersResponse = {
+  providers: OAuthProviderInfo[];
+  defaults?: {
+    systemProxyConfigured?: boolean;
+  };
+};
+
+export type OAuthRouteUnitStrategy = 'round_robin' | 'stick_until_unavailable';
+
+export type OAuthRouteUnitSummary = {
+  id?: number;
+  routeUnitId?: number;
+  name: string;
+  strategy: OAuthRouteUnitStrategy;
+  memberCount: number;
+};
+
+export type OAuthRouteParticipation =
+  | {
+    kind: 'single';
+  }
+  | ({
+    kind: 'route_unit';
+  } & OAuthRouteUnitSummary);
+
 export type OAuthStartInstructions = {
   redirectUri: string;
   callbackPort: number;
@@ -651,6 +676,8 @@ export type OAuthConnectionInfo = {
   lastModelSyncError?: string | null;
   proxyUrl?: string | null;
   useSystemProxy?: boolean;
+  routeUnit?: OAuthRouteUnitSummary | null;
+  routeParticipation?: OAuthRouteParticipation | null;
   site?: { id: number; name: string; url: string; platform: string } | null;
 };
 
@@ -685,6 +712,11 @@ export type OAuthImportResponse = {
     provider?: string;
     message?: string;
   }>;
+};
+
+export type OAuthRouteUnitMutationResponse = {
+  success: boolean;
+  routeUnit?: OAuthRouteUnitSummary;
 };
 
 export type DownstreamApiKeyTrendBucket = {
@@ -831,7 +863,7 @@ export const api = {
   search: (query: string) => request('/api/search', { method: 'POST', body: JSON.stringify({ query, limit: 20 }) }),
 
   // OAuth
-  getOAuthProviders: () => request('/api/oauth/providers') as Promise<{ providers: OAuthProviderInfo[] }>,
+  getOAuthProviders: () => request('/api/oauth/providers') as Promise<OAuthProvidersResponse>,
   startOAuthProvider: (provider: string, data?: { accountId?: number; projectId?: string; proxyUrl?: string | null; useSystemProxy?: boolean }) => request(`/api/oauth/providers/${encodeURIComponent(provider)}/start`, {
     method: 'POST',
     body: JSON.stringify(data || {}),
@@ -851,6 +883,10 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({ accountIds }),
   }) as Promise<OAuthQuotaBatchRefreshResponse>,
+  updateOAuthConnectionProxy: (accountId: number, data: { proxyUrl?: string | null; useSystemProxy?: boolean }) => request(`/api/oauth/connections/${accountId}/proxy`, {
+    method: 'PATCH',
+    body: JSON.stringify(data || {}),
+  }) as Promise<{ success: true }>,
   rebindOAuthConnection: (accountId: number, data?: { proxyUrl?: string | null; useSystemProxy?: boolean }) => request(`/api/oauth/connections/${accountId}/rebind`, {
     method: 'POST',
     body: JSON.stringify(data || {}),
@@ -860,8 +896,21 @@ export const api = {
   }) as Promise<{ success: true }>,
   importOAuthConnections: (data: Record<string, unknown>) => request('/api/oauth/import', {
     method: 'POST',
-    body: JSON.stringify({ data }),
+    body: JSON.stringify(
+      Array.isArray(data.items)
+        || 'proxyUrl' in data
+        || 'useSystemProxy' in data
+        ? data
+        : { data },
+    ),
   }) as Promise<OAuthImportResponse>,
+  createOAuthRouteUnit: (data: { accountIds: number[]; name: string; strategy: OAuthRouteUnitStrategy }) => request('/api/oauth/route-units', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }) as Promise<OAuthRouteUnitMutationResponse>,
+  deleteOAuthRouteUnit: (routeUnitId: number) => request(`/api/oauth/route-units/${routeUnitId}`, {
+    method: 'DELETE',
+  }) as Promise<{ success: true }>,
 
   // Events
   getEvents: (params?: string) => request(`/api/events${params ? '?' + params : ''}`),

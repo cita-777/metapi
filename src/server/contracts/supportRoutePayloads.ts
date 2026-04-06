@@ -27,12 +27,31 @@ const oauthConnectionRebindPayloadSchema = z.object({
   useSystemProxy: z.boolean().optional(),
 }).passthrough();
 
+const oauthConnectionProxyUpdatePayloadSchema = z.object({
+  proxyUrl: z.union([z.string(), z.null()]).optional(),
+  useSystemProxy: z.boolean().optional(),
+}).passthrough();
+
 const oauthQuotaBatchRefreshPayloadSchema = z.object({
   accountIds: z.array(z.number().int().positive()).optional(),
 }).passthrough();
 
 const oauthImportPayloadSchema = z.object({
   data: z.unknown().optional(),
+  items: z.array(z.unknown()).optional(),
+  proxyUrl: z.union([z.string(), z.null()]).optional(),
+  useSystemProxy: z.boolean().optional(),
+}).passthrough();
+
+const oauthRouteUnitCreatePayloadSchema = z.object({
+  accountIds: z.array(z.number().int().positive()).optional(),
+  name: z.string().optional(),
+  strategy: z.enum(['round_robin', 'stick_until_unavailable']).optional(),
+}).passthrough();
+
+const oauthRouteUnitUpdatePayloadSchema = z.object({
+  name: z.string().optional(),
+  strategy: z.enum(['round_robin', 'stick_until_unavailable']).optional(),
 }).passthrough();
 
 const updateCenterConfigPayloadSchema = z.object({
@@ -61,9 +80,12 @@ const updateCenterRollbackPayloadSchema = z.object({
 export type AuthChangePayload = z.output<typeof authChangePayloadSchema>;
 export type MonitorConfigPayload = z.output<typeof monitorConfigPayloadSchema>;
 export type OauthConnectionRebindPayload = z.output<typeof oauthConnectionRebindPayloadSchema>;
+export type OauthConnectionProxyUpdatePayload = z.output<typeof oauthConnectionProxyUpdatePayloadSchema>;
 export type OauthImportPayload = z.output<typeof oauthImportPayloadSchema>;
 export type OauthManualCallbackPayload = z.output<typeof oauthManualCallbackPayloadSchema>;
 export type OauthQuotaBatchRefreshPayload = z.output<typeof oauthQuotaBatchRefreshPayloadSchema>;
+export type OauthRouteUnitCreatePayload = z.output<typeof oauthRouteUnitCreatePayloadSchema>;
+export type OauthRouteUnitUpdatePayload = z.output<typeof oauthRouteUnitUpdatePayloadSchema>;
 export type OauthStartPayload = z.output<typeof oauthStartPayloadSchema>;
 export type UpdateCenterConfigPayload = z.output<typeof updateCenterConfigPayloadSchema>;
 export type UpdateCenterDeployPayload = z.output<typeof updateCenterDeployPayloadSchema>;
@@ -103,11 +125,20 @@ function formatSupportRoutePayloadError(error: z.ZodError): string {
   if (firstPath === 'accountIds') {
     return 'Invalid accountIds. Expected positive number array.';
   }
+  if (firstPath === 'name') {
+    return 'Invalid name. Expected string.';
+  }
+  if (firstPath === 'strategy') {
+    return 'Invalid strategy. Expected round_robin/stick_until_unavailable.';
+  }
   if (firstPath === 'callbackUrl') {
     return 'Invalid callbackUrl. Expected string.';
   }
   if (firstPath === 'data') {
     return 'Invalid data. Expected object.';
+  }
+  if (firstPath === 'items') {
+    return 'Invalid items. Expected object array.';
   }
   if (firstPath === 'enabled') {
     return 'Invalid enabled. Expected boolean.';
@@ -196,6 +227,11 @@ export function parseOauthConnectionRebindPayload(input: unknown):
   return parseSupportRoutePayload(oauthConnectionRebindPayloadSchema, input);
 }
 
+export function parseOauthConnectionProxyUpdatePayload(input: unknown):
+{ success: true; data: OauthConnectionProxyUpdatePayload } | { success: false; error: string } {
+  return parseSupportRoutePayload(oauthConnectionProxyUpdatePayloadSchema, input);
+}
+
 export function parseOauthQuotaBatchRefreshPayload(input: unknown):
 { success: true; data: OauthQuotaBatchRefreshPayload } | { success: false; error: string } {
   return parseSupportRoutePayload(oauthQuotaBatchRefreshPayloadSchema, input);
@@ -204,6 +240,16 @@ export function parseOauthQuotaBatchRefreshPayload(input: unknown):
 export function parseOauthImportPayload(input: unknown):
 { success: true; data: OauthImportPayload } | { success: false; error: string } {
   return parseSupportRoutePayload(oauthImportPayloadSchema, input);
+}
+
+export function parseOauthRouteUnitCreatePayload(input: unknown):
+{ success: true; data: OauthRouteUnitCreatePayload } | { success: false; error: string } {
+  return parseSupportRoutePayload(oauthRouteUnitCreatePayloadSchema, input);
+}
+
+export function parseOauthRouteUnitUpdatePayload(input: unknown):
+{ success: true; data: OauthRouteUnitUpdatePayload } | { success: false; error: string } {
+  return parseSupportRoutePayload(oauthRouteUnitUpdatePayloadSchema, input);
 }
 
 export function parseUpdateCenterConfigPayload(input: unknown):

@@ -190,6 +190,181 @@ describe('TokenRouter selection scoring', () => {
     await expect(router.selectPreferredChannel('gpt-5.2', preferredChannel.id)).resolves.toBeNull();
   });
 
+  it('round-robins inside an oauth route unit while keeping one outer channel', async () => {
+    const route = await createRoute('gpt-5.4');
+    const site = await db.insert(schema.sites).values({
+      name: 'oauth-pool-site',
+      url: 'https://oauth-pool-site.example.com',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+    const accountA = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'pool-a@example.com',
+      accessToken: 'oauth-access-a',
+      apiToken: null,
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'pool-a',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          accountId: 'pool-a',
+          accountKey: 'pool-a',
+          email: 'pool-a@example.com',
+        },
+      }),
+    }).returning().get();
+    const accountB = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'pool-b@example.com',
+      accessToken: 'oauth-access-b',
+      apiToken: null,
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'pool-b',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          accountId: 'pool-b',
+          accountKey: 'pool-b',
+          email: 'pool-b@example.com',
+        },
+      }),
+    }).returning().get();
+    const unit = await db.insert(schema.oauthRouteUnits).values({
+      siteId: site.id,
+      provider: 'codex',
+      name: 'Codex Pool A',
+      strategy: 'round_robin',
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.oauthRouteUnitMembers).values([
+      {
+        unitId: unit.id,
+        accountId: accountA.id,
+        sortOrder: 0,
+      },
+      {
+        unitId: unit.id,
+        accountId: accountB.id,
+        sortOrder: 1,
+      },
+    ]).run();
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountA.id,
+      oauthRouteUnitId: unit.id,
+      tokenId: null,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      manualOverride: false,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    const first = await router.selectChannel('gpt-5.4');
+    const second = await router.selectChannel('gpt-5.4');
+
+    expect(first?.channel.id).toBe(channel.id);
+    expect(second?.channel.id).toBe(channel.id);
+    expect(first?.account.id).toBe(accountA.id);
+    expect(second?.account.id).toBe(accountB.id);
+  });
+
+  it('sticks to one oauth route unit member until that member becomes unavailable', async () => {
+    const route = await createRoute('gpt-5.4');
+    const site = await db.insert(schema.sites).values({
+      name: 'oauth-stick-site',
+      url: 'https://oauth-stick-site.example.com',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+    const accountA = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'stick-a@example.com',
+      accessToken: 'oauth-stick-a',
+      apiToken: null,
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'stick-a',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          accountId: 'stick-a',
+          accountKey: 'stick-a',
+          email: 'stick-a@example.com',
+        },
+      }),
+    }).returning().get();
+    const accountB = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'stick-b@example.com',
+      accessToken: 'oauth-stick-b',
+      apiToken: null,
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'stick-b',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: {
+          provider: 'codex',
+          accountId: 'stick-b',
+          accountKey: 'stick-b',
+          email: 'stick-b@example.com',
+        },
+      }),
+    }).returning().get();
+    const unit = await db.insert(schema.oauthRouteUnits).values({
+      siteId: site.id,
+      provider: 'codex',
+      name: 'Codex Stick Pool',
+      strategy: 'stick_until_unavailable',
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.oauthRouteUnitMembers).values([
+      {
+        unitId: unit.id,
+        accountId: accountA.id,
+        sortOrder: 0,
+      },
+      {
+        unitId: unit.id,
+        accountId: accountB.id,
+        sortOrder: 1,
+      },
+    ]).run();
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountA.id,
+      oauthRouteUnitId: unit.id,
+      tokenId: null,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      manualOverride: false,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    const first = await router.selectChannel('gpt-5.4');
+    const second = await router.selectChannel('gpt-5.4');
+
+    expect(first?.account.id).toBe(accountA.id);
+    expect(second?.account.id).toBe(accountA.id);
+
+    await router.recordFailure(channel.id, {
+      status: 429,
+      errorText: 'rate_limit',
+      modelName: 'gpt-5.4',
+    }, accountA.id);
+
+    const third = await router.selectChannel('gpt-5.4');
+    expect(third?.account.id).toBe(accountB.id);
+  });
+
   it('avoids recently failed candidates by default when healthy alternatives exist', () => {
     const nowMs = Date.now();
     const filtered = filterRecentlyFailedCandidates([

@@ -226,6 +226,137 @@ describe('TokenRoutes grouped source models', () => {
     }
   });
 
+  it('renders oauth route unit summary and members after expanding a pooled route', async () => {
+    apiMock.getRoutesSummary.mockResolvedValue([
+      {
+        id: 31, modelPattern: 'gpt-4.1', displayName: null,
+        displayIcon: null, modelMapping: null, enabled: true,
+        channelCount: 1, enabledChannelCount: 1, siteNames: ['codex-oauth'],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+    ]);
+    apiMock.getRouteChannels.mockResolvedValue([
+      {
+        id: 511, routeId: 31, accountId: 901, tokenId: null, sourceModel: 'gpt-4.1',
+        priority: 0, weight: 1, enabled: true, manualOverride: false,
+        successCount: 5, failCount: 1,
+        account: { username: 'route-unit-anchor', credentialMode: 'oauth' },
+        site: { id: 41, name: 'codex-oauth', platform: 'openai' },
+        token: null,
+        routeUnit: {
+          id: 'pool-31',
+          name: 'Codex Pool A',
+          strategy: 'stick_until_unavailable',
+          memberCount: 3,
+          members: [
+            { accountId: 901, username: 'route-unit-anchor', siteName: 'codex-oauth' },
+            { accountId: 902, username: 'route-unit-backup', siteName: 'codex-oauth' },
+            { accountId: 903, username: 'route-unit-third', siteName: 'codex-oauth' },
+          ],
+        },
+      },
+    ]);
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const expandBtn = root.root.find((node) =>
+        node.type === 'div' && String(node.props.className || '').includes('route-card-collapsed'),
+      );
+      await act(async () => {
+        expandBtn.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const text = collectText(root.root);
+      expect(text).toContain('Codex Pool A');
+      expect(text).toContain('3 个成员');
+      expect(text).toContain('单个用到不可用再切');
+      expect(text).toContain('成员摘要');
+      expect(text).toContain('route-unit-anchor');
+      expect(text).toContain('route-unit-backup');
+      expect(text).toContain('route-unit-third');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('shows oauth route unit summary and member details after expanding a pooled route', async () => {
+    apiMock.getRoutesSummary.mockResolvedValue([
+      {
+        id: 1, modelPattern: 'gpt-5-codex', displayName: 'gpt-5-codex',
+        displayIcon: null, modelMapping: null, enabled: true,
+        channelCount: 1, enabledChannelCount: 1, siteNames: ['site-a'],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+      },
+    ]);
+    apiMock.getRouteChannels.mockResolvedValue([
+      {
+        id: 11, routeId: 1, accountId: 101, tokenId: null, sourceModel: 'gpt-5-codex',
+        priority: 0, weight: 1, enabled: true, manualOverride: false,
+        successCount: 0, failCount: 0,
+        account: { username: 'pool-representative', credentialMode: 'oauth' },
+        site: { id: 1, name: 'site-a', platform: 'openai' },
+        token: null,
+        routeUnit: {
+          id: 17,
+          name: 'Codex 池',
+          memberCount: 3,
+          strategy: 'stick_until_unavailable',
+          members: [
+            { accountId: 101, username: 'user_a', siteName: 'site-a' },
+            { accountId: 102, username: 'user_b', siteName: 'site-b' },
+            { accountId: 103, username: 'user_c', siteName: 'site-c' },
+          ],
+        },
+      },
+    ]);
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const expandBtn = root.root.find((node) =>
+        node.type === 'div'
+        && String(node.props.className || '').includes('route-card-collapsed')
+        && collectText(node).includes('gpt-5-codex'),
+      );
+      await act(async () => {
+        expandBtn.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const expandedText = collectText(root.root);
+      expect(expandedText).toContain('OAuth 路由池');
+      expect(expandedText).toContain('Codex 池');
+      expect(expandedText).toContain('3 个成员');
+      expect(expandedText).toContain('单个用到不可用再切');
+      expect(expandedText).toContain('成员摘要');
+      expect(expandedText).toContain('user_a @ site-a、user_b @ site-b、user_c @ site-c');
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('writes explicit-group priority edits back to source channels and confirms shared-source impact', async () => {
     apiMock.getRoutesSummary.mockResolvedValue([
       {

@@ -46,6 +46,7 @@ describe('refreshModelsForAccount credential discovery', () => {
   let schema: DbModule['schema'];
   let refreshModelsForAccount: ModelServiceModule['refreshModelsForAccount'];
   let refreshModelsAndRebuildRoutes: ModelServiceModule['refreshModelsAndRebuildRoutes'];
+  let rebuildTokenRoutesFromAvailability: ModelServiceModule['rebuildTokenRoutesFromAvailability'];
   let dataDir = '';
 
   beforeAll(async () => {
@@ -60,6 +61,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     schema = dbModule.schema;
     refreshModelsForAccount = modelService.refreshModelsForAccount;
     refreshModelsAndRebuildRoutes = modelService.refreshModelsAndRebuildRoutes;
+    rebuildTokenRoutesFromAvailability = modelService.rebuildTokenRoutesFromAvailability;
   });
 
   beforeEach(async () => {
@@ -2165,5 +2167,66 @@ describe('refreshModelsForAccount credential discovery', () => {
 
     const manualRow = rows.find((r) => r.modelName === 'my-custom-model');
     expect(manualRow?.isManual).toBe(true);
+  });
+
+  it('rebuilds one pooled route channel for grouped oauth accounts that share a model', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'ChatGPT Codex OAuth',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+
+    const accountA = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'pool-a@example.com',
+      accessToken: 'oauth-access-token-a',
+      apiToken: null,
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-model-pool-a',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: { provider: 'codex', accountId: 'chatgpt-model-pool-a', email: 'pool-a@example.com' },
+      }),
+    }).returning().get();
+    const accountB = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'pool-b@example.com',
+      accessToken: 'oauth-access-token-b',
+      apiToken: null,
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-model-pool-b',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: { provider: 'codex', accountId: 'chatgpt-model-pool-b', email: 'pool-b@example.com' },
+      }),
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values([
+      { accountId: accountA.id, modelName: 'gpt-5.4', available: true },
+      { accountId: accountB.id, modelName: 'gpt-5.4', available: true },
+    ]).run();
+    const routeUnit = await db.insert(schema.oauthRouteUnits).values({
+      siteId: site.id,
+      provider: 'codex',
+      name: 'Codex Pool',
+      strategy: 'round_robin',
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.oauthRouteUnitMembers).values([
+      { unitId: routeUnit.id, accountId: accountA.id, sortOrder: 0 },
+      { unitId: routeUnit.id, accountId: accountB.id, sortOrder: 1 },
+    ]).run();
+
+    const rebuild = await rebuildTokenRoutesFromAvailability();
+    expect(rebuild.createdChannels).toBe(1);
+
+    const channels = await db.select().from(schema.routeChannels).all();
+    expect(channels).toHaveLength(1);
+    expect(channels[0]).toMatchObject({
+      oauthRouteUnitId: routeUnit.id,
+    });
   });
 });

@@ -25,6 +25,7 @@ import { formatDateTimeMinuteLocal } from '../helpers/checkinLogTime.js';
 import type {
   RouteSummaryRow,
   RouteChannel,
+  RouteChannelRouteUnit,
   RouteDecision,
   RouteDecisionCandidate,
   MissingTokenRouteSiteActionItem,
@@ -99,6 +100,24 @@ type RouteCardProps = {
   expandedSourceGroupMap: Record<string, boolean>;
   onToggleSourceGroup: (groupKey: string) => void;
 };
+
+function getRouteUnitStrategyLabel(strategy: string | null | undefined): string {
+  return strategy === 'stick_until_unavailable' ? '单个用到不可用再切' : '轮询';
+}
+
+function collectRouteUnits(channels: RouteChannel[] | undefined): RouteChannelRouteUnit[] {
+  if (!Array.isArray(channels) || channels.length === 0) return [];
+  const unitsById = new Map<string, RouteChannelRouteUnit>();
+  for (const channel of channels) {
+    const routeUnit = channel.routeUnit;
+    if (!routeUnit) continue;
+    const key = String(routeUnit.id);
+    if (!unitsById.has(key)) {
+      unitsById.set(key, routeUnit);
+    }
+  }
+  return Array.from(unitsById.values());
+}
 
 function PriorityRailNewLayerRow({
   id,
@@ -566,6 +585,7 @@ function RouteCardInner({
     : undefined;
   const showAddChannelButton = !readOnlyRoute && !channelManagementDisabled;
   const showMissingTokenHints = !channelManagementDisabled && (missingTokenSiteItems.length > 0 || missingTokenGroupItems.length > 0);
+  const routeUnits = collectRouteUnits(channels);
   const routingStrategyOptions = [
     {
       value: 'weighted',
@@ -972,6 +992,32 @@ function RouteCardInner({
       ) : !compact && !exactRoute ? (
         <div style={{ fontSize: 11, lineHeight: 1.45, color: 'var(--color-text-muted)', marginBottom: 6 }}>
           {tr('通配符路由按请求实时决策；下方优先级桶在整条路由内全局生效，来源模型只作为通道标签展示。')}
+        </div>
+      ) : null}
+
+      {routeUnits.length > 0 ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+          <div style={{ fontSize: 11.5, color: 'var(--color-text-secondary)' }}>
+            OAuth 路由池
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            {routeUnits.map((routeUnit) => (
+              <span
+                key={`route-unit-${String(routeUnit.id)}`}
+                className="badge badge-info"
+                style={{
+                  fontSize: 10.5,
+                  maxWidth: '100%',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+                title={`${routeUnit.name?.trim() || 'OAuth 路由池'} · ${routeUnit.memberCount} 个成员 · ${getRouteUnitStrategyLabel(routeUnit.strategy)}`}
+              >
+                {(routeUnit.name?.trim() || 'OAuth 路由池')} · {routeUnit.memberCount} 个成员 · {getRouteUnitStrategyLabel(routeUnit.strategy)}
+              </span>
+            ))}
+          </div>
         </div>
       ) : null}
 

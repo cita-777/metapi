@@ -167,11 +167,50 @@ export const routeGroupSources = sqliteTable('route_group_sources', {
   sourceRouteIdx: index('route_group_sources_source_route_id_idx').on(table.sourceRouteId),
 }));
 
+export const oauthRouteUnits = sqliteTable('oauth_route_units', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  provider: text('provider').notNull(),
+  name: text('name').notNull(),
+  strategy: text('strategy').notNull().default('round_robin'),
+  enabled: integer('enabled', { mode: 'boolean' }).default(true),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  siteProviderIdx: index('oauth_route_units_site_provider_idx').on(table.siteId, table.provider),
+  enabledIdx: index('oauth_route_units_enabled_idx').on(table.enabled),
+}));
+
+export const oauthRouteUnitMembers = sqliteTable('oauth_route_unit_members', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  unitId: integer('unit_id').notNull().references(() => oauthRouteUnits.id, { onDelete: 'cascade' }),
+  accountId: integer('account_id').notNull().references(() => accounts.id, { onDelete: 'cascade' }),
+  sortOrder: integer('sort_order').default(0),
+  successCount: integer('success_count').default(0),
+  failCount: integer('fail_count').default(0),
+  totalLatencyMs: integer('total_latency_ms').default(0),
+  totalCost: real('total_cost').default(0),
+  lastUsedAt: text('last_used_at'),
+  lastSelectedAt: text('last_selected_at'),
+  lastFailAt: text('last_fail_at'),
+  consecutiveFailCount: integer('consecutive_fail_count').notNull().default(0),
+  cooldownLevel: integer('cooldown_level').notNull().default(0),
+  cooldownUntil: text('cooldown_until'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  unitAccountUnique: uniqueIndex('oauth_route_unit_members_unit_account_unique').on(table.unitId, table.accountId),
+  accountUnique: uniqueIndex('oauth_route_unit_members_account_unique').on(table.accountId),
+  unitSortIdx: index('oauth_route_unit_members_unit_sort_idx').on(table.unitId, table.sortOrder),
+  unitCooldownIdx: index('oauth_route_unit_members_unit_cooldown_idx').on(table.unitId, table.cooldownUntil),
+}));
+
 export const routeChannels = sqliteTable('route_channels', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   routeId: integer('route_id').notNull().references(() => tokenRoutes.id, { onDelete: 'cascade' }),
   accountId: integer('account_id').notNull().references(() => accounts.id, { onDelete: 'cascade' }),
   tokenId: integer('token_id').references(() => accountTokens.id, { onDelete: 'set null' }),
+  oauthRouteUnitId: integer('oauth_route_unit_id').references(() => oauthRouteUnits.id, { onDelete: 'cascade' }),
   sourceModel: text('source_model'),
   priority: integer('priority').default(0),
   weight: integer('weight').default(10),
@@ -191,6 +230,7 @@ export const routeChannels = sqliteTable('route_channels', {
   routeIdIdx: index('route_channels_route_id_idx').on(table.routeId),
   accountIdIdx: index('route_channels_account_id_idx').on(table.accountId),
   tokenIdIdx: index('route_channels_token_id_idx').on(table.tokenId),
+  oauthRouteUnitIdx: index('route_channels_oauth_route_unit_id_idx').on(table.oauthRouteUnitId),
   routeEnabledIdx: index('route_channels_route_enabled_idx').on(table.routeId, table.enabled),
   routeTokenIdx: index('route_channels_route_token_idx').on(table.routeId, table.tokenId),
 }));

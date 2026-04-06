@@ -78,6 +78,73 @@ function buildChannel(overrides: Partial<RouteChannel> = {}): RouteChannel {
 }
 
 describe('RouteCard', () => {
+  it('renders oauth route unit summary and member labels on expanded channels', () => {
+    const root = create(
+      <RouteCard
+        route={buildRoute({
+          modelPattern: 'gpt-4.1',
+          displayName: 'gpt-4.1',
+          channelCount: 1,
+          enabledChannelCount: 1,
+        })}
+        brand={null}
+        expanded
+        onToggleExpand={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggleEnabled={vi.fn()}
+        onClearCooldown={vi.fn()}
+        clearingCooldown={false}
+        onRoutingStrategyChange={vi.fn()}
+        updatingRoutingStrategy={false}
+        channels={[
+          buildChannel({
+            account: { username: 'route-unit-anchor' },
+            routeUnit: {
+              id: 'pool-1',
+              name: 'Codex Pool A',
+              strategy: 'round_robin',
+              memberCount: 3,
+              members: [
+                { accountId: 101, username: 'route-unit-anchor', siteName: 'site-a' },
+                { accountId: 102, username: 'route-unit-backup', siteName: 'site-b' },
+                { accountId: 103, username: 'route-unit-third', siteName: 'site-c' },
+              ],
+            },
+          }),
+        ]}
+        loadingChannels={false}
+        routeDecision={null}
+        loadingDecision={false}
+        candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
+        channelTokenDraft={{}}
+        updatingChannel={{}}
+        savingPriority={false}
+        onTokenDraftChange={vi.fn()}
+        onSaveToken={vi.fn()}
+        onDeleteChannel={vi.fn()}
+        onToggleChannelEnabled={vi.fn()}
+        onChannelDragEnd={vi.fn()}
+        missingTokenSiteItems={[]}
+        missingTokenGroupItems={[]}
+        onCreateTokenForMissing={vi.fn()}
+        onAddChannel={vi.fn()}
+        onSiteBlockModel={vi.fn()}
+        expandedSourceGroupMap={{}}
+        onToggleSourceGroup={vi.fn()}
+      />,
+    );
+
+    const text = collectText(root.root);
+    expect(text).toContain('Codex Pool A');
+    expect(text).toContain('3 个成员');
+    expect(text).toContain('轮询');
+    expect(text).toContain('成员摘要');
+    expect(text).toContain('route-unit-anchor');
+    expect(text).toContain('route-unit-backup');
+    expect(text).toContain('route-unit-third');
+  });
+
   it('truncates the collapsed regex badge while keeping the group name primary', () => {
     const root = create(
       <RouteCard
@@ -369,6 +436,70 @@ describe('RouteCard', () => {
     expect(p0RailNode.props.style.background).not.toBe('var(--color-bg)');
     expect(p1RailNode.props.style.background).not.toBe('var(--color-bg)');
     expect(p0RailNode.props.style.color).not.toBe(p1RailNode.props.style.color);
+  });
+
+  it('renders oauth route unit summary badges on expanded cards', () => {
+    const root = create(
+      <RouteCard
+        route={buildRoute()}
+        brand={null}
+        expanded
+        onToggleExpand={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggleEnabled={vi.fn()}
+        onClearCooldown={vi.fn()}
+        clearingCooldown={false}
+        onRoutingStrategyChange={vi.fn()}
+        updatingRoutingStrategy={false}
+        channels={[
+          buildChannel({
+            id: 11,
+            account: { username: 'pool-representative' },
+            site: { id: 1, name: 'site-a', platform: 'openai' },
+            ...( {
+              routeUnit: {
+                id: 7,
+                name: 'Codex 池',
+                memberCount: 3,
+                strategy: 'round_robin',
+                members: [
+                  { accountId: 101, username: 'user_a', siteName: 'site-a' },
+                  { accountId: 102, username: 'user_b', siteName: 'site-b' },
+                  { accountId: 103, username: 'user_c', siteName: 'site-c' },
+                ],
+              },
+            } as any ),
+          }),
+        ]}
+        loadingChannels={false}
+        routeDecision={null}
+        loadingDecision={false}
+        candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
+        channelTokenDraft={{}}
+        updatingChannel={{}}
+        savingPriority={false}
+        onTokenDraftChange={vi.fn()}
+        onSaveToken={vi.fn()}
+        onDeleteChannel={vi.fn()}
+        onToggleChannelEnabled={vi.fn()}
+        onChannelDragEnd={vi.fn()}
+        missingTokenSiteItems={[]}
+        missingTokenGroupItems={[]}
+        onCreateTokenForMissing={vi.fn()}
+        onAddChannel={vi.fn()}
+        onSiteBlockModel={vi.fn()}
+        expandedSourceGroupMap={{}}
+        onToggleSourceGroup={vi.fn()}
+      />,
+    );
+
+    const text = collectText(root.root);
+    expect(text).toContain('OAuth 路由池');
+    expect(text).toContain('Codex 池');
+    expect(text).toContain('3 个成员');
+    expect(text).toContain('轮询');
+    expect(text).toContain('成员摘要');
   });
 
   it('uses translate-only rect sorting for flat channel shell rows', () => {

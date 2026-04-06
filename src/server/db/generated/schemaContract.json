@@ -474,6 +474,158 @@
         }
       }
     },
+    "oauth_route_unit_members": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "unit_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "account_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "sort_order": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "success_count": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "fail_count": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "total_latency_ms": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "total_cost": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "last_used_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_selected_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_fail_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "consecutive_fail_count": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "cooldown_level": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "cooldown_until": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "oauth_route_units": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "site_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "provider": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "name": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "strategy": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'round_robin'",
+          "primaryKey": false
+        },
+        "enabled": {
+          "logicalType": "boolean",
+          "notNull": false,
+          "defaultValue": "true",
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
     "proxy_debug_attempts": {
       "columns": {
         "id": {
@@ -1185,6 +1337,12 @@
           "notNull": false,
           "defaultValue": null,
           "primaryKey": false
+        },
+        "oauth_route_unit_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
         }
       }
     },
@@ -1820,6 +1978,58 @@
       "unique": false
     },
     {
+      "name": "oauth_route_unit_members_account_unique",
+      "table": "oauth_route_unit_members",
+      "columns": [
+        "account_id"
+      ],
+      "unique": true
+    },
+    {
+      "name": "oauth_route_unit_members_unit_account_unique",
+      "table": "oauth_route_unit_members",
+      "columns": [
+        "unit_id",
+        "account_id"
+      ],
+      "unique": true
+    },
+    {
+      "name": "oauth_route_unit_members_unit_cooldown_idx",
+      "table": "oauth_route_unit_members",
+      "columns": [
+        "unit_id",
+        "cooldown_until"
+      ],
+      "unique": false
+    },
+    {
+      "name": "oauth_route_unit_members_unit_sort_idx",
+      "table": "oauth_route_unit_members",
+      "columns": [
+        "unit_id",
+        "sort_order"
+      ],
+      "unique": false
+    },
+    {
+      "name": "oauth_route_units_enabled_idx",
+      "table": "oauth_route_units",
+      "columns": [
+        "enabled"
+      ],
+      "unique": false
+    },
+    {
+      "name": "oauth_route_units_site_provider_idx",
+      "table": "oauth_route_units",
+      "columns": [
+        "site_id",
+        "provider"
+      ],
+      "unique": false
+    },
+    {
       "name": "proxy_debug_attempts_trace_attempt_unique",
       "table": "proxy_debug_attempts",
       "columns": [
@@ -1981,6 +2191,14 @@
       "table": "route_channels",
       "columns": [
         "account_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "route_channels_oauth_route_unit_id_idx",
+      "table": "route_channels",
+      "columns": [
+        "oauth_route_unit_id"
       ],
       "unique": false
     },
@@ -2191,6 +2409,21 @@
       ]
     },
     {
+      "name": "oauth_route_unit_members_account_unique",
+      "table": "oauth_route_unit_members",
+      "columns": [
+        "account_id"
+      ]
+    },
+    {
+      "name": "oauth_route_unit_members_unit_account_unique",
+      "table": "oauth_route_unit_members",
+      "columns": [
+        "unit_id",
+        "account_id"
+      ]
+    },
+    {
       "name": "proxy_debug_attempts_trace_attempt_unique",
       "table": "proxy_debug_attempts",
       "columns": [
@@ -2307,6 +2540,39 @@
       "onDelete": "CASCADE"
     },
     {
+      "table": "oauth_route_unit_members",
+      "columns": [
+        "account_id"
+      ],
+      "referencedTable": "accounts",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "oauth_route_unit_members",
+      "columns": [
+        "unit_id"
+      ],
+      "referencedTable": "oauth_route_units",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "oauth_route_units",
+      "columns": [
+        "site_id"
+      ],
+      "referencedTable": "sites",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
       "table": "proxy_debug_attempts",
       "columns": [
         "trace_id"
@@ -2327,6 +2593,17 @@
         "id"
       ],
       "onDelete": "CASCADE"
+    },
+    {
+      "table": "route_channels",
+      "columns": [
+        "oauth_route_unit_id"
+      ],
+      "referencedTable": "oauth_route_units",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "NO ACTION"
     },
     {
       "table": "route_channels",

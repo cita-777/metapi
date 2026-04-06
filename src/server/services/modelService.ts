@@ -26,6 +26,7 @@ import { withAccountProxyOverride } from './siteProxy.js';
 import { isCodexPlatform } from './oauth/codexAccount.js';
 import { buildStoredOauthStateFromAccount, getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { refreshOauthAccessTokenSingleflight } from './oauth/refreshSingleflight.js';
+import { listEnabledOauthRouteUnitsWithMembers } from './oauth/routeUnitService.js';
 import { requireSiteApiBaseUrl } from './siteApiEndpointService.js';
 import {
   discoverAntigravityModelsFromCloud,
@@ -1104,16 +1105,56 @@ export async function rebuildTokenRoutesFromAvailability() {
     return globalAllowedModels.has(modelName.toLowerCase().trim());
   }
 
-  const modelCandidates = new Map<string, Map<string, { accountId: number; tokenId: number | null }>>();
-  const addModelCandidate = (modelNameRaw: string | null | undefined, accountId: number, tokenId: number | null, siteId: number) => {
+  const enabledOauthRouteUnits = await listEnabledOauthRouteUnitsWithMembers();
+  const routeUnitByAccountId = new Map<number, {
+    routeUnitId: number;
+    representativeAccountId: number;
+  }>();
+  for (const routeUnit of enabledOauthRouteUnits) {
+    const representativeAccountId = routeUnit.members[0]?.account.id;
+    if (!representativeAccountId) continue;
+    for (const member of routeUnit.members) {
+      routeUnitByAccountId.set(member.account.id, {
+        routeUnitId: routeUnit.unit.id,
+        representativeAccountId,
+      });
+    }
+  }
+
+  const modelCandidates = new Map<string, Map<string, {
+    accountId: number;
+    tokenId: number | null;
+    oauthRouteUnitId: number | null;
+  }>>();
+  const buildCandidateKey = (input: {
+    accountId: number;
+    tokenId: number | null;
+    oauthRouteUnitId: number | null;
+  }) => (
+    input.oauthRouteUnitId
+      ? `route-unit:${input.oauthRouteUnitId}`
+      : `${input.accountId}:${input.tokenId ?? 'account'}`
+  );
+  const buildChannelKey = (channel: typeof schema.routeChannels.$inferSelect) => (
+    channel.oauthRouteUnitId
+      ? `route-unit:${channel.oauthRouteUnitId}`
+      : `${channel.accountId}:${channel.tokenId ?? 'account'}`
+  );
+  const addModelCandidate = (
+    modelNameRaw: string | null | undefined,
+    accountId: number,
+    tokenId: number | null,
+    siteId: number,
+    oauthRouteUnitId: number | null = null,
+  ) => {
     const modelName = (modelNameRaw || '').trim();
     if (!modelName) return;
     if (!isModelAllowedByWhitelist(modelName)) return;
     if (isModelDisabledForSite(siteId, modelName)) return;
     if (blockedBrandRules.length > 0 && isModelBlockedByBrand(modelName, blockedBrandRules)) return;
     if (!modelCandidates.has(modelName)) modelCandidates.set(modelName, new Map());
-    const candidateKey = `${accountId}:${tokenId ?? 'account'}`;
-    modelCandidates.get(modelName)!.set(candidateKey, { accountId, tokenId });
+    const candidate = { accountId, tokenId, oauthRouteUnitId };
+    modelCandidates.get(modelName)!.set(buildCandidateKey(candidate), candidate);
   };
 
   for (const row of usableTokenRows) {
@@ -1122,6 +1163,17 @@ export async function rebuildTokenRoutesFromAvailability() {
 
   for (const row of accountRows) {
     if (!supportsDirectAccountRoutingConnection(row.accounts)) continue;
+    const routeUnit = routeUnitByAccountId.get(row.accounts.id);
+    if (routeUnit) {
+      addModelCandidate(
+        row.model_availability.modelName,
+        routeUnit.representativeAccountId,
+        null,
+        row.accounts.siteId,
+        routeUnit.routeUnitId,
+      );
+      continue;
+    }
     addModelCandidate(row.model_availability.modelName, row.accounts.id, null, row.accounts.siteId);
   }
 
@@ -1153,16 +1205,14 @@ export async function rebuildTokenRoutesFromAvailability() {
     const desiredKeys = new Set(Array.from(candidateMap.keys()));
 
     for (const [candidateKey, candidate] of candidateMap.entries()) {
-      const exists = routeChannels.some((channel) => (
-        channel.accountId === candidate.accountId
-        && (channel.tokenId ?? null) === candidate.tokenId
-      ));
+      const exists = routeChannels.some((channel) => buildChannelKey(channel) === candidateKey);
       if (exists) continue;
 
       const inserted = await db.insert(schema.routeChannels).values({
         routeId: route.id,
         accountId: candidate.accountId,
         tokenId: candidate.tokenId,
+        oauthRouteUnitId: candidate.oauthRouteUnitId,
         priority: 0,
         weight: 10,
         enabled: true,
@@ -1178,7 +1228,7 @@ export async function rebuildTokenRoutesFromAvailability() {
     }
 
     for (const channel of routeChannels) {
-      const channelKey = `${channel.accountId}:${channel.tokenId ?? 'account'}`;
+      const channelKey = buildChannelKey(channel);
       if (desiredKeys.has(channelKey)) {
         continue;
       }

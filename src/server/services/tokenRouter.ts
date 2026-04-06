@@ -18,6 +18,12 @@ import { isUsableAccountToken } from './accountTokenService.js';
 import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { parseCodexQuotaResetHint } from './oauth/quota.js';
 import {
+  getOauthRouteUnitStrategyLabel,
+  listOauthRouteUnitMembersByUnitIds,
+  loadOauthRouteUnitSummariesByIds,
+  type OAuthRouteUnitSummary,
+} from './oauth/routeUnitService.js';
+import {
   isExactTokenRouteModelPattern,
   isTokenRouteRegexPattern,
   matchesTokenRouteModelPattern,
@@ -37,6 +43,13 @@ interface RouteMatch {
     account: typeof schema.accounts.$inferSelect;
     site: typeof schema.sites.$inferSelect;
     token: typeof schema.accountTokens.$inferSelect | null;
+    routeUnit: OAuthRouteUnitSummary | null;
+    routeUnitMembers: Array<{
+      member: typeof schema.oauthRouteUnitMembers.$inferSelect;
+      account: typeof schema.accounts.$inferSelect;
+      site: typeof schema.sites.$inferSelect;
+      token: null;
+    }>;
   }>;
 }
 
@@ -1161,6 +1174,16 @@ async function loadRouteMatch(route: RouteRow, nowMs = Date.now()): Promise<Rout
       .all()
     : [];
 
+  const oauthRouteUnitIds: number[] = Array.from(new Set<number>(
+    channels
+      .map((row) => Number(row.route_channels.oauthRouteUnitId))
+      .filter((id): id is number => Number.isFinite(id) && id > 0),
+  ));
+  const [routeUnitSummaries, routeUnitMembersByUnitId] = await Promise.all([
+    loadOauthRouteUnitSummariesByIds(oauthRouteUnitIds),
+    listOauthRouteUnitMembersByUnitIds(oauthRouteUnitIds),
+  ]);
+
   const mapped = channels.map((row) => ({
     channel: {
       ...row.route_channels,
@@ -1171,6 +1194,17 @@ async function loadRouteMatch(route: RouteRow, nowMs = Date.now()): Promise<Rout
     account: row.accounts,
     site: row.sites,
     token: row.account_tokens,
+    routeUnit: row.route_channels.oauthRouteUnitId
+      ? (routeUnitSummaries.get(row.route_channels.oauthRouteUnitId) || null)
+      : null,
+    routeUnitMembers: row.route_channels.oauthRouteUnitId
+      ? (routeUnitMembersByUnitId.get(row.route_channels.oauthRouteUnitId) || []).map((member) => ({
+        member: member.member,
+        account: member.account,
+        site: member.site,
+        token: null,
+      }))
+      : [],
   }));
 
   const match = { route, channels: mapped };
@@ -1463,6 +1497,21 @@ function compareNullableTimeAsc(left?: string | null, right?: string | null): nu
   if (leftMs == null) return -1;
   if (rightMs == null) return 1;
   return leftMs - rightMs;
+}
+
+function compareNullableTimeDesc(left?: string | null, right?: string | null): number {
+  return compareNullableTimeAsc(right, left);
+}
+
+function isOauthRouteUnitCandidate(candidate: RouteChannelCandidate): boolean {
+  return !!candidate.routeUnit && candidate.routeUnitMembers.length > 0;
+}
+
+function isOauthRouteUnitMemberCoolingDown(
+  member: typeof schema.oauthRouteUnitMembers.$inferSelect,
+  nowIso: string,
+): boolean {
+  return !!member.cooldownUntil && member.cooldownUntil > nowIso;
 }
 
 function compareStableFirstCandidateOrder(left: RouteChannelCandidate, right: RouteChannelCandidate): number {
@@ -2373,7 +2422,13 @@ export class TokenRouter {
   /**
    * Record success for a channel.
    */
-  async recordSuccess(channelId: number, latencyMs: number, cost: number, modelName?: string | null) {
+  async recordSuccess(
+    channelId: number,
+    latencyMs: number,
+    cost: number,
+    modelName?: string | null,
+    actualAccountId?: number,
+  ) {
     await ensureSiteRuntimeHealthStateLoaded();
     const row = await db.select()
       .from(schema.routeChannels)
@@ -2387,6 +2442,45 @@ export class TokenRouter {
     const nextSuccessCount = (ch.successCount ?? 0) + 1;
     const nextTotalLatencyMs = (ch.totalLatencyMs ?? 0) + latencyMs;
     const nextTotalCost = (ch.totalCost ?? 0) + cost;
+    if (typeof ch.oauthRouteUnitId === 'number' && ch.oauthRouteUnitId > 0) {
+      const targetAccountId = Number.isFinite(actualAccountId) && (actualAccountId ?? 0) > 0
+        ? Math.trunc(actualAccountId!)
+        : account.id;
+      const memberRow = await db.select({
+        member: schema.oauthRouteUnitMembers,
+        account: schema.accounts,
+      }).from(schema.oauthRouteUnitMembers)
+        .innerJoin(schema.accounts, eq(schema.oauthRouteUnitMembers.accountId, schema.accounts.id))
+        .where(and(
+          eq(schema.oauthRouteUnitMembers.unitId, ch.oauthRouteUnitId),
+          eq(schema.oauthRouteUnitMembers.accountId, targetAccountId),
+        ))
+        .get();
+
+      if (memberRow) {
+        const memberSuccessCount = (memberRow.member.successCount ?? 0) + 1;
+        const memberTotalLatencyMs = (memberRow.member.totalLatencyMs ?? 0) + latencyMs;
+        const memberTotalCost = (memberRow.member.totalCost ?? 0) + cost;
+        await db.update(schema.oauthRouteUnitMembers).set({
+          successCount: memberSuccessCount,
+          totalLatencyMs: memberTotalLatencyMs,
+          totalCost: memberTotalCost,
+          lastUsedAt: nowIso,
+          cooldownUntil: null,
+          lastFailAt: null,
+          consecutiveFailCount: 0,
+          cooldownLevel: 0,
+          updatedAt: nowIso,
+        }).where(eq(schema.oauthRouteUnitMembers.id, memberRow.member.id)).run();
+        recordSiteRuntimeSuccess(memberRow.account.siteId, latencyMs, modelName);
+      } else {
+        recordSiteRuntimeSuccess(account.siteId, latencyMs, modelName);
+      }
+      invalidateTokenRouterCache();
+    } else {
+      recordSiteRuntimeSuccess(account.siteId, latencyMs, modelName);
+    }
+
     await db.update(schema.routeChannels).set({
       successCount: nextSuccessCount,
       totalLatencyMs: nextTotalLatencyMs,
@@ -2408,11 +2502,14 @@ export class TokenRouter {
       channel.consecutiveFailCount = 0;
       channel.cooldownLevel = 0;
     });
-
-    recordSiteRuntimeSuccess(account.siteId, latencyMs, modelName);
   }
 
-  async recordProbeSuccess(channelId: number, latencyMs: number, modelName?: string | null) {
+  async recordProbeSuccess(
+    channelId: number,
+    latencyMs: number,
+    modelName?: string | null,
+    actualAccountId?: number,
+  ) {
     await ensureSiteRuntimeHealthStateLoaded();
     const row = await db.select()
       .from(schema.routeChannels)
@@ -2423,6 +2520,51 @@ export class TokenRouter {
 
     const ch = row.route_channels;
     const account = row.accounts;
+    if (typeof ch.oauthRouteUnitId === 'number' && ch.oauthRouteUnitId > 0) {
+      const targetAccountId = Number.isFinite(actualAccountId) && (actualAccountId ?? 0) > 0
+        ? Math.trunc(actualAccountId!)
+        : account.id;
+      const nowIso = new Date().toISOString();
+      const memberRow = await db.select({
+        member: schema.oauthRouteUnitMembers,
+        account: schema.accounts,
+      }).from(schema.oauthRouteUnitMembers)
+        .innerJoin(schema.accounts, eq(schema.oauthRouteUnitMembers.accountId, schema.accounts.id))
+        .where(and(
+          eq(schema.oauthRouteUnitMembers.unitId, ch.oauthRouteUnitId),
+          eq(schema.oauthRouteUnitMembers.accountId, targetAccountId),
+        ))
+        .get();
+
+      if (memberRow) {
+        await db.update(schema.oauthRouteUnitMembers).set({
+          cooldownUntil: null,
+          lastFailAt: null,
+          consecutiveFailCount: 0,
+          cooldownLevel: 0,
+          updatedAt: nowIso,
+        }).where(eq(schema.oauthRouteUnitMembers.id, memberRow.member.id)).run();
+        recordSiteRuntimeSuccess(memberRow.account.siteId, latencyMs, modelName);
+      } else {
+        recordSiteRuntimeSuccess(account.siteId, latencyMs, modelName);
+      }
+
+      await db.update(schema.routeChannels).set({
+        cooldownUntil: null,
+        lastFailAt: null,
+        consecutiveFailCount: 0,
+        cooldownLevel: 0,
+      }).where(eq(schema.routeChannels.id, channelId)).run();
+      patchCachedChannel(channelId, (channel) => {
+        channel.cooldownUntil = null;
+        channel.lastFailAt = null;
+        channel.consecutiveFailCount = 0;
+        channel.cooldownLevel = 0;
+      });
+      invalidateTokenRouterCache();
+      return;
+    }
+
     const affectedChannelIds = await loadCredentialScopedChannelIds(ch, account.id);
     const needsChannelReset = !!ch.cooldownUntil
       || !!ch.lastFailAt
@@ -2528,7 +2670,11 @@ export class TokenRouter {
   /**
    * Record failure and set cooldown.
    */
-  async recordFailure(channelId: number, context: SiteRuntimeFailureContext | string | null = {}) {
+  async recordFailure(
+    channelId: number,
+    context: SiteRuntimeFailureContext | string | null = {},
+    actualAccountId?: number,
+  ) {
     await ensureSiteRuntimeHealthStateLoaded();
     const row = await db.select()
       .from(schema.routeChannels)
@@ -2546,6 +2692,65 @@ export class TokenRouter {
     const normalizedContext: SiteRuntimeFailureContext = typeof context === 'string'
       ? { modelName: context }
       : (context ?? {});
+    if (typeof ch.oauthRouteUnitId === 'number' && ch.oauthRouteUnitId > 0) {
+      const targetAccountId = Number.isFinite(actualAccountId) && (actualAccountId ?? 0) > 0
+        ? Math.trunc(actualAccountId!)
+        : account.id;
+      const memberRow = await db.select({
+        member: schema.oauthRouteUnitMembers,
+        account: schema.accounts,
+        unit: schema.oauthRouteUnits,
+      }).from(schema.oauthRouteUnitMembers)
+        .innerJoin(schema.accounts, eq(schema.oauthRouteUnitMembers.accountId, schema.accounts.id))
+        .innerJoin(schema.oauthRouteUnits, eq(schema.oauthRouteUnitMembers.unitId, schema.oauthRouteUnits.id))
+        .where(and(
+          eq(schema.oauthRouteUnitMembers.unitId, ch.oauthRouteUnitId),
+          eq(schema.oauthRouteUnitMembers.accountId, targetAccountId),
+        ))
+        .get();
+      if (memberRow) {
+        const shortWindowLimitCooldownUntil = resolveShortWindowLimitCooldown(memberRow.account, normalizedContext, nowMs);
+        const failCount = shortWindowLimitCooldownUntil ? 0 : ((memberRow.member.failCount ?? 0) + 1);
+        const routeUnitStrategy = memberRow.unit.strategy === 'stick_until_unavailable'
+          ? 'stick_until_unavailable'
+          : 'round_robin';
+        let cooldownUntil: string | null = null;
+        let consecutiveFailCount = Math.max(0, memberRow.member.consecutiveFailCount ?? 0) + 1;
+        let cooldownLevel = Math.max(0, memberRow.member.cooldownLevel ?? 0);
+
+        if (shortWindowLimitCooldownUntil) {
+          cooldownUntil = shortWindowLimitCooldownUntil;
+          consecutiveFailCount = 0;
+          cooldownLevel = 0;
+        } else if (routeUnitStrategy === 'round_robin') {
+          if (consecutiveFailCount >= ROUND_ROBIN_FAILURE_THRESHOLD) {
+            cooldownLevel = Math.min(cooldownLevel + 1, ROUND_ROBIN_COOLDOWN_LEVELS_SEC.length - 1);
+            const cooldownSec = resolveRoundRobinCooldownSec(cooldownLevel);
+            cooldownUntil = cooldownSec > 0
+              ? new Date(nowMs + clampFailureCooldownMs(cooldownSec * 1000)).toISOString()
+              : null;
+            consecutiveFailCount = 0;
+          }
+        } else {
+          cooldownUntil = new Date(nowMs + resolveEffectiveFailureCooldownMs(failCount)).toISOString();
+          consecutiveFailCount = 0;
+          cooldownLevel = 0;
+        }
+
+        await db.update(schema.oauthRouteUnitMembers).set({
+          failCount,
+          lastFailAt: nowIso,
+          consecutiveFailCount,
+          cooldownLevel,
+          cooldownUntil,
+          updatedAt: nowIso,
+        }).where(eq(schema.oauthRouteUnitMembers.id, memberRow.member.id)).run();
+        recordSiteRuntimeFailure(memberRow.account.siteId, normalizedContext, nowMs);
+        invalidateTokenRouterCache();
+        return;
+      }
+    }
+
     const shortWindowLimitCooldownUntil = resolveShortWindowLimitCooldown(account, normalizedContext, nowMs);
     const failCount = shortWindowLimitCooldownUntil ? 0 : ((ch.failCount ?? 0) + 1);
     const routeStrategy = resolveRouteStrategy(route);
@@ -2642,26 +2847,16 @@ export class TokenRouter {
       const breakerFiltered = filterSiteRuntimeBrokenCandidatesByModel(available, runtimeModelResolver, nowMs);
       const selected = this.selectRoundRobinCandidate(breakerFiltered.candidates);
       if (!selected) return null;
-
-      const tokenValue = this.resolveChannelTokenValue(selected);
-      if (!tokenValue) return null;
-      if (recordSelection) {
-        await this.recordChannelSelection(selected.channel.id);
-      }
-
-      const actualModel = resolveActualModelForSelectedChannel(
+      return await this.finalizeSelectedCandidateForDispatch(
+        selected,
+        match,
         requestedModel,
-        match.route,
         mappedModel,
-        selected.channel.sourceModel,
+        downstreamPolicy,
+        recordSelection,
+        nowIso,
+        nowMs,
       );
-
-      return {
-        ...selected,
-        tokenValue,
-        tokenName: selected.token?.name || 'default',
-        actualModel,
-      };
     }
 
     if (routeStrategy === 'stable_first') {
@@ -2694,32 +2889,19 @@ export class TokenRouter {
         shouldUseObservation ? `${rotationKey}:observe` : rotationKey,
       );
       if (!selected) return null;
-
-      const tokenValue = this.resolveChannelTokenValue(selected);
-      if (!tokenValue) return null;
-      if (recordSelection) {
-        rememberStableFirstSiteSelectionForKey(shouldUseObservation ? `${rotationKey}:observe` : rotationKey, selected.site.id);
-        updateStableFirstObservationProgress(rotationKey, {
-          usedObservation: shouldUseObservation,
-          selectedSiteId: selected.site.id,
-          nowMs,
-        });
-        await this.recordChannelSelection(selected.channel.id);
-      }
-
-      const actualModel = resolveActualModelForSelectedChannel(
+      return await this.finalizeSelectedCandidateForDispatch(
+        selected,
+        match,
         requestedModel,
-        match.route,
         mappedModel,
-        selected.channel.sourceModel,
+        downstreamPolicy,
+        recordSelection,
+        nowIso,
+        nowMs,
+        rotationKey,
+        `${rotationKey}:observe`,
+        shouldUseObservation,
       );
-
-      return {
-        ...selected,
-        tokenValue,
-        tokenName: selected.token?.name || 'default',
-        actualModel,
-      };
     }
 
     const layers = new Map<number, typeof available>();
@@ -2741,23 +2923,17 @@ export class TokenRouter {
         nowMs,
       );
       if (!selected) continue;
-
-      const tokenValue = this.resolveChannelTokenValue(selected);
-      if (!tokenValue) continue;
-
-      const actualModel = resolveActualModelForSelectedChannel(
+      const resolved = await this.finalizeSelectedCandidateForDispatch(
+        selected,
+        match,
         requestedModel,
-        match.route,
         mappedModel,
-        selected.channel.sourceModel,
+        downstreamPolicy,
+        recordSelection,
+        nowIso,
+        nowMs,
       );
-
-      return {
-        ...selected,
-        tokenValue,
-        tokenName: selected.token?.name || 'default',
-        actualModel,
-      };
+      if (resolved) return resolved;
     }
 
     return null;
@@ -2799,35 +2975,22 @@ export class TokenRouter {
 
     const selected = breakerFiltered.candidates.find((candidate) => candidate.channel.id === preferredChannelId);
     if (!selected) return null;
-    if (routeStrategy !== 'round_robin' && isChannelRecentlyFailed(selected.channel, nowMs)) {
+    if (!isOauthRouteUnitCandidate(selected) && routeStrategy !== 'round_robin' && isChannelRecentlyFailed(selected.channel, nowMs)) {
       return null;
     }
-
-    const tokenValue = this.resolveChannelTokenValue(selected);
-    if (!tokenValue) return null;
-    if (recordSelection && (routeStrategy === 'round_robin' || routeStrategy === 'stable_first')) {
-      if (routeStrategy === 'stable_first') {
-        rememberStableFirstSiteSelectionForKey(
-          this.buildStableFirstRotationKey(match.route.id, requestedModel),
-          selected.site.id,
-        );
-      }
-      await this.recordChannelSelection(selected.channel.id);
-    }
-
-    const actualModel = resolveActualModelForSelectedChannel(
+    return await this.finalizeSelectedCandidateForDispatch(
+      selected,
+      match,
       requestedModel,
-      match.route,
       mappedModel,
-      selected.channel.sourceModel,
+      downstreamPolicy,
+      recordSelection && (routeStrategy === 'round_robin' || routeStrategy === 'stable_first'),
+      nowIso,
+      nowMs,
+      routeStrategy === 'stable_first' ? this.buildStableFirstRotationKey(match.route.id, requestedModel) : undefined,
+      routeStrategy === 'stable_first' ? `${this.buildStableFirstRotationKey(match.route.id, requestedModel)}:observe` : undefined,
+      false,
     );
-
-    return {
-      ...selected,
-      tokenValue,
-      tokenName: selected.token?.name || 'default',
-      actualModel,
-    };
   }
 
   private async findRoute(model: string, downstreamPolicy: DownstreamRoutingPolicy): Promise<RouteMatch | null> {
@@ -2870,6 +3033,165 @@ export class TokenRouter {
 
   private async loadRouteMatch(route: RouteRow): Promise<RouteMatch> {
     return await loadRouteMatch(route);
+  }
+
+  private resolveRouteUnitMemberTokenValue(candidate: {
+    account: typeof schema.accounts.$inferSelect;
+  }): string | null {
+    const oauthAccessToken = candidate.account.accessToken?.trim();
+    if (oauthAccessToken) return oauthAccessToken;
+    const apiToken = candidate.account.apiToken?.trim();
+    return apiToken || null;
+  }
+
+  private buildRouteUnitMemberDispatchCandidate(
+    outerCandidate: RouteChannelCandidate,
+    memberCandidate: RouteChannelCandidate['routeUnitMembers'][number],
+  ): RouteChannelCandidate {
+    return {
+      ...outerCandidate,
+      account: memberCandidate.account,
+      site: memberCandidate.site,
+      token: null,
+    };
+  }
+
+  private getRouteUnitMemberEligibilityReasons(
+    outerCandidate: RouteChannelCandidate,
+    memberCandidate: RouteChannelCandidate['routeUnitMembers'][number],
+    options: CandidateEligibilityOptions,
+  ): string[] {
+    const reasonParts: string[] = [];
+    const bypassSourceModelCheck = options.bypassSourceModelCheck ?? false;
+    const nowIso = options.nowIso ?? new Date().toISOString();
+
+    if (!bypassSourceModelCheck && !channelSupportsRequestedModel(outerCandidate.channel.sourceModel, options.requestedModel)) {
+      reasonParts.push(`来源模型不匹配=${outerCandidate.channel.sourceModel || ''}`);
+    }
+
+    if (!outerCandidate.channel.enabled) reasonParts.push('通道禁用');
+
+    if (memberCandidate.account.status !== 'active') {
+      reasonParts.push(`账号状态=${memberCandidate.account.status}`);
+    }
+
+    if (isSiteDisabled(memberCandidate.site.status)) {
+      reasonParts.push(`站点状态=${memberCandidate.site.status || 'disabled'}`);
+    }
+
+    const downstreamExclusionReason = this.resolveDownstreamExclusionReason(
+      this.buildRouteUnitMemberDispatchCandidate(outerCandidate, memberCandidate),
+      options.downstreamPolicy,
+    );
+    if (downstreamExclusionReason) {
+      reasonParts.push(downstreamExclusionReason);
+    }
+
+    const tokenValue = this.resolveRouteUnitMemberTokenValue(memberCandidate);
+    if (!tokenValue) reasonParts.push('令牌不可用');
+
+    if (isOauthRouteUnitMemberCoolingDown(memberCandidate.member, nowIso)) {
+      reasonParts.push('冷却中');
+    }
+
+    return reasonParts;
+  }
+
+  private getEligibleRouteUnitMembers(
+    candidate: RouteChannelCandidate,
+    options: CandidateEligibilityOptions,
+  ): RouteChannelCandidate['routeUnitMembers'] {
+    if (!isOauthRouteUnitCandidate(candidate)) return [];
+    return candidate.routeUnitMembers.filter((memberCandidate) => (
+      this.getRouteUnitMemberEligibilityReasons(candidate, memberCandidate, options).length === 0
+    ));
+  }
+
+  private getRoundRobinRouteUnitMembers(
+    members: RouteChannelCandidate['routeUnitMembers'],
+  ): RouteChannelCandidate['routeUnitMembers'] {
+    return [...members].sort((left, right) => {
+      const selectionOrder = compareNullableTimeAsc(
+        left.member.lastSelectedAt || left.member.lastUsedAt,
+        right.member.lastSelectedAt || right.member.lastUsedAt,
+      );
+      if (selectionOrder !== 0) return selectionOrder;
+
+      const usedOrder = compareNullableTimeAsc(left.member.lastUsedAt, right.member.lastUsedAt);
+      if (usedOrder !== 0) return usedOrder;
+
+      const sortOrder = (left.member.sortOrder ?? 0) - (right.member.sortOrder ?? 0);
+      if (sortOrder !== 0) return sortOrder;
+
+      return left.account.id - right.account.id;
+    });
+  }
+
+  private getStickyPreferredRouteUnitMember(
+    members: RouteChannelCandidate['routeUnitMembers'],
+  ): RouteChannelCandidate['routeUnitMembers'][number] | null {
+    return [...members].sort((left, right) => {
+      const selectionOrder = compareNullableTimeDesc(
+        left.member.lastSelectedAt || left.member.lastUsedAt,
+        right.member.lastSelectedAt || right.member.lastUsedAt,
+      );
+      if (selectionOrder !== 0) return selectionOrder;
+
+      const sortOrder = (left.member.sortOrder ?? 0) - (right.member.sortOrder ?? 0);
+      if (sortOrder !== 0) return sortOrder;
+
+      return left.account.id - right.account.id;
+    })[0] ?? null;
+  }
+
+  private selectRouteUnitMember(
+    candidate: RouteChannelCandidate,
+    requestedModel: string,
+    downstreamPolicy: DownstreamRoutingPolicy,
+    nowIso: string,
+    nowMs: number,
+  ): RouteChannelCandidate['routeUnitMembers'][number] | null {
+    if (!isOauthRouteUnitCandidate(candidate)) return null;
+    const eligibleMembers = this.getEligibleRouteUnitMembers(candidate, {
+      requestedModel,
+      bypassSourceModelCheck: true,
+      excludeChannelIds: [],
+      nowIso,
+      downstreamPolicy,
+    });
+    if (eligibleMembers.length === 0) return null;
+
+    const healthyMembers = filterRecentlyFailedCandidates(
+      eligibleMembers.map((memberCandidate) => ({
+        memberCandidate,
+        channel: memberCandidate.member,
+      })),
+      nowMs,
+    ).map((item) => item.memberCandidate);
+
+    const candidateMembers = healthyMembers.length > 0 ? healthyMembers : eligibleMembers;
+    if (candidate.routeUnit?.strategy === 'stick_until_unavailable') {
+      const sticky = this.getStickyPreferredRouteUnitMember(candidateMembers);
+      if (sticky) return sticky;
+      return this.getRoundRobinRouteUnitMembers(candidateMembers)[0] ?? null;
+    }
+
+    return this.getRoundRobinRouteUnitMembers(candidateMembers)[0] ?? null;
+  }
+
+  private async recordRouteUnitMemberSelection(
+    routeUnitId: number,
+    accountId: number,
+  ): Promise<void> {
+    const nowIso = new Date().toISOString();
+    await db.update(schema.oauthRouteUnitMembers).set({
+      lastSelectedAt: nowIso,
+      updatedAt: nowIso,
+    }).where(and(
+      eq(schema.oauthRouteUnitMembers.unitId, routeUnitId),
+      eq(schema.oauthRouteUnitMembers.accountId, accountId),
+    )).run();
+    invalidateTokenRouterCache();
   }
 
   private resolveChannelTokenValue(candidate: {
@@ -2960,6 +3282,18 @@ export class TokenRouter {
     }
 
     if (!candidate.channel.enabled) reasonParts.push('通道禁用');
+
+    if (isOauthRouteUnitCandidate(candidate)) {
+      if (excludeChannelIds.includes(candidate.channel.id)) {
+        // Route-unit failover should stay inside the same outer channel and switch members instead of
+        // excluding the entire pool after one member fails.
+      }
+
+      if (this.getEligibleRouteUnitMembers(candidate, options).length === 0) {
+        reasonParts.push(`路由池成员不可用（${candidate.routeUnit?.name || getOauthRouteUnitStrategyLabel(candidate.routeUnit?.strategy || 'round_robin')}）`);
+      }
+      return reasonParts;
+    }
 
     if (isExplicitTokenChannel(candidate)) {
       if (candidate.account.status === 'disabled') {
@@ -3054,6 +3388,63 @@ export class TokenRouter {
     patchCachedChannel(channelId, (channel) => {
       channel.lastSelectedAt = nowIso;
     });
+  }
+
+  private async finalizeSelectedCandidateForDispatch(
+    selected: RouteChannelCandidate,
+    match: RouteMatch,
+    requestedModel: string,
+    mappedModel: string,
+    downstreamPolicy: DownstreamRoutingPolicy,
+    recordSelection: boolean,
+    nowIso: string,
+    nowMs: number,
+    stableFirstRotationKey?: string,
+    stableFirstObservationKey?: string,
+    usedObservation = false,
+  ): Promise<SelectedChannel | null> {
+    let dispatchCandidate = selected;
+    if (isOauthRouteUnitCandidate(selected)) {
+      const member = this.selectRouteUnitMember(selected, requestedModel, downstreamPolicy, nowIso, nowMs);
+      if (!member || !selected.routeUnit) return null;
+      dispatchCandidate = this.buildRouteUnitMemberDispatchCandidate(selected, member);
+      if (recordSelection) {
+        await this.recordRouteUnitMemberSelection(selected.routeUnit.id, member.account.id);
+      }
+    }
+
+    const tokenValue = this.resolveChannelTokenValue(dispatchCandidate);
+    if (!tokenValue) return null;
+
+    if (recordSelection) {
+      if (stableFirstRotationKey && stableFirstObservationKey) {
+        rememberStableFirstSiteSelectionForKey(
+          usedObservation ? stableFirstObservationKey : stableFirstRotationKey,
+          dispatchCandidate.site.id,
+        );
+        updateStableFirstObservationProgress(stableFirstRotationKey, {
+          usedObservation,
+          selectedSiteId: dispatchCandidate.site.id,
+          nowMs,
+        });
+      }
+      await this.recordChannelSelection(selected.channel.id);
+    }
+
+    const actualModel = resolveActualModelForSelectedChannel(
+      requestedModel,
+      match.route,
+      mappedModel,
+      selected.channel.sourceModel,
+    );
+
+    return {
+      ...dispatchCandidate,
+      channel: selected.channel,
+      tokenValue,
+      tokenName: dispatchCandidate.token?.name || 'default',
+      actualModel,
+    };
   }
 
   private weightedRandomSelect(

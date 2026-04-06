@@ -7,11 +7,26 @@ export type RouteSortBy = 'modelPattern' | 'channelCount';
 export type RouteSortDir = 'asc' | 'desc';
 export type GroupFilter = null | '__all__' | number;
 export type RouteRoutingStrategy = 'weighted' | 'round_robin' | 'stable_first';
+export type OAuthRouteUnitStrategy = 'round_robin' | 'stick_until_unavailable';
 export type RouteRowKind = 'persisted' | 'zero_channel';
 export type RouteChannelDraft = {
   accountId: number;
   tokenId: number;
   sourceModel: string;
+};
+
+export type RouteChannelRouteUnitMember = {
+  accountId: number;
+  username: string | null;
+  siteName: string | null;
+};
+
+export type RouteChannelRouteUnit = {
+  id: number | string;
+  name: string | null;
+  strategy: OAuthRouteUnitStrategy;
+  memberCount: number;
+  members?: RouteChannelRouteUnitMember[];
 };
 
 export type RouteChannel = {
@@ -45,6 +60,8 @@ export type RouteChannel = {
     enabled: boolean;
     isDefault: boolean;
   } | null;
+  oauthRouteUnitId?: number | null;
+  routeUnit?: RouteChannelRouteUnit | null;
 };
 
 export type RouteRow = {

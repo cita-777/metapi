@@ -23,6 +23,8 @@ import {
   api,
   type OAuthConnectionInfo,
   type OAuthProviderInfo,
+  type OAuthRouteParticipation,
+  type OAuthRouteUnitStrategy,
   type OAuthQuotaInfo,
   type OAuthQuotaWindowInfo,
   type OAuthStartInstructions,
@@ -92,6 +94,12 @@ type OAuthModelsModalState = {
   totalCount: number;
   disabledCount: number;
   siteName: string;
+};
+
+type OAuthRouteUnitModalState = {
+  open: boolean;
+  name: string;
+  strategy: OAuthRouteUnitStrategy;
 };
 
 const COLUMN_OPTIONS: Array<{ key: ColumnKey; label: string }> = [
@@ -450,6 +458,40 @@ function hasOauthProxySelection(connection: OAuthConnectionInfo): boolean {
   return !!connection.useSystemProxy || !!asTrimmedString(connection.proxyUrl);
 }
 
+function resolveRouteUnitStrategyLabel(strategy?: OAuthRouteUnitStrategy | null): string {
+  return strategy === 'stick_until_unavailable' ? '单个用到不可用再切' : '轮询';
+}
+
+function resolveConnectionRouteParticipation(
+  connection: OAuthConnectionInfo,
+): OAuthRouteParticipation {
+  if (connection.routeParticipation?.kind === 'route_unit') {
+    return connection.routeParticipation;
+  }
+  if (connection.routeParticipation?.kind === 'single') {
+    return connection.routeParticipation;
+  }
+  if (connection.routeUnit) {
+    return {
+      kind: 'route_unit',
+      routeUnitId: connection.routeUnit.routeUnitId ?? connection.routeUnit.id,
+      id: connection.routeUnit.id,
+      name: connection.routeUnit.name,
+      strategy: connection.routeUnit.strategy,
+      memberCount: connection.routeUnit.memberCount,
+    };
+  }
+  return { kind: 'single' };
+}
+
+function resolveRouteParticipationSummary(connection: OAuthConnectionInfo): string {
+  const participation = resolveConnectionRouteParticipation(connection);
+  if (participation.kind !== 'route_unit') {
+    return '单体';
+  }
+  return `路由池：${participation.name} · ${participation.memberCount} 个成员 · ${resolveRouteUnitStrategyLabel(participation.strategy)}`;
+}
+
 function renderCodeBlock(value: string) {
   return (
     <code className="oauth-code-block">{value}</code>
@@ -588,12 +630,16 @@ export default function OAuthManagement() {
   const [showColumnMenu, setShowColumnMenu] = useState(false);
   const [autoRefreshSeconds, setAutoRefreshSeconds] = useState<number>(0);
   const [autoRefreshCountdown, setAutoRefreshCountdown] = useState<number>(0);
+  const [runtimeSystemProxyConfigured, setRuntimeSystemProxyConfigured] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const importFileInputRef = useRef<HTMLInputElement | null>(null);
   const [importJsonText, setImportJsonText] = useState('');
   const [importDrafts, setImportDrafts] = useState<OAuthImportDraft[]>([]);
   const [importDragOver, setImportDragOver] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [importCustomProxyEnabled, setImportCustomProxyEnabled] = useState(false);
+  const [importSystemProxyEnabled, setImportSystemProxyEnabled] = useState(false);
+  const [importProxyUrl, setImportProxyUrl] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerIntent, setDrawerIntent] = useState<DrawerIntent>({ mode: 'create' });
   const [selectedProviderKey, setSelectedProviderKey] = useState('');
@@ -615,11 +661,22 @@ export default function OAuthManagement() {
     disabledCount: 0,
     siteName: '',
   });
+  const [routeUnitModal, setRouteUnitModal] = useState<OAuthRouteUnitModalState>({
+    open: false,
+    name: '',
+    strategy: 'round_robin',
+  });
 
   const resetOauthProxySettings = useCallback(() => {
     setOauthCustomProxyEnabled(false);
     setOauthSystemProxyEnabled(false);
     setOauthProxyUrl('');
+  }, []);
+
+  const resetImportProxySettings = useCallback((defaultToSystem = false) => {
+    setImportCustomProxyEnabled(false);
+    setImportSystemProxyEnabled(defaultToSystem);
+    setImportProxyUrl('');
   }, []);
 
   const resetImportState = useCallback(() => {
@@ -631,12 +688,14 @@ export default function OAuthManagement() {
   const closeImportModal = useCallback(() => {
     setImportOpen(false);
     resetImportState();
-  }, [resetImportState]);
+    resetImportProxySettings(false);
+  }, [resetImportProxySettings, resetImportState]);
 
   const openImportModal = useCallback(() => {
     resetImportState();
+    resetImportProxySettings(runtimeSystemProxyConfigured);
     setImportOpen(true);
-  }, [resetImportState]);
+  }, [resetImportProxySettings, resetImportState, runtimeSystemProxyConfigured]);
 
   const loadConnections = useCallback(async () => {
     const response = await api.getOAuthConnections({
@@ -656,6 +715,7 @@ export default function OAuthManagement() {
         loadConnections(),
       ]);
       const nextProviders = Array.isArray(providersResponse?.providers) ? providersResponse.providers : [];
+      setRuntimeSystemProxyConfigured(providersResponse?.defaults?.systemProxyConfigured === true);
       setProviders(nextProviders);
       setSelectedProviderKey((current) => current || nextProviders[0]?.provider || '');
     } catch (error: any) {
@@ -815,6 +875,41 @@ export default function OAuthManagement() {
   const allVisibleSelected = filteredConnections.length > 0
     && filteredConnections.every((connection) => selectedConnectionIds.includes(connection.accountId));
 
+  const selectedConnections = useMemo(
+    () => connections.filter((connection) => selectedConnectionIds.includes(connection.accountId)),
+    [connections, selectedConnectionIds],
+  );
+
+  const selectedRouteUnitParticipation = useMemo(() => {
+    if (selectedConnections.length <= 0) return null;
+    const participations = selectedConnections.map(resolveConnectionRouteParticipation);
+    if (participations.some((item) => item.kind !== 'route_unit')) return null;
+    const first = participations[0];
+    if (!first || first.kind !== 'route_unit') return null;
+    const routeUnitId = first.routeUnitId ?? first.id;
+    if (!routeUnitId) return null;
+    const allSameRouteUnit = participations.every((item) => (
+      item.kind === 'route_unit'
+      && (item.routeUnitId ?? item.id) === routeUnitId
+    ));
+    return allSameRouteUnit ? first : null;
+  }, [selectedConnections]);
+
+  const canMergeSelectedIntoRouteUnit = useMemo(() => {
+    if (selectedConnections.length < 2) return false;
+    const first = selectedConnections[0];
+    if (!first) return false;
+    const firstSiteId = first.siteId;
+    const firstProvider = first.provider;
+    return selectedConnections.every((connection) => (
+      connection.siteId === firstSiteId
+      && connection.provider === firstProvider
+      && resolveConnectionRouteParticipation(connection).kind === 'single'
+    ));
+  }, [selectedConnections]);
+
+  const canSplitSelectedRouteUnit = selectedRouteUnitParticipation != null;
+
   const openCreateDrawer = (provider?: string) => {
     setDrawerIntent({ mode: 'create', provider });
     setSelectedProviderKey(provider || providers[0]?.provider || '');
@@ -842,7 +937,100 @@ export default function OAuthManagement() {
     setOauthProxyUrl(connection.useSystemProxy ? '' : asTrimmedString(connection.proxyUrl));
     setDrawerOpen(true);
     setShowColumnMenu(false);
-    setSessionMessage('已打开 OAuth 代理设置，修改后点击“保存代理并重新授权”。');
+    setSessionMessage('已打开 OAuth 代理设置，修改后可直接保存代理，或保存后重新授权。');
+  };
+
+  const openRouteUnitModal = () => {
+    setRouteUnitModal({
+      open: true,
+      name: '',
+      strategy: 'round_robin',
+    });
+  };
+
+  const closeRouteUnitModal = () => {
+    setRouteUnitModal((current) => ({
+      ...current,
+      open: false,
+    }));
+  };
+
+  const resolveProxySettingsPayload = ({
+    customEnabled,
+    systemEnabled,
+    proxyValue,
+    fallbackAccount,
+    clearToSiteFallback = false,
+  }: {
+    customEnabled: boolean;
+    systemEnabled: boolean;
+    proxyValue: string;
+    fallbackAccount?: OAuthConnectionInfo | null;
+    clearToSiteFallback?: boolean;
+  }): { proxyUrl?: string | null; useSystemProxy?: boolean } => {
+    const customProxyUrl = asTrimmedString(proxyValue);
+    if (customEnabled) {
+      return {
+        proxyUrl: customProxyUrl,
+        useSystemProxy: false,
+      };
+    }
+    if (systemEnabled) {
+      return {
+        proxyUrl: null,
+        useSystemProxy: true,
+      };
+    }
+    if (clearToSiteFallback) {
+      return {
+        proxyUrl: null,
+        useSystemProxy: false,
+      };
+    }
+    if (fallbackAccount?.useSystemProxy) {
+      return {
+        proxyUrl: null,
+        useSystemProxy: true,
+      };
+    }
+    if (fallbackAccount?.proxyUrl !== undefined) {
+      return {
+        proxyUrl: asTrimmedString(fallbackAccount.proxyUrl) || null,
+        useSystemProxy: false,
+      };
+    }
+    return {};
+  };
+
+  const handleSaveProxy = async () => {
+    if (drawerIntent.mode !== 'proxy') return;
+    const customProxyUrl = asTrimmedString(oauthProxyUrl);
+    if (oauthCustomProxyEnabled && !customProxyUrl) {
+      setSessionMessage('已开启代理，请先输入完整代理地址');
+      return;
+    }
+
+    const actionKey = `save-proxy:${drawerIntent.account.accountId}`;
+    setActionLoadingKey(actionKey);
+    try {
+      await api.updateOAuthConnectionProxy(
+        drawerIntent.account.accountId,
+        resolveProxySettingsPayload({
+          customEnabled: oauthCustomProxyEnabled,
+          systemEnabled: oauthSystemProxyEnabled,
+          proxyValue: oauthProxyUrl,
+          clearToSiteFallback: true,
+        }),
+      );
+      await loadConnections();
+      setDrawerOpen(false);
+      resetOauthProxySettings();
+      setSessionMessage('代理已保存');
+    } catch (error: any) {
+      setSessionMessage(error?.message || '保存代理失败');
+    } finally {
+      setActionLoadingKey('');
+    }
   };
 
   const handleStart = async () => {
@@ -869,24 +1057,13 @@ export default function OAuthManagement() {
       return;
     }
 
-    let resolvedProxyUrl: string | null | undefined;
-    let resolvedUseSystemProxy: boolean | undefined;
-    if (oauthCustomProxyEnabled) {
-      resolvedProxyUrl = customProxyUrl;
-      resolvedUseSystemProxy = false;
-    } else if (oauthSystemProxyEnabled) {
-      resolvedProxyUrl = null;
-      resolvedUseSystemProxy = true;
-    } else if (drawerIntent.mode === 'proxy') {
-      resolvedProxyUrl = null;
-      resolvedUseSystemProxy = false;
-    } else if (rebindAccount?.useSystemProxy) {
-      resolvedProxyUrl = null;
-      resolvedUseSystemProxy = true;
-    } else if (rebindAccount?.proxyUrl !== undefined) {
-      resolvedProxyUrl = asTrimmedString(rebindAccount.proxyUrl) || null;
-      resolvedUseSystemProxy = false;
-    }
+    const proxySettings = resolveProxySettingsPayload({
+      customEnabled: oauthCustomProxyEnabled,
+      systemEnabled: oauthSystemProxyEnabled,
+      proxyValue: oauthProxyUrl,
+      fallbackAccount: rebindAccount,
+      clearToSiteFallback: drawerIntent.mode === 'proxy',
+    });
 
     const actionKey = `start:${provider.provider}:${accountId || 0}`;
     setActionLoadingKey(actionKey);
@@ -898,14 +1075,12 @@ export default function OAuthManagement() {
         ? await api.rebindOAuthConnection(
           accountId,
           {
-            ...(resolvedProxyUrl !== undefined ? { proxyUrl: resolvedProxyUrl } : {}),
-            ...(resolvedUseSystemProxy !== undefined ? { useSystemProxy: resolvedUseSystemProxy } : {}),
+            ...proxySettings,
           },
         )
         : await api.startOAuthProvider(provider.provider, {
           projectId,
-          ...(resolvedProxyUrl !== undefined ? { proxyUrl: resolvedProxyUrl } : {}),
-          ...(resolvedUseSystemProxy !== undefined ? { useSystemProxy: resolvedUseSystemProxy } : {}),
+          ...proxySettings,
         });
 
       setSessionMessage('等待授权完成');
@@ -1155,19 +1330,34 @@ export default function OAuthManagement() {
       setSessionMessage('请先修正无效的 OAuth JSON');
       return;
     }
+    if (importCustomProxyEnabled && !asTrimmedString(importProxyUrl)) {
+      setSessionMessage('已开启代理，请先输入完整代理地址');
+      return;
+    }
 
     setImporting(true);
     try {
-      let importedCount = 0;
-
-      for (const item of importPreviewSummary.items) {
-        if (!item.valid || !item.parsedData) continue;
-        const result = await api.importOAuthConnections(item.parsedData);
-        importedCount += result.imported;
-      }
+      const parsedItems = importPreviewSummary.items
+        .filter((item) => item.valid && item.parsedData)
+        .map((item) => item.parsedData as Record<string, unknown>);
+      const importProxySettings = importSystemProxyEnabled && !importCustomProxyEnabled
+        ? { useSystemProxy: true as const }
+        : resolveProxySettingsPayload({
+          customEnabled: importCustomProxyEnabled,
+          systemEnabled: importSystemProxyEnabled,
+          proxyValue: importProxyUrl,
+        });
+      const result = parsedItems.length === 1
+        && !('proxyUrl' in importProxySettings)
+        && !('useSystemProxy' in importProxySettings)
+        ? await api.importOAuthConnections(parsedItems[0]!)
+        : await api.importOAuthConnections({
+          items: parsedItems,
+          ...importProxySettings,
+        });
 
       await loadConnections();
-      const successMessage = `已添加 ${importedCount} 个 OAuth 连接`;
+      const successMessage = `已添加 ${result.imported} 个 OAuth 连接`;
       toast.success(successMessage);
       setSessionMessage(successMessage);
       closeImportModal();
@@ -1177,6 +1367,50 @@ export default function OAuthManagement() {
       setSessionMessage(message);
     } finally {
       setImporting(false);
+    }
+  };
+
+  const handleCreateRouteUnit = async () => {
+    const name = asTrimmedString(routeUnitModal.name);
+    if (!canMergeSelectedIntoRouteUnit || selectedConnections.length < 2) return;
+    if (!name) {
+      setSessionMessage('请先输入路由池名称');
+      return;
+    }
+
+    setActionLoadingKey('route-unit:create');
+    try {
+      await api.createOAuthRouteUnit({
+        accountIds: selectedConnections.map((connection) => connection.accountId),
+        name,
+        strategy: routeUnitModal.strategy,
+      });
+      await loadConnections();
+      setSelectedConnectionIds([]);
+      closeRouteUnitModal();
+      setSessionMessage('已合并为路由池');
+    } catch (error: any) {
+      setSessionMessage(error?.message || '创建路由池失败');
+    } finally {
+      setActionLoadingKey('');
+    }
+  };
+
+  const handleDeleteSelectedRouteUnit = async () => {
+    if (!selectedRouteUnitParticipation) return;
+    const routeUnitId = selectedRouteUnitParticipation.routeUnitId ?? selectedRouteUnitParticipation.id;
+    if (!routeUnitId) return;
+
+    setActionLoadingKey('route-unit:delete');
+    try {
+      await api.deleteOAuthRouteUnit(routeUnitId);
+      await loadConnections();
+      setSelectedConnectionIds([]);
+      setSessionMessage('已拆回单体');
+    } catch (error: any) {
+      setSessionMessage(error?.message || '拆回单体失败');
+    } finally {
+      setActionLoadingKey('');
     }
   };
 
@@ -1489,6 +1723,7 @@ export default function OAuthManagement() {
                 <td className="oauth-col-proxy">
                   <div className="oauth-cell-stack">
                     <div className="oauth-cell-secondary">{resolveProxyProjectSummary(connection)}</div>
+                    <div className="oauth-cell-secondary">{resolveRouteParticipationSummary(connection)}</div>
                     <div className="oauth-cell-tertiary">{resolveProxyDisplayText(connection)}</div>
                     <button
                       type="button"
@@ -1566,6 +1801,7 @@ export default function OAuthManagement() {
             <MobileField label="站点" value={connection.site?.name || '--'} />
             <MobileField label="邮箱" value={resolveConnectionEmailLabel(connection) || '--'} />
             <MobileField label="计划 / 项目" value={connection.projectId ? `${connection.planType || '--'} · ${connection.projectId}` : (connection.planType || '--')} />
+            <MobileField label="路由参与" value={resolveRouteParticipationSummary(connection)} />
             <MobileField
               label="账号代理"
               value={(
@@ -1719,6 +1955,25 @@ export default function OAuthManagement() {
             >
               {actionLoadingKey === 'quota:selected' ? '刷新中...' : '批量刷新额度'}
             </button>
+            {canMergeSelectedIntoRouteUnit ? (
+              <button
+                type="button"
+                className="btn btn-ghost oauth-outline-button"
+                onClick={openRouteUnitModal}
+              >
+                合并参与路由
+              </button>
+            ) : null}
+            {canSplitSelectedRouteUnit ? (
+              <button
+                type="button"
+                className="btn btn-ghost oauth-outline-button"
+                onClick={handleDeleteSelectedRouteUnit}
+                disabled={actionLoadingKey === 'route-unit:delete'}
+              >
+                {actionLoadingKey === 'route-unit:delete' ? '拆分中...' : '拆回单体'}
+              </button>
+            ) : null}
             <button
               type="button"
               className="btn btn-link btn-link-danger"
@@ -1806,7 +2061,7 @@ export default function OAuthManagement() {
 
               <div className="oauth-form-note">
                 {drawerIntent.mode === 'proxy'
-                  ? '这里修改的是账号级 OAuth 代理。保存后会立刻按当前设置重新走一次授权，后续生成的账号也会沿用这份代理配置。若两项都不勾选，则回退到站点代理配置。'
+                  ? '这里修改的是账号级 OAuth 代理。点击“保存代理”会立即落库并刷新列表；只有“保存并重新授权”才会重新走授权流程。若两项都不勾选，则回退到站点代理配置。'
                   : '这里的设置会作用于下一次“连接”或“重新授权”。填写代理地址后，本次 OAuth 换 token 和后续生成的账号都会直接带上这份账号级代理配置；若不勾选，则回退到站点代理配置。'}
               </div>
 
@@ -1855,20 +2110,39 @@ export default function OAuthManagement() {
                 />
               </div>
 
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={handleStart}
-                disabled={!selectedProvider || !selectedProvider.enabled || actionLoadingKey.startsWith('start:')}
-              >
-                {actionLoadingKey.startsWith('start:')
-                  ? '启动中...'
-                  : drawerIntent.mode === 'proxy'
-                    ? '保存代理并重新授权'
+              {drawerIntent.mode === 'proxy' ? (
+                <div className="oauth-inline-actions">
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handleSaveProxy}
+                    disabled={actionLoadingKey === `save-proxy:${drawerIntent.account.accountId}`}
+                  >
+                    {actionLoadingKey === `save-proxy:${drawerIntent.account.accountId}` ? '保存中...' : '保存代理'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={handleStart}
+                    disabled={!selectedProvider || !selectedProvider.enabled || actionLoadingKey.startsWith('start:')}
+                  >
+                    {actionLoadingKey.startsWith('start:') ? '启动中...' : '保存并重新授权'}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleStart}
+                  disabled={!selectedProvider || !selectedProvider.enabled || actionLoadingKey.startsWith('start:')}
+                >
+                  {actionLoadingKey.startsWith('start:')
+                    ? '启动中...'
                     : drawerIntent.mode === 'rebind'
-                    ? `重新授权 ${selectedProvider?.label || ''}`.trim()
-                    : `连接 ${selectedProvider?.label || ''}`.trim()}
-              </button>
+                      ? `重新授权 ${selectedProvider?.label || ''}`.trim()
+                      : `连接 ${selectedProvider?.label || ''}`.trim()}
+                </button>
+              )}
             </div>
           </div>
 
@@ -2025,6 +2299,52 @@ export default function OAuthManagement() {
             </>
           )}
         </div>
+        <div className="oauth-form-note">
+          导入后的账号代理可在这里一次性指定；如果当前运行时已配置系统代理，会默认预选“使用系统级代理”。
+        </div>
+        <div className="oauth-toggle-group">
+          <label className="oauth-toggle">
+            <input
+              type="checkbox"
+              checked={importSystemProxyEnabled}
+              data-oauth-import-setting="use-system-proxy"
+              onChange={(event) => {
+                const checked = !!event.target.checked;
+                setImportSystemProxyEnabled(checked);
+                if (checked) {
+                  setImportCustomProxyEnabled(false);
+                  setImportProxyUrl('');
+                }
+              }}
+            />
+            <span>使用系统级代理</span>
+          </label>
+          <label className="oauth-toggle">
+            <input
+              type="checkbox"
+              checked={importCustomProxyEnabled}
+              data-oauth-import-setting="use-custom-proxy"
+              onChange={(event) => {
+                const checked = !!event.target.checked;
+                setImportCustomProxyEnabled(checked);
+                if (checked) setImportSystemProxyEnabled(false);
+              }}
+            />
+            <span>使用自定义代理</span>
+          </label>
+        </div>
+        <div className="oauth-form-field">
+          <div className="oauth-field-label">代理地址</div>
+          <input
+            type="text"
+            className="oauth-input"
+            value={importProxyUrl}
+            data-oauth-import-setting="proxy-url"
+            onChange={(event) => setImportProxyUrl(event.target.value)}
+            placeholder="如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"
+            disabled={!importCustomProxyEnabled}
+          />
+        </div>
         <div className="oauth-import-copy">或者手动粘贴单个 JSON 内容：</div>
         <textarea
           className="oauth-textarea oauth-mono"
@@ -2069,6 +2389,56 @@ export default function OAuthManagement() {
             ) : null}
           </div>
         ) : null}
+      </CenteredModal>
+
+      <CenteredModal
+        open={routeUnitModal.open}
+        onClose={closeRouteUnitModal}
+        title="创建路由池"
+        maxWidth={520}
+        bodyStyle={{ display: 'grid', gap: 16 }}
+        footer={(
+          <>
+            <button type="button" className="btn btn-ghost" onClick={closeRouteUnitModal}>
+              取消
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={handleCreateRouteUnit}
+              disabled={actionLoadingKey === 'route-unit:create' || !asTrimmedString(routeUnitModal.name)}
+            >
+              {actionLoadingKey === 'route-unit:create' ? '创建中...' : '创建路由池'}
+            </button>
+          </>
+        )}
+      >
+        <div className="oauth-form-field">
+          <div className="oauth-field-label">路由池名称</div>
+          <input
+            type="text"
+            className="oauth-input"
+            data-testid="oauth-route-unit-name"
+            value={routeUnitModal.name}
+            onChange={(event) => setRouteUnitModal((current) => ({ ...current, name: event.target.value }))}
+            placeholder="例如 Codex Pool"
+          />
+        </div>
+        <div className="oauth-form-field">
+          <div className="oauth-field-label">策略</div>
+          <ModernSelect
+            value={routeUnitModal.strategy}
+            onChange={(value) => setRouteUnitModal((current) => ({
+              ...current,
+              strategy: String(value || 'round_robin') as OAuthRouteUnitStrategy,
+            }))}
+            options={[
+              { value: 'round_robin', label: '轮询' },
+              { value: 'stick_until_unavailable', label: '单个用到不可用再切' },
+            ]}
+            placeholder="选择路由池策略"
+          />
+        </div>
       </CenteredModal>
     </div>
   );
