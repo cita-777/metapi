@@ -129,11 +129,54 @@ export async function listOauthRouteUnitMembersByUnitIds(unitIds: number[]): Pro
   for (const members of result.values()) {
     members.sort((left, right) => (
       (left.member.sortOrder ?? 0) - (right.member.sortOrder ?? 0)
-      || left.member.accountId - right.member.accountId
+      || left.member.id - right.member.id
     ));
   }
 
   return result;
+}
+
+async function rollbackCreatedOauthRouteUnit(routeUnitId: number): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.delete(schema.routeChannels)
+      .where(eq(schema.routeChannels.oauthRouteUnitId, routeUnitId))
+      .run();
+    await tx.delete(schema.oauthRouteUnitMembers)
+      .where(eq(schema.oauthRouteUnitMembers.unitId, routeUnitId))
+      .run();
+    await tx.delete(schema.oauthRouteUnits)
+      .where(eq(schema.oauthRouteUnits.id, routeUnitId))
+      .run();
+  });
+}
+
+async function restoreDeletedOauthRouteUnit(snapshot: {
+  unit: typeof schema.oauthRouteUnits.$inferSelect;
+  members: Array<typeof schema.oauthRouteUnitMembers.$inferSelect>;
+}): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.insert(schema.oauthRouteUnits).values({
+      id: snapshot.unit.id,
+      siteId: snapshot.unit.siteId,
+      provider: snapshot.unit.provider,
+      name: snapshot.unit.name,
+      strategy: snapshot.unit.strategy,
+      enabled: snapshot.unit.enabled,
+      createdAt: snapshot.unit.createdAt,
+      updatedAt: snapshot.unit.updatedAt,
+    }).run();
+
+    if (snapshot.members.length > 0) {
+      await tx.insert(schema.oauthRouteUnitMembers).values(snapshot.members.map((member) => ({
+        id: member.id,
+        unitId: member.unitId,
+        accountId: member.accountId,
+        sortOrder: member.sortOrder,
+        createdAt: member.createdAt,
+        updatedAt: member.updatedAt,
+      }))).run();
+    }
+  });
 }
 
 export async function listEnabledOauthRouteUnitsWithMembers(): Promise<Array<{
@@ -234,7 +277,17 @@ export async function createOauthRouteUnit(input: {
     throw error;
   }
 
-  await routeRefreshWorkflow.rebuildRoutesOnly();
+  try {
+    await routeRefreshWorkflow.rebuildRoutesOnly();
+  } catch (error) {
+    await rollbackCreatedOauthRouteUnit(created.id);
+    try {
+      await routeRefreshWorkflow.rebuildRoutesOnly();
+    } catch {
+      // Best-effort restore to the pre-create routing shape before surfacing the original failure.
+    }
+    throw error;
+  }
 
   return {
     success: true as const,
@@ -317,6 +370,10 @@ export async function deleteOauthRouteUnit(routeUnitId: number) {
     throw new Error('oauth route unit not found');
   }
 
+  const existingMembers = await db.select().from(schema.oauthRouteUnitMembers)
+    .where(eq(schema.oauthRouteUnitMembers.unitId, routeUnitId))
+    .all();
+
   await db.delete(schema.routeChannels)
     .where(eq(schema.routeChannels.oauthRouteUnitId, routeUnitId))
     .run();
@@ -327,7 +384,20 @@ export async function deleteOauthRouteUnit(routeUnitId: number) {
     .where(eq(schema.oauthRouteUnits.id, routeUnitId))
     .run();
 
-  await routeRefreshWorkflow.rebuildRoutesOnly();
+  try {
+    await routeRefreshWorkflow.rebuildRoutesOnly();
+  } catch (error) {
+    await restoreDeletedOauthRouteUnit({
+      unit: existing,
+      members: existingMembers,
+    });
+    try {
+      await routeRefreshWorkflow.rebuildRoutesOnly();
+    } catch {
+      // Best-effort restore to the pre-delete routing shape before surfacing the original failure.
+    }
+    throw error;
+  }
   return { success: true as const };
 }
 

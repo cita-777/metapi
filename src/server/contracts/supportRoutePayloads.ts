@@ -43,15 +43,20 @@ const oauthImportPayloadSchema = z.object({
   useSystemProxy: z.boolean().optional(),
 }).passthrough();
 
+const oauthRouteUnitStrategySchema = z.preprocess((value) => {
+  if (typeof value !== 'string') return value;
+  return value.trim().toLowerCase();
+}, z.enum(['round_robin', 'stick_until_unavailable']));
+
 const oauthRouteUnitCreatePayloadSchema = z.object({
   accountIds: z.array(z.number().int().positive()).optional(),
   name: z.string().optional(),
-  strategy: z.enum(['round_robin', 'stick_until_unavailable']).optional(),
+  strategy: oauthRouteUnitStrategySchema.optional(),
 }).passthrough();
 
 const oauthRouteUnitUpdatePayloadSchema = z.object({
   name: z.string().optional(),
-  strategy: z.enum(['round_robin', 'stick_until_unavailable']).optional(),
+  strategy: oauthRouteUnitStrategySchema.optional(),
 }).passthrough();
 
 const updateCenterConfigPayloadSchema = z.object({
