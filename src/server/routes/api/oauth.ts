@@ -65,6 +65,7 @@ const oauthSensitiveRouteLimiter = new RateLimiterMemory({
   points: 20,
   duration: 60,
 });
+const MAX_OAUTH_QUOTA_BATCH_SIZE = 100;
 
 async function limitOauthSensitiveRoute(request: FastifyRequest, reply: FastifyReply) {
   try {
@@ -324,6 +325,11 @@ export async function oauthRoutes(app: FastifyInstance) {
       const accountIds = Array.isArray(parsedBody.data.accountIds) ? parsedBody.data.accountIds : [];
       if (accountIds.length === 0) {
         return reply.code(400).send({ message: 'accountIds is required' });
+      }
+      if (accountIds.length > MAX_OAUTH_QUOTA_BATCH_SIZE) {
+        return reply.code(400).send({
+          message: `accountIds must contain at most ${MAX_OAUTH_QUOTA_BATCH_SIZE} items`,
+        });
       }
       return refreshOauthConnectionQuotaBatch(accountIds);
     },

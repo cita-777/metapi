@@ -2033,6 +2033,22 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     });
   });
 
+  it('rejects oversized oauth quota refresh batches before dispatching upstream work', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/connections/quota/refresh-batch',
+      payload: {
+        accountIds: Array.from({ length: 101 }, (_, index) => index + 1),
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      message: 'accountIds must contain at most 100 items',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('runs batch quota refresh probes with bounded concurrency instead of fully serializing them', async () => {
     const codexSite = await db.insert(schema.sites).values({
       name: 'ChatGPT Codex OAuth',
