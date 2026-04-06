@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Response } from 'undici';
 
 type DbModule = typeof import('../db/index.js');
 type StoreModule = typeof import('./proxyDebugTraceStore.js');
@@ -182,5 +183,19 @@ describe('proxyDebugTraceStore', () => {
     });
     expect(typeof bodyPayload.preview).toBe('string');
     expect(bodyPayload.preview).toContain('"model": "gpt-5.4"');
+  });
+
+  it('normalizes undici response headers for proxy debug capture', () => {
+    const response = new Response('ok', {
+      headers: {
+        'content-type': 'application/json',
+        'x-trace-id': 'trace-123',
+      },
+    });
+
+    expect(store.normalizeProxyDebugResponseHeaders(response.headers)).toEqual({
+      'content-type': 'application/json',
+      'x-trace-id': 'trace-123',
+    });
   });
 });

@@ -70,8 +70,12 @@ function stringifyDebugValue(value: unknown, maxBytes: number): string | null {
 function normalizeHeadersValue(value: HeadersLike): Record<string, unknown> | null {
   if (!value) return null;
 
-  if (typeof Headers !== 'undefined' && value instanceof Headers) {
-    return Object.fromEntries([...value.entries()].sort((left, right) => left[0].localeCompare(right[0])));
+  const headerEntries = value as { entries?: unknown; get?: unknown };
+  if (typeof headerEntries.get === 'function' && typeof headerEntries.entries === 'function') {
+    return Object.fromEntries(
+      [...headerEntries.entries.call(value) as Iterable<[string, string]>]
+        .sort((left, right) => left[0].localeCompare(right[0])),
+    );
   }
 
   if (typeof value !== 'object' || Array.isArray(value)) {
