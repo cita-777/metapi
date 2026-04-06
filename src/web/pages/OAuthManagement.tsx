@@ -102,6 +102,19 @@ type OAuthRouteUnitModalState = {
   strategy: OAuthRouteUnitStrategy;
 };
 
+type SessionRouteUnitFeedback = {
+  action: 'created' | 'deleted';
+  name: string;
+  memberCount: number;
+  strategy: OAuthRouteUnitStrategy;
+};
+
+type SessionFeedback = {
+  message: string;
+  tone: 'info' | 'success' | 'error';
+  routeUnit?: SessionRouteUnitFeedback | null;
+};
+
 const COLUMN_OPTIONS: Array<{ key: ColumnKey; label: string }> = [
   { key: 'identity', label: '账号 / Provider' },
   { key: 'site', label: '站点' },
@@ -619,7 +632,7 @@ export default function OAuthManagement() {
   const [providers, setProviders] = useState<OAuthProviderInfo[]>([]);
   const [connections, setConnections] = useState<OAuthConnectionInfo[]>([]);
   const [loaded, setLoaded] = useState(false);
-  const [sessionMessage, setSessionMessage] = useState('');
+  const [sessionFeedback, setSessionFeedback] = useState<SessionFeedback | null>(null);
   const [actionLoadingKey, setActionLoadingKey] = useState('');
   const [selectedConnectionIds, setSelectedConnectionIds] = useState<number[]>([]);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
@@ -673,6 +686,20 @@ export default function OAuthManagement() {
     name: '',
     strategy: 'round_robin',
   });
+
+  const setSessionMessage = useCallback((
+    message: string,
+    options?: {
+      tone?: SessionFeedback['tone'];
+      routeUnit?: SessionRouteUnitFeedback | null;
+    },
+  ) => {
+    setSessionFeedback({
+      message,
+      tone: options?.tone || 'info',
+      routeUnit: options?.routeUnit ?? null,
+    });
+  }, []);
 
   const resetOauthProxySettings = useCallback(() => {
     setOauthCustomProxyEnabled(false);
@@ -1405,7 +1432,7 @@ export default function OAuthManagement() {
 
     setActionLoadingKey('route-unit:create');
     try {
-      await api.createOAuthRouteUnit({
+      const result = await api.createOAuthRouteUnit({
         accountIds: selectedConnections.map((connection) => connection.accountId),
         name,
         strategy: routeUnitModal.strategy,
@@ -1413,9 +1440,21 @@ export default function OAuthManagement() {
       await loadConnections();
       setSelectedConnectionIds([]);
       closeRouteUnitModal();
-      setSessionMessage('已合并为路由池');
+      const routeUnit = result.routeUnit && {
+        action: 'created' as const,
+        name: asTrimmedString(result.routeUnit.name) || name,
+        memberCount: result.routeUnit.memberCount || selectedConnections.length,
+        strategy: result.routeUnit.strategy || routeUnitModal.strategy,
+      };
+      toast.success(routeUnit ? `已创建路由池：${routeUnit.name}` : '已创建路由池');
+      setSessionMessage('已创建路由池', {
+        tone: 'success',
+        routeUnit,
+      });
     } catch (error: any) {
-      setSessionMessage(error?.message || '创建路由池失败');
+      const message = error?.message || '创建路由池失败';
+      toast.error(message);
+      setSessionMessage(message, { tone: 'error' });
     } finally {
       setActionLoadingKey('');
     }
@@ -1428,12 +1467,24 @@ export default function OAuthManagement() {
 
     setActionLoadingKey('route-unit:delete');
     try {
+      const routeUnitFeedback = {
+        action: 'deleted' as const,
+        name: selectedRouteUnitParticipation.name,
+        memberCount: selectedRouteUnitParticipation.memberCount,
+        strategy: selectedRouteUnitParticipation.strategy,
+      };
       await api.deleteOAuthRouteUnit(routeUnitId);
       await loadConnections();
       setSelectedConnectionIds([]);
-      setSessionMessage('已拆回单体');
+      toast.success(`已拆回单体：${routeUnitFeedback.name}`);
+      setSessionMessage('已拆回单体', {
+        tone: 'success',
+        routeUnit: routeUnitFeedback,
+      });
     } catch (error: any) {
-      setSessionMessage(error?.message || '拆回单体失败');
+      const message = error?.message || '拆回单体失败';
+      toast.error(message);
+      setSessionMessage(message, { tone: 'error' });
     } finally {
       setActionLoadingKey('');
     }
@@ -1930,9 +1981,26 @@ export default function OAuthManagement() {
         ) : null}
       </div>
 
-      {sessionMessage ? (
-        <div className="card oauth-page-message">
-          <div className="oauth-page-message-text">{sessionMessage}</div>
+      {sessionFeedback ? (
+        <div className={`card oauth-page-message oauth-page-message-${sessionFeedback.tone}`.trim()}>
+          <div className="oauth-page-message-head">
+            <div className="oauth-page-message-text">{sessionFeedback.message}</div>
+            <span className={`badge ${sessionFeedback.tone === 'success' ? 'badge-success' : sessionFeedback.tone === 'error' ? 'badge-danger' : 'badge-info'}`}>
+              {sessionFeedback.tone === 'success' ? '成功' : sessionFeedback.tone === 'error' ? '失败' : '提示'}
+            </span>
+          </div>
+          {sessionFeedback.routeUnit ? (
+            <div className="oauth-page-message-meta">
+              <span className="badge badge-info">{sessionFeedback.routeUnit.name}</span>
+              <span className="badge badge-muted">{sessionFeedback.routeUnit.memberCount} 个成员</span>
+              <span className="badge badge-muted">{resolveRouteUnitStrategyLabel(sessionFeedback.routeUnit.strategy)}</span>
+              <div className="oauth-page-message-detail">
+                {sessionFeedback.routeUnit.action === 'created'
+                  ? '已将选中的 OAuth 账号合并为一个路由池，后续会以单个路由单元参与路由。'
+                  : '该路由池已拆分回单体账号，后续会分别参与路由。'}
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
 

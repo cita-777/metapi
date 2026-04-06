@@ -571,6 +571,11 @@ describe('OAuthManagement page', () => {
         strategy: 'round_robin',
       });
       expect(apiMock.getOAuthConnections).toHaveBeenCalledTimes(2);
+      expect(collectText(root.root)).toContain('已创建路由池');
+      expect(collectText(root.root)).toContain('Codex Pool');
+      expect(collectText(root.root)).toContain('2 个成员');
+      expect(collectText(root.root)).toContain('轮询');
+      expect(collectText(root.root)).toContain('已将选中的 OAuth 账号合并为一个路由池，后续会以单个路由单元参与路由。');
       expect(collectText(root.root)).toContain('路由池：Codex Pool · 2 个成员 · 轮询');
     } finally {
       root?.unmount();

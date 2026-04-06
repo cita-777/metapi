@@ -2950,6 +2950,44 @@ textarea {
   margin-bottom: 16px;
 }
 
+.oauth-page-message-info {
+  border: 1px solid color-mix(in srgb, var(--color-primary) 18%, var(--color-border-light));
+  background: color-mix(in srgb, var(--color-primary) 6%, var(--color-bg-card));
+}
+
+.oauth-page-message-success {
+  border: 1px solid color-mix(in srgb, var(--color-success) 22%, var(--color-border-light));
+  background: color-mix(in srgb, var(--color-success) 8%, var(--color-bg-card));
+}
+
+.oauth-page-message-error {
+  border: 1px solid color-mix(in srgb, var(--color-danger) 22%, var(--color-border-light));
+  background: color-mix(in srgb, var(--color-danger) 7%, var(--color-bg-card));
+}
+
+.oauth-page-message-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.oauth-page-message-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.oauth-page-message-detail {
+  width: 100%;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
 .oauth-workbench-card {
   padding: 16px;
 }
