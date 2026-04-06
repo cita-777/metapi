@@ -61,6 +61,7 @@ describe('provider header utils', () => {
         originator: 'codex_cli_rs',
         'chatgpt-account-id': 'acct-1',
       },
+      stream: false,
       continuityKey: 'cache-key-1',
       explicitSessionId: null,
     });
@@ -70,7 +71,7 @@ describe('provider header utils', () => {
     expect(headers['Chatgpt-Account-Id']).toBe('acct-1');
     expect(headers.Session_id).toMatch(/^[0-9a-f-]{36}$/);
     expect(headers.Conversation_id).toBe(headers.Session_id);
-    expect(headers.Accept).toBe('text/event-stream');
+    expect(headers.Accept).toBe('application/json');
   });
 
   it('builds claude runtime headers with merged betas and oauth bearer auth', async () => {

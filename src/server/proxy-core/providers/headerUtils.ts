@@ -114,6 +114,7 @@ function asTrimmedString(value: unknown): string {
 export function buildCodexRuntimeHeaders(input: {
   baseHeaders: Record<string, string>;
   providerHeaders?: Record<string, string>;
+  stream?: boolean;
   explicitSessionId?: string | null;
   continuityKey?: string | null;
   versionDefault?: string;
@@ -177,7 +178,7 @@ export function buildCodexRuntimeHeaders(input: {
     Session_id: sessionId,
     ...(conversationId ? { Conversation_id: conversationId } : {}),
     'User-Agent': userAgent,
-    Accept: 'text/event-stream',
+    Accept: input.stream === false ? 'application/json' : 'text/event-stream',
     Connection: 'Keep-Alive',
   };
 }

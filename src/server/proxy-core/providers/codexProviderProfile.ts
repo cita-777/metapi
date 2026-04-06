@@ -20,6 +20,7 @@ export const codexProviderProfile: ProviderProfile = {
     const headers = buildCodexRuntimeHeaders({
       baseHeaders: input.baseHeaders,
       providerHeaders: input.providerHeaders,
+      stream: input.stream,
       explicitSessionId: asTrimmedString(input.codexExplicitSessionId) || null,
       continuityKey: asTrimmedString(input.codexSessionCacheKey) || null,
       userAgentOverride: configuredUserAgent || null,

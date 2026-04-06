@@ -362,6 +362,7 @@ describe('responses proxy compact upstream routing', () => {
     expect(forwardedBody.stream_options).toBeUndefined();
     expect(forwardedBody.instructions).toBe('');
     expect(forwardedBody.store).toBe(false);
+    expect(options.headers.Accept || options.headers.accept).toBe('application/json');
   });
 
   it('preserves native response.compaction payloads instead of coercing them into object=response', async () => {
