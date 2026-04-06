@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { getSub2ApiAuthFromExtraConfig } from './accountExtraConfig.js';
 import {
@@ -7,8 +7,10 @@ import {
 } from './sub2apiManagedAuth.js';
 import { refreshSub2ApiManagedSessionSingleflight } from './sub2apiRefreshSingleflight.js';
 
+const ACTIVE_STATUS = 'active';
+const SUB2API_PLATFORM = 'sub2api';
 const SUB2API_REFRESH_SCHEDULER_INTERVAL_MS = 60_000;
-const SUB2API_REFRESH_SCHEDULER_CONCURRENCY = 4;
+export const SUB2API_REFRESH_SCHEDULER_CONCURRENCY = 4;
 
 let sub2ApiRefreshSchedulerTimer: ReturnType<typeof setInterval> | null = null;
 let sub2ApiRefreshPassInFlight: Promise<void> | null = null;
@@ -19,14 +21,28 @@ function clearSub2ApiRefreshSchedulerTimer(): void {
   sub2ApiRefreshSchedulerTimer = null;
 }
 
+function normalizeLifecycleStatus(value?: string | null): string {
+  if (typeof value !== 'string') return ACTIVE_STATUS;
+  const normalized = value.trim().toLowerCase();
+  return normalized || ACTIVE_STATUS;
+}
+
+function normalizedLifecycleStatusSql(column: typeof schema.accounts.status | typeof schema.sites.status) {
+  return sql<string>`coalesce(nullif(lower(trim(${column})), ''), ${ACTIVE_STATUS})`;
+}
+
+function normalizedPlatformSql(column: typeof schema.sites.platform) {
+  return sql<string>`coalesce(lower(trim(${column})), '')`;
+}
+
 function shouldRefreshManagedSub2ApiAccount(input: {
   account: typeof schema.accounts.$inferSelect;
   site: typeof schema.sites.$inferSelect;
   nowMs: number;
 }): boolean {
   if (!isSub2ApiPlatform(input.site.platform)) return false;
-  if ((input.account.status || 'active') !== 'active') return false;
-  if ((input.site.status || 'active') !== 'active') return false;
+  if (normalizeLifecycleStatus(input.account.status) !== ACTIVE_STATUS) return false;
+  if (normalizeLifecycleStatus(input.site.status) !== ACTIVE_STATUS) return false;
 
   const managedAuth = getSub2ApiAuthFromExtraConfig(input.account.extraConfig);
   if (!managedAuth?.refreshToken || !managedAuth.tokenExpiresAt) return false;
@@ -44,9 +60,9 @@ export async function executeSub2ApiManagedRefreshPass(input: {
     .from(schema.accounts)
     .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
     .where(and(
-      eq(schema.accounts.status, 'active'),
-      eq(schema.sites.status, 'active'),
-      eq(schema.sites.platform, 'sub2api'),
+      sql`${normalizedLifecycleStatusSql(schema.accounts.status)} = ${ACTIVE_STATUS}`,
+      sql`${normalizedLifecycleStatusSql(schema.sites.status)} = ${ACTIVE_STATUS}`,
+      sql`${normalizedPlatformSql(schema.sites.platform)} = ${SUB2API_PLATFORM}`,
     ))
     .all();
 
@@ -71,7 +87,7 @@ export async function executeSub2ApiManagedRefreshPass(input: {
         await refreshSub2ApiManagedSessionSingleflight({
           account: row.accounts,
           site: row.sites,
-          currentAccessToken: row.accounts.accessToken,
+          currentAccessToken: row.accounts.accessToken || '',
           currentExtraConfig: row.accounts.extraConfig,
         });
         refreshedAccountIds.push(row.accounts.id);

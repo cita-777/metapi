@@ -40,6 +40,7 @@ describe('sub2apiRefreshScheduler', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let executeSub2ApiManagedRefreshPass: SchedulerModule['executeSub2ApiManagedRefreshPass'];
+  let sub2ApiRefreshSchedulerConcurrency: number;
   let startSub2ApiManagedRefreshScheduler: SchedulerModule['startSub2ApiManagedRefreshScheduler'];
   let stopSub2ApiManagedRefreshScheduler: SchedulerModule['stopSub2ApiManagedRefreshScheduler'];
   let resetSub2ApiManagedRefreshSchedulerForTests: SchedulerModule['__resetSub2ApiManagedRefreshSchedulerForTests'];
@@ -58,6 +59,7 @@ describe('sub2apiRefreshScheduler', () => {
     db = dbModule.db;
     schema = dbModule.schema;
     executeSub2ApiManagedRefreshPass = schedulerModule.executeSub2ApiManagedRefreshPass;
+    sub2ApiRefreshSchedulerConcurrency = schedulerModule.SUB2API_REFRESH_SCHEDULER_CONCURRENCY;
     startSub2ApiManagedRefreshScheduler = schedulerModule.startSub2ApiManagedRefreshScheduler;
     stopSub2ApiManagedRefreshScheduler = schedulerModule.stopSub2ApiManagedRefreshScheduler;
     resetSub2ApiManagedRefreshSchedulerForTests = schedulerModule.__resetSub2ApiManagedRefreshSchedulerForTests;
@@ -73,12 +75,10 @@ describe('sub2apiRefreshScheduler', () => {
     await db.delete(schema.sites).run();
   });
 
-  afterEach(() => {
-    return (async () => {
-      await stopSub2ApiManagedRefreshScheduler();
-      await resetSub2ApiManagedRefreshSchedulerForTests();
-      vi.useRealTimers();
-    })();
+  afterEach(async () => {
+    await stopSub2ApiManagedRefreshScheduler();
+    await resetSub2ApiManagedRefreshSchedulerForTests();
+    vi.useRealTimers();
   });
 
   afterAll(() => {
@@ -229,7 +229,10 @@ describe('sub2apiRefreshScheduler', () => {
       status: 'active',
     }).returning().get();
 
-    for (const key of ['due-a', 'due-b', 'later']) {
+    for (const key of [
+      ...Array.from({ length: sub2ApiRefreshSchedulerConcurrency + 2 }, (_value, index) => `due-${index + 1}`),
+      'later',
+    ]) {
       await db.insert(schema.accounts).values({
         siteId: activeSub2ApiSite.id,
         username: `${key}@example.com`,
@@ -258,16 +261,28 @@ describe('sub2apiRefreshScheduler', () => {
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
 
-    expect(refreshSub2ApiManagedSessionSingleflightMock).toHaveBeenCalledTimes(2);
+    expect(refreshSub2ApiManagedSessionSingleflightMock).toHaveBeenCalledTimes(sub2ApiRefreshSchedulerConcurrency);
 
-    for (const resolve of resolvers) {
+    const firstBatchResolvers = [...resolvers];
+    for (const resolve of firstBatchResolvers) {
+      resolve();
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(refreshSub2ApiManagedSessionSingleflightMock).toHaveBeenCalledTimes(
+      sub2ApiRefreshSchedulerConcurrency + 2,
+    );
+
+    const secondBatchResolvers = resolvers.slice(firstBatchResolvers.length);
+    for (const resolve of secondBatchResolvers) {
       resolve();
     }
 
     const result = await passPromise;
     expect(result).toMatchObject({
-      scanned: 3,
-      refreshed: 2,
+      scanned: sub2ApiRefreshSchedulerConcurrency + 3,
+      refreshed: sub2ApiRefreshSchedulerConcurrency + 2,
       failed: 0,
       skipped: 1,
     });
