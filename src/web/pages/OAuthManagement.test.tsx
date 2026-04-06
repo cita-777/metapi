@@ -732,6 +732,227 @@ describe('OAuthManagement page', () => {
     }
   });
 
+  it('keeps created route unit feedback when the connection list refresh fails', async () => {
+    apiMock.getOAuthProviders.mockResolvedValue({
+      providers: [
+        {
+          provider: 'codex',
+          label: 'Codex',
+          platform: 'codex',
+          enabled: true,
+          loginType: 'oauth',
+          requiresProjectId: false,
+          supportsDirectAccountRouting: true,
+          supportsCloudValidation: true,
+          supportsNativeProxy: true,
+        },
+      ],
+    });
+    apiMock.getOAuthConnections
+      .mockResolvedValueOnce({
+        items: [
+          {
+            accountId: 51,
+            siteId: 8,
+            provider: 'codex',
+            email: 'pool-a@example.com',
+            planType: 'team',
+            modelCount: 2,
+            modelsPreview: ['gpt-5.4'],
+            status: 'healthy',
+            routeParticipation: { kind: 'single' },
+            site: {
+              id: 8,
+              name: 'ChatGPT Codex OAuth',
+              url: 'https://chatgpt.com/backend-api/codex',
+              platform: 'codex',
+            },
+          },
+          {
+            accountId: 52,
+            siteId: 8,
+            provider: 'codex',
+            email: 'pool-b@example.com',
+            planType: 'team',
+            modelCount: 2,
+            modelsPreview: ['gpt-5.4'],
+            status: 'healthy',
+            routeParticipation: { kind: 'single' },
+            site: {
+              id: 8,
+              name: 'ChatGPT Codex OAuth',
+              url: 'https://chatgpt.com/backend-api/codex',
+              platform: 'codex',
+            },
+          },
+        ],
+        total: 2,
+        limit: 100,
+        offset: 0,
+      })
+      .mockRejectedValueOnce(new Error('列表刷新失败'));
+    apiMock.createOAuthRouteUnit.mockResolvedValue({ success: true });
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <MemoryRouter>
+              <OAuthManagement />
+            </MemoryRouter>
+          </ToastProvider>,
+        );
+      });
+      await flushMicrotasks();
+
+      const selectAll = root.root.find((node) => (
+        node.type === 'input'
+        && node.props.type === 'checkbox'
+        && node.props['data-testid'] === 'oauth-select-all'
+      ));
+
+      await act(async () => {
+        selectAll.props.onChange({ target: { checked: true } });
+      });
+
+      await clickButton(root, '合并参与路由');
+
+      const nameInput = root.root.find((node) => (
+        node.type === 'input'
+        && node.props['data-testid'] === 'oauth-route-unit-name'
+      ));
+      await act(async () => {
+        nameInput.props.onChange({ target: { value: 'Fallback Pool' } });
+      });
+
+      await clickButton(root, '创建路由池');
+
+      expect(apiMock.createOAuthRouteUnit).toHaveBeenCalledWith({
+        accountIds: [51, 52],
+        name: 'Fallback Pool',
+        strategy: 'round_robin',
+      });
+      expect(apiMock.getOAuthConnections).toHaveBeenCalledTimes(2);
+      expect(collectText(root.root)).toContain('已创建路由池，但连接列表刷新失败');
+      expect(collectText(root.root)).toContain('Fallback Pool');
+      expect(collectText(root.root)).toContain('2 个成员');
+      expect(collectText(root.root)).toContain('轮询');
+      expect(collectText(root.root)).not.toContain('已选 2 项');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('keeps split feedback when the connection list refresh fails', async () => {
+    apiMock.getOAuthProviders.mockResolvedValue({
+      providers: [
+        {
+          provider: 'codex',
+          label: 'Codex',
+          platform: 'codex',
+          enabled: true,
+          loginType: 'oauth',
+          requiresProjectId: false,
+          supportsDirectAccountRouting: true,
+          supportsCloudValidation: true,
+          supportsNativeProxy: true,
+        },
+      ],
+    });
+    apiMock.getOAuthConnections
+      .mockResolvedValueOnce({
+        items: [
+          {
+            accountId: 61,
+            siteId: 8,
+            provider: 'codex',
+            email: 'split-a@example.com',
+            planType: 'team',
+            modelCount: 2,
+            modelsPreview: ['gpt-5.4'],
+            status: 'healthy',
+            routeParticipation: {
+              kind: 'route_unit',
+              routeUnitId: 96,
+              name: 'Sticky Pool',
+              strategy: 'stick_until_unavailable',
+              memberCount: 2,
+            },
+            site: {
+              id: 8,
+              name: 'ChatGPT Codex OAuth',
+              url: 'https://chatgpt.com/backend-api/codex',
+              platform: 'codex',
+            },
+          },
+          {
+            accountId: 62,
+            siteId: 8,
+            provider: 'codex',
+            email: 'split-b@example.com',
+            planType: 'team',
+            modelCount: 2,
+            modelsPreview: ['gpt-5.4'],
+            status: 'healthy',
+            routeParticipation: {
+              kind: 'route_unit',
+              routeUnitId: 96,
+              name: 'Sticky Pool',
+              strategy: 'stick_until_unavailable',
+              memberCount: 2,
+            },
+            site: {
+              id: 8,
+              name: 'ChatGPT Codex OAuth',
+              url: 'https://chatgpt.com/backend-api/codex',
+              platform: 'codex',
+            },
+          },
+        ],
+        total: 2,
+        limit: 100,
+        offset: 0,
+      })
+      .mockRejectedValueOnce(new Error('列表刷新失败'));
+    apiMock.deleteOAuthRouteUnit.mockResolvedValue({ success: true });
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <MemoryRouter>
+              <OAuthManagement />
+            </MemoryRouter>
+          </ToastProvider>,
+        );
+      });
+      await flushMicrotasks();
+
+      const selectAll = root.root.find((node) => (
+        node.type === 'input'
+        && node.props.type === 'checkbox'
+        && node.props['data-testid'] === 'oauth-select-all'
+      ));
+
+      await act(async () => {
+        selectAll.props.onChange({ target: { checked: true } });
+      });
+
+      await clickButton(root, '拆回单体');
+
+      expect(apiMock.deleteOAuthRouteUnit).toHaveBeenCalledWith(96);
+      expect(apiMock.getOAuthConnections).toHaveBeenCalledTimes(2);
+      expect(collectText(root.root)).toContain('已拆回单体，但连接列表刷新失败');
+      expect(collectText(root.root)).toContain('Sticky Pool');
+      expect(collectText(root.root)).toContain('2 个成员');
+      expect(collectText(root.root)).toContain('单个用到不可用再切');
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('only enables splitting when the full route pool is selected and falls back to routeUnit ids', async () => {
     apiMock.getOAuthProviders.mockResolvedValue({
       providers: [

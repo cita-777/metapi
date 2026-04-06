@@ -689,17 +689,44 @@ export default function OAuthManagement() {
 
   const setSessionMessage = useCallback((
     message: string,
+    tone: SessionFeedback['tone'],
     options?: {
-      tone?: SessionFeedback['tone'];
       routeUnit?: SessionRouteUnitFeedback | null;
     },
   ) => {
     setSessionFeedback({
       message,
-      tone: options?.tone || 'info',
+      tone,
       routeUnit: options?.routeUnit ?? null,
     });
   }, []);
+
+  const setSessionInfo = useCallback((
+    message: string,
+    options?: {
+      routeUnit?: SessionRouteUnitFeedback | null;
+    },
+  ) => {
+    setSessionMessage(message, 'info', options);
+  }, [setSessionMessage]);
+
+  const setSessionSuccess = useCallback((
+    message: string,
+    options?: {
+      routeUnit?: SessionRouteUnitFeedback | null;
+    },
+  ) => {
+    setSessionMessage(message, 'success', options);
+  }, [setSessionMessage]);
+
+  const setSessionError = useCallback((
+    message: string,
+    options?: {
+      routeUnit?: SessionRouteUnitFeedback | null;
+    },
+  ) => {
+    setSessionMessage(message, 'error', options);
+  }, [setSessionMessage]);
 
   const resetOauthProxySettings = useCallback(() => {
     setOauthCustomProxyEnabled(false);
@@ -754,7 +781,7 @@ export default function OAuthManagement() {
       setSelectedProviderKey((current) => current || nextProviders[0]?.provider || '');
     } catch (error: any) {
       console.error('failed to load oauth management data', error);
-      setSessionMessage(error?.message || 'OAuth 管理数据加载失败');
+      setSessionError(error?.message || 'OAuth 管理数据加载失败');
     } finally {
       setLoaded(true);
     }
@@ -775,7 +802,7 @@ export default function OAuthManagement() {
       setAutoRefreshCountdown((current) => {
         if (current <= 1) {
           void loadConnections().catch((error: any) => {
-            setSessionMessage(error?.message || 'OAuth 连接列表刷新失败');
+            setSessionError(error?.message || 'OAuth 连接列表刷新失败');
           });
           return autoRefreshSeconds;
         }
@@ -797,7 +824,7 @@ export default function OAuthManagement() {
     setSelectedProviderKey(provider);
     setDrawerProjectId('');
     setDrawerOpen(true);
-    setSessionMessage('从建站流程跳转到 OAuth 管理，请在这里完成授权。');
+    setSessionInfo('从建站流程跳转到 OAuth 管理，请在这里完成授权。');
   }, [loaded, location.search, providers]);
 
   useEffect(() => {
@@ -812,23 +839,23 @@ export default function OAuthManagement() {
         if (cancelled) return;
 
         if (session.status === 'pending') {
-          setSessionMessage('等待授权完成');
+          setSessionInfo('等待授权完成');
           timer = setTimeout(poll, POLL_INTERVAL_MS);
           return;
         }
 
         if (session.status === 'success') {
-          setSessionMessage('授权成功');
+          setSessionSuccess('授权成功');
           await loadConnections();
           setActiveSession(null);
           return;
         }
 
-        setSessionMessage(`授权失败：${session.error || '未知错误'}`);
+        setSessionError(`授权失败：${session.error || '未知错误'}`);
         setActiveSession(null);
       } catch (error: any) {
         if (cancelled) return;
-        setSessionMessage(error?.message || 'OAuth 会话状态查询失败');
+        setSessionError(error?.message || 'OAuth 会话状态查询失败');
         setActiveSession(null);
       }
     };
@@ -983,7 +1010,7 @@ export default function OAuthManagement() {
     setOauthProxyUrl(connection.useSystemProxy ? '' : asTrimmedString(connection.proxyUrl));
     setDrawerOpen(true);
     setShowColumnMenu(false);
-    setSessionMessage('已打开 OAuth 代理设置，修改后可直接保存代理，或保存后重新授权。');
+    setSessionInfo('已打开 OAuth 代理设置，修改后可直接保存代理，或保存后重新授权。');
   };
 
   const openRouteUnitModal = () => {
@@ -1052,7 +1079,7 @@ export default function OAuthManagement() {
     if (drawerIntent.mode !== 'proxy') return;
     const customProxyUrl = asTrimmedString(oauthProxyUrl);
     if (oauthCustomProxyEnabled && !customProxyUrl) {
-      setSessionMessage('已开启代理，请先输入完整代理地址');
+      setSessionError('已开启代理，请先输入完整代理地址');
       return;
     }
 
@@ -1071,9 +1098,9 @@ export default function OAuthManagement() {
       await loadConnections();
       setDrawerOpen(false);
       resetOauthProxySettings();
-      setSessionMessage('代理已保存');
+      setSessionSuccess('代理已保存');
     } catch (error: any) {
-      setSessionMessage(error?.message || '保存代理失败');
+      setSessionError(error?.message || '保存代理失败');
     } finally {
       setActionLoadingKey('');
     }
@@ -1087,11 +1114,11 @@ export default function OAuthManagement() {
       || providers[0]
       || null;
     if (!provider) {
-      setSessionMessage('当前没有可用的 OAuth Provider。');
+      setSessionError('当前没有可用的 OAuth Provider。');
       return;
     }
     if (!provider.enabled) {
-      setSessionMessage(`${provider.label} 当前环境未启用`);
+      setSessionError(`${provider.label} 当前环境未启用`);
       return;
     }
 
@@ -1099,7 +1126,7 @@ export default function OAuthManagement() {
     const accountId = rebindAccount?.accountId;
     const customProxyUrl = asTrimmedString(oauthProxyUrl);
     if (oauthCustomProxyEnabled && !customProxyUrl) {
-      setSessionMessage('已开启代理，请先输入完整代理地址');
+      setSessionError('已开启代理，请先输入完整代理地址');
       return;
     }
 
@@ -1129,7 +1156,7 @@ export default function OAuthManagement() {
           ...proxySettings,
         });
 
-      setSessionMessage('等待授权完成');
+      setSessionInfo('等待授权完成');
       setActiveSession({
         provider: started.provider,
         state: started.state,
@@ -1139,7 +1166,7 @@ export default function OAuthManagement() {
       resetOauthProxySettings();
       openOAuthPopup(provider.provider, started.authorizationUrl);
     } catch (error: any) {
-      setSessionMessage(error?.message || '无法启动 OAuth 授权');
+      setSessionError(error?.message || '无法启动 OAuth 授权');
     } finally {
       setActionLoadingKey('');
     }
@@ -1149,15 +1176,15 @@ export default function OAuthManagement() {
     if (!activeSession) return;
     const callbackUrl = manualCallbackUrl.trim();
     if (!callbackUrl) {
-      setSessionMessage('请输入完整的回调 URL');
+      setSessionError('请输入完整的回调 URL');
       return;
     }
     setManualCallbackSubmitting(true);
     try {
       await api.submitOAuthManualCallback(activeSession.state, callbackUrl);
-      setSessionMessage('回调已提交，等待授权完成');
+      setSessionInfo('回调已提交，等待授权完成');
     } catch (error: any) {
-      setSessionMessage(error?.message || '提交回调 URL 失败');
+      setSessionError(error?.message || '提交回调 URL 失败');
     } finally {
       setManualCallbackSubmitting(false);
     }
@@ -1172,11 +1199,11 @@ export default function OAuthManagement() {
     setActionLoadingKey(actionKey);
     try {
       await api.deleteOAuthConnection(accountId);
-      setSessionMessage('连接已删除');
+      setSessionSuccess('连接已删除');
       await loadConnections();
       setSelectedConnectionIds((current) => current.filter((id) => id !== accountId));
     } catch (error: any) {
-      setSessionMessage(error?.message || '删除 OAuth 连接失败');
+      setSessionError(error?.message || '删除 OAuth 连接失败');
     } finally {
       setActionLoadingKey('');
     }
@@ -1194,9 +1221,11 @@ export default function OAuthManagement() {
       const failed = results.filter((item) => item.status === 'rejected').length;
       await loadConnections();
       setSelectedConnectionIds([]);
-      setSessionMessage(failed > 0
-        ? `批量删除完成，${failed} 个连接删除失败`
-        : `已删除 ${results.length} 个 OAuth 连接`);
+      if (failed > 0) {
+        setSessionInfo(`批量删除完成，${failed} 个连接删除失败`);
+      } else {
+        setSessionSuccess(`已删除 ${results.length} 个 OAuth 连接`);
+      }
     } finally {
       setActionLoadingKey('');
     }
@@ -1207,10 +1236,10 @@ export default function OAuthManagement() {
     setActionLoadingKey(actionKey);
     try {
       await api.refreshOAuthConnectionQuota(accountId);
-      setSessionMessage('额度信息已刷新');
+      setSessionSuccess('额度信息已刷新');
       await loadConnections();
     } catch (error: any) {
-      setSessionMessage(error?.message || '刷新额度失败');
+      setSessionError(error?.message || '刷新额度失败');
     } finally {
       setActionLoadingKey('');
     }
@@ -1222,11 +1251,13 @@ export default function OAuthManagement() {
     try {
       const result = await api.refreshOAuthConnectionQuotaBatch(selectedConnectionIds);
       await loadConnections();
-      setSessionMessage(result.failed > 0
-        ? `批量刷新完成，成功 ${result.refreshed} 个，失败 ${result.failed} 个`
-        : `已批量刷新 ${result.refreshed} 个 OAuth 连接`);
+      if (result.failed > 0) {
+        setSessionInfo(`批量刷新完成，成功 ${result.refreshed} 个，失败 ${result.failed} 个`);
+      } else {
+        setSessionSuccess(`已批量刷新 ${result.refreshed} 个 OAuth 连接`);
+      }
     } catch (error: any) {
-      setSessionMessage(error?.message || '批量刷新额度失败');
+      setSessionError(error?.message || '批量刷新额度失败');
     } finally {
       setActionLoadingKey('');
     }
@@ -1278,11 +1309,11 @@ export default function OAuthManagement() {
       applyLoadedModelsModal(connection, result);
       if (options.refreshUpstream) {
         await loadConnections();
-        setSessionMessage('模型列表已刷新');
+        setSessionSuccess('模型列表已刷新');
       }
     } catch (error: any) {
       if (modelsModalRequestSeqRef.current !== requestId) return;
-      setSessionMessage(error?.message || '加载模型列表失败');
+      setSessionError(error?.message || '加载模型列表失败');
       setModelsModal((current) => (
         options.closeOnError
           ? {
@@ -1369,15 +1400,15 @@ export default function OAuthManagement() {
 
   const handleImport = async () => {
     if (importSources.length <= 0) {
-      setSessionMessage('请先选择 JSON 文件或粘贴 OAuth 连接 JSON 内容');
+      setSessionError('请先选择 JSON 文件或粘贴 OAuth 连接 JSON 内容');
       return;
     }
     if (!importPreviewSummary?.canImport) {
-      setSessionMessage('请先修正无效的 OAuth JSON');
+      setSessionError('请先修正无效的 OAuth JSON');
       return;
     }
     if (importCustomProxyEnabled && !asTrimmedString(importProxyUrl)) {
-      setSessionMessage('已开启代理，请先输入完整代理地址');
+      setSessionError('已开启代理，请先输入完整代理地址');
       return;
     }
 
@@ -1411,12 +1442,16 @@ export default function OAuthManagement() {
       } else {
         toast.success(importMessage);
       }
-      setSessionMessage(importMessage);
+      if (result.failed > 0) {
+        setSessionInfo(importMessage);
+      } else {
+        setSessionSuccess(importMessage);
+      }
       closeImportModal();
     } catch (error: any) {
       const message = error?.message || '导入 OAuth JSON 失败';
       toast.error(message);
-      setSessionMessage(message);
+      setSessionError(message);
     } finally {
       setImporting(false);
     }
@@ -1426,7 +1461,7 @@ export default function OAuthManagement() {
     const name = asTrimmedString(routeUnitModal.name);
     if (!canMergeSelectedIntoRouteUnit || selectedConnections.length < 2) return;
     if (!name) {
-      setSessionMessage('请先输入路由池名称');
+      setSessionError('请先输入路由池名称');
       return;
     }
 
@@ -1437,24 +1472,38 @@ export default function OAuthManagement() {
         name,
         strategy: routeUnitModal.strategy,
       });
-      await loadConnections();
-      setSelectedConnectionIds([]);
-      closeRouteUnitModal();
-      const routeUnit = result.routeUnit && {
+      const routeUnitDefaults: SessionRouteUnitFeedback = {
         action: 'created' as const,
-        name: asTrimmedString(result.routeUnit.name) || name,
-        memberCount: result.routeUnit.memberCount || selectedConnections.length,
-        strategy: result.routeUnit.strategy || routeUnitModal.strategy,
+        name: asTrimmedString(name) || name,
+        memberCount: selectedConnections.length,
+        strategy: routeUnitModal.strategy,
       };
-      toast.success(routeUnit ? `已创建路由池：${routeUnit.name}` : '已创建路由池');
-      setSessionMessage('已创建路由池', {
-        tone: 'success',
+      const routeUnit: SessionRouteUnitFeedback = result.routeUnit
+        ? {
+          ...routeUnitDefaults,
+          name: asTrimmedString(result.routeUnit.name) || routeUnitDefaults.name,
+          memberCount: result.routeUnit.memberCount || routeUnitDefaults.memberCount,
+          strategy: result.routeUnit.strategy || routeUnitDefaults.strategy,
+        }
+        : routeUnitDefaults;
+      toast.success(`已创建路由池：${routeUnit.name}`);
+      setSessionSuccess('已创建路由池', {
         routeUnit,
       });
+      setSelectedConnectionIds([]);
+      closeRouteUnitModal();
+      try {
+        await loadConnections();
+      } catch {
+        toast.error('OAuth 连接列表刷新失败');
+        setSessionError('已创建路由池，但连接列表刷新失败', {
+          routeUnit,
+        });
+      }
     } catch (error: any) {
       const message = error?.message || '创建路由池失败';
       toast.error(message);
-      setSessionMessage(message, { tone: 'error' });
+      setSessionError(message);
     } finally {
       setActionLoadingKey('');
     }
@@ -1474,17 +1523,23 @@ export default function OAuthManagement() {
         strategy: selectedRouteUnitParticipation.strategy,
       };
       await api.deleteOAuthRouteUnit(routeUnitId);
-      await loadConnections();
-      setSelectedConnectionIds([]);
       toast.success(`已拆回单体：${routeUnitFeedback.name}`);
-      setSessionMessage('已拆回单体', {
-        tone: 'success',
+      setSessionSuccess('已拆回单体', {
         routeUnit: routeUnitFeedback,
       });
+      setSelectedConnectionIds([]);
+      try {
+        await loadConnections();
+      } catch {
+        toast.error('OAuth 连接列表刷新失败');
+        setSessionError('已拆回单体，但连接列表刷新失败', {
+          routeUnit: routeUnitFeedback,
+        });
+      }
     } catch (error: any) {
       const message = error?.message || '拆回单体失败';
       toast.error(message);
-      setSessionMessage(message, { tone: 'error' });
+      setSessionError(message);
     } finally {
       setActionLoadingKey('');
     }
