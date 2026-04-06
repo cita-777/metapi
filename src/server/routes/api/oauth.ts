@@ -303,8 +303,10 @@ export async function oauthRoutes(app: FastifyInstance) {
 
   app.patch<{ Params: { accountId: string }; Body: unknown }>(
     '/api/oauth/connections/:accountId/proxy',
-    { preHandler: [limitOauthConnectionMutate, limitOauthSensitiveRoute] },
+    { preHandler: [limitOauthConnectionMutate] },
     async (request, reply) => {
+      await limitOauthSensitiveRoute(request, reply);
+      if (reply.sent) return;
       const parsedBody = parseOauthConnectionProxyUpdatePayload(request.body);
       if (!parsedBody.success) {
         return reply.code(400).send({ message: parsedBody.error });
@@ -425,8 +427,10 @@ export async function oauthRoutes(app: FastifyInstance) {
 
   app.post<{ Body: unknown }>(
     '/api/oauth/route-units',
-    { preHandler: [limitOauthConnectionMutate, limitOauthSensitiveRoute] },
+    { preHandler: [limitOauthConnectionMutate] },
     async (request, reply) => {
+      await limitOauthSensitiveRoute(request, reply);
+      if (reply.sent) return;
       const parsedBody = parseOauthRouteUnitCreatePayload(request.body);
       if (!parsedBody.success) {
         return reply.code(400).send({ message: parsedBody.error });
@@ -442,7 +446,19 @@ export async function oauthRoutes(app: FastifyInstance) {
         if (message === 'oauth route unit accounts not found' || message === 'oauth route unit not found') {
           return reply.code(404).send({ message });
         }
-        return reply.code(400).send({ message });
+        if (
+          message === 'oauth route unit requires at least 2 accounts'
+          || message === 'oauth route unit name is required'
+          || message === 'invalid oauth route unit strategy'
+          || message === 'oauth route unit accounts already grouped'
+          || message === 'oauth route unit only supports oauth accounts'
+          || message === 'oauth route unit accounts must belong to the same site'
+          || message === 'oauth route unit accounts must share the same provider'
+        ) {
+          return reply.code(400).send({ message });
+        }
+        request.log.error({ err: error }, 'oauth route unit creation failed');
+        return reply.code(500).send({ message });
       }
     },
   );
@@ -470,7 +486,11 @@ export async function oauthRoutes(app: FastifyInstance) {
         if (message === 'oauth route unit not found') {
           return reply.code(404).send({ message });
         }
-        return reply.code(400).send({ message });
+        if (message === 'oauth route unit name is required' || message === 'invalid oauth route unit strategy') {
+          return reply.code(400).send({ message });
+        }
+        request.log.error({ err: error }, 'oauth route unit update failed');
+        return reply.code(500).send({ message });
       }
     },
   );
@@ -490,7 +510,8 @@ export async function oauthRoutes(app: FastifyInstance) {
         if (message === 'oauth route unit not found') {
           return reply.code(404).send({ message });
         }
-        return reply.code(400).send({ message });
+        request.log.error({ err: error }, 'oauth route unit deletion failed');
+        return reply.code(500).send({ message });
       }
     },
   );

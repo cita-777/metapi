@@ -972,9 +972,12 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({
+    const body = response.json() as Record<string, unknown>;
+    expect(body).toMatchObject({
       success: true,
     });
+    expect(body).not.toHaveProperty('state');
+    expect(body).not.toHaveProperty('authorizationUrl');
 
     const stored = await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();
     expect(JSON.parse(stored?.extraConfig || '{}')).toMatchObject({
@@ -1058,12 +1061,15 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({
+    const body = response.json() as Record<string, unknown>;
+    expect(body).toMatchObject({
       success: true,
       accountId: account.id,
       useSystemProxy: true,
       proxyUrl: null,
     });
+    expect(body).not.toHaveProperty('state');
+    expect(body).not.toHaveProperty('authorizationUrl');
 
     const updated = await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();
     expect(JSON.parse(updated?.extraConfig || '{}')).toMatchObject({

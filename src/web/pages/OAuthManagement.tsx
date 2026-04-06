@@ -2135,7 +2135,10 @@ export default function OAuthManagement() {
                     type="button"
                     className="btn btn-primary"
                     onClick={handleSaveProxy}
-                    disabled={actionLoadingKey === `save-proxy:${drawerIntent.account.accountId}`}
+                    disabled={
+                      actionLoadingKey === `save-proxy:${drawerIntent.account.accountId}`
+                      || actionLoadingKey.startsWith('start:')
+                    }
                   >
                     {actionLoadingKey === `save-proxy:${drawerIntent.account.accountId}` ? '保存中...' : '保存代理'}
                   </button>
@@ -2143,7 +2146,12 @@ export default function OAuthManagement() {
                     type="button"
                     className="btn btn-ghost"
                     onClick={handleStart}
-                    disabled={!selectedProvider || !selectedProvider.enabled || actionLoadingKey.startsWith('start:')}
+                    disabled={
+                      !selectedProvider
+                      || !selectedProvider.enabled
+                      || actionLoadingKey.startsWith('start:')
+                      || actionLoadingKey === `save-proxy:${drawerIntent.account.accountId}`
+                    }
                   >
                     {actionLoadingKey.startsWith('start:') ? '启动中...' : '保存并重新授权'}
                   </button>

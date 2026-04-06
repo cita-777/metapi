@@ -38,7 +38,7 @@ const oauthQuotaBatchRefreshPayloadSchema = z.object({
 
 const oauthImportPayloadSchema = z.object({
   data: z.unknown().optional(),
-  items: z.array(z.unknown()).optional(),
+  items: z.array(z.object({}).passthrough()).optional(),
   proxyUrl: z.union([z.string(), z.null()]).optional(),
   useSystemProxy: z.boolean().optional(),
 }).passthrough();

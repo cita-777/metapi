@@ -1,5 +1,6 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { db, schema } from '../../db/index.js';
+import { insertAndGetById } from '../../db/insertHelpers.js';
 import * as routeRefreshWorkflow from '../routeRefreshWorkflow.js';
 import { invalidateTokenRouterCache } from '../tokenRouter.js';
 
@@ -62,6 +63,7 @@ function isOauthRouteUnitAccountUniqueConflict(error: unknown): boolean {
     ((code === 'SQLITE_CONSTRAINT' || code === 'SQLITE_CONSTRAINT_UNIQUE')
       && lowered.includes('oauth_route_unit_members.account_id'))
     || (code === 'ER_DUP_ENTRY' && lowered.includes('oauth_route_unit_members_account_unique'))
+    || (code === '23505' && lowered.includes('oauth_route_unit_members_account_unique'))
     || (lowered.includes('duplicate key value violates unique constraint')
       && lowered.includes('oauth_route_unit_members_account_unique'))
   );
@@ -202,13 +204,19 @@ export async function createOauthRouteUnit(input: {
         throw new Error('oauth route unit accounts already grouped');
       }
 
-      const inserted = await tx.insert(schema.oauthRouteUnits).values({
-        siteId: expectedSiteId,
-        provider: expectedProvider,
-        name,
-        strategy,
-        enabled: true,
-      }).returning().get();
+      const inserted = await insertAndGetById<typeof schema.oauthRouteUnits.$inferSelect>({
+        txDb: tx,
+        table: schema.oauthRouteUnits,
+        idColumn: schema.oauthRouteUnits.id,
+        values: {
+          siteId: expectedSiteId,
+          provider: expectedProvider,
+          name,
+          strategy,
+          enabled: true,
+        },
+        insertErrorMessage: 'oauth route unit creation failed',
+      });
 
       await tx.insert(schema.oauthRouteUnitMembers).values(
         accountIds.map((accountId, index) => ({
