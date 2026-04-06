@@ -369,6 +369,7 @@ async function revertPersistedOauthAccount(input: {
   accountId: number;
   created: boolean;
   previousAccount: typeof schema.accounts.$inferSelect | null;
+  previousModelAvailability?: Array<typeof schema.modelAvailability.$inferSelect>;
 }) {
   if (input.created) {
     await db.delete(schema.accounts).where(eq(schema.accounts.id, input.accountId)).run();
@@ -376,19 +377,37 @@ async function revertPersistedOauthAccount(input: {
   }
 
   if (!input.previousAccount) return;
-  await db.update(schema.accounts).set({
-    siteId: input.previousAccount.siteId,
-    username: input.previousAccount.username,
-    accessToken: input.previousAccount.accessToken,
-    apiToken: input.previousAccount.apiToken,
-    checkinEnabled: input.previousAccount.checkinEnabled,
-    status: input.previousAccount.status,
-    oauthProvider: input.previousAccount.oauthProvider,
-    oauthAccountKey: input.previousAccount.oauthAccountKey,
-    oauthProjectId: input.previousAccount.oauthProjectId,
-    extraConfig: input.previousAccount.extraConfig,
-    updatedAt: input.previousAccount.updatedAt,
-  }).where(eq(schema.accounts.id, input.previousAccount.id)).run();
+  await db.transaction(async (tx) => {
+    await tx.update(schema.accounts).set({
+      siteId: input.previousAccount!.siteId,
+      username: input.previousAccount!.username,
+      accessToken: input.previousAccount!.accessToken,
+      apiToken: input.previousAccount!.apiToken,
+      checkinEnabled: input.previousAccount!.checkinEnabled,
+      status: input.previousAccount!.status,
+      oauthProvider: input.previousAccount!.oauthProvider,
+      oauthAccountKey: input.previousAccount!.oauthAccountKey,
+      oauthProjectId: input.previousAccount!.oauthProjectId,
+      extraConfig: input.previousAccount!.extraConfig,
+      updatedAt: input.previousAccount!.updatedAt,
+    }).where(eq(schema.accounts.id, input.previousAccount!.id)).run();
+
+    if (input.previousModelAvailability) {
+      await tx.delete(schema.modelAvailability)
+        .where(eq(schema.modelAvailability.accountId, input.accountId))
+        .run();
+      if (input.previousModelAvailability.length > 0) {
+        await tx.insert(schema.modelAvailability).values(input.previousModelAvailability.map((row) => ({
+          accountId: input.previousAccount!.id,
+          modelName: row.modelName,
+          available: row.available,
+          isManual: row.isManual,
+          latencyMs: row.latencyMs,
+          checkedAt: row.checkedAt,
+        }))).run();
+      }
+    }
+  });
 }
 
 async function mapWithConcurrency<T, TResult>(
@@ -450,6 +469,11 @@ async function activatePersistedOauthAccount(input: {
   persistedStatus?: 'active' | 'disabled';
   activateExistingAfterRefresh?: boolean;
 }) {
+  const rollbackSnapshotByRebindAccountId = typeof input.rebindAccountId === 'number' && input.rebindAccountId > 0
+    ? await db.select().from(schema.modelAvailability)
+      .where(eq(schema.modelAvailability.accountId, input.rebindAccountId))
+      .all()
+    : [];
   const persisted = await upsertOauthAccount({
     definition: input.definition,
     exchange: input.exchange,
@@ -463,6 +487,14 @@ async function activatePersistedOauthAccount(input: {
     throw new Error('failed to persist oauth account');
   }
 
+  const previousModelAvailability = rollbackSnapshotByRebindAccountId.length > 0
+    ? rollbackSnapshotByRebindAccountId
+    : persisted.created
+      ? []
+      : await db.select().from(schema.modelAvailability)
+        .where(eq(schema.modelAvailability.accountId, persisted.previousAccount?.id ?? persisted.account.id))
+        .all();
+
   const shouldRefreshModels = input.activateExistingAfterRefresh === true
     || (persisted.account.status || 'active') === 'active';
   if (shouldRefreshModels) {
@@ -475,6 +507,7 @@ async function activatePersistedOauthAccount(input: {
         accountId: persisted.account.id,
         created: persisted.created,
         previousAccount: persisted.previousAccount,
+        previousModelAvailability,
       });
       await routeRefreshWorkflow.rebuildRoutesOnly();
       throw new Error(refreshResult.errorMessage || `${input.definition.metadata.provider} model discovery failed`);
@@ -499,6 +532,7 @@ async function activatePersistedOauthAccount(input: {
       accountId: persisted.account.id,
       created: persisted.created,
       previousAccount: persisted.previousAccount,
+      previousModelAvailability,
     });
     await routeRefreshWorkflow.rebuildRoutesOnly();
     throw error;

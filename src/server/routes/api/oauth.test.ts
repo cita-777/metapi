@@ -641,7 +641,6 @@ describe('oauth routes', { timeout: 15_000 }, () => {
         },
       }),
     }).returning().get();
-
     fetchMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -1201,7 +1200,6 @@ describe('oauth routes', { timeout: 15_000 }, () => {
         },
       }),
     }).returning().get();
-
     const reboundJwt = buildJwt({
       email: 'codex-existing@example.com',
       'https://api.openai.com/auth': {
@@ -1306,7 +1304,6 @@ describe('oauth routes', { timeout: 15_000 }, () => {
         },
       }),
     }).returning().get();
-
     const reboundJwt = buildJwt({
       email: 'codex-existing@example.com',
       'https://api.openai.com/auth': {
@@ -1414,6 +1411,20 @@ describe('oauth routes', { timeout: 15_000 }, () => {
         },
       }),
     }).returning().get();
+    await db.insert(schema.modelAvailability).values([
+      {
+        accountId: existing.id,
+        modelName: 'gpt-4.1',
+        available: true,
+        isManual: false,
+      },
+      {
+        accountId: existing.id,
+        modelName: 'manual-kept',
+        available: true,
+        isManual: true,
+      },
+    ]).run();
 
     const reboundJwt = buildJwt({
       email: 'codex-existing@example.com',
@@ -1487,6 +1498,16 @@ describe('oauth routes', { timeout: 15_000 }, () => {
           idToken: originalJwt,
         },
       });
+      const restoredModels = await db.select({
+        modelName: schema.modelAvailability.modelName,
+        isManual: schema.modelAvailability.isManual,
+      }).from(schema.modelAvailability)
+        .where(eq(schema.modelAvailability.accountId, existing.id))
+        .all();
+      expect(restoredModels).toEqual(expect.arrayContaining([
+        expect.objectContaining({ modelName: 'gpt-4.1', isManual: false }),
+        expect.objectContaining({ modelName: 'manual-kept', isManual: true }),
+      ]));
     } finally {
       rebuildSpy.mockRestore();
     }

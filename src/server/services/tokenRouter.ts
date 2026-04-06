@@ -1224,6 +1224,31 @@ function patchCachedChannel(channelId: number, apply: (channel: ChannelRow) => v
   }
 }
 
+function clearStableFirstCachesForRoute(routeId: number): void {
+  const routePrefix = `${routeId}:`;
+  for (const key of stableFirstLastSelectedSiteByKey.keys()) {
+    if (key.startsWith(routePrefix)) {
+      stableFirstLastSelectedSiteByKey.delete(key);
+    }
+  }
+  for (const key of stableFirstObservationProgressByKey.keys()) {
+    if (key.startsWith(routePrefix)) {
+      stableFirstObservationProgressByKey.delete(key);
+    }
+  }
+  for (const key of stableFirstObservationSiteCooldownByKey.keys()) {
+    if (key.startsWith(routePrefix)) {
+      stableFirstObservationSiteCooldownByKey.delete(key);
+    }
+  }
+}
+
+function invalidateRouteScopedCache(routeId: number): void {
+  if (!Number.isFinite(routeId) || routeId <= 0) return;
+  routeMatchCache.delete(routeId);
+  clearStableFirstCachesForRoute(routeId);
+}
+
 export function invalidateTokenRouterCache(): void {
   routeCacheSnapshot = {
     loadedAt: 0,
@@ -2476,7 +2501,7 @@ export class TokenRouter {
       } else {
         recordSiteRuntimeSuccess(account.siteId, latencyMs, modelName);
       }
-      invalidateTokenRouterCache();
+      invalidateRouteScopedCache(ch.routeId);
     } else {
       recordSiteRuntimeSuccess(account.siteId, latencyMs, modelName);
     }
@@ -2561,7 +2586,7 @@ export class TokenRouter {
         channel.consecutiveFailCount = 0;
         channel.cooldownLevel = 0;
       });
-      invalidateTokenRouterCache();
+      invalidateRouteScopedCache(ch.routeId);
       return;
     }
 
@@ -2746,7 +2771,7 @@ export class TokenRouter {
           updatedAt: nowIso,
         }).where(eq(schema.oauthRouteUnitMembers.id, memberRow.member.id)).run();
         recordSiteRuntimeFailure(memberRow.account.siteId, normalizedContext, nowMs);
-        invalidateTokenRouterCache();
+        invalidateRouteScopedCache(route.id);
         return;
       }
     }
@@ -3206,7 +3231,19 @@ export class TokenRouter {
       eq(schema.oauthRouteUnitMembers.unitId, routeUnitId),
       eq(schema.oauthRouteUnitMembers.accountId, accountId),
     )).run();
-    invalidateTokenRouterCache();
+    const routeRows = await db.select({
+      routeId: schema.routeChannels.routeId,
+    }).from(schema.routeChannels)
+      .where(eq(schema.routeChannels.oauthRouteUnitId, routeUnitId))
+      .all();
+    const routeIds: number[] = Array.from(new Set<number>(
+      routeRows
+        .map((row) => Number(row.routeId))
+        .filter((routeId): routeId is number => Number.isFinite(routeId) && routeId > 0),
+    ));
+    for (const routeId of routeIds) {
+      invalidateRouteScopedCache(routeId);
+    }
   }
 
   private resolveChannelTokenValue(candidate: {

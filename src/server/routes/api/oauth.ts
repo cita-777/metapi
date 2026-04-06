@@ -110,6 +110,7 @@ async function limitOauthSensitiveRoute(request: FastifyRequest, reply: FastifyR
     await oauthQuotaBatchRefreshLimiter.consume(request.ip);
   } catch (error) {
     sendOauthSensitiveRateLimit(reply, error);
+    return reply;
   }
 }
 

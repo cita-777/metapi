@@ -641,8 +641,14 @@ type RouteChannelSummary = {
   siteNames: Set<string>;
 };
 
-async function fetchChannelsForRouteRows(routes: RouteRow[]): Promise<Map<number, any[]>> {
+async function fetchChannelsForRouteRows(
+  routes: RouteRow[],
+  options: {
+    includeRouteUnitDetails?: boolean;
+  } = {},
+): Promise<Map<number, any[]>> {
   if (routes.length === 0) return new Map();
+  const includeRouteUnitDetails = options.includeRouteUnitDetails !== false;
 
   const explicitSourceRouteIds = Array.from(new Set(routes
     .filter((route) => isExplicitGroupRoute(route))
@@ -688,10 +694,12 @@ async function fetchChannelsForRouteRows(routes: RouteRow[]): Promise<Map<number
       .map((row) => Number(row.route_channels.oauthRouteUnitId))
       .filter((id): id is number => Number.isFinite(id) && id > 0),
   ));
-  const [routeUnitSummaries, routeUnitMembersByUnitId] = await Promise.all([
-    loadOauthRouteUnitSummariesByIds(oauthRouteUnitIds),
-    listOauthRouteUnitMembersByUnitIds(oauthRouteUnitIds),
-  ]);
+  const routeUnitSummaries = includeRouteUnitDetails
+    ? await loadOauthRouteUnitSummariesByIds(oauthRouteUnitIds)
+    : new Map();
+  const routeUnitMembersByUnitId = includeRouteUnitDetails
+    ? await listOauthRouteUnitMembersByUnitIds(oauthRouteUnitIds)
+    : new Map();
 
   const channelsByActualRouteId = new Map<number, any[]>();
 
@@ -720,7 +728,7 @@ async function fetchChannelsForRouteRows(routes: RouteRow[]): Promise<Map<number
           isDefault: row.account_tokens.isDefault,
         }
         : null,
-      routeUnit: routeUnit
+      routeUnit: includeRouteUnitDetails && routeUnit
         ? {
           id: routeUnit.id,
           name: routeUnit.name,
@@ -760,7 +768,7 @@ async function fetchChannelsForRoutes(routeIds: number[]): Promise<Map<number, a
 }
 
 async function buildRouteChannelSummaryMap(routes: RouteRow[]): Promise<Map<number, RouteChannelSummary>> {
-  const channelsByRoute = await fetchChannelsForRouteRows(routes);
+  const channelsByRoute = await fetchChannelsForRouteRows(routes, { includeRouteUnitDetails: false });
   const summaryByRoute = new Map<number, RouteChannelSummary>();
   for (const route of routes) {
     const channels = channelsByRoute.get(route.id) || [];

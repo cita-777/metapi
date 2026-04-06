@@ -11,6 +11,7 @@ describe('TokenRouter oauth route units', () => {
   let schema: DbModule['schema'];
   let TokenRouter: TokenRouterModule['TokenRouter'];
   let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'];
+  let tokenRouterTestUtils: TokenRouterModule['__tokenRouterTestUtils'];
   let dataDir = '';
 
   beforeAll(async () => {
@@ -24,6 +25,7 @@ describe('TokenRouter oauth route units', () => {
     schema = dbModule.schema;
     TokenRouter = tokenRouterModule.TokenRouter;
     invalidateTokenRouterCache = tokenRouterModule.invalidateTokenRouterCache;
+    tokenRouterTestUtils = tokenRouterModule.__tokenRouterTestUtils;
   });
 
   beforeEach(async () => {
@@ -194,6 +196,84 @@ describe('TokenRouter oauth route units', () => {
     const third = await router.selectChannel('gpt-5.4');
     expect(third?.channel.id).toBe(channel.id);
     expect(third?.account.id).toBe(accountB.id);
+  });
+
+  it('keeps unrelated stable-first cache entries when pooled member state updates', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'ChatGPT Codex OAuth',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+
+    const accountA = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'cache-a@example.com',
+      accessToken: 'oauth-cache-access-a',
+      apiToken: null,
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-cache-a',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: { provider: 'codex', accountId: 'chatgpt-cache-a', email: 'cache-a@example.com' },
+      }),
+    }).returning().get();
+    const accountB = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'cache-b@example.com',
+      accessToken: 'oauth-cache-access-b',
+      apiToken: null,
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'chatgpt-cache-b',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: { provider: 'codex', accountId: 'chatgpt-cache-b', email: 'cache-b@example.com' },
+      }),
+    }).returning().get();
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.4',
+      routingStrategy: 'weighted',
+      enabled: true,
+    }).returning().get();
+    const routeUnit = await db.insert(schema.oauthRouteUnits).values({
+      siteId: site.id,
+      provider: 'codex',
+      name: 'Cache Pool',
+      strategy: 'round_robin',
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.oauthRouteUnitMembers).values([
+      { unitId: routeUnit.id, accountId: accountA.id, sortOrder: 0 },
+      { unitId: routeUnit.id, accountId: accountB.id, sortOrder: 1 },
+    ]).run();
+    await db.insert(schema.modelAvailability).values([
+      { accountId: accountA.id, modelName: 'gpt-5.4', available: true },
+      { accountId: accountB.id, modelName: 'gpt-5.4', available: true },
+    ]).run();
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountA.id,
+      tokenId: null,
+      oauthRouteUnitId: routeUnit.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      manualOverride: false,
+    }).returning().get();
+
+    tokenRouterTestUtils.rememberStableFirstSiteSelectionForKey('999:other-model', 77);
+    expect(tokenRouterTestUtils.getStableFirstRotationCacheSize()).toBe(1);
+
+    const router = new TokenRouter();
+    const selected = await router.selectChannel('gpt-5.4');
+    expect(selected?.channel.id).toBe(channel.id);
+    expect(tokenRouterTestUtils.getStableFirstRotationCacheSize()).toBe(1);
+
+    await router.recordFailure(channel.id, { status: 503, errorText: 'pooled unavailable' }, accountA.id);
+    expect(tokenRouterTestUtils.getStableFirstRotationCacheSize()).toBe(1);
   });
 
   it('fails closed when a pooled channel has no loaded members', async () => {
