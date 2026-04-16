@@ -48,7 +48,7 @@ type NormalizedCodexQuotaHeaders = {
   };
 };
 
-const CODEX_QUOTA_PROBE_MODEL = 'gpt-5.1-codex';
+const CODEX_QUOTA_PROBE_MODEL = 'gpt-5.4';
 const CODEX_QUOTA_PROBE_VERSION = '0.101.0';
 const CODEX_QUOTA_PROBE_USER_AGENT = 'codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464';
 const CODEX_QUOTA_PROBE_BETA = 'responses-2025-03-11';
