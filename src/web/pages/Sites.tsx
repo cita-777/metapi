@@ -1,3 +1,8 @@
+/**
+ * @Author: 橘子
+ * @Project_description: Metapi 站点管理页
+ * @Description: 代码是我抄的，不会也是真的
+ */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
@@ -98,6 +103,23 @@ function resolveSiteCreatedSessionLabel(platform?: string | null): string {
   const normalized = String(platform || '').trim().toLowerCase();
   if (normalized === 'codex') return '添加 OAuth 连接';
   return '添加账号（用户名密码登录）';
+}
+
+/**
+ * 跳转到站点对应的连接补全流程。
+ */
+function buildSiteConnectionSearchParams(input: {
+  siteId: number;
+  initializationPresetId?: string | null;
+}) {
+  const params = new URLSearchParams({
+    create: '1',
+    siteId: String(input.siteId),
+  });
+  if (input.initializationPresetId) {
+    params.set('initPreset', input.initializationPresetId);
+  }
+  return params;
 }
 
 function formatSubscriptionDate(value?: string | null): string {
@@ -680,32 +702,45 @@ export default function Sites() {
     });
   };
 
-  const handleSiteCreatedChoice = (choice: 'session' | 'apikey' | 'later') => {
-    if (!createdSiteForChoice) return;
-
-    const siteId = createdSiteForChoice.id;
-    const platform = createdSiteForChoice.platform?.toLowerCase().trim();
-    const params = new URLSearchParams({
-      create: '1',
-      siteId: String(siteId),
+  /**
+   * 从站点页进入账号/API Key 连接创建流程。
+   */
+  const openSiteConnectionFlow = (input: {
+    siteId: number;
+    platform?: string | null;
+    initializationPresetId?: string | null;
+    choice: 'session' | 'apikey';
+  }) => {
+    const platform = input.platform?.toLowerCase().trim();
+    const params = buildSiteConnectionSearchParams({
+      siteId: input.siteId,
+      initializationPresetId: input.initializationPresetId,
     });
-    if (createdSiteForChoice.initializationPresetId) {
-      params.set('initPreset', createdSiteForChoice.initializationPresetId);
-    }
 
-    if (choice === 'session') {
-      // codex平台使用OAuth流程
+    if (input.choice === 'session') {
       if (platform === 'codex') {
         params.set('provider', 'codex');
         navigate(`/oauth?${params.toString()}`);
-      } else {
-        // 其他平台跳转到账号创建页面（session模式）
-        navigate(`/accounts?${params.toString()}`);
+        return;
       }
-    } else if (choice === 'apikey') {
-      // 跳转到账号创建页面（apikey模式）
-      params.set('segment', 'apikey');
       navigate(`/accounts?${params.toString()}`);
+      return;
+    }
+
+    params.set('segment', 'apikey');
+    navigate(`/accounts?${params.toString()}`);
+  };
+
+  const handleSiteCreatedChoice = (choice: 'session' | 'apikey' | 'later') => {
+    if (!createdSiteForChoice) return;
+
+    if (choice === 'session' || choice === 'apikey') {
+      openSiteConnectionFlow({
+        siteId: createdSiteForChoice.id,
+        platform: createdSiteForChoice.platform,
+        initializationPresetId: createdSiteForChoice.initializationPresetId,
+        choice,
+      });
     }
     // choice === 'later': 不跳转，留在当前页面
 
@@ -788,6 +823,18 @@ export default function Sites() {
     } finally {
       setTogglingSiteId(null);
     }
+  };
+
+  /**
+   * 从站点列表直接进入 API Key 批量添加入口。
+   */
+  const handleOpenSiteApiKey = (site: SiteRow) => {
+    openSiteConnectionFlow({
+      siteId: site.id,
+      platform: site.platform,
+      initializationPresetId: detectSiteInitializationPreset(site.url, site.platform)?.id || null,
+      choice: 'apikey',
+    });
   };
 
   const handleTogglePin = async (site: SiteRow) => {
@@ -1579,6 +1626,12 @@ export default function Sites() {
                           {isExpanded ? '收起' : '详情'}
                         </button>
                         <button
+                          onClick={() => handleOpenSiteApiKey(site)}
+                          className="btn btn-link btn-link-primary"
+                        >
+                          添加 Key
+                        </button>
+                        <button
                           onClick={() => openEdit(site)}
                           className="btn btn-link btn-link-primary"
                         >
@@ -1896,6 +1949,12 @@ export default function Sites() {
                             </button>
                           </>
                         )}
+                        <button
+                          onClick={() => handleOpenSiteApiKey(site)}
+                          className="btn btn-link btn-link-primary"
+                        >
+                          添加 Key
+                        </button>
                         <button
                           onClick={() => openEdit(site)}
                           className="btn btn-link btn-link-primary"

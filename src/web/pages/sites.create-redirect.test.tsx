@@ -1,3 +1,8 @@
+/**
+ * @Author: 橘子
+ * @Project_description: Metapi 站点创建跳转测试
+ * @Description: 代码是我抄的，不会也是真的
+ */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
@@ -186,6 +191,44 @@ describe('Sites create redirect', () => {
     expect(rendered).toContain('provider=codex');
     expect(rendered).toContain('create=1');
     expect(rendered).toContain('siteId=24');
+  });
+
+  it('opens API key flow from site list action', async () => {
+    apiMock.getSites.mockResolvedValue([
+      {
+        id: 51,
+        name: 'List Site',
+        url: 'https://list.example.com',
+        platform: 'openai',
+      },
+    ]);
+
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <ToastProvider>
+            <MemoryRouter initialEntries={['/sites']}>
+              <Routes>
+                <Route path="/sites" element={<Sites />} />
+                <Route path="/accounts" element={<LocationProbe />} />
+              </Routes>
+            </MemoryRouter>
+          </ToastProvider>,
+        );
+      });
+      await flushMicrotasks();
+
+      const addKeyButton = findClickableButtonByText(root, '添加 Key');
+      await act(async () => {
+        addKeyButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(JSON.stringify(root.toJSON())).toContain('/accounts?create=1&siteId=51&segment=apikey');
+    } finally {
+      root?.unmount();
+    }
   });
 
   it('lists vendor-specific site types directly in the platform selector', async () => {
