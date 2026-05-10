@@ -114,7 +114,7 @@
     "mermaid": "^11.14.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^7.14.0",
+    "react-router-dom": "^7.15.0",
     "react-test-renderer": "^18.3.1",
     "sharp": "^0.34.5",
     "tailwindcss": "^4.0.0",
