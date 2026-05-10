@@ -80,7 +80,7 @@
     "electron-updater": "^6.6.2",
     "fastify": "^5.8.4",
     "get-port": "^7.2.0",
-    "marked": "^17.0.5",
+    "marked": "^18.0.3",
     "minimatch": "^10.2.5",
     "minimist": "^1.2.8",
     "mysql2": "^3.20.0",
