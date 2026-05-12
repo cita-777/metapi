@@ -119,6 +119,20 @@ describe('modelContextLengthCache', () => {
 
       expect(getModelContextLength('model-a', endpointScope)).toBe(64000);
     });
+
+    it('canonicalizes semantically equivalent endpoint urls to the same scope', () => {
+      const canonicalScope = buildEndpointModelContextLengthScope('https://API.EXAMPLE.com:443/v1/');
+      const equivalentScope = buildEndpointModelContextLengthScope(' https://api.example.com/v1 ');
+
+      expect(canonicalScope).toBe(equivalentScope);
+    });
+
+    it('keeps distinct endpoint paths in separate scopes', () => {
+      const rootScope = buildEndpointModelContextLengthScope('https://api.example.com');
+      const versionedScope = buildEndpointModelContextLengthScope('https://api.example.com/v1/');
+
+      expect(rootScope).not.toBe(versionedScope);
+    });
   });
 
   describe('hasModelContextLength', () => {

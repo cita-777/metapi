@@ -49,8 +49,27 @@ export function buildAccountModelContextLengthScope(accountId: number): string {
   return `account:${accountId}`;
 }
 
+function canonicalizeEndpointUrl(baseUrl: string): string {
+  const trimmed = baseUrl.trim();
+  if (!trimmed) return '';
+
+  try {
+    const url = new URL(trimmed);
+    const protocol = url.protocol.toLowerCase();
+    const hostname = url.hostname.toLowerCase();
+    const isDefaultPort =
+      (protocol === 'http:' && url.port === '80')
+      || (protocol === 'https:' && url.port === '443');
+    const port = !url.port || isDefaultPort ? '' : `:${url.port}`;
+    const pathname = url.pathname === '/' ? '' : url.pathname.replace(/\/+$/, '');
+    return `${protocol}//${hostname}${port}${pathname}`;
+  } catch {
+    return trimmed;
+  }
+}
+
 export function buildEndpointModelContextLengthScope(baseUrl: string): string {
-  return `endpoint:${normalizeKey(baseUrl)}`;
+  return `endpoint:${normalizeKey(canonicalizeEndpointUrl(baseUrl))}`;
 }
 
 /**
