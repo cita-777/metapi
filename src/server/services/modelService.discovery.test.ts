@@ -3,6 +3,12 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
+import {
+  buildAccountModelContextLengthScope,
+  clearModelContextLengthCache,
+  setModelContextLengths,
+  getModelContextLength,
+} from './modelContextLengthCache.js';
 
 const getApiTokenMock = vi.fn();
 const getModelsMock = vi.fn();
@@ -70,6 +76,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     undiciFetchMock.mockReset();
     proxyAgentCtorMock.mockReset();
     refreshOauthAccessTokenSingleflightMock.mockReset();
+    clearModelContextLengthCache();
 
     await db.delete(schema.routeChannels).run();
     await db.delete(schema.tokenRoutes).run();
@@ -137,6 +144,71 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(tokenRows).toHaveLength(0);
   });
 
+  it('preserves earlier context-length entries when later credential scans return only a subset', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockImplementation(async (_baseUrl: string, token: string, _platformUserId: unknown, contextScope?: string) => {
+      if (!contextScope) return [];
+
+      if (token === 'session-token') {
+        setModelContextLengths(new Map([
+          ['model-a', 128000],
+          ['model-b', 256000],
+        ]), contextScope);
+        return ['model-a', 'model-b'];
+      }
+
+      if (token === 'managed-token-subset') {
+        setModelContextLengths(new Map([
+          ['model-a', 128000],
+        ]), contextScope);
+        return ['model-a'];
+      }
+
+      return [];
+    });
+
+    const site = await db.insert(schema.sites).values({
+      name: 'site-context-merge',
+      url: 'https://site-context-merge.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'context-merge-user',
+      accessToken: 'session-token',
+      apiToken: null,
+      status: 'active',
+      extraConfig: JSON.stringify({ credentialMode: 'session' }),
+    }).returning().get();
+
+    await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'subset-token',
+      token: 'managed-token-subset',
+      source: 'manual',
+      enabled: true,
+      isDefault: true,
+      valueStatus: 'ready',
+    }).run();
+
+    const result = await refreshModelsForAccount(account.id);
+    const contextScope = buildAccountModelContextLengthScope(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      status: 'success',
+      modelCount: 2,
+      modelsPreview: ['model-a', 'model-b'],
+      tokenScanned: 1,
+      discoveredByCredential: true,
+    });
+    expect(getModelContextLength('model-a', contextScope)).toBe(128000);
+    expect(getModelContextLength('model-b', contextScope)).toBe(256000);
+  });
+
   it('uses the configured ai endpoint for direct model discovery credentials', async () => {
     getApiTokenMock.mockResolvedValue(null);
     getModelsMock.mockImplementation(async (baseUrl: string, token: string) => (
@@ -177,7 +249,12 @@ describe('refreshModelsForAccount credential discovery', () => {
       modelCount: 1,
       modelsPreview: ['gpt-4.1'],
     });
-    expect(getModelsMock).toHaveBeenCalledWith('https://api.example.com', 'session-token', undefined);
+    expect(getModelsMock).toHaveBeenCalledWith(
+      'https://api.example.com',
+      'session-token',
+      undefined,
+      expect.stringMatching(/^account:\d+:scan:\d+$/),
+    );
   });
 
   it('deduplicates discovered model names before writing availability rows', async () => {

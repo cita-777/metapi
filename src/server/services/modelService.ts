@@ -27,7 +27,12 @@ import { isCodexPlatform } from './oauth/codexAccount.js';
 import { buildStoredOauthStateFromAccount, getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { refreshOauthAccessTokenSingleflight } from './oauth/refreshSingleflight.js';
 import { listEnabledOauthRouteUnitsWithMembers } from './oauth/routeUnitService.js';
-import { buildAccountModelContextLengthScope } from './modelContextLengthCache.js';
+import {
+  buildAccountModelContextLengthScope,
+  clearModelContextLengthCache,
+  getAllModelContextLengths,
+  setModelContextLengths,
+} from './modelContextLengthCache.js';
 import { requireSiteApiBaseUrl } from './siteApiEndpointService.js';
 import {
   discoverAntigravityModelsFromCloud,
@@ -887,6 +892,8 @@ export async function refreshModelsForAccount(
   const accountModels = new Map<string, string>();   // lowercase key → original name (first-wins)
   const modelLatency = new Map<string, number | null>();
   const modelContextScope = buildAccountModelContextLengthScope(account.id);
+  const discoveredContextLengths = new Map<string, number>();
+  let modelContextScanCounter = 0;
   let scannedTokenCount = 0;
   let discoveredByCredential = false;
   const attemptedCredentials = new Set<string>();
@@ -910,6 +917,15 @@ export async function refreshModelsForAccount(
     }
   };
 
+  const beginModelContextScanScope = () => `${modelContextScope}:scan:${modelContextScanCounter += 1}`;
+
+  const collectModelContextLengthsFromScope = (sourceScope: string) => {
+    for (const [modelName, contextLength] of getAllModelContextLengths(sourceScope)) {
+      discoveredContextLengths.set(modelName, contextLength);
+    }
+    clearModelContextLengthCache(sourceScope);
+  };
+
   const discoverModelsWithCredential = async (credentialRaw: string | null | undefined) => {
     const credential = (credentialRaw || '').trim();
     if (!credential) return;
@@ -918,12 +934,13 @@ export async function refreshModelsForAccount(
     attemptedCredentials.add(credential);
 
     const startedAt = Date.now();
+    const credentialContextScope = beginModelContextScanScope();
     let models: string[] = [];
     try {
       models = normalizeModels(
         await withTimeout(
           () => withAccountProxyOverride(accountProxyUrl,
-            () => adapter.getModels(aiBaseUrl, credential, platformUserId, modelContextScope)),
+            () => adapter.getModels(aiBaseUrl, credential, platformUserId, credentialContextScope)),
           MODEL_DISCOVERY_TIMEOUT_MS,
           `model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
         ),
@@ -931,6 +948,8 @@ export async function refreshModelsForAccount(
     } catch (err) {
       recordFailure(err);
       models = [];
+    } finally {
+      collectModelContextLengthsFromScope(credentialContextScope);
     }
     if (models.length === 0) return;
     discoveredByCredential = true;
@@ -945,13 +964,14 @@ export async function refreshModelsForAccount(
 
   for (const token of enabledTokens) {
     const startedAt = Date.now();
+    const tokenContextScope = beginModelContextScanScope();
     let models: string[] = [];
 
     try {
       models = normalizeModels(
         await withTimeout(
           () => withAccountProxyOverride(accountProxyUrl,
-            () => adapter.getModels(aiBaseUrl, token.token, platformUserId, modelContextScope)),
+            () => adapter.getModels(aiBaseUrl, token.token, platformUserId, tokenContextScope)),
           MODEL_DISCOVERY_TIMEOUT_MS,
           `model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
         ),
@@ -959,6 +979,8 @@ export async function refreshModelsForAccount(
     } catch (err) {
       recordFailure(err);
       models = [];
+    } finally {
+      collectModelContextLengthsFromScope(tokenContextScope);
     }
 
     if (models.length === 0) continue;
@@ -1014,6 +1036,7 @@ export async function refreshModelsForAccount(
       })),
     ).run();
   }
+  setModelContextLengths(discoveredContextLengths, modelContextScope);
 
   await setAccountRuntimeHealth(account.id, {
     state: 'healthy',
