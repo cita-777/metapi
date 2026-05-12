@@ -3,7 +3,11 @@ import type { RequestInit as UndiciRequestInit } from 'undici';
 import { createContext, runInContext } from 'node:vm';
 import { withSiteProxyRequestInit } from '../siteProxy.js';
 import { fetchJsonWithShieldCookieRetry } from './newApiShield.js';
-import { extractContextLengthsFromPayload, setModelContextLengths } from '../modelContextLengthCache.js';
+import {
+  buildEndpointModelContextLengthScope,
+  extractContextLengthsFromPayload,
+  setModelContextLengths,
+} from '../modelContextLengthCache.js';
 
 export class NewApiAdapter extends BasePlatformAdapter {
   readonly platformName: string = 'new-api';
@@ -838,17 +842,18 @@ export class NewApiAdapter extends BasePlatformAdapter {
     return [];
   }
 
-  private extractOpenAiModels(payload: any): string[] {
+  private extractOpenAiModels(payload: any, sourceScope: string): string[] {
     if (!Array.isArray(payload?.data)) return [];
-    // Also extract and cache context_length from upstream when available
     const contextLengths = extractContextLengthsFromPayload(payload);
-    if (contextLengths.size > 0) {
-      setModelContextLengths(contextLengths);
-    }
+    setModelContextLengths(contextLengths, sourceScope);
     return payload.data.map((m: any) => m?.id).filter(Boolean);
   }
 
-  private async getOpenAiModelsViaShieldCookie(baseUrl: string, token: string): Promise<string[]> {
+  private async getOpenAiModelsViaShieldCookie(
+    baseUrl: string,
+    token: string,
+    sourceScope: string,
+  ): Promise<string[]> {
     for (const cookie of this.buildCookieCandidates(token)) {
       try {
         const { data } = await fetchJsonWithShieldCookieRetry<any>(`${baseUrl}/v1/models`, {
@@ -857,17 +862,18 @@ export class NewApiAdapter extends BasePlatformAdapter {
             Cookie: cookie,
           },
         });
-        const models = this.extractOpenAiModels(data);
+        const models = this.extractOpenAiModels(data, sourceScope);
         if (models.length > 0) return models;
       } catch {}
     }
     return [];
   }
 
-  private async getOpenAiModels(baseUrl: string, token: string): Promise<string[]> {
+  private async getOpenAiModels(baseUrl: string, token: string, contextSourceScope?: string): Promise<string[]> {
+    const sourceScope = contextSourceScope || buildEndpointModelContextLengthScope(baseUrl);
     const shouldTryShieldCookie = this.platformName === 'anyrouter' || token.includes('=');
     if (shouldTryShieldCookie) {
-      const shieldModels = await this.getOpenAiModelsViaShieldCookie(baseUrl, token);
+      const shieldModels = await this.getOpenAiModelsViaShieldCookie(baseUrl, token, sourceScope);
       if (shieldModels.length > 0) return shieldModels;
     }
 
@@ -875,7 +881,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
       const res = await this.fetchJson<any>(`${baseUrl}/v1/models`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      return this.extractOpenAiModels(res);
+      return this.extractOpenAiModels(res, sourceScope);
     } catch {
       return [];
     }
@@ -1221,8 +1227,13 @@ export class NewApiAdapter extends BasePlatformAdapter {
     throw new Error(failureMessage || 'failed to fetch balance');
   }
 
-  async getModels(baseUrl: string, token: string, platformUserId?: number): Promise<string[]> {
-    const openAiModels = await this.getOpenAiModels(baseUrl, token);
+  async getModels(
+    baseUrl: string,
+    token: string,
+    platformUserId?: number,
+    contextSourceScope?: string,
+  ): Promise<string[]> {
+    const openAiModels = await this.getOpenAiModels(baseUrl, token, contextSourceScope);
     if (openAiModels.length > 0) return openAiModels;
 
     const userId = platformUserId || await this.discoverUserId(baseUrl, token);

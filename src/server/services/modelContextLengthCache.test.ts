@@ -1,5 +1,7 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import {
+  buildAccountModelContextLengthScope,
+  buildEndpointModelContextLengthScope,
   setModelContextLength,
   setModelContextLengths,
   getModelContextLength,
@@ -10,43 +12,60 @@ import {
 } from './modelContextLengthCache.js';
 
 describe('modelContextLengthCache', () => {
+  const primaryAccountScope = buildAccountModelContextLengthScope(101);
+  const secondaryAccountScope = buildAccountModelContextLengthScope(202);
+  const endpointScope = buildEndpointModelContextLengthScope('https://api.example.com/v1');
+
   beforeEach(() => {
     clearModelContextLengthCache();
   });
 
   describe('setModelContextLength / getModelContextLength', () => {
     it('stores and retrieves context length for a model', () => {
-      setModelContextLength('gpt-4o', 128000);
-      expect(getModelContextLength('gpt-4o')).toBe(128000);
+      setModelContextLength('gpt-4o', 128000, primaryAccountScope);
+      expect(getModelContextLength('gpt-4o', primaryAccountScope)).toBe(128000);
     });
 
     it('returns default 1_000_000 when model is not in cache', () => {
-      expect(getModelContextLength('unknown-model')).toBe(1_000_000);
+      expect(getModelContextLength('unknown-model', primaryAccountScope)).toBe(1_000_000);
     });
 
     it('normalizes model name case-insensitively', () => {
-      setModelContextLength('GPT-4o', 128000);
-      expect(getModelContextLength('gpt-4o')).toBe(128000);
-      expect(getModelContextLength('GPT-4O')).toBe(128000);
+      setModelContextLength('GPT-4o', 128000, primaryAccountScope);
+      expect(getModelContextLength('gpt-4o', primaryAccountScope)).toBe(128000);
+      expect(getModelContextLength('GPT-4O', primaryAccountScope)).toBe(128000);
     });
 
     it('ignores invalid values', () => {
-      setModelContextLength('', 128000);
-      expect(hasModelContextLength('')).toBe(false);
+      setModelContextLength('', 128000, primaryAccountScope);
+      expect(hasModelContextLength('', primaryAccountScope)).toBe(false);
 
-      setModelContextLength('model-a', NaN);
-      expect(hasModelContextLength('model-a')).toBe(false);
+      setModelContextLength('model-a', NaN, primaryAccountScope);
+      expect(hasModelContextLength('model-a', primaryAccountScope)).toBe(false);
 
-      setModelContextLength('model-b', -100);
-      expect(hasModelContextLength('model-b')).toBe(false);
+      setModelContextLength('model-b', -100, primaryAccountScope);
+      expect(hasModelContextLength('model-b', primaryAccountScope)).toBe(false);
 
-      setModelContextLength('model-c', 0);
-      expect(hasModelContextLength('model-c')).toBe(false);
+      setModelContextLength('model-c', 0, primaryAccountScope);
+      expect(hasModelContextLength('model-c', primaryAccountScope)).toBe(false);
+    });
+
+    it('rejects whitespace-only model names after normalization', () => {
+      setModelContextLength('   ', 128000, primaryAccountScope);
+      expect(hasModelContextLength('   ', primaryAccountScope)).toBe(false);
     });
 
     it('rounds fractional values', () => {
-      setModelContextLength('model', 128000.7);
-      expect(getModelContextLength('model')).toBe(128001);
+      setModelContextLength('model', 128000.7, primaryAccountScope);
+      expect(getModelContextLength('model', primaryAccountScope)).toBe(128001);
+    });
+
+    it('scopes entries per account to avoid cross-account overwrites', () => {
+      setModelContextLength('gpt-4o', 128000, primaryAccountScope);
+      setModelContextLength('gpt-4o', 200000, secondaryAccountScope);
+
+      expect(getModelContextLength('gpt-4o', primaryAccountScope)).toBe(128000);
+      expect(getModelContextLength('gpt-4o', secondaryAccountScope)).toBe(200000);
     });
   });
 
@@ -57,11 +76,11 @@ describe('modelContextLengthCache', () => {
         ['model-b', 200000],
         ['model-c', 1_000_000],
       ]);
-      setModelContextLengths(entries);
+      setModelContextLengths(entries, primaryAccountScope);
 
-      expect(getModelContextLength('model-a')).toBe(128000);
-      expect(getModelContextLength('model-b')).toBe(200000);
-      expect(getModelContextLength('model-c')).toBe(1_000_000);
+      expect(getModelContextLength('model-a', primaryAccountScope)).toBe(128000);
+      expect(getModelContextLength('model-b', primaryAccountScope)).toBe(200000);
+      expect(getModelContextLength('model-c', primaryAccountScope)).toBe(1_000_000);
     });
 
     it('ignores invalid entries in bulk', () => {
@@ -69,30 +88,64 @@ describe('modelContextLengthCache', () => {
         ['valid-model', 128000],
         ['', 200000],
         ['nan-model', NaN],
+        ['   ', 180000],
       ]);
-      setModelContextLengths(entries);
+      setModelContextLengths(entries, primaryAccountScope);
 
-      expect(getModelContextLength('valid-model')).toBe(128000);
-      expect(hasModelContextLength('')).toBe(false);
-      expect(hasModelContextLength('nan-model')).toBe(false);
+      expect(getModelContextLength('valid-model', primaryAccountScope)).toBe(128000);
+      expect(hasModelContextLength('', primaryAccountScope)).toBe(false);
+      expect(hasModelContextLength('nan-model', primaryAccountScope)).toBe(false);
+      expect(hasModelContextLength('   ', primaryAccountScope)).toBe(false);
+    });
+
+    it('replaces previous values for the same source scope to clear stale metadata', () => {
+      setModelContextLengths(new Map([
+        ['model-a', 128000],
+        ['model-b', 200000],
+      ]), primaryAccountScope);
+
+      setModelContextLengths(new Map([
+        ['model-a', 256000],
+      ]), primaryAccountScope);
+
+      expect(getModelContextLength('model-a', primaryAccountScope)).toBe(256000);
+      expect(getModelContextLength('model-b', primaryAccountScope)).toBe(1_000_000);
+    });
+
+    it('can use endpoint scopes when no account scope is available', () => {
+      setModelContextLengths(new Map([
+        ['model-a', 64000],
+      ]), endpointScope);
+
+      expect(getModelContextLength('model-a', endpointScope)).toBe(64000);
     });
   });
 
   describe('hasModelContextLength', () => {
     it('returns true only for cached models', () => {
-      expect(hasModelContextLength('gpt-4o')).toBe(false);
-      setModelContextLength('gpt-4o', 128000);
-      expect(hasModelContextLength('gpt-4o')).toBe(true);
+      expect(hasModelContextLength('gpt-4o', primaryAccountScope)).toBe(false);
+      setModelContextLength('gpt-4o', 128000, primaryAccountScope);
+      expect(hasModelContextLength('gpt-4o', primaryAccountScope)).toBe(true);
     });
   });
 
   describe('clearModelContextLengthCache', () => {
     it('clears all entries', () => {
-      setModelContextLength('model-a', 128000);
-      setModelContextLength('model-b', 200000);
+      setModelContextLength('model-a', 128000, primaryAccountScope);
+      setModelContextLength('model-b', 200000, secondaryAccountScope);
       clearModelContextLengthCache();
-      expect(hasModelContextLength('model-a')).toBe(false);
-      expect(hasModelContextLength('model-b')).toBe(false);
+      expect(hasModelContextLength('model-a', primaryAccountScope)).toBe(false);
+      expect(hasModelContextLength('model-b', secondaryAccountScope)).toBe(false);
+    });
+
+    it('can clear a single source scope without affecting others', () => {
+      setModelContextLength('model-a', 128000, primaryAccountScope);
+      setModelContextLength('model-a', 256000, secondaryAccountScope);
+
+      clearModelContextLengthCache(primaryAccountScope);
+
+      expect(hasModelContextLength('model-a', primaryAccountScope)).toBe(false);
+      expect(getModelContextLength('model-a', secondaryAccountScope)).toBe(256000);
     });
   });
 
@@ -194,9 +247,9 @@ describe('modelContextLengthCache', () => {
 
   describe('getAllModelContextLengths', () => {
     it('returns all cached entries', () => {
-      setModelContextLength('a', 100);
-      setModelContextLength('b', 200);
-      const all = getAllModelContextLengths();
+      setModelContextLength('a', 100, primaryAccountScope);
+      setModelContextLength('b', 200, primaryAccountScope);
+      const all = getAllModelContextLengths(primaryAccountScope);
       expect(all.size).toBe(2);
       expect(all.get('a')).toBe(100);
       expect(all.get('b')).toBe(200);

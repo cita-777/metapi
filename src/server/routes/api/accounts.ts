@@ -58,6 +58,7 @@ import {
   parseBatchApiKeys,
 } from "../../services/apiKeyBatch.js";
 import { createManualAccount } from "../../services/manualAccountCreationService.js";
+import { removeManualModelsFromAccount } from "../../services/accountManualModelService.js";
 
 type AccountWithSiteRow = {
   accounts: typeof schema.accounts.$inferSelect;
@@ -1967,19 +1968,7 @@ export async function accountsRoutes(app: FastifyInstance) {
       }
 
       try {
-        for (const modelName of normalizedModels) {
-          await db
-            .delete(schema.modelAvailability)
-            .where(
-              and(
-                eq(schema.modelAvailability.accountId, accountId),
-                eq(schema.modelAvailability.modelName, modelName),
-                eq(schema.modelAvailability.isManual, true),
-              ),
-            )
-            .run();
-        }
-        await rebuildRoutesBestEffort();
+        await removeManualModelsFromAccount(accountId, normalizedModels);
 
         return { success: true };
       } catch (err: any) {

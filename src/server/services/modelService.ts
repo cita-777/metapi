@@ -27,6 +27,7 @@ import { isCodexPlatform } from './oauth/codexAccount.js';
 import { buildStoredOauthStateFromAccount, getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { refreshOauthAccessTokenSingleflight } from './oauth/refreshSingleflight.js';
 import { listEnabledOauthRouteUnitsWithMembers } from './oauth/routeUnitService.js';
+import { buildAccountModelContextLengthScope } from './modelContextLengthCache.js';
 import { requireSiteApiBaseUrl } from './siteApiEndpointService.js';
 import {
   discoverAntigravityModelsFromCloud,
@@ -885,6 +886,7 @@ export async function refreshModelsForAccount(
 
   const accountModels = new Map<string, string>();   // lowercase key → original name (first-wins)
   const modelLatency = new Map<string, number | null>();
+  const modelContextScope = buildAccountModelContextLengthScope(account.id);
   let scannedTokenCount = 0;
   let discoveredByCredential = false;
   const attemptedCredentials = new Set<string>();
@@ -921,7 +923,7 @@ export async function refreshModelsForAccount(
       models = normalizeModels(
         await withTimeout(
           () => withAccountProxyOverride(accountProxyUrl,
-            () => adapter.getModels(aiBaseUrl, credential, platformUserId)),
+            () => adapter.getModels(aiBaseUrl, credential, platformUserId, modelContextScope)),
           MODEL_DISCOVERY_TIMEOUT_MS,
           `model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
         ),
@@ -949,7 +951,7 @@ export async function refreshModelsForAccount(
       models = normalizeModels(
         await withTimeout(
           () => withAccountProxyOverride(accountProxyUrl,
-            () => adapter.getModels(aiBaseUrl, token.token, platformUserId)),
+            () => adapter.getModels(aiBaseUrl, token.token, platformUserId, modelContextScope)),
           MODEL_DISCOVERY_TIMEOUT_MS,
           `model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
         ),

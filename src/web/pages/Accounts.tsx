@@ -715,6 +715,8 @@ export default function Accounts() {
 
   const handleAddManualModels = async () => {
     if (!modelModal.account || !modelModal.manualModelsInput.trim()) return;
+    const account = modelModal.account;
+    const requestId = modelModalRequestSeqRef.current;
     const modelsToAdd = modelModal.manualModelsInput
       .split(",")
       .map((m) => m.trim())
@@ -729,8 +731,9 @@ export default function Accounts() {
       );
       if (res.success) {
         toast.success("模型已手动添加");
+        if (modelModalRequestSeqRef.current !== requestId) return;
         setModelModal((s) => ({ ...s, manualModelsInput: "" }));
-        await loadModelModalModels(modelModal.account, {
+        await loadModelModalModels(account, {
           refreshUpstream: false,
         });
       } else {
@@ -3479,10 +3482,13 @@ export default function Accounts() {
         onAddManualModels={handleAddManualModels}
         onRemoveManualModel={async (modelName) => {
           if (!modelModal.account) return;
+          const account = modelModal.account;
+          const requestId = modelModalRequestSeqRef.current;
           try {
-            await api.removeAccountManualModels(modelModal.account.id, [modelName]);
+            await api.removeAccountManualModels(account.id, [modelName]);
             toast.success(`已删除模型 ${modelName}`);
-            await loadModelModalModels(modelModal.account, {});
+            if (modelModalRequestSeqRef.current !== requestId) return;
+            await loadModelModalModels(account, {});
           } catch (err: any) {
             toast.error(err?.message || "删除失败");
           }

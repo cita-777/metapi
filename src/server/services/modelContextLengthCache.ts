@@ -9,58 +9,123 @@
  */
 
 const DEFAULT_CONTEXT_LENGTH = 1_000_000;
+const DEFAULT_SOURCE_SCOPE = '__default__';
 
-const cache = new Map<string, number>();
+const cache = new Map<string, Map<string, number>>();
 
 function normalizeKey(modelName: string): string {
   return modelName.trim().toLowerCase();
 }
 
+function normalizeSourceScope(sourceScope?: string): string {
+  const normalized = String(sourceScope || '').trim().toLowerCase();
+  return normalized || DEFAULT_SOURCE_SCOPE;
+}
+
+function getOrCreateScopeCache(sourceScope?: string): Map<string, number> {
+  const scopeKey = normalizeSourceScope(sourceScope);
+  const scopedCache = cache.get(scopeKey);
+  if (scopedCache) return scopedCache;
+  const next = new Map<string, number>();
+  cache.set(scopeKey, next);
+  return next;
+}
+
+function getNormalizedModelKey(modelName: string): string {
+  return normalizeKey(modelName);
+}
+
+function isValidContextLength(value: number): boolean {
+  return Number.isFinite(value) && value > 0;
+}
+
+function buildScopedEntryKey(sourceScope: string | undefined, modelName: string): [string, string] | null {
+  const normalizedModelName = getNormalizedModelKey(modelName);
+  if (!normalizedModelName) return null;
+  return [normalizeSourceScope(sourceScope), normalizedModelName];
+}
+
+export function buildAccountModelContextLengthScope(accountId: number): string {
+  return `account:${accountId}`;
+}
+
+export function buildEndpointModelContextLengthScope(baseUrl: string): string {
+  return `endpoint:${normalizeKey(baseUrl)}`;
+}
+
 /**
  * Store context length for a single model.
  */
-export function setModelContextLength(modelName: string, contextLength: number): void {
-  if (!modelName || !Number.isFinite(contextLength) || contextLength <= 0) return;
-  cache.set(normalizeKey(modelName), Math.round(contextLength));
+export function setModelContextLength(
+  modelName: string,
+  contextLength: number,
+  sourceScope?: string,
+): void {
+  const scopedEntry = buildScopedEntryKey(sourceScope, modelName);
+  if (!scopedEntry || !isValidContextLength(contextLength)) return;
+  const [scopeKey, normalizedModelName] = scopedEntry;
+  getOrCreateScopeCache(scopeKey).set(normalizedModelName, Math.round(contextLength));
 }
 
 /**
  * Bulk-store context lengths from a map (e.g. extracted from upstream payload).
+ * Replaces the existing cache for the provided source scope so stale values
+ * do not linger when an upstream stops sending context metadata.
  */
-export function setModelContextLengths(entries: Map<string, number>): void {
+export function setModelContextLengths(
+  entries: Map<string, number>,
+  sourceScope?: string,
+): void {
+  const scopeKey = normalizeSourceScope(sourceScope);
+  const nextScopeCache = new Map<string, number>();
   for (const [name, length] of entries) {
-    if (name && Number.isFinite(length) && length > 0) {
-      cache.set(normalizeKey(name), Math.round(length));
-    }
+    const scopedEntry = buildScopedEntryKey(scopeKey, name);
+    if (!scopedEntry || !isValidContextLength(length)) continue;
+    nextScopeCache.set(scopedEntry[1], Math.round(length));
   }
+
+  if (nextScopeCache.size === 0) {
+    cache.delete(scopeKey);
+    return;
+  }
+
+  cache.set(scopeKey, nextScopeCache);
 }
 
 /**
  * Get context length for a model. Returns the default if not found.
  */
-export function getModelContextLength(modelName: string): number {
-  return cache.get(normalizeKey(modelName)) ?? DEFAULT_CONTEXT_LENGTH;
+export function getModelContextLength(modelName: string, sourceScope?: string): number {
+  const scopedEntry = buildScopedEntryKey(sourceScope, modelName);
+  if (!scopedEntry) return DEFAULT_CONTEXT_LENGTH;
+  return cache.get(scopedEntry[0])?.get(scopedEntry[1]) ?? DEFAULT_CONTEXT_LENGTH;
 }
 
 /**
  * Check if a model has an explicit context length in the cache.
  */
-export function hasModelContextLength(modelName: string): boolean {
-  return cache.has(normalizeKey(modelName));
+export function hasModelContextLength(modelName: string, sourceScope?: string): boolean {
+  const scopedEntry = buildScopedEntryKey(sourceScope, modelName);
+  if (!scopedEntry) return false;
+  return cache.get(scopedEntry[0])?.has(scopedEntry[1]) ?? false;
 }
 
 /**
- * Get all cached entries (for diagnostics).
+ * Get cached entries for a specific source scope.
  */
-export function getAllModelContextLengths(): ReadonlyMap<string, number> {
-  return cache;
+export function getAllModelContextLengths(sourceScope?: string): ReadonlyMap<string, number> {
+  return cache.get(normalizeSourceScope(sourceScope)) ?? new Map<string, number>();
 }
 
 /**
  * Clear the cache (for testing or refresh).
  */
-export function clearModelContextLengthCache(): void {
-  cache.clear();
+export function clearModelContextLengthCache(sourceScope?: string): void {
+  if (sourceScope === undefined) {
+    cache.clear();
+    return;
+  }
+  cache.delete(normalizeSourceScope(sourceScope));
 }
 
 /**

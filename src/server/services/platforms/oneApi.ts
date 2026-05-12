@@ -1,4 +1,9 @@
 import { ApiTokenInfo, BasePlatformAdapter, CheckinResult, BalanceInfo, CreateApiTokenOptions } from './base.js';
+import {
+  buildEndpointModelContextLengthScope,
+  extractContextLengthsFromPayload,
+  setModelContextLengths,
+} from '../modelContextLengthCache.js';
 
 type CreateApiTokenPayload = {
   name: string;
@@ -76,10 +81,19 @@ export class OneApiAdapter extends BasePlatformAdapter {
     return { balance: quota - used, used, quota, todayIncome, todayQuotaConsumption };
   }
 
-  async getModels(baseUrl: string, apiToken: string, _platformUserId?: number): Promise<string[]> {
+  async getModels(
+    baseUrl: string,
+    apiToken: string,
+    _platformUserId?: number,
+    contextSourceScope?: string,
+  ): Promise<string[]> {
     const res = await this.fetchJson<any>(`${baseUrl}/v1/models`, {
       headers: { Authorization: `Bearer ${apiToken}` },
     });
+    setModelContextLengths(
+      extractContextLengthsFromPayload(res),
+      contextSourceScope || buildEndpointModelContextLengthScope(baseUrl),
+    );
     return (res?.data || []).map((m: any) => m.id).filter(Boolean);
   }
 
