@@ -192,11 +192,6 @@ describe('NewApiAdapter', () => {
           res.end(JSON.stringify({ success: false, message: 'unauthorized' }));
           return;
         }
-        if (typeof req.headers.authorization === 'string' && req.headers.authorization === `Bearer auth_token=${AUTH_TOKEN_SIGNIN_ONLY_TOKEN}`) {
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, message: 'unauthorized' }));
-          return;
-        }
         if (typeof req.headers.authorization === 'string' && req.headers.authorization === `Bearer ${COOKIE_SHIELDED_TOKEN}`) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, message: 'unauthorized' }));
@@ -523,19 +518,6 @@ describe('NewApiAdapter', () => {
 
       if (req.url === '/api/user/sign_in') {
         if (typeof req.headers.cookie === 'string' && req.headers.cookie.includes(`auth_token=${AUTH_TOKEN_SIGNIN_ONLY_TOKEN}`)) {
-          if (req.headers['new-api-user'] !== '5566') {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: false, message: 'missing New-Api-User' }));
-            return;
-          }
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: true, message: 'checked-in-via-sign-in' }));
-          return;
-        }
-        if (
-          typeof req.headers.cookie === 'string'
-          && req.headers.cookie.includes(`auth_token=${AUTH_TOKEN_SIGNIN_ONLY_TOKEN}`)
-        ) {
           if (req.headers['new-api-user'] !== '5566') {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: false, message: 'missing New-Api-User' }));

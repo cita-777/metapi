@@ -60,7 +60,6 @@ import {
 import { createManualAccount } from "../../services/manualAccountCreationService.js";
 import {
   AccountManualModelServiceError,
-  ensureManualModelAccountExists,
   removeManualModelsFromAccount,
 } from "../../services/accountManualModelService.js";
 
@@ -1962,7 +1961,6 @@ export async function accountsRoutes(app: FastifyInstance) {
       }
 
       try {
-        await ensureManualModelAccountExists(accountId);
         await removeManualModelsFromAccount(accountId, normalizedModels);
 
         return { success: true };

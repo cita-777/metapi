@@ -246,8 +246,13 @@ describe('refreshModelsForAccount credential discovery', () => {
 
     const firstRefresh = refreshModelsForAccount(account.id);
     const secondRefresh = refreshModelsForAccount(account.id);
-    await Promise.resolve();
-    await Promise.resolve();
+    const waitDeadline = Date.now() + 5_000;
+    while (seenScopes.length < 2) {
+      if (Date.now() > waitDeadline) {
+        throw new Error(`Timed out waiting for concurrent refresh scopes, saw ${seenScopes.length}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
     releaseGate?.();
 
     const [firstResult, secondResult] = await Promise.all([firstRefresh, secondRefresh]);

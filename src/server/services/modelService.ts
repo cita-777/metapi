@@ -1037,7 +1037,9 @@ export async function refreshModelsForAccount(
       })),
     ).run();
   }
-  setModelContextLengths(discoveredContextLengths, modelContextScope);
+  if (discoveredContextLengths.size > 0) {
+    setModelContextLengths(discoveredContextLengths, modelContextScope);
+  }
 
   await setAccountRuntimeHealth(account.id, {
     state: 'healthy',
