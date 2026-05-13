@@ -209,6 +209,43 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(getModelContextLength('model-b', contextScope)).toBe(256000);
   });
 
+  it('clears stale account context-length metadata when a successful refresh finds no lengths', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockResolvedValue(['model-a']);
+
+    const site = await db.insert(schema.sites).values({
+      name: 'site-context-clear',
+      url: 'https://site-context-clear.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'context-clear-user',
+      accessToken: 'session-token',
+      apiToken: null,
+      status: 'active',
+      extraConfig: JSON.stringify({ credentialMode: 'session' }),
+    }).returning().get();
+
+    const contextScope = buildAccountModelContextLengthScope(account.id);
+    setModelContextLengths(new Map([
+      ['model-a', 256000],
+    ]), contextScope);
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      status: 'success',
+      modelCount: 1,
+      modelsPreview: ['model-a'],
+    });
+    expect(getModelContextLength('model-a', contextScope)).toBe(1_000_000);
+  });
+
   it('uses unique temporary context scopes across concurrent refreshes for the same account', async () => {
     getApiTokenMock.mockResolvedValue(null);
 
