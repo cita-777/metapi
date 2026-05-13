@@ -32,13 +32,21 @@ export async function removeManualModelsFromAccount(
     modelNames.map((modelName) => String(modelName || '').trim()).filter((modelName) => modelName.length > 0),
   ));
 
-  if (normalizedModelNames.length === 0) {
-    return { deletedCount: 0 };
-  }
-
-  await ensureManualModelAccountExists(accountId);
-
   const deletedCount = await db.transaction(async (tx) => {
+    const account = await tx
+      .select({ id: schema.accounts.id })
+      .from(schema.accounts)
+      .where(eq(schema.accounts.id, accountId))
+      .get();
+
+    if (!account) {
+      throw new AccountManualModelServiceError('账号不存在', 404);
+    }
+
+    if (normalizedModelNames.length === 0) {
+      return 0;
+    }
+
     const result = await tx
       .delete(schema.modelAvailability)
       .where(and(
