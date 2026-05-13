@@ -209,6 +209,57 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(getModelContextLength('model-b', contextScope)).toBe(256000);
   });
 
+  it('uses unique temporary context scopes across concurrent refreshes for the same account', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+
+    const seenScopes: string[] = [];
+    let releaseGate: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+
+    getModelsMock.mockImplementation(async (_baseUrl: string, token: string, _platformUserId: unknown, contextScope?: string) => {
+      if (token === 'shared-session-token' && contextScope) {
+        seenScopes.push(contextScope);
+        if (seenScopes.length <= 2) {
+          await gate;
+        }
+      }
+      return [];
+    });
+
+    const site = await db.insert(schema.sites).values({
+      name: 'site-concurrent-context-scope',
+      url: 'https://site-concurrent-context-scope.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'concurrent-context-user',
+      accessToken: 'shared-session-token',
+      apiToken: null,
+      status: 'active',
+      extraConfig: JSON.stringify({ credentialMode: 'session' }),
+    }).returning().get();
+
+    const firstRefresh = refreshModelsForAccount(account.id);
+    const secondRefresh = refreshModelsForAccount(account.id);
+    await Promise.resolve();
+    await Promise.resolve();
+    releaseGate?.();
+
+    const [firstResult, secondResult] = await Promise.all([firstRefresh, secondRefresh]);
+
+    expect(firstResult.status).toBe('failed');
+    expect(secondResult.status).toBe('failed');
+    expect(seenScopes).toHaveLength(2);
+    expect(seenScopes[0]).not.toBe(seenScopes[1]);
+    expect(seenScopes[0]).toMatch(/^account:\d+:refresh:[^:]+:scan:1$/);
+    expect(seenScopes[1]).toMatch(/^account:\d+:refresh:[^:]+:scan:1$/);
+  });
+
   it('uses the configured ai endpoint for direct model discovery credentials', async () => {
     getApiTokenMock.mockResolvedValue(null);
     getModelsMock.mockImplementation(async (baseUrl: string, token: string) => (
@@ -253,7 +304,7 @@ describe('refreshModelsForAccount credential discovery', () => {
       'https://api.example.com',
       'session-token',
       undefined,
-      expect.stringMatching(/^account:\d+:scan:\d+$/),
+      expect.stringMatching(/^account:\d+:refresh:[^:]+:scan:\d+$/),
     );
   });
 

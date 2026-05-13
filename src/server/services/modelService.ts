@@ -1,4 +1,5 @@
 import { and, eq } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
 import { db, schema } from '../db/index.js';
 import { getInsertedRowId } from '../db/insertHelpers.js';
 import { getAdapter } from './platforms/index.js';
@@ -892,6 +893,7 @@ export async function refreshModelsForAccount(
   const accountModels = new Map<string, string>();   // lowercase key → original name (first-wins)
   const modelLatency = new Map<string, number | null>();
   const modelContextScope = buildAccountModelContextLengthScope(account.id);
+  const modelContextRefreshScope = `${modelContextScope}:refresh:${randomUUID()}`;
   const discoveredContextLengths = new Map<string, number>();
   let modelContextScanCounter = 0;
   let scannedTokenCount = 0;
@@ -917,7 +919,7 @@ export async function refreshModelsForAccount(
     }
   };
 
-  const beginModelContextScanScope = () => `${modelContextScope}:scan:${modelContextScanCounter += 1}`;
+  const beginModelContextScanScope = () => `${modelContextRefreshScope}:scan:${modelContextScanCounter += 1}`;
 
   const collectModelContextLengthsFromScope = (sourceScope: string) => {
     for (const [modelName, contextLength] of getAllModelContextLengths(sourceScope)) {
