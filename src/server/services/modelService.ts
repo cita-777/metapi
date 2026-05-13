@@ -1039,6 +1039,8 @@ export async function refreshModelsForAccount(
   }
   if (discoveredContextLengths.size > 0) {
     setModelContextLengths(discoveredContextLengths, modelContextScope);
+  } else {
+    clearModelContextLengthCache(modelContextScope);
   }
 
   await setAccountRuntimeHealth(account.id, {
