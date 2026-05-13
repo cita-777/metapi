@@ -74,6 +74,44 @@ describe('listModelsSurface', () => {
     });
   });
 
+  it('uses the most conservative context length across eligible routing candidates', async () => {
+    clearModelContextLengthCache();
+    setModelContextLength('shared-model', 200000, buildAccountModelContextLengthScope(41));
+    setModelContextLength('shared-model', 128000, buildAccountModelContextLengthScope(42));
+
+    const result = await listModelsSurface({
+      downstreamPolicy: { type: 'all' },
+      responseFormat: 'openai',
+      tokenRouter: {
+        getAvailableModels: vi.fn().mockResolvedValue(['shared-model']),
+        explainSelection: vi.fn().mockResolvedValue({
+          selectedChannelId: 4101,
+          selectedAccountId: 41,
+          candidates: [
+            { accountId: 41, eligible: true },
+            { accountId: 42, eligible: true },
+          ],
+        }),
+      },
+      refreshModelsAndRebuildRoutes: vi.fn(),
+      isModelAllowed: vi.fn().mockResolvedValue(true),
+      now: () => new Date('2026-03-19T00:00:00.000Z'),
+    });
+
+    expect(result).toEqual({
+      object: 'list',
+      data: [
+        {
+          id: 'shared-model',
+          object: 'model',
+          created: 1773878400,
+          owned_by: 'metapi',
+          context_length: 128000,
+        },
+      ],
+    });
+  });
+
   it('applies downstream policy filtering before selection checks and refreshes once when the first read is empty', async () => {
     clearModelContextLengthCache();
     setModelContextLength('allowed-model', 64000, buildAccountModelContextLengthScope(33));

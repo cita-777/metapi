@@ -17,6 +17,10 @@ type ModelsSurfaceInput = {
     explainSelection(modelName: string, excludeChannelIds: number[], downstreamPolicy: unknown): Promise<{
       selectedChannelId?: number | null;
       selectedAccountId?: number | null;
+      candidates?: Array<{
+        accountId?: number | null;
+        eligible?: boolean;
+      }>;
     }>;
   };
   refreshModelsAndRebuildRoutes(): Promise<unknown>;
@@ -24,7 +28,28 @@ type ModelsSurfaceInput = {
   now?: () => Date;
 };
 
-function resolveModelContextLength(modelName: string, selectedAccountId?: number | null): number {
+function resolveModelContextLength(
+  modelName: string,
+  selectedAccountId?: number | null,
+  candidates?: Array<{ accountId?: number | null; eligible?: boolean }>,
+): number {
+  const eligibleAccountIds = Array.from(new Set(
+    (Array.isArray(candidates) ? candidates : [])
+      .filter((candidate) => candidate?.eligible !== false)
+      .map((candidate) => candidate?.accountId)
+      .filter((accountId): accountId is number => typeof accountId === 'number' && accountId > 0),
+  ));
+
+  if (eligibleAccountIds.length > 0) {
+    return eligibleAccountIds.reduce((minValue, accountId) => {
+      const currentValue = getModelContextLength(
+        modelName,
+        buildAccountModelContextLengthScope(accountId),
+      );
+      return Math.min(minValue, currentValue);
+    }, Number.POSITIVE_INFINITY);
+  }
+
   if (typeof selectedAccountId === 'number' && selectedAccountId > 0) {
     return getModelContextLength(
       modelName,
@@ -36,11 +61,19 @@ function resolveModelContextLength(modelName: string, selectedAccountId?: number
 
 async function readVisibleModels(
   input: ModelsSurfaceInput,
-): Promise<Array<{ id: string; selectedAccountId?: number | null }>> {
+): Promise<Array<{
+  id: string;
+  selectedAccountId?: number | null;
+  candidates?: Array<{ accountId?: number | null; eligible?: boolean }>;
+}>> {
   const deduped = Array.from(new Set(await input.tokenRouter.getAvailableModels()))
     .filter((modelName) => !isSearchPseudoModel(modelName))
     .sort();
-  const allowed: Array<{ id: string; selectedAccountId?: number | null }> = [];
+  const allowed: Array<{
+    id: string;
+    selectedAccountId?: number | null;
+    candidates?: Array<{ accountId?: number | null; eligible?: boolean }>;
+  }> = [];
   for (const modelName of deduped) {
     if (!await input.isModelAllowed(modelName, input.downstreamPolicy)) {
       continue;
@@ -50,6 +83,7 @@ async function readVisibleModels(
       allowed.push({
         id: modelName,
         selectedAccountId: decision.selectedAccountId,
+        candidates: decision.candidates,
       });
     }
   }
@@ -78,7 +112,7 @@ export async function listModelsSurface(input: ModelsSurfaceInput) {
         type: 'model' as const,
         display_name: model.id,
         created_at: now.toISOString(),
-        context_length: resolveModelContextLength(model.id, model.selectedAccountId),
+        context_length: resolveModelContextLength(model.id, model.selectedAccountId, model.candidates),
       });
     }
     return {
@@ -96,7 +130,7 @@ export async function listModelsSurface(input: ModelsSurfaceInput) {
       object: 'model' as const,
       created: Math.floor(now.getTime() / 1000),
       owned_by: 'metapi',
-      context_length: resolveModelContextLength(model.id, model.selectedAccountId),
+      context_length: resolveModelContextLength(model.id, model.selectedAccountId, model.candidates),
     })),
   };
 }
