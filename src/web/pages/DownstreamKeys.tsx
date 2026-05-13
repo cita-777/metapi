@@ -77,7 +77,6 @@ type BatchMetadataForm = {
   tags: string[];
 };
 
-type DefaultRouteSelections = Pick<DownstreamKeyEditorForm, 'selectedModels' | 'selectedGroupRouteIds'>;
 function toDateTimeLocal(isoString: string | null | undefined): string {
   if (!isoString) return '';
   const ts = Date.parse(isoString);
@@ -166,7 +165,7 @@ function normalizeExcludedCredentialRefs(values: DownstreamExcludedCredentialRef
   return Array.from(deduped.values()).sort((left, right) => buildExcludedCredentialRefKey(left).localeCompare(buildExcludedCredentialRefKey(right)));
 }
 
-function buildDefaultRouteSelections(routeOptions: RouteSelectorItem[]): DefaultRouteSelections {
+function buildDefaultRouteSelections(routeOptions: RouteSelectorItem[]): { selectedModels: string[]; selectedGroupRouteIds: number[] } {
   return {
     selectedModels: uniqStrings(
       routeOptions
@@ -385,6 +384,23 @@ function summarizeTags(tags: string[]): string {
   return `${tags[0]} +${tags.length - 1}`;
 }
 
+function summarizeModelSelection(models: string[]): string {
+  if (!Array.isArray(models) || models.length === 0) return '全部模型';
+  if (models.length === 1) return models[0];
+  return `${models[0]} +${models.length - 1}`;
+}
+
+function summarizeRouteSelection(routeIds: number[], routeMap: Map<number, RouteSelectorItem>): string {
+  if (!Array.isArray(routeIds) || routeIds.length === 0) return '全部群组';
+  const names = routeIds
+    .map((id) => routeMap.get(id))
+    .filter(Boolean)
+    .map((item) => routeTitle(item!));
+  if (names.length === 0) return `${routeIds.length} 个群组`;
+  if (names.length === 1) return names[0];
+  return `${names[0]} +${names.length - 1}`;
+}
+
 function SummaryMetric({
   label,
   value,
@@ -473,6 +489,7 @@ export default function DownstreamKeys() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editorForm, setEditorForm] = useState<DownstreamKeyEditorForm>(() => buildEditorForm());
   const [createDefaultsPending, setCreateDefaultsPending] = useState(false);
+  const [createRouteSelectionTouched, setCreateRouteSelectionTouched] = useState(false);
   const [exclusionSourceLoading, setExclusionSourceLoading] = useState(false);
   const [exclusionSourceLoaded, setExclusionSourceLoaded] = useState(false);
   const [exclusionSiteOptions, setExclusionSiteOptions] = useState<DownstreamSiteOption[]>([]);
@@ -723,13 +740,17 @@ export default function DownstreamKeys() {
     return acc;
   }, { tokens: 0, requests: 0, cost: 0, enabled: 0 }), [visibleItems]);
 
+  const defaultRouteSelections = useMemo(
+    () => buildDefaultRouteSelections(routeOptions),
+    [routeOptions],
+  );
+
   useEffect(() => {
     if (!editorOpen || editingId !== null || !createDefaultsPending) {
       return;
     }
 
-    const defaultSelections = buildDefaultRouteSelections(routeOptions);
-    if (defaultSelections.selectedModels.length === 0 && defaultSelections.selectedGroupRouteIds.length === 0) {
+    if (defaultRouteSelections.selectedModels.length === 0 && defaultRouteSelections.selectedGroupRouteIds.length === 0) {
       return;
     }
 
@@ -739,18 +760,19 @@ export default function DownstreamKeys() {
       }
       return {
         ...prev,
-        selectedModels: defaultSelections.selectedModels,
-        selectedGroupRouteIds: defaultSelections.selectedGroupRouteIds,
+        selectedModels: defaultRouteSelections.selectedModels,
+        selectedGroupRouteIds: defaultRouteSelections.selectedGroupRouteIds,
       };
     });
     setCreateDefaultsPending(false);
-  }, [createDefaultsPending, editorOpen, editingId, routeOptions]);
+  }, [createDefaultsPending, defaultRouteSelections, editorOpen, editingId]);
 
   const openCreate = () => {
     setEditingId(null);
     setEditorForm(buildEditorForm(null, routeOptions, true));
-    setCreateDefaultsPending(true);
     setEditorOpen(true);
+    setCreateDefaultsPending(true);
+    setCreateRouteSelectionTouched(false);
   };
 
   const resetBatchMetadataForm = () => {
@@ -765,6 +787,7 @@ export default function DownstreamKeys() {
   const openEdit = (item: ManagedItem) => {
     setEditingId(item.id);
     setCreateDefaultsPending(false);
+    setCreateRouteSelectionTouched(false);
     setEditorForm(buildEditorForm(rawItemMap.get(item.id) || item));
     setEditorOpen(true);
   };
@@ -773,6 +796,7 @@ export default function DownstreamKeys() {
     setEditorOpen(false);
     setEditingId(null);
     setCreateDefaultsPending(false);
+    setCreateRouteSelectionTouched(false);
     setEditorForm(buildEditorForm());
   };
 
@@ -823,6 +847,17 @@ export default function DownstreamKeys() {
 
     setSaving(true);
     try {
+      const normalizedSelectedModels = uniqStrings(editorForm.selectedModels);
+      const normalizedSelectedGroupRouteIds = uniqIds(editorForm.selectedGroupRouteIds)
+        .filter((id) => routeMap.has(id) && isGroupRouteOption(routeMap.get(id)!));
+      const matchesDefaultRuntimeScope =
+        editingId === null
+        && !createRouteSelectionTouched
+        && normalizedSelectedModels.length === defaultRouteSelections.selectedModels.length
+        && normalizedSelectedModels.every((model, index) => model === defaultRouteSelections.selectedModels[index])
+        && normalizedSelectedGroupRouteIds.length === defaultRouteSelections.selectedGroupRouteIds.length
+        && normalizedSelectedGroupRouteIds.every((id, index) => id === defaultRouteSelections.selectedGroupRouteIds[index]);
+
       const payload = {
         name,
         key,
@@ -833,8 +868,8 @@ export default function DownstreamKeys() {
         expiresAt: editorForm.expiresAt ? new Date(editorForm.expiresAt).toISOString() : null,
         maxCost: editorForm.maxCost.trim() ? Number(editorForm.maxCost.trim()) : null,
         maxRequests: editorForm.maxRequests.trim() ? Number(editorForm.maxRequests.trim()) : null,
-        supportedModels: uniqStrings(editorForm.selectedModels),
-        allowedRouteIds: uniqIds(editorForm.selectedGroupRouteIds).filter((id) => routeMap.has(id) && isGroupRouteOption(routeMap.get(id)!)),
+        supportedModels: matchesDefaultRuntimeScope ? [] : normalizedSelectedModels,
+        allowedRouteIds: matchesDefaultRuntimeScope ? [] : normalizedSelectedGroupRouteIds,
         siteWeightMultipliers,
         excludedSiteIds: normalizeExcludedSiteIds(editorForm.excludedSiteIds),
         excludedCredentialRefs: normalizeExcludedCredentialRefs(editorForm.excludedCredentialRefs),
@@ -1177,8 +1212,8 @@ export default function DownstreamKeys() {
                   {row.description ? <MobileField label="备注" value={row.description} stacked /> : null}
                   <MobileField label="主分组" value={row.groupName || '未分组'} />
                   <MobileField label="标签" value={summarizeTags(row.tags || [])} stacked />
-                  <MobileField label="模型" value={summarizeModelLimit(row.supportedModels || [])} stacked />
-                  <MobileField label="群组" value={summarizeRouteLimit(row.allowedRouteIds || [], routeMap)} stacked />
+                  <MobileField label="模型" value={summarizeModelSelection(row.supportedModels || [])} stacked />
+                  <MobileField label="群组" value={summarizeRouteSelection(row.allowedRouteIds || [], routeMap)} stacked />
                   <MobileField label="倍率" value={summarizeSiteWeightMultipliers(row.siteWeightMultipliers || {})} stacked />
                   <MobileField label="额度" value={`${row.maxRequests == null ? '不限' : row.maxRequests.toLocaleString()} / ${row.maxCost == null ? '成本不限' : formatMoney(row.maxCost)}`} stacked />
                   <MobileField label="用量" value={`${(row.rangeUsage?.totalRequests || 0).toLocaleString()} 请求 · ${formatCompactTokens(row.rangeUsage?.totalTokens || 0)}`} stacked />
@@ -1233,8 +1268,8 @@ export default function DownstreamKeys() {
                       </td>
                       <td>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>模型：<span style={{ color: 'var(--color-text-primary)' }}>{summarizeModelLimit(row.supportedModels || [])}</span></div>
-                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>群组：<span style={{ color: 'var(--color-text-primary)' }}>{summarizeRouteLimit(row.allowedRouteIds || [], routeMap)}</span></div>
+                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>模型：<span style={{ color: 'var(--color-text-primary)' }}>{summarizeModelSelection(row.supportedModels || [])}</span></div>
+                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>群组：<span style={{ color: 'var(--color-text-primary)' }}>{summarizeRouteSelection(row.allowedRouteIds || [], routeMap)}</span></div>
                           <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>标签：<span style={{ color: 'var(--color-text-primary)' }}>{summarizeTags(row.tags || [])}</span></div>
                           <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>倍率：<span style={{ color: 'var(--color-text-primary)' }}>{summarizeSiteWeightMultipliers(row.siteWeightMultipliers || {})}</span></div>
                         </div>
@@ -1272,7 +1307,19 @@ export default function DownstreamKeys() {
         open={editorOpen}
         editingItem={editingItem}
         form={editorForm}
-        onChange={(updater) => setEditorForm((prev) => updater(prev))}
+        onChange={(updater) => setEditorForm((prev) => {
+          const next = updater(prev);
+          if (
+            editingId === null
+            && (
+              next.selectedModels !== prev.selectedModels
+              || next.selectedGroupRouteIds !== prev.selectedGroupRouteIds
+            )
+          ) {
+            setCreateRouteSelectionTouched(true);
+          }
+          return next;
+        })}
         onClose={closeEditor}
         onSave={() => void saveKey()}
         saving={saving}

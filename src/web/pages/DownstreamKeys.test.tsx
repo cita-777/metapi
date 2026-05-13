@@ -677,8 +677,8 @@ describe('DownstreamKeys page', () => {
       expect(apiMock.createDownstreamApiKey).toHaveBeenCalledWith(expect.objectContaining({
         name: 'default-all-key',
         key: 'sk-default-all-key-0323',
-        supportedModels: ['claude-opus-4-6', 'gpt-4.1-mini'],
-        allowedRouteIds: [11, 13],
+        supportedModels: [],
+        allowedRouteIds: [],
       }));
     } finally {
       root?.unmount();
