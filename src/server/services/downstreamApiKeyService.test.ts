@@ -154,6 +154,20 @@ describe('downstreamApiKeyService', () => {
     expect(await service.isModelAllowedByPolicyOrAllowedRoutes('claude-opus-4-6', policy)).toBe(false);
   });
 
+  it('treats empty managed-key selections as runtime-wide access by default', async () => {
+    const policy = service.toPolicyFromView({
+      supportedModels: [],
+      allowedRouteIds: [],
+      siteWeightMultipliers: {},
+      excludedSiteIds: [],
+      excludedCredentialRefs: [],
+    });
+
+    expect(policy.denyAllWhenEmpty).toBe(false);
+    await expect(service.isModelAllowedByPolicyOrAllowedRoutes('gpt-4o-mini', policy)).resolves.toBe(true);
+    await expect(service.isModelAllowedByPolicyOrAllowedRoutes('claude-opus-4-6', policy)).resolves.toBe(true);
+  });
+
   it('authorizes by selected group model pattern only, not arbitrary internal models', async () => {
     const virtualModelGroup = await db.insert(schema.tokenRoutes).values({
       modelPattern: 'claude-opus-4-6',

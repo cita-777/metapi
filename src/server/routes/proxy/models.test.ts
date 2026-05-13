@@ -354,7 +354,7 @@ describe('/v1/models route', () => {
     expect(ids).not.toContain('claude-sonnet-4-5');
   });
 
-  it('returns no models for managed key with empty model and group selections', async () => {
+  it('returns all models for managed key with empty model and group selections', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'deny-all-site',
       url: 'https://deny-all.example.com',
@@ -368,6 +368,14 @@ describe('/v1/models route', () => {
       status: 'active',
     }).returning().get();
 
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'deny-all-api-token',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
     await db.insert(schema.modelAvailability).values([
       {
         accountId: account.id,
@@ -378,6 +386,32 @@ describe('/v1/models route', () => {
         accountId: account.id,
         modelName: 'claude-opus-4-6',
         available: true,
+      },
+    ]).run();
+
+    const gptRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4o-mini',
+      enabled: true,
+    }).returning().get();
+    const claudeRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'claude-opus-4-6',
+      enabled: true,
+    }).returning().get();
+
+    await db.insert(schema.routeChannels).values([
+      {
+        routeId: gptRoute.id,
+        accountId: account.id,
+        tokenId: token.id,
+        sourceModel: 'gpt-4o-mini',
+        enabled: true,
+      },
+      {
+        routeId: claudeRoute.id,
+        accountId: account.id,
+        tokenId: token.id,
+        sourceModel: 'claude-opus-4-6',
+        enabled: true,
       },
     ]).run();
 
@@ -403,7 +437,10 @@ describe('/v1/models route', () => {
       data: Array<{ id: string }>;
     };
 
-    expect(body.data).toEqual([]);
+    expect(body.data.map((item) => item.id).sort()).toEqual([
+      'claude-opus-4-6',
+      'gpt-4o-mini',
+    ]);
   });
 
   it('returns only explicit-group public name while hiding source exact routes', async () => {
