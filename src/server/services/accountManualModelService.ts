@@ -2,6 +2,28 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { rebuildRoutesBestEffort } from './accountMutationWorkflow.js';
 
+export class AccountManualModelServiceError extends Error {
+  readonly statusCode: number;
+
+  constructor(message: string, statusCode: number) {
+    super(message);
+    this.name = 'AccountManualModelServiceError';
+    this.statusCode = statusCode;
+  }
+}
+
+export async function ensureManualModelAccountExists(accountId: number): Promise<void> {
+  const account = await db
+    .select({ id: schema.accounts.id })
+    .from(schema.accounts)
+    .where(eq(schema.accounts.id, accountId))
+    .get();
+
+  if (!account) {
+    throw new AccountManualModelServiceError('账号不存在', 404);
+  }
+}
+
 export async function removeManualModelsFromAccount(
   accountId: number,
   modelNames: string[],
@@ -13,6 +35,8 @@ export async function removeManualModelsFromAccount(
   if (normalizedModelNames.length === 0) {
     return { deletedCount: 0 };
   }
+
+  await ensureManualModelAccountExists(accountId);
 
   const deletedCount = await db.transaction(async (tx) => {
     const result = await tx
