@@ -77,12 +77,15 @@ export class NewApiAdapter extends BasePlatformAdapter {
     if (!trimmed) return [];
 
     const raw = trimmed.startsWith('Bearer ') ? trimmed.slice(7).trim() : trimmed;
-    const looksLikeCookieHeader = /(^|;\s*)(session|token|auth_token|access_token|jwt|jwt_token)=/i.test(raw);
-    if (looksLikeCookieHeader) {
+    if (this.isCookieHeaderCredential(raw)) {
       return [raw];
     }
 
     return [`session=${raw}`, `token=${raw}`];
+  }
+
+  private isCookieHeaderCredential(token: string): boolean {
+    return /(^|;\s*)(session|token|auth_token|access_token|jwt|jwt_token)=/i.test(token);
   }
 
   private decodeBase64Loose(value: string): string | null {
@@ -1115,21 +1118,26 @@ export class NewApiAdapter extends BasePlatformAdapter {
       }
     };
 
-    try {
-      const headers = this.authHeaders(accessToken, resolvedUserId || undefined);
+    const rawCredential = (accessToken || '').trim().startsWith('Bearer ')
+      ? (accessToken || '').trim().slice(7).trim()
+      : (accessToken || '').trim();
+    if (!this.isCookieHeaderCredential(rawCredential)) {
+      try {
+        const headers = this.authHeaders(accessToken, resolvedUserId || undefined);
 
-      const res = await this.fetchJson<any>(`${baseUrl}/api/user/checkin`, {
-        method: 'POST',
-        headers,
-      });
-      if (res?.success) {
-        return { success: true, message: res.message || 'checkin success', reward: res.data?.reward?.toString() };
+        const res = await this.fetchJson<any>(`${baseUrl}/api/user/checkin`, {
+          method: 'POST',
+          headers,
+        });
+        if (res?.success) {
+          return { success: true, message: res.message || 'checkin success', reward: res.data?.reward?.toString() };
+        }
+        const directMessage = this.extractResponseMessage(res);
+        rememberFailure(directMessage);
+      } catch (err) {
+        const parsed = this.formatRequestErrorMessage(err);
+        rememberFailure(parsed);
       }
-      const directMessage = this.extractResponseMessage(res);
-      rememberFailure(directMessage);
-    } catch (err) {
-      const parsed = this.formatRequestErrorMessage(err);
-      rememberFailure(parsed);
     }
 
     if (firstFailureMessage && !this.shouldFallbackToCookieCheckin(firstFailureMessage)) {

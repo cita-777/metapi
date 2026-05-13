@@ -58,7 +58,11 @@ import {
   parseBatchApiKeys,
 } from "../../services/apiKeyBatch.js";
 import { createManualAccount } from "../../services/manualAccountCreationService.js";
-import { removeManualModelsFromAccount } from "../../services/accountManualModelService.js";
+import {
+  AccountManualModelServiceError,
+  ensureManualModelAccountExists,
+  removeManualModelsFromAccount,
+} from "../../services/accountManualModelService.js";
 
 type AccountWithSiteRow = {
   accounts: typeof schema.accounts.$inferSelect;
@@ -1957,21 +1961,15 @@ export async function accountsRoutes(app: FastifyInstance) {
         return reply.code(400).send({ message: "模型列表不能为空" });
       }
 
-      const account = await db
-        .select()
-        .from(schema.accounts)
-        .where(eq(schema.accounts.id, accountId))
-        .get();
-
-      if (!account) {
-        return reply.code(404).send({ message: "账号不存在" });
-      }
-
       try {
+        await ensureManualModelAccountExists(accountId);
         await removeManualModelsFromAccount(accountId, normalizedModels);
 
         return { success: true };
       } catch (err: any) {
+        if (err instanceof AccountManualModelServiceError) {
+          return reply.code(err.statusCode).send({ message: err.message });
+        }
         return reply
           .code(500)
           .send({ success: false, message: err?.message || "删除失败" });

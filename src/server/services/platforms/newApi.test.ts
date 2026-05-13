@@ -39,7 +39,7 @@ const COOKIE_GOB_USER_TOKEN = Buffer.from(
     'hex',
   ).toString('base64')}|sig`,
 ).toString('base64');
-const AUTH_TOKEN_SIGNIN_ONLY_TOKEN = `session=${COOKIE_GOB_USER_TOKEN}`;
+const AUTH_TOKEN_SIGNIN_ONLY_TOKEN = `header.${Buffer.from(JSON.stringify({ id: 5566 })).toString('base64url')}.sig`;
 const ANYROUTER_CHALLENGE_HTML = readFileSync(
   new URL('./__fixtures__/anyrouter-challenge.html', import.meta.url),
   'utf8',
@@ -187,12 +187,12 @@ describe('NewApiAdapter', () => {
       }
 
       if (req.url?.startsWith('/api/token/')) {
-        if (typeof req.headers.authorization === 'string' && req.headers.authorization === `Bearer ${AUTH_TOKEN_SIGNIN_ONLY_TOKEN}`) {
+        if (typeof req.headers.authorization === 'string' && req.headers.authorization === `Bearer auth_token=${AUTH_TOKEN_SIGNIN_ONLY_TOKEN}`) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, message: 'unauthorized' }));
           return;
         }
-        if (typeof req.headers.authorization === 'string' && req.headers.authorization === `Bearer ${AUTH_TOKEN_SIGNIN_ONLY_TOKEN}`) {
+        if (typeof req.headers.authorization === 'string' && req.headers.authorization === `Bearer auth_token=${AUTH_TOKEN_SIGNIN_ONLY_TOKEN}`) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, message: 'unauthorized' }));
           return;
@@ -522,8 +522,8 @@ describe('NewApiAdapter', () => {
       }
 
       if (req.url === '/api/user/sign_in') {
-        if (typeof req.headers.cookie === 'string' && req.headers.cookie.includes(AUTH_TOKEN_SIGNIN_ONLY_TOKEN)) {
-          if (req.headers['new-api-user'] !== '144408') {
+        if (typeof req.headers.cookie === 'string' && req.headers.cookie.includes(`auth_token=${AUTH_TOKEN_SIGNIN_ONLY_TOKEN}`)) {
+          if (req.headers['new-api-user'] !== '5566') {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: false, message: 'missing New-Api-User' }));
             return;
@@ -739,7 +739,7 @@ describe('NewApiAdapter', () => {
 
   it('supports auth_token-style session cookies when sign_in requires a user header', async () => {
     const adapter = new NewApiAdapter();
-    const checkin = await adapter.checkin(baseUrl, AUTH_TOKEN_SIGNIN_ONLY_TOKEN);
+    const checkin = await adapter.checkin(baseUrl, `auth_token=${AUTH_TOKEN_SIGNIN_ONLY_TOKEN}`);
 
     expect(checkin).toEqual({
       success: true,
@@ -751,8 +751,8 @@ describe('NewApiAdapter', () => {
         (r) =>
           r.url === '/api/user/self'
           && typeof r.headers.cookie === 'string'
-          && r.headers.cookie.includes(AUTH_TOKEN_SIGNIN_ONLY_TOKEN)
-          && r.headers['new-api-user'] === '144408',
+          && r.headers.cookie.includes(`auth_token=${AUTH_TOKEN_SIGNIN_ONLY_TOKEN}`)
+          && r.headers['new-api-user'] === '5566',
       ),
     ).toBe(true);
     expect(
@@ -760,8 +760,8 @@ describe('NewApiAdapter', () => {
         (r) =>
           r.url === '/api/user/sign_in'
           && typeof r.headers.cookie === 'string'
-          && r.headers.cookie.includes(AUTH_TOKEN_SIGNIN_ONLY_TOKEN)
-          && r.headers['new-api-user'] === '144408',
+          && r.headers.cookie.includes(`auth_token=${AUTH_TOKEN_SIGNIN_ONLY_TOKEN}`)
+          && r.headers['new-api-user'] === '5566',
       ),
     ).toBe(true);
   });
