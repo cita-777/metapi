@@ -3,6 +3,12 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
+import {
+  buildAccountModelContextLengthScope,
+  clearModelContextLengthCache,
+  getModelContextLength,
+  setModelContextLengths,
+} from './modelContextLengthCache.js';
 
 const getApiTokenMock = vi.fn();
 const getModelsMock = vi.fn();
@@ -70,6 +76,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     undiciFetchMock.mockReset();
     proxyAgentCtorMock.mockReset();
     refreshOauthAccessTokenSingleflightMock.mockReset();
+    clearModelContextLengthCache();
 
     await db.delete(schema.routeChannels).run();
     await db.delete(schema.tokenRoutes).run();
@@ -137,6 +144,163 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(tokenRows).toHaveLength(0);
   });
 
+  it('preserves earlier context-length entries when later credential scans return only a subset', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockImplementation(async (_baseUrl: string, token: string, _platformUserId: unknown, contextScope?: string) => {
+      if (!contextScope) return [];
+
+      if (token === 'session-token') {
+        setModelContextLengths(new Map([
+          ['model-a', 128000],
+          ['model-b', 256000],
+        ]), contextScope);
+        return ['model-a', 'model-b'];
+      }
+
+      if (token === 'managed-token-subset') {
+        setModelContextLengths(new Map([
+          ['model-a', 128000],
+        ]), contextScope);
+        return ['model-a'];
+      }
+
+      return [];
+    });
+
+    const site = await db.insert(schema.sites).values({
+      name: 'site-context-merge',
+      url: 'https://site-context-merge.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'context-merge-user',
+      accessToken: 'session-token',
+      apiToken: null,
+      status: 'active',
+      extraConfig: JSON.stringify({ credentialMode: 'session' }),
+    }).returning().get();
+
+    await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'subset-token',
+      token: 'managed-token-subset',
+      source: 'manual',
+      enabled: true,
+      isDefault: true,
+      valueStatus: 'ready',
+    }).run();
+
+    const result = await refreshModelsForAccount(account.id);
+    const contextScope = buildAccountModelContextLengthScope(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      status: 'success',
+      modelCount: 2,
+      modelsPreview: ['model-a', 'model-b'],
+      tokenScanned: 1,
+      discoveredByCredential: true,
+    });
+    expect(getModelContextLength('model-a', contextScope)).toBe(128000);
+    expect(getModelContextLength('model-b', contextScope)).toBe(256000);
+  });
+
+  it('clears stale account context-length metadata when a successful refresh finds no lengths', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockResolvedValue(['model-a']);
+
+    const site = await db.insert(schema.sites).values({
+      name: 'site-context-clear',
+      url: 'https://site-context-clear.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'context-clear-user',
+      accessToken: 'session-token',
+      apiToken: null,
+      status: 'active',
+      extraConfig: JSON.stringify({ credentialMode: 'session' }),
+    }).returning().get();
+
+    const contextScope = buildAccountModelContextLengthScope(account.id);
+    setModelContextLengths(new Map([
+      ['model-a', 256000],
+    ]), contextScope);
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      status: 'success',
+      modelCount: 1,
+      modelsPreview: ['model-a'],
+    });
+    expect(getModelContextLength('model-a', contextScope)).toBe(1_000_000);
+  });
+
+  it('uses unique temporary context scopes across concurrent refreshes for the same account', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+
+    const seenScopes: string[] = [];
+    let releaseGate: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+
+    getModelsMock.mockImplementation(async (_baseUrl: string, token: string, _platformUserId: unknown, contextScope?: string) => {
+      if (token === 'shared-session-token' && contextScope) {
+        seenScopes.push(contextScope);
+        if (seenScopes.length <= 2) {
+          await gate;
+        }
+      }
+      return [];
+    });
+
+    const site = await db.insert(schema.sites).values({
+      name: 'site-concurrent-context-scope',
+      url: 'https://site-concurrent-context-scope.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'concurrent-context-user',
+      accessToken: 'shared-session-token',
+      apiToken: null,
+      status: 'active',
+      extraConfig: JSON.stringify({ credentialMode: 'session' }),
+    }).returning().get();
+
+    const firstRefresh = refreshModelsForAccount(account.id);
+    const secondRefresh = refreshModelsForAccount(account.id);
+    const waitDeadline = Date.now() + 5_000;
+    while (seenScopes.length < 2) {
+      if (Date.now() > waitDeadline) {
+        throw new Error(`Timed out waiting for concurrent refresh scopes, saw ${seenScopes.length}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    releaseGate?.();
+
+    const [firstResult, secondResult] = await Promise.all([firstRefresh, secondRefresh]);
+
+    expect(firstResult.status).toBe('failed');
+    expect(secondResult.status).toBe('failed');
+    expect(seenScopes).toHaveLength(2);
+    expect(seenScopes[0]).not.toBe(seenScopes[1]);
+    expect(seenScopes[0]).toMatch(/^account:\d+:refresh:[^:]+:scan:1$/);
+    expect(seenScopes[1]).toMatch(/^account:\d+:refresh:[^:]+:scan:1$/);
+  });
   it('uses the configured ai endpoint for direct model discovery credentials', async () => {
     getApiTokenMock.mockResolvedValue(null);
     getModelsMock.mockImplementation(async (baseUrl: string, token: string) => (
@@ -177,7 +341,12 @@ describe('refreshModelsForAccount credential discovery', () => {
       modelCount: 1,
       modelsPreview: ['gpt-4.1'],
     });
-    expect(getModelsMock).toHaveBeenCalledWith('https://api.example.com', 'session-token', undefined);
+    expect(getModelsMock).toHaveBeenCalledWith(
+      'https://api.example.com',
+      'session-token',
+      undefined,
+      expect.stringMatching(/^account:\d+:refresh:[^:]+:scan:\d+$/),
+    );
   });
 
   it('deduplicates discovered model names before writing availability rows', async () => {

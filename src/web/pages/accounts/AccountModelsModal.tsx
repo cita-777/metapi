@@ -30,6 +30,7 @@ type AccountModelsModalProps = {
   onSetPendingDisabled: (pendingDisabled: Set<string>) => void;
   onManualInputChange: (value: string) => void;
   onAddManualModels: () => Promise<void> | void;
+  onRemoveManualModel?: (modelName: string) => Promise<void> | void;
 };
 
 export default function AccountModelsModal({
@@ -42,6 +43,7 @@ export default function AccountModelsModal({
   onSetPendingDisabled,
   onManualInputChange,
   onAddManualModels,
+  onRemoveManualModel,
 }: AccountModelsModalProps) {
   return (
     <CenteredModal
@@ -182,7 +184,18 @@ export default function AccountModelsModal({
                         </span>
                       ) : null}
                       {model.isManual ? (
-                        <span className="badge badge-info" style={{ fontSize: 10, flexShrink: 0, padding: '0 4px' }}>手动</span>
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            void onRemoveManualModel?.(model.name);
+                          }}
+                          className="btn btn-ghost btn-xs"
+                          style={{ fontSize: 10, padding: '2px 6px', color: 'var(--color-error)', flexShrink: 0 }}
+                          title="删除手动添加的模型"
+                        >
+                          ✕ 删除
+                        </button>
                       ) : null}
                       {isDisabled ? (
                         <span className="badge badge-error" style={{ fontSize: 10, flexShrink: 0 }}>禁用</span>

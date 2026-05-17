@@ -13,10 +13,15 @@ export class OneHubAdapter extends OneApiAdapter {
    * The /api/available_model endpoint returns { data: { model_name: { price: ... }, ... } }
    * where the keys are model names.
    */
-  override async getModels(baseUrl: string, apiToken: string, platformUserId?: number): Promise<string[]> {
+  override async getModels(
+    baseUrl: string,
+    apiToken: string,
+    platformUserId?: number,
+    contextSourceScope?: string,
+  ): Promise<string[]> {
     let openAiModels: string[] = [];
     try {
-      openAiModels = await super.getModels(baseUrl, apiToken, platformUserId);
+      openAiModels = await super.getModels(baseUrl, apiToken, platformUserId, contextSourceScope);
     } catch {}
     if (openAiModels.length > 0) return openAiModels;
 

@@ -49,7 +49,12 @@ export class GeminiAdapter extends StandardApiProviderAdapterBase {
     );
   }
 
-  async getModels(baseUrl: string, apiToken: string): Promise<string[]> {
+  async getModels(
+    baseUrl: string,
+    apiToken: string,
+    _platformUserId?: number,
+    contextSourceScope?: string,
+  ): Promise<string[]> {
     const normalizedBase = normalizePlatformBaseUrl(baseUrl);
 
     if (isOpenAiCompatGeminiBase(normalizedBase)) {
@@ -57,6 +62,7 @@ export class GeminiAdapter extends StandardApiProviderAdapterBase {
         baseUrl: normalizedBase,
         headers: { Authorization: `Bearer ${apiToken}` },
         resolveUrl: resolveGeminiOpenAiModelsUrl,
+        contextSourceScope,
       });
       if (openAiModels.length > 0) return normalizeModelList(openAiModels);
     }
@@ -73,6 +79,7 @@ export class GeminiAdapter extends StandardApiProviderAdapterBase {
       const openAiModels = await this.fetchModelsFromStandardEndpoint({
         baseUrl: `${normalizedBase}/v1beta/openai`,
         headers: { Authorization: `Bearer ${apiToken}` },
+        contextSourceScope,
       });
       if (openAiModels.length > 0) return normalizeModelList(openAiModels);
     }
