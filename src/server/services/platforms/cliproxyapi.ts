@@ -50,11 +50,12 @@ export class CliProxyApiAdapter extends StandardApiProviderAdapterBase {
     }
   }
 
-  async getModels(baseUrl: string, apiToken: string): Promise<string[]> {
+  async getModels(baseUrl: string, apiToken: string, _platformUserId?: number, contextSourceScope?: string): Promise<string[]> {
     return this.fetchModelsFromStandardEndpoint({
       baseUrl,
       headers: { Authorization: `Bearer ${apiToken}` },
       resolveUrl: resolveVersionedModelsUrl,
+      contextSourceScope,
     });
   }
 }

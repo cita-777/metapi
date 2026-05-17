@@ -9,13 +9,14 @@ export class ClaudeAdapter extends StandardApiProviderAdapterBase {
     return normalized.includes('api.anthropic.com') || normalized.includes('anthropic.com/v1');
   }
 
-  async getModels(baseUrl: string, apiToken: string): Promise<string[]> {
+  async getModels(baseUrl: string, apiToken: string, _platformUserId?: number, contextSourceScope?: string): Promise<string[]> {
     return this.fetchModelsFromStandardEndpoint({
       baseUrl,
       headers: {
         'x-api-key': apiToken,
         'anthropic-version': CLAUDE_DEFAULT_ANTHROPIC_VERSION,
       },
+      contextSourceScope,
     });
   }
 }

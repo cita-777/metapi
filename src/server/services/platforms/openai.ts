@@ -8,10 +8,11 @@ export class OpenAiAdapter extends StandardApiProviderAdapterBase {
     return normalized.includes('api.openai.com');
   }
 
-  async getModels(baseUrl: string, apiToken: string): Promise<string[]> {
+  async getModels(baseUrl: string, apiToken: string, _platformUserId?: number, contextSourceScope?: string): Promise<string[]> {
     return this.fetchModelsFromStandardEndpoint({
       baseUrl,
       headers: { Authorization: `Bearer ${apiToken}` },
+      contextSourceScope,
     });
   }
 }

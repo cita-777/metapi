@@ -25,7 +25,7 @@ describe('accounts manual models endpoint', () => {
 
     app = Fastify();
     await app.register(routesModule.accountsRoutes);
-  });
+  }, 30_000);
 
   beforeEach(async () => {
     await db.delete(schema.proxyLogs).run();
@@ -40,9 +40,9 @@ describe('accounts manual models endpoint', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await app?.close();
     delete process.env.DATA_DIR;
-  });
+  }, 30_000);
 
   it('adds manual models and sets isManual to true', async () => {
     const site = await db.insert(schema.sites).values({
@@ -178,5 +178,103 @@ describe('accounts manual models endpoint', () => {
     expect(response.json()).toMatchObject({
       message: 'Invalid models. Expected string[].',
     });
+  });
+
+  it('deletes only manual models for the target account', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Test Site',
+      url: 'https://test.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      accessToken: 'test-token',
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values([
+      {
+        accountId: account.id,
+        modelName: 'manual-a',
+        available: true,
+        isManual: true,
+      },
+      {
+        accountId: account.id,
+        modelName: 'manual-b',
+        available: true,
+        isManual: true,
+      },
+      {
+        accountId: account.id,
+        modelName: 'synced-model',
+        available: true,
+        isManual: false,
+      },
+    ]);
+
+    const response = await app.inject({
+      method: 'DELETE',
+      url: `/api/accounts/${account.id}/models/manual`,
+      payload: {
+        models: ['manual-a'],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ success: true });
+
+    const models = await db.select().from(schema.modelAvailability)
+      .where(eq(schema.modelAvailability.accountId, account.id))
+      .all();
+
+    expect(models.map((model) => `${model.modelName}:${model.isManual}`).sort()).toEqual([
+      'manual-b:true',
+      'synced-model:false',
+    ]);
+  });
+
+  it('ignores duplicate and whitespace model names when deleting manual models', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Test Site',
+      url: 'https://test.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      accessToken: 'test-token',
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values([
+      {
+        accountId: account.id,
+        modelName: 'manual-a',
+        available: true,
+        isManual: true,
+      },
+      {
+        accountId: account.id,
+        modelName: 'manual-b',
+        available: true,
+        isManual: true,
+      },
+    ]);
+
+    const response = await app.inject({
+      method: 'DELETE',
+      url: `/api/accounts/${account.id}/models/manual`,
+      payload: {
+        models: [' manual-a ', 'manual-a', '   '],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const models = await db.select().from(schema.modelAvailability)
+      .where(eq(schema.modelAvailability.accountId, account.id))
+      .all();
+
+    expect(models.map((model) => model.modelName)).toEqual(['manual-b']);
   });
 });

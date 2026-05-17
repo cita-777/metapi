@@ -58,6 +58,7 @@ import {
   parseBatchApiKeys,
 } from "../../services/apiKeyBatch.js";
 import { createManualAccount } from "../../services/manualAccountCreationService.js";
+import { removeManualModelsFromAccount } from "../../services/accountManualModelService.js";
 
 type AccountWithSiteRow = {
   accounts: typeof schema.accounts.$inferSelect;
@@ -1924,6 +1925,56 @@ export async function accountsRoutes(app: FastifyInstance) {
         return reply
           .code(500)
           .send({ success: false, message: err?.message || "保存失败" });
+      }
+    },
+  );
+
+  // Remove manually added models from an account
+  app.delete<{ Params: { id: string }; Body: unknown }>(
+    "/api/accounts/:id/models/manual",
+    async (request, reply) => {
+      const parsedBody = parseAccountManualModelsPayload(request.body);
+      if (!parsedBody.success) {
+        return reply.code(400).send({ message: parsedBody.error });
+      }
+
+      const accountId = parseInt(request.params.id, 10);
+      if (!Number.isFinite(accountId) || accountId <= 0) {
+        return reply.code(400).send({ message: "账号 ID 无效" });
+      }
+
+      const { models } = parsedBody.data;
+      if (!Array.isArray(models) || models.length === 0) {
+        return reply.code(400).send({ message: "模型列表不能为空" });
+      }
+
+      const normalizedModels = Array.from(
+        new Set(
+          models.map((m) => String(m).trim()).filter((m) => m.length > 0),
+        ),
+      );
+      if (normalizedModels.length === 0) {
+        return reply.code(400).send({ message: "模型列表不能为空" });
+      }
+
+      const account = await db
+        .select()
+        .from(schema.accounts)
+        .where(eq(schema.accounts.id, accountId))
+        .get();
+
+      if (!account) {
+        return reply.code(404).send({ message: "账号不存在" });
+      }
+
+      try {
+        await removeManualModelsFromAccount(accountId, normalizedModels);
+
+        return { success: true };
+      } catch (err: any) {
+        return reply
+          .code(500)
+          .send({ success: false, message: err?.message || "删除失败" });
       }
     },
   );

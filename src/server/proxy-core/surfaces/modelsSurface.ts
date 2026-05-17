@@ -1,3 +1,8 @@
+import {
+  buildAccountModelContextLengthScope,
+  getModelContextLength,
+} from '../../services/modelContextLengthCache.js';
+
 function isSearchPseudoModel(modelName: string): boolean {
   const normalized = (modelName || '').trim().toLowerCase();
   if (!normalized) return false;
@@ -11,6 +16,11 @@ type ModelsSurfaceInput = {
     getAvailableModels(): Promise<string[]>;
     explainSelection(modelName: string, excludeChannelIds: number[], downstreamPolicy: unknown): Promise<{
       selectedChannelId?: number | null;
+      selectedAccountId?: number | null;
+      candidates?: Array<{
+        accountId?: number | null;
+        eligible?: boolean;
+      }>;
     }>;
   };
   refreshModelsAndRebuildRoutes(): Promise<unknown>;
@@ -18,18 +28,63 @@ type ModelsSurfaceInput = {
   now?: () => Date;
 };
 
-async function readVisibleModels(input: ModelsSurfaceInput): Promise<string[]> {
+function resolveModelContextLength(
+  modelName: string,
+  selectedAccountId?: number | null,
+  candidates?: Array<{ accountId?: number | null; eligible?: boolean }>,
+): number {
+  const eligibleAccountIds = Array.from(new Set(
+    (Array.isArray(candidates) ? candidates : [])
+      .filter((candidate) => candidate?.eligible !== false)
+      .map((candidate) => candidate?.accountId)
+      .filter((accountId): accountId is number => typeof accountId === 'number' && accountId > 0),
+  ));
+
+  if (eligibleAccountIds.length > 0) {
+    return eligibleAccountIds.reduce((minValue, accountId) => {
+      const currentValue = getModelContextLength(
+        modelName,
+        buildAccountModelContextLengthScope(accountId),
+      );
+      return Math.min(minValue, currentValue);
+    }, Number.POSITIVE_INFINITY);
+  }
+
+  if (typeof selectedAccountId === 'number' && selectedAccountId > 0) {
+    return getModelContextLength(
+      modelName,
+      buildAccountModelContextLengthScope(selectedAccountId),
+    );
+  }
+  return getModelContextLength(modelName);
+}
+
+async function readVisibleModels(
+  input: ModelsSurfaceInput,
+): Promise<Array<{
+  id: string;
+  selectedAccountId?: number | null;
+  candidates?: Array<{ accountId?: number | null; eligible?: boolean }>;
+}>> {
   const deduped = Array.from(new Set(await input.tokenRouter.getAvailableModels()))
     .filter((modelName) => !isSearchPseudoModel(modelName))
     .sort();
-  const allowed: string[] = [];
+  const allowed: Array<{
+    id: string;
+    selectedAccountId?: number | null;
+    candidates?: Array<{ accountId?: number | null; eligible?: boolean }>;
+  }> = [];
   for (const modelName of deduped) {
     if (!await input.isModelAllowed(modelName, input.downstreamPolicy)) {
       continue;
     }
     const decision = await input.tokenRouter.explainSelection(modelName, [], input.downstreamPolicy);
     if (typeof decision.selectedChannelId === 'number') {
-      allowed.push(modelName);
+      allowed.push({
+        id: modelName,
+        selectedAccountId: decision.selectedAccountId,
+        candidates: decision.candidates,
+      });
     }
   }
   return allowed;
@@ -44,12 +99,22 @@ export async function listModelsSurface(input: ModelsSurfaceInput) {
 
   const now = input.now?.() ?? new Date();
   if (input.responseFormat === 'claude') {
-    const data = models.map((id) => ({
-      id,
-      type: 'model' as const,
-      display_name: id,
-      created_at: now.toISOString(),
-    }));
+    const data: Array<{
+      id: string;
+      type: 'model';
+      display_name: string;
+      created_at: string;
+      context_length: number;
+    }> = [];
+    for (const model of models) {
+      data.push({
+        id: model.id,
+        type: 'model' as const,
+        display_name: model.id,
+        created_at: now.toISOString(),
+        context_length: resolveModelContextLength(model.id, model.selectedAccountId, model.candidates),
+      });
+    }
     return {
       data,
       first_id: data[0]?.id || null,
@@ -60,11 +125,12 @@ export async function listModelsSurface(input: ModelsSurfaceInput) {
 
   return {
     object: 'list' as const,
-    data: models.map((id) => ({
-      id,
+    data: models.map((model) => ({
+      id: model.id,
       object: 'model' as const,
       created: Math.floor(now.getTime() / 1000),
       owned_by: 'metapi',
+      context_length: resolveModelContextLength(model.id, model.selectedAccountId, model.candidates),
     })),
   };
 }
