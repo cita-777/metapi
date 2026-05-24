@@ -2,8 +2,12 @@
 
 /* ===== Design Tokens ===== */
 :root {
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, 'Liberation Mono', Menlo, monospace;
+  --font-sans:
+    "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC",
+    "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+  --font-mono:
+    "SF Mono", "Cascadia Code", "Fira Code", Consolas, "Liberation Mono", Menlo,
+    monospace;
   --color-bg: #f5f5f5;
   --color-bg-card: #ffffff;
   --color-bg-sidebar: #ffffff;
@@ -189,7 +193,6 @@ body {
 }
 
 @keyframes pulse-dot {
-
   0%,
   100% {
     opacity: 1;
@@ -247,7 +250,6 @@ body {
 }
 
 @keyframes shake {
-
   0%,
   100% {
     transform: translateX(0);
@@ -311,7 +313,6 @@ body {
 }
 
 @keyframes float {
-
   0%,
   100% {
     transform: translateY(0);
@@ -558,7 +559,11 @@ body {
 }
 
 .topbar-search-trigger:hover {
-  border-color: color-mix(in srgb, var(--color-primary) 30%, var(--color-border));
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 30%,
+    var(--color-border)
+  );
   background: color-mix(in srgb, var(--color-primary) 7%, var(--color-bg-card));
   color: var(--color-text-primary);
 }
@@ -700,7 +705,7 @@ body {
 }
 
 .sidebar-item.active::before {
-  content: '';
+  content: "";
   position: absolute;
   left: 0;
   top: 50%;
@@ -797,7 +802,7 @@ body {
 }
 
 .btn::after {
-  content: '';
+  content: "";
   position: absolute;
   top: 50%;
   left: 50%;
@@ -828,7 +833,11 @@ body {
 
 .btn-soft-primary {
   background: var(--color-primary-light);
-  background: color-mix(in srgb, var(--color-primary) 12%, var(--color-bg-card));
+  background: color-mix(
+    in srgb,
+    var(--color-primary) 12%,
+    var(--color-bg-card)
+  );
   color: var(--color-primary);
   border: 1px solid var(--color-border);
   border-color: color-mix(in srgb, var(--color-primary) 26%, transparent);
@@ -838,7 +847,11 @@ body {
 }
 
 .btn-soft-primary:hover {
-  background: color-mix(in srgb, var(--color-primary) 18%, var(--color-bg-card));
+  background: color-mix(
+    in srgb,
+    var(--color-primary) 18%,
+    var(--color-bg-card)
+  );
   border-color: color-mix(in srgb, var(--color-primary) 36%, transparent);
   color: var(--color-primary-hover);
 }
@@ -868,7 +881,11 @@ body {
 }
 
 .btn-ghost {
-  background: color-mix(in srgb, var(--color-primary) 12%, var(--color-bg-card));
+  background: color-mix(
+    in srgb,
+    var(--color-primary) 12%,
+    var(--color-bg-card)
+  );
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   border: 1px solid color-mix(in srgb, var(--color-primary) 26%, transparent);
   border-radius: var(--radius-sm);
@@ -878,7 +895,11 @@ body {
 }
 
 .btn-ghost:hover {
-  background: color-mix(in srgb, var(--color-primary) 18%, var(--color-bg-card));
+  background: color-mix(
+    in srgb,
+    var(--color-primary) 18%,
+    var(--color-bg-card)
+  );
   border-color: color-mix(in srgb, var(--color-primary) 36%, transparent);
   color: var(--color-primary-hover);
   transform: none;
@@ -886,11 +907,19 @@ body {
 }
 
 [data-theme="dark"] .btn-ghost:hover {
-  background: color-mix(in srgb, var(--color-primary) 22%, var(--color-bg-card));
+  background: color-mix(
+    in srgb,
+    var(--color-primary) 22%,
+    var(--color-bg-card)
+  );
 }
 
 .btn-ghost-active {
-  background: color-mix(in srgb, var(--color-primary) 22%, var(--color-bg-card));
+  background: color-mix(
+    in srgb,
+    var(--color-primary) 22%,
+    var(--color-bg-card)
+  );
   border-color: var(--color-primary) !important;
   color: var(--color-primary);
 }
@@ -1121,7 +1150,11 @@ body {
   padding: 8px 10px;
   border-radius: 10px;
   border: 1px solid var(--color-border-light);
-  background: color-mix(in srgb, var(--color-bg-card) 78%, var(--color-bg-subtle) 22%);
+  background: color-mix(
+    in srgb,
+    var(--color-bg-card) 78%,
+    var(--color-bg-subtle) 22%
+  );
 }
 
 .mobile-summary-metric-label {
@@ -1369,7 +1402,7 @@ body {
 }
 
 .mobile-nav-item.active::before {
-  content: '';
+  content: "";
   position: absolute;
   left: 0;
   top: 50%;
@@ -1471,7 +1504,7 @@ body {
   padding: 6px 0;
 }
 
-.stat-card-row+.stat-card-row {
+.stat-card-row + .stat-card-row {
   margin-top: 4px;
 }
 
@@ -1577,6 +1610,13 @@ body {
   font-weight: 700;
   color: var(--color-text-primary);
   letter-spacing: -0.02em;
+}
+
+.text-truncate {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .dashboard-stat-grid {
@@ -1767,12 +1807,14 @@ body {
 
 .data-table tbody tr.row-selected {
   background: color-mix(in srgb, var(--color-primary) 10%, transparent);
-  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--color-primary) 75%, transparent);
+  box-shadow: inset 3px 0 0
+    color-mix(in srgb, var(--color-primary) 75%, transparent);
 }
 
 [data-theme="dark"] .data-table tbody tr.row-selected {
   background: color-mix(in srgb, var(--color-primary) 16%, transparent);
-  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--color-primary) 82%, transparent);
+  box-shadow: inset 3px 0 0
+    color-mix(in srgb, var(--color-primary) 82%, transparent);
 }
 
 .data-table tbody tr.row-selectable.row-selected:hover {
@@ -1786,7 +1828,8 @@ body {
 @keyframes row-focus-glow {
   0% {
     background: color-mix(in srgb, var(--color-primary) 18%, transparent);
-    box-shadow: inset 3px 0 0 color-mix(in srgb, var(--color-primary) 70%, transparent);
+    box-shadow: inset 3px 0 0
+      color-mix(in srgb, var(--color-primary) 70%, transparent);
   }
 
   100% {
@@ -1852,7 +1895,9 @@ body {
 }
 
 .announcement-rich-content code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: 12px;
   padding: 1px 4px;
   border-radius: 6px;
@@ -1902,9 +1947,18 @@ body {
 
 @keyframes rebind-panel-glow {
   0% {
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 42%, transparent);
-    border-color: color-mix(in srgb, var(--color-primary) 42%, var(--color-border));
-    background: color-mix(in srgb, var(--color-primary) 6%, var(--color-bg-card));
+    box-shadow: 0 0 0 2px
+      color-mix(in srgb, var(--color-primary) 42%, transparent);
+    border-color: color-mix(
+      in srgb,
+      var(--color-primary) 42%,
+      var(--color-border)
+    );
+    background: color-mix(
+      in srgb,
+      var(--color-primary) 6%,
+      var(--color-bg-card)
+    );
   }
 
   100% {
@@ -1968,7 +2022,12 @@ body {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  transition: transform 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease,
+    background-color 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
 }
 
 .checkin-toggle-badge.is-on {
@@ -2295,7 +2354,11 @@ body {
 }
 
 .downstream-key-advanced-toggle:hover {
-  border-color: color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 35%,
+    var(--color-border)
+  );
   background: color-mix(in srgb, var(--color-primary) 5%, var(--color-bg));
 }
 
@@ -2354,7 +2417,12 @@ body {
 
 .route-enable-toggle {
   border: 1px solid transparent;
-  transition: background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+  transition:
+    background-color 0.18s ease,
+    color 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
 }
 
 .route-enable-toggle:hover {
@@ -2398,11 +2466,13 @@ body[data-tooltip-portal="true"] [data-tooltip]::before {
   background: color-mix(in srgb, #ffffff 92%, var(--color-primary) 8%);
   border: 1px solid color-mix(in srgb, var(--color-primary) 22%, transparent);
   box-shadow: 0 12px 30px rgba(15, 23, 42, 0.14);
-  transition: opacity 0.18s ease, transform 0.18s ease;
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
 }
 
 [data-tooltip]::before {
-  content: '';
+  content: "";
   position: absolute;
   left: 50%;
   bottom: calc(100% + 4px);
@@ -2413,8 +2483,10 @@ body[data-tooltip-portal="true"] [data-tooltip]::before {
   z-index: 19999;
   opacity: 0;
   background: color-mix(in srgb, #ffffff 92%, var(--color-primary) 8%);
-  border-right: 1px solid color-mix(in srgb, var(--color-primary) 22%, transparent);
-  border-bottom: 1px solid color-mix(in srgb, var(--color-primary) 22%, transparent);
+  border-right: 1px solid
+    color-mix(in srgb, var(--color-primary) 22%, transparent);
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--color-primary) 22%, transparent);
   transition: opacity 0.18s ease;
 }
 
@@ -2430,8 +2502,10 @@ body[data-tooltip-portal="true"] [data-tooltip]::before {
   transform: translateX(-50%) rotate(225deg);
   border-right: none;
   border-bottom: none;
-  border-left: 1px solid color-mix(in srgb, var(--color-primary) 22%, transparent);
-  border-top: 1px solid color-mix(in srgb, var(--color-primary) 22%, transparent);
+  border-left: 1px solid
+    color-mix(in srgb, var(--color-primary) 22%, transparent);
+  border-top: 1px solid
+    color-mix(in srgb, var(--color-primary) 22%, transparent);
 }
 
 [data-tooltip][data-tooltip-align="start"]::after {
@@ -2484,7 +2558,12 @@ body[data-tooltip-portal="true"] [data-tooltip]::before {
 .missing-token-site-tag {
   border: 1px solid color-mix(in srgb, var(--color-info) 35%, transparent);
   background: color-mix(in srgb, var(--color-info) 12%, var(--color-bg));
-  transition: transform 0.18s ease, background-color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, color 0.18s ease;
+  transition:
+    transform 0.18s ease,
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    color 0.18s ease;
 }
 
 .missing-token-site-tag:hover {
@@ -2517,10 +2596,15 @@ body[data-tooltip-portal="true"] [data-tooltip]::before {
 }
 
 .route-enable-toggle.is-disabled:hover {
-  background: color-mix(in srgb, var(--color-primary) 12%, var(--color-bg-card));
+  background: color-mix(
+    in srgb,
+    var(--color-primary) 12%,
+    var(--color-bg-card)
+  );
   color: var(--color-primary);
   border-color: color-mix(in srgb, var(--color-primary) 35%, transparent);
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--color-primary) 22%, transparent);
+  box-shadow: 0 2px 8px
+    color-mix(in srgb, var(--color-primary) 22%, transparent);
 }
 
 [data-theme="dark"] .badge-success {
@@ -2568,7 +2652,11 @@ body[data-tooltip-portal="true"] [data-tooltip]::before {
 [data-theme="dark"] [data-tooltip]::before {
   background: color-mix(in srgb, #0f172a 88%, var(--color-primary) 12%);
   border-right-color: color-mix(in srgb, var(--color-primary) 35%, transparent);
-  border-bottom-color: color-mix(in srgb, var(--color-primary) 35%, transparent);
+  border-bottom-color: color-mix(
+    in srgb,
+    var(--color-primary) 35%,
+    transparent
+  );
 }
 
 .tooltip-layer {
@@ -2595,7 +2683,9 @@ body[data-tooltip-portal="true"] [data-tooltip]::before {
   box-shadow: 0 12px 30px rgba(15, 23, 42, 0.14);
   opacity: 0;
   transform: scale(0.98);
-  transition: opacity 0.18s ease, transform 0.18s ease;
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
 }
 
 .tooltip-bubble.is-visible {
@@ -2613,14 +2703,18 @@ body[data-tooltip-portal="true"] [data-tooltip]::before {
 
 .tooltip-bubble-arrow-top {
   top: calc(100% - 5px);
-  border-right: 1px solid color-mix(in srgb, var(--color-primary) 22%, transparent);
-  border-bottom: 1px solid color-mix(in srgb, var(--color-primary) 22%, transparent);
+  border-right: 1px solid
+    color-mix(in srgb, var(--color-primary) 22%, transparent);
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--color-primary) 22%, transparent);
 }
 
 .tooltip-bubble-arrow-bottom {
   top: -5px;
-  border-left: 1px solid color-mix(in srgb, var(--color-primary) 22%, transparent);
-  border-top: 1px solid color-mix(in srgb, var(--color-primary) 22%, transparent);
+  border-left: 1px solid
+    color-mix(in srgb, var(--color-primary) 22%, transparent);
+  border-top: 1px solid
+    color-mix(in srgb, var(--color-primary) 22%, transparent);
 }
 
 [data-theme="dark"] .tooltip-bubble {
@@ -2636,7 +2730,11 @@ body[data-tooltip-portal="true"] [data-tooltip]::before {
 
 [data-theme="dark"] .tooltip-bubble-arrow-top {
   border-right-color: color-mix(in srgb, var(--color-primary) 35%, transparent);
-  border-bottom-color: color-mix(in srgb, var(--color-primary) 35%, transparent);
+  border-bottom-color: color-mix(
+    in srgb,
+    var(--color-primary) 35%,
+    transparent
+  );
 }
 
 [data-theme="dark"] .tooltip-bubble-arrow-bottom {
@@ -2662,7 +2760,11 @@ body[data-tooltip-portal="true"] [data-tooltip]::before {
 }
 
 [data-theme="dark"] .route-enable-toggle.is-disabled:hover {
-  background: color-mix(in srgb, var(--color-primary) 18%, var(--color-bg-card));
+  background: color-mix(
+    in srgb,
+    var(--color-primary) 18%,
+    var(--color-bg-card)
+  );
   color: #a5b4fc;
 }
 
@@ -2791,7 +2893,10 @@ body[data-tooltip-portal="true"] [data-tooltip]::before {
 input:not([type="checkbox"]):not([type="radio"]),
 select,
 textarea {
-  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    background-color 0.2s ease;
   font-family: var(--font-sans);
 }
 
@@ -2951,17 +3056,20 @@ textarea {
 }
 
 .oauth-page-message-info {
-  border: 1px solid color-mix(in srgb, var(--color-primary) 18%, var(--color-border-light));
+  border: 1px solid
+    color-mix(in srgb, var(--color-primary) 18%, var(--color-border-light));
   background: color-mix(in srgb, var(--color-primary) 6%, var(--color-bg-card));
 }
 
 .oauth-page-message-success {
-  border: 1px solid color-mix(in srgb, var(--color-success) 22%, var(--color-border-light));
+  border: 1px solid
+    color-mix(in srgb, var(--color-success) 22%, var(--color-border-light));
   background: color-mix(in srgb, var(--color-success) 8%, var(--color-bg-card));
 }
 
 .oauth-page-message-error {
-  border: 1px solid color-mix(in srgb, var(--color-danger) 22%, var(--color-border-light));
+  border: 1px solid
+    color-mix(in srgb, var(--color-danger) 22%, var(--color-border-light));
   background: color-mix(in srgb, var(--color-danger) 7%, var(--color-bg-card));
 }
 
@@ -3428,7 +3536,8 @@ textarea {
   padding: 10px 12px;
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--color-primary) 6%, var(--color-bg));
-  border: 1px solid color-mix(in srgb, var(--color-primary) 18%, var(--color-border));
+  border: 1px solid
+    color-mix(in srgb, var(--color-primary) 18%, var(--color-border));
   color: var(--color-text-primary);
   font-size: 12px;
   line-height: 1.5;
@@ -3456,12 +3565,20 @@ textarea {
 }
 
 .oauth-import-preview.is-valid {
-  border-color: color-mix(in srgb, var(--color-success) 24%, var(--color-border-light));
+  border-color: color-mix(
+    in srgb,
+    var(--color-success) 24%,
+    var(--color-border-light)
+  );
   background: color-mix(in srgb, var(--color-success) 8%, var(--color-bg));
 }
 
 .oauth-import-preview.is-invalid {
-  border-color: color-mix(in srgb, var(--color-danger) 24%, var(--color-border-light));
+  border-color: color-mix(
+    in srgb,
+    var(--color-danger) 24%,
+    var(--color-border-light)
+  );
   background: color-mix(in srgb, var(--color-danger) 6%, var(--color-bg));
 }
 
@@ -3533,7 +3650,9 @@ textarea {
   border-radius: var(--radius-md);
   background: var(--color-bg);
   cursor: pointer;
-  transition: border-color 0.2s ease, background-color 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease;
 }
 
 .oauth-import-picker.is-dragover {
@@ -3727,15 +3846,31 @@ textarea {
   justify-content: center;
   padding: 32px;
   background:
-    radial-gradient(circle at top left, rgba(59, 130, 246, 0.18), transparent 34%),
-    radial-gradient(circle at right 18%, rgba(34, 211, 238, 0.16), transparent 30%),
+    radial-gradient(
+      circle at top left,
+      rgba(59, 130, 246, 0.18),
+      transparent 34%
+    ),
+    radial-gradient(
+      circle at right 18%,
+      rgba(34, 211, 238, 0.16),
+      transparent 30%
+    ),
     linear-gradient(180deg, #eef4fb 0%, #e9eef7 100%);
 }
 
 [data-theme="dark"] .login-shell {
   background:
-    radial-gradient(circle at top left, rgba(59, 130, 246, 0.18), transparent 34%),
-    radial-gradient(circle at right 18%, rgba(34, 211, 238, 0.12), transparent 30%),
+    radial-gradient(
+      circle at top left,
+      rgba(59, 130, 246, 0.18),
+      transparent 34%
+    ),
+    radial-gradient(
+      circle at right 18%,
+      rgba(34, 211, 238, 0.12),
+      transparent 30%
+    ),
     linear-gradient(180deg, #0d1320 0%, #0a1018 100%);
 }
 
@@ -3745,8 +3880,11 @@ textarea {
   grid-template-columns: minmax(0, 1.16fr) minmax(360px, 440px);
   gap: 24px;
   padding: 20px;
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.78), rgba(244, 248, 253, 0.88));
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.78),
+    rgba(244, 248, 253, 0.88)
+  );
   border: 1px solid rgba(255, 255, 255, 0.58);
   border-radius: 36px;
   box-shadow:
@@ -3755,8 +3893,11 @@ textarea {
 }
 
 [data-theme="dark"] .login-surface {
-  background:
-    linear-gradient(145deg, rgba(15, 23, 42, 0.88), rgba(10, 18, 30, 0.94));
+  background: linear-gradient(
+    145deg,
+    rgba(15, 23, 42, 0.88),
+    rgba(10, 18, 30, 0.94)
+  );
   border-color: rgba(148, 163, 184, 0.12);
   box-shadow:
     0 24px 80px rgba(2, 6, 23, 0.5),
@@ -3777,30 +3918,46 @@ textarea {
 
 .login-brand-panel-light {
   background:
-    radial-gradient(circle at top left, rgba(96, 165, 250, 0.22), transparent 26%),
-    radial-gradient(circle at right 20%, rgba(34, 211, 238, 0.16), transparent 22%),
+    radial-gradient(
+      circle at top left,
+      rgba(96, 165, 250, 0.22),
+      transparent 26%
+    ),
+    radial-gradient(
+      circle at right 20%,
+      rgba(34, 211, 238, 0.16),
+      transparent 22%
+    ),
     linear-gradient(160deg, #f8fbff 0%, #edf4ff 52%, #e9f0fa 100%);
 }
 
 .login-brand-panel::before {
-  content: '';
+  content: "";
   position: absolute;
   inset: auto auto -12% -8%;
   width: 280px;
   height: 280px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(125, 211, 252, 0.2), transparent 68%);
+  background: radial-gradient(
+    circle,
+    rgba(125, 211, 252, 0.2),
+    transparent 68%
+  );
   pointer-events: none;
 }
 
 .login-brand-panel::after {
-  content: '';
+  content: "";
   position: absolute;
   inset: 28px 26px auto auto;
   width: 220px;
   height: 220px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(59, 130, 246, 0.12), transparent 66%);
+  background: radial-gradient(
+    circle,
+    rgba(59, 130, 246, 0.12),
+    transparent 66%
+  );
   pointer-events: none;
 }
 
@@ -3823,7 +3980,11 @@ textarea {
   justify-content: center;
   flex-shrink: 0;
   padding: 10px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(227, 238, 252, 0.84));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.9),
+    rgba(227, 238, 252, 0.84)
+  );
   border: 1px solid rgba(191, 219, 254, 0.6);
   box-shadow:
     0 24px 40px rgba(148, 163, 184, 0.22),
@@ -3831,7 +3992,7 @@ textarea {
 }
 
 .brand-mark-frame::after {
-  content: '';
+  content: "";
   position: absolute;
   inset: 6px;
   border-radius: inherit;
@@ -3851,7 +4012,11 @@ textarea {
   padding: 10px;
   border-radius: 28px;
   overflow: hidden;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 250, 255, 0.92));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.96),
+    rgba(247, 250, 255, 0.92)
+  );
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.96),
     0 12px 28px rgba(59, 130, 246, 0.1);
@@ -3866,7 +4031,9 @@ textarea {
 }
 
 .login-brand-name {
-  font-family: 'Avenir Next', 'Segoe UI Variable Display', 'PingFang SC', 'Noto Sans SC', sans-serif;
+  font-family:
+    "Avenir Next", "Segoe UI Variable Display", "PingFang SC", "Noto Sans SC",
+    sans-serif;
   font-size: clamp(34px, 3.2vw, 46px);
   font-weight: 800;
   letter-spacing: -0.05em;
@@ -3931,7 +4098,9 @@ textarea {
 }
 
 .login-capability-title {
-  font-family: 'Avenir Next', 'Segoe UI Variable Display', 'PingFang SC', 'Noto Sans SC', sans-serif;
+  font-family:
+    "Avenir Next", "Segoe UI Variable Display", "PingFang SC", "Noto Sans SC",
+    sans-serif;
   font-size: 18px;
   font-weight: 700;
   letter-spacing: -0.03em;
@@ -3963,7 +4132,10 @@ textarea {
   background: rgba(255, 255, 255, 0.76);
   color: #0f172a;
   text-decoration: none;
-  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    border-color 0.18s ease;
 }
 
 .login-icon-link:hover {
@@ -3989,7 +4161,9 @@ textarea {
   font-size: 12px;
   font-weight: 700;
   text-decoration: none;
-  transition: transform 0.18s ease, box-shadow 0.18s ease;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
 }
 
 .login-doc-link:hover {
@@ -4005,7 +4179,11 @@ textarea {
   border-radius: 30px;
   background:
     radial-gradient(circle at top, rgba(125, 211, 252, 0.16), transparent 34%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.44), rgba(241, 245, 249, 0.58));
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.44),
+      rgba(241, 245, 249, 0.58)
+    );
 }
 
 .login-auth-panel {
@@ -4031,7 +4209,9 @@ textarea {
 
 .login-auth-title {
   margin: 0 0 10px;
-  font-family: 'Avenir Next', 'Segoe UI Variable Display', 'PingFang SC', 'Noto Sans SC', sans-serif;
+  font-family:
+    "Avenir Next", "Segoe UI Variable Display", "PingFang SC", "Noto Sans SC",
+    sans-serif;
   font-size: 42px;
   font-weight: 800;
   line-height: 0.96;
@@ -4055,19 +4235,24 @@ textarea {
 .login-auth-input {
   width: 100%;
   padding: 14px 16px;
-  border: 1px solid color-mix(in srgb, var(--color-primary) 18%, var(--color-border));
+  border: 1px solid
+    color-mix(in srgb, var(--color-primary) 18%, var(--color-border));
   border-radius: 16px;
   font-size: 14px;
   outline: none;
   background: rgba(248, 250, 252, 0.92);
   color: var(--color-text-primary);
   margin-bottom: 14px;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    background-color 0.2s ease;
 }
 
 .login-auth-input:focus {
   border-color: color-mix(in srgb, var(--color-primary) 56%, transparent);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-primary) 12%, transparent);
+  box-shadow: 0 0 0 4px
+    color-mix(in srgb, var(--color-primary) 12%, transparent);
   background: var(--color-bg-card);
 }
 
@@ -4294,7 +4479,9 @@ textarea {
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  transition: background 0.2s ease, color 0.2s ease;
+  transition:
+    background 0.2s ease,
+    color 0.2s ease;
 }
 
 .modal-close-button:hover {
@@ -4373,7 +4560,10 @@ textarea {
   justify-content: space-between;
   gap: 10px;
   cursor: pointer;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.15s ease;
 }
 
 .modern-select.is-sm .modern-select-trigger {
@@ -4412,7 +4602,9 @@ textarea {
 .modern-select-chevron {
   color: var(--color-text-muted);
   flex-shrink: 0;
-  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), color 0.2s ease;
+  transition:
+    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    color 0.2s ease;
 }
 
 .modern-select.is-open .modern-select-chevron {
@@ -4446,7 +4638,9 @@ textarea {
   opacity: 0;
   transform: translateY(-6px) scale(0.98);
   pointer-events: none;
-  transition: opacity 0.2s ease, transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+  transition:
+    opacity 0.2s ease,
+    transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .modern-select.is-open .modern-select-panel {
@@ -4462,7 +4656,8 @@ textarea {
   padding: 0 0 6px;
   margin: -6px -6px 6px;
   background: var(--color-bg-card);
-  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--color-border) 70%, transparent);
 }
 
 .modern-select-search-input {
@@ -4476,7 +4671,9 @@ textarea {
   padding: 0 10px;
   font-size: 12px;
   outline: none;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .modern-select-search-input:focus {
@@ -4501,7 +4698,10 @@ textarea {
   gap: 8px;
   text-align: left;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    transform 0.12s ease;
 }
 
 .modern-select-option-main {
@@ -4853,7 +5053,9 @@ textarea {
 
 /* ===== Chart Container Smooth Transition ===== */
 .chart-transition {
-  transition: opacity 0.3s ease, transform 0.3s ease;
+  transition:
+    opacity 0.3s ease,
+    transform 0.3s ease;
 }
 
 /* ===== Pulse Glow Effect for Stat Values ===== */
@@ -4862,7 +5064,6 @@ textarea {
 }
 
 @keyframes pulseGlow {
-
   0%,
   100% {
     text-shadow: none;
@@ -5028,7 +5229,7 @@ textarea {
   box-shadow: var(--shadow-md);
 }
 
-.model-card+.model-card {
+.model-card + .model-card {
   margin-top: 12px;
 }
 
@@ -5216,7 +5417,9 @@ textarea {
 .panel-presence {
   opacity: 1;
   transform: translateY(0) scale(1);
-  transition: opacity 0.2s ease, transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+  transition:
+    opacity 0.2s ease,
+    transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .panel-presence.is-closing {
@@ -5340,7 +5543,7 @@ textarea {
 }
 
 .stat-summary-card::before {
-  content: '';
+  content: "";
   position: absolute;
   top: -50%;
   right: -20%;
@@ -5491,10 +5694,16 @@ textarea {
   padding: 8px 10px;
   border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
   border-radius: 14px;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 94%, white 6%), color-mix(in srgb, var(--color-bg-card) 98%, white 2%));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-bg-card) 94%, white 6%),
+    color-mix(in srgb, var(--color-bg-card) 98%, white 2%)
+  );
   box-shadow: 0 10px 20px rgba(15, 23, 42, 0.04);
-  transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    background-color 0.18s ease;
 }
 
 .proxy-logs-filter-select {
@@ -5555,7 +5764,7 @@ textarea {
   transition: all 0.15s;
 }
 
-.view-toggle-btn+.view-toggle-btn {
+.view-toggle-btn + .view-toggle-btn {
   border-left: 1px solid var(--color-border);
 }
 
@@ -5766,7 +5975,6 @@ textarea {
 }
 
 @media (max-width: 768px) {
-
   /* --- Layout --- */
   :root {
     --topbar-height: 48px;
@@ -6066,7 +6274,10 @@ textarea {
   align-items: center;
   padding: 1px 8px;
   border-radius: 999px;
-  background: var(--color-primary-soft, color-mix(in srgb, var(--color-primary) 12%, transparent));
+  background: var(
+    --color-primary-soft,
+    color-mix(in srgb, var(--color-primary) 12%, transparent)
+  );
   color: var(--color-primary);
   font-size: 11px;
   font-weight: 600;
@@ -6118,7 +6329,10 @@ textarea {
 .site-observability-toggle-btn:hover {
   border-color: var(--color-primary);
   color: var(--color-primary);
-  background: var(--color-primary-soft, color-mix(in srgb, var(--color-primary) 8%, transparent));
+  background: var(
+    --color-primary-soft,
+    color-mix(in srgb, var(--color-primary) 8%, transparent)
+  );
 }
 
 /* Grid layout: 2 columns by default, 3 on wide screens */
@@ -6145,11 +6359,17 @@ textarea {
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border-light);
   background: color-mix(in srgb, var(--color-bg) 88%, white);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .site-observability-card:hover {
-  border-color: color-mix(in srgb, var(--color-primary) 40%, var(--color-border));
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 40%,
+    var(--color-border)
+  );
   box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
 }
 
@@ -6225,7 +6445,10 @@ textarea {
 .site-observability-log-link-compact:hover {
   border-color: var(--color-primary);
   color: var(--color-primary);
-  background: var(--color-primary-soft, color-mix(in srgb, var(--color-primary) 8%, transparent));
+  background: var(
+    --color-primary-soft,
+    color-mix(in srgb, var(--color-primary) 8%, transparent)
+  );
 }
 
 .site-availability-strip-compact {
@@ -6244,7 +6467,8 @@ textarea {
 }
 
 .site-availability-cell-pill {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-border) 68%, transparent);
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--color-border) 68%, transparent);
   backface-visibility: hidden;
 }
 
@@ -6335,7 +6559,10 @@ textarea {
   font-size: 12px;
   font-weight: 600;
   text-decoration: none;
-  transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .site-observability-log-link:hover {
@@ -6355,13 +6582,16 @@ textarea {
   width: 100%;
   height: 12px;
   border-radius: 4px;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-border) 78%, transparent);
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--color-border) 78%, transparent);
 }
 
 .site-availability-cell-link {
   display: block;
   text-decoration: none;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .site-availability-cell-link:hover {
@@ -6559,8 +6789,11 @@ textarea {
   margin-bottom: 8px;
   border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
   border-radius: 14px;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 94%, white 6%), color-mix(in srgb, var(--color-bg-card) 99%, white 1%));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-bg-card) 94%, white 6%),
+    color-mix(in srgb, var(--color-bg-card) 99%, white 1%)
+  );
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.03);
   overflow: hidden;
 }
@@ -6577,7 +6810,10 @@ textarea {
   font-size: 12.5px;
   color: var(--color-text-secondary);
   text-align: left;
-  transition: background-color 0.15s ease, color 0.15s ease, transform 0.18s ease;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.18s ease;
 }
 
 .route-filter-bar-summary:hover {
@@ -6629,14 +6865,23 @@ textarea {
   font-size: 11px;
   color: var(--color-text-secondary);
   white-space: nowrap;
-  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease, box-shadow 0.18s ease, transform 0.18s ease;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
   line-height: 1.3;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
 }
 
 .filter-chip:hover {
   background: color-mix(in srgb, var(--color-bg) 78%, white 22%);
-  border-color: color-mix(in srgb, var(--color-text-muted) 22%, var(--color-border));
+  border-color: color-mix(
+    in srgb,
+    var(--color-text-muted) 22%,
+    var(--color-border)
+  );
   color: var(--color-text-primary);
   box-shadow: 0 8px 16px rgba(15, 23, 42, 0.05);
   transform: translateY(-1px);
@@ -6720,12 +6965,19 @@ textarea {
   padding: 8px 10px;
   border-radius: 14px;
   border-color: color-mix(in srgb, var(--color-border) 84%, transparent);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 94%, white 6%), color-mix(in srgb, var(--color-bg-card) 99%, white 1%));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-bg-card) 94%, white 6%),
+    color-mix(in srgb, var(--color-bg-card) 99%, white 1%)
+  );
   box-shadow:
     0 10px 20px rgba(15, 23, 42, 0.035),
     inset 0 1px 0 rgba(255, 255, 255, 0.6);
-  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease, background-color 0.16s ease;
+  transition:
+    transform 0.16s ease,
+    box-shadow 0.16s ease,
+    border-color 0.16s ease,
+    background-color 0.16s ease;
 }
 
 .route-card-collapsed.is-active {
@@ -6748,10 +7000,16 @@ textarea {
   grid-column: 1 / -1;
   border-radius: 16px;
   border-color: color-mix(in srgb, var(--color-border) 82%, transparent);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 95%, white 5%), color-mix(in srgb, var(--color-bg-card) 99%, white 1%));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-bg-card) 95%, white 5%),
+    color-mix(in srgb, var(--color-bg-card) 99%, white 1%)
+  );
   box-shadow: 0 12px 24px rgba(15, 23, 42, 0.04);
-  transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    background-color 0.18s ease;
 }
 
 .route-card-expanded-compact {
@@ -6825,8 +7083,11 @@ textarea {
 }
 
 [data-theme="dark"] .route-filter-bar {
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 94%, #0b1220 6%), color-mix(in srgb, var(--color-bg-card) 99%, #020617 1%));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-bg-card) 94%, #0b1220 6%),
+    color-mix(in srgb, var(--color-bg-card) 99%, #020617 1%)
+  );
   box-shadow: 0 16px 34px rgba(2, 6, 23, 0.22);
 }
 
@@ -6841,16 +7102,22 @@ textarea {
 }
 
 [data-theme="dark"] .route-card-collapsed {
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 94%, #0b1220 6%), color-mix(in srgb, var(--color-bg-card) 99%, #020617 1%));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-bg-card) 94%, #0b1220 6%),
+    color-mix(in srgb, var(--color-bg-card) 99%, #020617 1%)
+  );
   box-shadow:
     0 16px 30px rgba(2, 6, 23, 0.22),
     inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 [data-theme="dark"] .route-card-expanded {
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 95%, #0b1220 5%), color-mix(in srgb, var(--color-bg-card) 99%, #020617 1%));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-bg-card) 95%, #0b1220 5%),
+    color-mix(in srgb, var(--color-bg-card) 99%, #020617 1%)
+  );
   box-shadow: 0 18px 34px rgba(2, 6, 23, 0.24);
 }
 

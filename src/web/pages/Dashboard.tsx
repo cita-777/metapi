@@ -653,7 +653,7 @@ export default function Dashboard({
             </div>
             <div className="dashboard-stat-content">
               <div className="stat-label">当前余额</div>
-              <div className="stat-value animate-count-up">
+              <div className="stat-value animate-count-up text-truncate">
                 ${totalBalance.toFixed(2)}
               </div>
               <div
