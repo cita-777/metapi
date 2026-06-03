@@ -1,5 +1,5 @@
 import { and, eq, lt } from "drizzle-orm";
-import { db, schema } from "../db/index.js";
+import { db, runtimeDbDialect, schema } from "../db/index.js";
 import type {
   PersistedSnapshotRecord,
   SnapshotPersistenceAdapter,
@@ -80,6 +80,23 @@ export async function writeAdminSnapshot<T>(
     staleUntil: record.staleUntil,
     updatedAt: new Date().toISOString(),
   };
+
+  if (runtimeDbDialect === "mysql") {
+    await (db
+      .insert(schema.adminSnapshots)
+      .values(values) as any)
+      .onDuplicateKeyUpdate({
+        set: {
+          payload: values.payload,
+          generatedAt: values.generatedAt,
+          expiresAt: values.expiresAt,
+          staleUntil: values.staleUntil,
+          updatedAt: values.updatedAt,
+        },
+      })
+      .run();
+    return;
+  }
 
   await (db
     .insert(schema.adminSnapshots)
