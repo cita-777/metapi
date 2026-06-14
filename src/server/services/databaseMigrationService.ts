@@ -324,7 +324,7 @@ function buildStatements(
   for (const row of snapshot.accounts.sites) {
     statements.push({
       table: 'sites',
-      columns: ['id', 'name', 'url', 'external_checkin_url', 'platform', 'proxy_url', 'use_system_proxy', 'custom_headers', 'custom_headers_override_request_headers', 'status', 'is_pinned', 'sort_order', 'global_weight', 'api_key', 'created_at', 'updated_at'],
+      columns: ['id', 'name', 'url', 'external_checkin_url', 'platform', 'proxy_url', 'use_system_proxy', 'custom_headers', 'custom_headers_override_request_headers', 'status', 'is_pinned', 'sort_order', 'global_weight', 'api_key', 'post_refresh_probe_enabled', 'post_refresh_probe_model', 'post_refresh_probe_scope', 'post_refresh_probe_latency_threshold_ms', 'created_at', 'updated_at'],
       values: [
         asNumber(row.id, 0),
         asNullableString(row.name),
@@ -340,6 +340,10 @@ function buildStatements(
         asNumber(row.sortOrder, 0),
         asNumber(row.globalWeight, 1),
         asNullableString(row.apiKey),
+        asBoolean(row.postRefreshProbeEnabled, false),
+        asNullableString(row.postRefreshProbeModel) ?? '',
+        asNullableString(row.postRefreshProbeScope) ?? 'single',
+        asNumber(row.postRefreshProbeLatencyThresholdMs, 0),
         asNullableString(row.createdAt),
         asNullableString(row.updatedAt),
       ],

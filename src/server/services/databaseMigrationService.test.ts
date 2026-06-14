@@ -212,7 +212,7 @@ describe('databaseMigrationService', () => {
     ).toBe(true);
   });
 
-  it('includes site proxy and custom header settings when building site migration statements', () => {
+  it('includes site proxy, custom header, and probe settings when building site migration statements', () => {
     const statements = __databaseMigrationServiceTestUtils.buildStatements({
       version: 'test',
       timestamp: Date.now(),
@@ -225,6 +225,10 @@ describe('databaseMigrationService', () => {
           useSystemProxy: true,
           customHeaders: '{"x-site-scope":"internal"}',
           customHeadersOverrideRequestHeaders: true,
+          postRefreshProbeEnabled: true,
+          postRefreshProbeModel: 'gpt-4o-mini',
+          postRefreshProbeScope: 'all',
+          postRefreshProbeLatencyThresholdMs: 750,
           status: 'active',
         }],
         siteApiEndpoints: [],
@@ -253,6 +257,10 @@ describe('databaseMigrationService', () => {
     const useSystemProxyIndex = siteStatement?.columns.indexOf('use_system_proxy') ?? -1;
     const customHeadersIndex = siteStatement?.columns.indexOf('custom_headers') ?? -1;
     const customHeadersOverrideIndex = siteStatement?.columns.indexOf('custom_headers_override_request_headers') ?? -1;
+    const probeEnabledIndex = siteStatement?.columns.indexOf('post_refresh_probe_enabled') ?? -1;
+    const probeModelIndex = siteStatement?.columns.indexOf('post_refresh_probe_model') ?? -1;
+    const probeScopeIndex = siteStatement?.columns.indexOf('post_refresh_probe_scope') ?? -1;
+    const probeLatencyIndex = siteStatement?.columns.indexOf('post_refresh_probe_latency_threshold_ms') ?? -1;
 
     expect(useSystemProxyIndex).toBeGreaterThanOrEqual(0);
     expect(siteStatement?.values[useSystemProxyIndex]).toBe(true);
@@ -260,6 +268,14 @@ describe('databaseMigrationService', () => {
     expect(siteStatement?.values[customHeadersIndex]).toBe('{"x-site-scope":"internal"}');
     expect(customHeadersOverrideIndex).toBeGreaterThanOrEqual(0);
     expect(siteStatement?.values[customHeadersOverrideIndex]).toBe(true);
+    expect(probeEnabledIndex).toBeGreaterThanOrEqual(0);
+    expect(siteStatement?.values[probeEnabledIndex]).toBe(true);
+    expect(probeModelIndex).toBeGreaterThanOrEqual(0);
+    expect(siteStatement?.values[probeModelIndex]).toBe('gpt-4o-mini');
+    expect(probeScopeIndex).toBeGreaterThanOrEqual(0);
+    expect(siteStatement?.values[probeScopeIndex]).toBe('all');
+    expect(probeLatencyIndex).toBeGreaterThanOrEqual(0);
+    expect(siteStatement?.values[probeLatencyIndex]).toBe(750);
   });
 
   it('includes site api endpoints when building migration statements', () => {
