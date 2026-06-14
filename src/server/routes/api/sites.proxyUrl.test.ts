@@ -50,6 +50,7 @@ describe('sites proxy settings', () => {
           'cf-access-client-id': 'site-client-id',
           'x-site-scope': 'internal',
         }),
+        customHeadersOverrideRequestHeaders: true,
         externalCheckinUrl: 'https://checkin.example.com/welfare',
         globalWeight: 1.5,
       },
@@ -60,12 +61,14 @@ describe('sites proxy settings', () => {
       proxyUrl?: string | null;
       useSystemProxy?: boolean;
       customHeaders?: string | null;
+      customHeadersOverrideRequestHeaders?: boolean | null;
       externalCheckinUrl?: string | null;
       globalWeight?: number;
     };
     expect(payload.proxyUrl).toBe('socks5://127.0.0.1:1080');
     expect(payload.useSystemProxy).toBe(true);
     expect(payload.customHeaders).toBe('{"cf-access-client-id":"site-client-id","x-site-scope":"internal"}');
+    expect(payload.customHeadersOverrideRequestHeaders).toBe(true);
     expect(payload.externalCheckinUrl).toBe('https://checkin.example.com/welfare');
     expect(payload.globalWeight).toBe(1.5);
   });
@@ -215,6 +218,35 @@ describe('sites proxy settings', () => {
     expect(payload.useSystemProxy).toBe(true);
   });
 
+  it('updates custom header override priority for an existing site', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'headers-priority-site',
+        url: 'https://headers-priority-site.example.com',
+        platform: 'new-api',
+        customHeadersOverrideRequestHeaders: true,
+      },
+    });
+    expect(created.statusCode).toBe(200);
+    expect((created.json() as { customHeadersOverrideRequestHeaders?: boolean }).customHeadersOverrideRequestHeaders)
+      .toBe(true);
+    const site = created.json() as { id: number };
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${site.id}`,
+      payload: {
+        customHeadersOverrideRequestHeaders: false,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect((response.json() as { customHeadersOverrideRequestHeaders?: boolean }).customHeadersOverrideRequestHeaders)
+      .toBe(false);
+  });
+
   it('clears optional editor fields when updating a site with empty strings', async () => {
     const created = await app.inject({
       method: 'POST',
@@ -334,6 +366,22 @@ describe('sites proxy settings', () => {
 
     expect(response.statusCode).toBe(400);
     expect((response.json() as { error?: string }).error).toContain('Invalid customHeaders');
+  });
+
+  it('rejects invalid custom header override priority flag', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'headers-priority-site',
+        url: 'https://headers-priority-site.example.com',
+        platform: 'new-api',
+        customHeadersOverrideRequestHeaders: 'not-a-boolean',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect((response.json() as { error?: string }).error).toContain('Invalid customHeadersOverrideRequestHeaders');
   });
 
   it('rejects custom headers with non-string values', async () => {

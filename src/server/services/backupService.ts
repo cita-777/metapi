@@ -51,6 +51,7 @@ type ProxyLogRow = typeof schema.proxyLogs.$inferSelect;
 type CheckinLogRow = typeof schema.checkinLogs.$inferSelect;
 type DownstreamApiKeyRow = typeof schema.downstreamApiKeys.$inferSelect;
 type SiteAnnouncementRow = typeof schema.siteAnnouncements.$inferSelect;
+type SettingRow = typeof schema.settings.$inferSelect;
 
 type BackupAccountRow = Omit<AccountRow, 'balanceUsed' | 'lastCheckinAt' | 'lastBalanceRefresh'>
   & Partial<Pick<AccountRow, 'balanceUsed' | 'lastCheckinAt' | 'lastBalanceRefresh'>>;
@@ -242,7 +243,8 @@ const BACKUP_WEBDAV_CONFIG_SETTING_KEY = 'backup_webdav_config_v1';
 const BACKUP_WEBDAV_STATE_SETTING_KEY = 'backup_webdav_state_v1';
 const BACKUP_WEBDAV_DEFAULT_AUTO_SYNC_CRON = '0 */6 * * *';
 const BACKUP_WEBDAV_FETCH_TIMEOUT_MS = 15_000;
-let backupWebdavTask: cron.ScheduledTask | null = null;
+type BackupWebdavTask = ReturnType<typeof cron.schedule>;
+let backupWebdavTask: BackupWebdavTask | null = null;
 
 const DIRECT_API_PLATFORMS = new Set([
   'openai',
@@ -466,17 +468,17 @@ async function collectCurrentRuntimeStateSnapshot(): Promise<RuntimeStateSnapsho
     tokenModelAvailability,
     downstreamApiKeys,
   ] = await Promise.all([
-    db.select().from(schema.sites).all(),
-    db.select().from(schema.accounts).all(),
-    db.select().from(schema.accountTokens).all(),
-    db.select().from(schema.tokenRoutes).all(),
-    db.select().from(schema.routeChannels).all(),
-    db.select().from(schema.proxyLogs).all(),
-    db.select().from(schema.checkinLogs).all(),
-    db.select().from(schema.siteAnnouncements).all(),
-    db.select().from(schema.modelAvailability).all(),
-    db.select().from(schema.tokenModelAvailability).all(),
-    db.select().from(schema.downstreamApiKeys).all(),
+    db.select().from(schema.sites).all() as Promise<SiteRow[]>,
+    db.select().from(schema.accounts).all() as Promise<AccountRow[]>,
+    db.select().from(schema.accountTokens).all() as Promise<AccountTokenRow[]>,
+    db.select().from(schema.tokenRoutes).all() as Promise<TokenRouteRow[]>,
+    db.select().from(schema.routeChannels).all() as Promise<RouteChannelRow[]>,
+    db.select().from(schema.proxyLogs).all() as Promise<ProxyLogRow[]>,
+    db.select().from(schema.checkinLogs).all() as Promise<CheckinLogRow[]>,
+    db.select().from(schema.siteAnnouncements).all() as Promise<SiteAnnouncementRow[]>,
+    db.select().from(schema.modelAvailability).all() as Promise<ModelAvailabilityRow[]>,
+    db.select().from(schema.tokenModelAvailability).all() as Promise<TokenModelAvailabilityRow[]>,
+    db.select().from(schema.downstreamApiKeys).all() as Promise<DownstreamApiKeyRow[]>,
   ]);
 
   const siteKeyById = new Map<number, string>();
@@ -753,6 +755,7 @@ function buildAllApiHubV2AccountsSection(data: RawBackupData): {
       proxyUrl: null,
       useSystemProxy: false,
       customHeaders: null,
+      customHeadersOverrideRequestHeaders: false,
       status: 'active',
       isPinned: false,
       sortOrder: section.sites.length,
@@ -1000,6 +1003,7 @@ function buildAccountsSectionFromRefBackup(data: RawBackupData): AccountsBackupS
         proxyUrl: null,
         useSystemProxy: false,
         customHeaders: null,
+        customHeadersOverrideRequestHeaders: false,
         status: 'active',
         isPinned: false,
         sortOrder: sites.length,
@@ -1304,27 +1308,27 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
     manualModels,
     downstreamApiKeys,
   ] = await Promise.all([
-    db.select().from(schema.sites).orderBy(asc(schema.sites.id)).all(),
+    db.select().from(schema.sites).orderBy(asc(schema.sites.id)).all() as Promise<SiteRow[]>,
     db.select().from(schema.siteApiEndpoints)
       .orderBy(
         asc(schema.siteApiEndpoints.siteId),
         asc(schema.siteApiEndpoints.sortOrder),
         asc(schema.siteApiEndpoints.id),
       )
-      .all(),
-    db.select().from(schema.accounts).orderBy(asc(schema.accounts.id)).all(),
-    db.select().from(schema.accountTokens).orderBy(asc(schema.accountTokens.id)).all(),
-    db.select().from(schema.tokenRoutes).orderBy(asc(schema.tokenRoutes.id)).all(),
-    db.select().from(schema.routeChannels).orderBy(asc(schema.routeChannels.id)).all(),
-    db.select().from(schema.routeGroupSources).orderBy(asc(schema.routeGroupSources.id)).all(),
+      .all() as Promise<SiteApiEndpointRow[]>,
+    db.select().from(schema.accounts).orderBy(asc(schema.accounts.id)).all() as Promise<AccountRow[]>,
+    db.select().from(schema.accountTokens).orderBy(asc(schema.accountTokens.id)).all() as Promise<AccountTokenRow[]>,
+    db.select().from(schema.tokenRoutes).orderBy(asc(schema.tokenRoutes.id)).all() as Promise<TokenRouteRow[]>,
+    db.select().from(schema.routeChannels).orderBy(asc(schema.routeChannels.id)).all() as Promise<RouteChannelRow[]>,
+    db.select().from(schema.routeGroupSources).orderBy(asc(schema.routeGroupSources.id)).all() as Promise<RouteGroupSourceRow[]>,
     db.select().from(schema.siteDisabledModels)
       .orderBy(asc(schema.siteDisabledModels.siteId), asc(schema.siteDisabledModels.modelName))
-      .all(),
+      .all() as Promise<SiteDisabledModelRow[]>,
     db.select().from(schema.modelAvailability)
       .where(eq(schema.modelAvailability.isManual, true))
       .orderBy(asc(schema.modelAvailability.accountId), asc(schema.modelAvailability.modelName))
-      .all(),
-    db.select().from(schema.downstreamApiKeys).orderBy(asc(schema.downstreamApiKeys.id)).all(),
+      .all() as Promise<ModelAvailabilityRow[]>,
+    db.select().from(schema.downstreamApiKeys).orderBy(asc(schema.downstreamApiKeys.id)).all() as Promise<DownstreamApiKeyRow[]>,
   ]);
 
   return {
@@ -1368,7 +1372,7 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
 }
 
 async function exportPreferencesSection(): Promise<PreferencesBackupSection> {
-  const settings = (await db.select().from(schema.settings).all())
+  const settings = (await db.select().from(schema.settings).all() as SettingRow[])
     .filter((row) => !EXCLUDED_SETTING_KEYS.has(row.key))
     .map((row) => ({
       key: row.key,
@@ -1525,7 +1529,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
   const shouldReplaceManualModels = Array.isArray(section.manualModels);
   const shouldReplaceDownstreamApiKeys = Array.isArray(section.downstreamApiKeys);
 
-  await db.transaction(async (tx) => {
+  await db.transaction(async (tx: typeof db) => {
     if (shouldReplaceDownstreamApiKeys) {
       await tx.delete(schema.downstreamApiKeys).run();
     }
@@ -1549,6 +1553,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         proxyUrl: row.proxyUrl ?? null,
         useSystemProxy: row.useSystemProxy ?? false,
         customHeaders: row.customHeaders ?? null,
+        customHeadersOverrideRequestHeaders: row.customHeadersOverrideRequestHeaders ?? false,
         status: row.status || 'active',
         isPinned: row.isPinned ?? false,
         sortOrder: row.sortOrder ?? 0,
@@ -1848,7 +1853,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
 async function importPreferencesSection(section: PreferencesBackupSection): Promise<Array<{ key: string; value: unknown }>> {
   const applied: Array<{ key: string; value: unknown }> = [];
 
-  await db.transaction(async (tx) => {
+  await db.transaction(async (tx: typeof db) => {
     for (const row of section.settings) {
       if (!isSettingValueAcceptable(row.key, row.value)) continue;
 

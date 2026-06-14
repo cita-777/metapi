@@ -36,6 +36,10 @@ describe('schema contract generation', () => {
       logicalType: 'boolean',
       defaultValue: 'false',
     });
+    expect(contract.tables.sites.columns.custom_headers_override_request_headers).toMatchObject({
+      logicalType: 'boolean',
+      defaultValue: 'false',
+    });
     expect(contract.tables.token_routes.columns.routing_strategy).toMatchObject({
       logicalType: 'text',
       defaultValue: "'weighted'",

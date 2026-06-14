@@ -48,6 +48,10 @@ function normalizeUseSystemProxyFlag(input: unknown): boolean | null {
   return normalizePinnedFlag(input);
 }
 
+function normalizeCustomHeadersOverrideRequestHeadersFlag(input: unknown): boolean | null {
+  return normalizePinnedFlag(input);
+}
+
 function normalizeSortOrder(input: unknown): number | null {
   if (input === undefined || input === null || input === '') return null;
   const parsed = Number.parseInt(String(input), 10);
@@ -113,6 +117,9 @@ type SiteApiEndpointInputRow = {
   enabled: boolean;
   sortOrder: number;
 };
+type SiteSelectRow = typeof schema.sites.$inferSelect;
+type SiteIdentityRow = Pick<SiteSelectRow, 'id' | 'url' | 'platform'>;
+type SiteModelNameRow = { modelName: string };
 
 function normalizeSiteApiEndpointBoolean(input: unknown): boolean | null {
   return normalizePinnedFlag(input);
@@ -472,6 +479,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       proxyUrl,
       useSystemProxy,
       customHeaders,
+      customHeadersOverrideRequestHeaders,
       externalCheckinUrl,
       status,
       isPinned,
@@ -511,6 +519,16 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (!normalizedCustomHeaders.valid) {
       return reply.code(400).send({ error: normalizedCustomHeaders.error || 'Invalid customHeaders.' });
     }
+    const normalizedCustomHeadersOverrideRequestHeaders =
+      normalizeCustomHeadersOverrideRequestHeadersFlag(customHeadersOverrideRequestHeaders);
+    if (
+      customHeadersOverrideRequestHeaders !== undefined
+      && normalizedCustomHeadersOverrideRequestHeaders === null
+    ) {
+      return reply.code(400).send({
+        error: 'Invalid customHeadersOverrideRequestHeaders value. Expected boolean.',
+      });
+    }
     const explicitInitializationPreset = initializationPresetId == null || initializationPresetId === ''
       ? null
       : getSiteInitializationPreset(initializationPresetId);
@@ -522,7 +540,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: normalizedApiEndpoints.error || 'Invalid apiEndpoints.' });
     }
 
-    const existingSites = await db.select().from(schema.sites).all();
+    const existingSites = await db.select().from(schema.sites).all() as SiteSelectRow[];
     const maxSortOrder = existingSites.reduce((max, site) => Math.max(max, site.sortOrder || 0), -1);
     const analyzedPrimarySiteUrl = analyzePrimarySiteUrl(url);
     const canonicalUrl = analyzedPrimarySiteUrl.persistedUrl;
@@ -552,7 +570,7 @@ export async function sitesRoutes(app: FastifyInstance) {
 
     let inserted;
     try {
-      inserted = await db.transaction(async (tx) => {
+      inserted = await db.transaction(async (tx: typeof db) => {
         const siteInsert = await tx.insert(schema.sites).values({
           name,
           url: canonicalUrl,
@@ -560,6 +578,7 @@ export async function sitesRoutes(app: FastifyInstance) {
           proxyUrl: normalizedProxyUrl.proxyUrl,
           useSystemProxy: normalizedUseSystemProxy ?? false,
           customHeaders: normalizedCustomHeaders.customHeaders,
+          customHeadersOverrideRequestHeaders: normalizedCustomHeadersOverrideRequestHeaders ?? false,
           externalCheckinUrl: normalizedExternalCheckinUrl.url,
           status: normalizedStatus ?? 'active',
           isPinned: normalizedPinned ?? false,
@@ -651,6 +670,16 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (!normalizedCustomHeaders.valid) {
       return reply.code(400).send({ error: normalizedCustomHeaders.error || 'Invalid customHeaders.' });
     }
+    const normalizedCustomHeadersOverrideRequestHeaders =
+      normalizeCustomHeadersOverrideRequestHeadersFlag(body.customHeadersOverrideRequestHeaders);
+    if (
+      body.customHeadersOverrideRequestHeaders !== undefined
+      && normalizedCustomHeadersOverrideRequestHeaders === null
+    ) {
+      return reply.code(400).send({
+        error: 'Invalid customHeadersOverrideRequestHeaders value. Expected boolean.',
+      });
+    }
     const normalizedApiEndpoints = normalizeSiteApiEndpointsInput(body.apiEndpoints);
     if (!normalizedApiEndpoints.valid) {
       return reply.code(400).send({ error: normalizedApiEndpoints.error || 'Invalid apiEndpoints.' });
@@ -670,7 +699,7 @@ export async function sitesRoutes(app: FastifyInstance) {
         id: schema.sites.id,
         url: schema.sites.url,
         platform: schema.sites.platform,
-      }).from(schema.sites).all();
+      }).from(schema.sites).all() as SiteIdentityRow[];
       const conflictingSite = findExistingSiteBinding(siteRows, nextPlatform, nextUrl, id);
       if (conflictingSite) {
         return sendSiteBindingConflict(reply, nextPlatform, nextUrl);
@@ -683,6 +712,9 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (normalizedProxyUrl.present) updates.proxyUrl = normalizedProxyUrl.proxyUrl;
     if (body.useSystemProxy !== undefined) updates.useSystemProxy = normalizedUseSystemProxy;
     if (normalizedCustomHeaders.present) updates.customHeaders = normalizedCustomHeaders.customHeaders;
+    if (body.customHeadersOverrideRequestHeaders !== undefined) {
+      updates.customHeadersOverrideRequestHeaders = normalizedCustomHeadersOverrideRequestHeaders;
+    }
     if (normalizedExternalCheckinUrl.present) updates.externalCheckinUrl = normalizedExternalCheckinUrl.url;
     if (body.status !== undefined) updates.status = normalizedStatus;
     if (body.isPinned !== undefined) updates.isPinned = normalizedPinned;
@@ -698,7 +730,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     }
     updates.updatedAt = new Date().toISOString();
     try {
-      await db.transaction(async (tx) => {
+      await db.transaction(async (tx: typeof db) => {
         await tx.update(schema.sites).set(updates).where(eq(schema.sites.id, id)).run();
         if (normalizedApiEndpoints.present) {
           await tx.delete(schema.siteApiEndpoints)
@@ -813,7 +845,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     const rows = await db.select({ modelName: schema.siteDisabledModels.modelName })
       .from(schema.siteDisabledModels)
       .where(eq(schema.siteDisabledModels.siteId, id))
-      .all();
+      .all() as SiteModelNameRow[];
     return { siteId: id, models: rows.map((r) => r.modelName) };
   });
 
@@ -877,7 +909,7 @@ export async function sitesRoutes(app: FastifyInstance) {
           eq(schema.modelAvailability.available, true),
         ),
       )
-      .all();
+      .all() as SiteModelNameRow[];
 
     // Get models from token_model_availability (token-level)
     const tokenModels = await db.select({ modelName: schema.tokenModelAvailability.modelName })
@@ -890,7 +922,7 @@ export async function sitesRoutes(app: FastifyInstance) {
           eq(schema.tokenModelAvailability.available, true),
         ),
       )
-      .all();
+      .all() as SiteModelNameRow[];
 
     const models = Array.from(new Set([
       ...accountModels.map((r) => r.modelName.trim()),

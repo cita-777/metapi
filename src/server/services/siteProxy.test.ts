@@ -197,6 +197,34 @@ describe('siteProxy', () => {
     expect(headers.get('x-trace-id')).toBe('trace-1');
   });
 
+  it('lets matched site custom headers override explicit headers when configured', async () => {
+    await db.insert(schema.sites).values({
+      name: 'headers-override-site',
+      url: 'https://headers-override-site.example.com',
+      platform: 'new-api',
+      customHeaders: JSON.stringify({
+        Authorization: 'Bearer site-token',
+        'User-Agent': 'site-agent',
+      }),
+      customHeadersOverrideRequestHeaders: true,
+    }).run();
+
+    const { withSiteProxyRequestInit } = await import('./siteProxy.js');
+    const requestInit = await withSiteProxyRequestInit('https://headers-override-site.example.com/v1/models', {
+      method: 'GET',
+      headers: {
+        authorization: 'Bearer request-token',
+        'user-agent': 'request-agent',
+        'X-Trace-Id': 'trace-1',
+      },
+    });
+    const headers = new Headers(requestInit.headers);
+
+    expect(headers.get('authorization')).toBe('Bearer site-token');
+    expect(headers.get('user-agent')).toBe('site-agent');
+    expect(headers.get('x-trace-id')).toBe('trace-1');
+  });
+
   it('merges site custom headers from site records even without cache lookup', async () => {
     const { withSiteRecordProxyRequestInit } = await import('./siteProxy.js');
     const requestInit = withSiteRecordProxyRequestInit({
@@ -216,6 +244,29 @@ describe('siteProxy', () => {
     expect(headers.get('x-site-scope')).toBe('site-level');
     expect(headers.get('x-request-id')).toBe('req-1');
     expect('dispatcher' in requestInit).toBe(true);
+  });
+
+  it('lets direct site record custom headers override explicit headers when configured', async () => {
+    const { withSiteRecordProxyRequestInit } = await import('./siteProxy.js');
+    const requestInit = withSiteRecordProxyRequestInit({
+      proxyUrl: null,
+      useSystemProxy: false,
+      customHeaders: JSON.stringify({
+        Authorization: 'Bearer site-token',
+        'User-Agent': 'site-agent',
+      }),
+      customHeadersOverrideRequestHeaders: true,
+    }, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer request-token',
+        'user-agent': 'request-agent',
+      },
+    });
+    const headers = new Headers(requestInit.headers);
+
+    expect(headers.get('authorization')).toBe('Bearer site-token');
+    expect(headers.get('user-agent')).toBe('site-agent');
   });
 
   it('merges parsed-object site custom headers from site records', async () => {

@@ -24,6 +24,7 @@ describe('buildSiteSaveAction', () => {
           { url: 'https://api-b.example.com', enabled: false, sortOrder: 1 },
         ],
         customHeaders: '{"x-site-token":"alpha"}',
+        customHeadersOverrideRequestHeaders: true,
         useSystemProxy: false,
         globalWeight: 1.2,
         postRefreshProbeEnabled: true,
@@ -46,6 +47,7 @@ describe('buildSiteSaveAction', () => {
           { url: 'https://api-b.example.com', enabled: false, sortOrder: 1 },
         ],
         customHeaders: '{"x-site-token":"alpha"}',
+        customHeadersOverrideRequestHeaders: true,
         useSystemProxy: false,
         globalWeight: 1.2,
         postRefreshProbeEnabled: true,
@@ -68,6 +70,7 @@ describe('buildSiteSaveAction', () => {
         useSystemProxy: true,
         apiEndpoints: [],
         customHeaders: '',
+        customHeadersOverrideRequestHeaders: false,
         globalWeight: 0.8,
       },
     );
@@ -84,6 +87,7 @@ describe('buildSiteSaveAction', () => {
         useSystemProxy: true,
         apiEndpoints: [],
         customHeaders: '',
+        customHeadersOverrideRequestHeaders: false,
         globalWeight: 0.8,
       },
     });
@@ -102,6 +106,7 @@ describe('buildSiteSaveAction', () => {
           useSystemProxy: false,
           apiEndpoints: [],
           customHeaders: '',
+          customHeadersOverrideRequestHeaders: false,
           globalWeight: 1,
         },
       ),
@@ -130,12 +135,16 @@ describe('buildSiteSaveAction', () => {
 
     expect(emptySiteForm()).not.toHaveProperty('apiKey');
     expect(emptySiteForm().customHeaders).toEqual([emptySiteCustomHeader()]);
+    expect(emptySiteForm().customHeadersOverrideRequestHeaders).toBe(false);
     expect(emptySiteForm().apiEndpoints).toEqual([emptySiteApiEndpoint()]);
     expect(emptySiteForm().proxyUrl).toBe('');
     expect(siteFormFromSite(legacySite)).not.toHaveProperty('apiKey');
     expect(siteFormFromSite({
       proxyUrl: 'http://127.0.0.1:8080',
     }).proxyUrl).toBe('http://127.0.0.1:8080');
+    expect(siteFormFromSite({
+      customHeadersOverrideRequestHeaders: true,
+    }).customHeadersOverrideRequestHeaders).toBe(true);
     expect(siteFormFromSite(legacySite).apiEndpoints).toEqual([
       {
         url: 'https://api.example.com',

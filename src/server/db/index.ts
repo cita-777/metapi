@@ -375,6 +375,22 @@ function ensureSiteCustomHeadersSchema() {
   }
 }
 
+function ensureSiteCustomHeadersOverrideRequestHeadersSchema() {
+  if (!tableExists('sites')) {
+    return;
+  }
+
+  if (!tableColumnExists('sites', 'custom_headers_override_request_headers')) {
+    execSqliteLegacyCompat(`ALTER TABLE sites ADD COLUMN custom_headers_override_request_headers integer DEFAULT 0;`);
+  }
+
+  execSqliteLegacyCompat(`
+    UPDATE sites
+    SET custom_headers_override_request_headers = 0
+    WHERE custom_headers_override_request_headers IS NULL;
+  `);
+}
+
 function ensureSiteExternalCheckinUrlSchema() {
   if (!tableExists('sites')) {
     return;
@@ -1361,6 +1377,7 @@ function initSqliteDb() {
   ensureSiteProxySchema();
   ensureSiteUseSystemProxySchema();
   ensureSiteCustomHeadersSchema();
+  ensureSiteCustomHeadersOverrideRequestHeadersSchema();
   ensureSiteExternalCheckinUrlSchema();
   ensureSiteGlobalWeightSchema();
   ensureRouteGroupingSchema();

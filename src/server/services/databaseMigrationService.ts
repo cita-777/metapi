@@ -80,6 +80,7 @@ export interface DatabaseMigrationSummary {
 }
 
 type SqlClient = RuntimeSchemaClient;
+type SettingRow = typeof schema.settings.$inferSelect;
 
 interface InsertStatement {
   table: string;
@@ -247,7 +248,7 @@ function parseSettingValue(raw: string | null): unknown {
 }
 
 async function toBackupSnapshot(): Promise<BackupSnapshot> {
-  const settingsRows = await db.select().from(schema.settings).all();
+  const settingsRows = await db.select().from(schema.settings).all() as SettingRow[];
   return {
     version: 'live-db-snapshot',
     timestamp: Date.now(),
@@ -323,7 +324,7 @@ function buildStatements(
   for (const row of snapshot.accounts.sites) {
     statements.push({
       table: 'sites',
-      columns: ['id', 'name', 'url', 'external_checkin_url', 'platform', 'proxy_url', 'use_system_proxy', 'custom_headers', 'status', 'is_pinned', 'sort_order', 'global_weight', 'api_key', 'created_at', 'updated_at'],
+      columns: ['id', 'name', 'url', 'external_checkin_url', 'platform', 'proxy_url', 'use_system_proxy', 'custom_headers', 'custom_headers_override_request_headers', 'status', 'is_pinned', 'sort_order', 'global_weight', 'api_key', 'created_at', 'updated_at'],
       values: [
         asNumber(row.id, 0),
         asNullableString(row.name),
@@ -333,6 +334,7 @@ function buildStatements(
         asNullableString(row.proxyUrl),
         asBoolean(row.useSystemProxy, false),
         serializeColumnValue('sites', 'custom_headers', row.customHeaders, contract),
+        asBoolean(row.customHeadersOverrideRequestHeaders, false),
         asNullableString(row.status) ?? 'active',
         asBoolean(row.isPinned, false),
         asNumber(row.sortOrder, 0),

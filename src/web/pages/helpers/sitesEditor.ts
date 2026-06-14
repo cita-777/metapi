@@ -20,6 +20,7 @@ export type SiteForm = {
   useSystemProxy: boolean;
   apiEndpoints: SiteApiEndpointField[];
   customHeaders: SiteCustomHeaderField[];
+  customHeadersOverrideRequestHeaders: boolean;
   globalWeight: string;
 };
 
@@ -41,6 +42,7 @@ export type SiteSavePayload = {
     sortOrder: number;
   }>;
   customHeaders: string;
+  customHeadersOverrideRequestHeaders: boolean;
   globalWeight: number;
   postRefreshProbeEnabled?: boolean;
   postRefreshProbeModel?: string;
@@ -79,6 +81,7 @@ export function emptySiteForm(): SiteForm {
     useSystemProxy: false,
     apiEndpoints: [emptySiteApiEndpoint()],
     customHeaders: [emptySiteCustomHeader()],
+    customHeadersOverrideRequestHeaders: false,
     globalWeight: '1',
   };
 }
@@ -131,10 +134,11 @@ function parseApiEndpointsForEditor(raw: unknown): SiteApiEndpointField[] {
   return ensureSiteApiEndpointRows(rows);
 }
 
-export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | 'customHeaders' | 'globalWeight' | 'externalCheckinUrl' | 'proxyUrl' | 'useSystemProxy'>> & {
+export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | 'customHeaders' | 'customHeadersOverrideRequestHeaders' | 'globalWeight' | 'externalCheckinUrl' | 'proxyUrl' | 'useSystemProxy'>> & {
   externalCheckinUrl?: string | null;
   proxyUrl?: string | null;
   useSystemProxy?: boolean | null;
+  customHeadersOverrideRequestHeaders?: boolean | null;
   apiEndpoints?: Array<{
     url?: string | null;
     enabled?: boolean | null;
@@ -155,6 +159,7 @@ export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | '
     useSystemProxy: !!site.useSystemProxy,
     apiEndpoints: parseApiEndpointsForEditor(site.apiEndpoints),
     customHeaders: parseCustomHeadersForEditor(site.customHeaders),
+    customHeadersOverrideRequestHeaders: !!site.customHeadersOverrideRequestHeaders,
     globalWeight,
   };
 }

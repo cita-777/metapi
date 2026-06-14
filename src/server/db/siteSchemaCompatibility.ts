@@ -50,6 +50,19 @@ export const SITE_COLUMN_COMPATIBILITY_SPECS: SiteColumnCompatibilitySpec[] = [
     },
   },
   {
+    column: 'custom_headers_override_request_headers',
+    addSql: {
+      sqlite: 'ALTER TABLE sites ADD COLUMN custom_headers_override_request_headers integer DEFAULT 0;',
+      mysql: 'ALTER TABLE `sites` ADD COLUMN `custom_headers_override_request_headers` BOOLEAN DEFAULT FALSE',
+      postgres: 'ALTER TABLE "sites" ADD COLUMN "custom_headers_override_request_headers" BOOLEAN DEFAULT FALSE',
+    },
+    normalizeSql: {
+      sqlite: 'UPDATE sites SET custom_headers_override_request_headers = 0 WHERE custom_headers_override_request_headers IS NULL;',
+      mysql: 'UPDATE `sites` SET `custom_headers_override_request_headers` = FALSE WHERE `custom_headers_override_request_headers` IS NULL',
+      postgres: 'UPDATE "sites" SET "custom_headers_override_request_headers" = FALSE WHERE "custom_headers_override_request_headers" IS NULL',
+    },
+  },
+  {
     column: 'external_checkin_url',
     addSql: {
       sqlite: 'ALTER TABLE sites ADD COLUMN external_checkin_url text;',

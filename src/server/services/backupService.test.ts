@@ -6,6 +6,12 @@ import { asc, eq } from 'drizzle-orm';
 
 type DbModule = typeof import('../db/index.js');
 type BackupServiceModule = typeof import('./backupService.js');
+type SiteRow = DbModule['schema']['sites']['$inferSelect'];
+type AccountRow = DbModule['schema']['accounts']['$inferSelect'];
+type AccountTokenRow = DbModule['schema']['accountTokens']['$inferSelect'];
+type ModelAvailabilityRow = DbModule['schema']['modelAvailability']['$inferSelect'];
+type ProxyLogRow = DbModule['schema']['proxyLogs']['$inferSelect'];
+type SettingRow = DbModule['schema']['settings']['$inferSelect'];
 
 describe('backupService', () => {
   let db: DbModule['db'];
@@ -62,6 +68,7 @@ describe('backupService', () => {
       customHeaders: JSON.stringify({
         'cf-access-client-id': 'roundtrip-client',
       }),
+      customHeadersOverrideRequestHeaders: true,
       status: 'active',
       isPinned: true,
       sortOrder: 9,
@@ -249,6 +256,7 @@ describe('backupService', () => {
     expect(exported.accounts.accounts[0]).not.toHaveProperty('balanceUsed');
     expect(exported.accounts.accounts[0]).not.toHaveProperty('lastCheckinAt');
     expect(exported.accounts.accounts[0]).not.toHaveProperty('lastBalanceRefresh');
+    expect(exported.accounts.sites[0].customHeadersOverrideRequestHeaders).toBe(true);
     expect(exported.accounts.routeChannels[0]).not.toHaveProperty('successCount');
     expect(exported.accounts.routeChannels[0]).not.toHaveProperty('lastUsedAt');
     expect(exported.accounts.downstreamApiKeys[0]).not.toHaveProperty('usedCost');
@@ -267,13 +275,14 @@ describe('backupService', () => {
     const restoredRoute = await db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, route.id)).get();
     const restoredChannel = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.routeId, route.id)).get();
     const restoredDisabledModels = await db.select().from(schema.siteDisabledModels).all();
-    const restoredModelAvailability = await db.select().from(schema.modelAvailability).all();
+    const restoredModelAvailability = await db.select().from(schema.modelAvailability).all() as ModelAvailabilityRow[];
     const restoredDownstreamKeys = await db.select().from(schema.downstreamApiKeys).all();
 
     expect(restoredSite?.proxyUrl).toBe('http://127.0.0.1:8080');
     expect(restoredSite?.externalCheckinUrl).toBe('https://checkin.roundtrip.example.com');
     expect(restoredSite?.useSystemProxy).toBe(true);
     expect(restoredSite?.customHeaders).toBe('{"cf-access-client-id":"roundtrip-client"}');
+    expect(restoredSite?.customHeadersOverrideRequestHeaders).toBe(true);
     expect(restoredSite?.isPinned).toBe(true);
     expect(restoredSite?.sortOrder).toBe(9);
 
@@ -357,7 +366,7 @@ describe('backupService', () => {
       { key: 'routing_fallback_unit_cost', value: 0.25 },
     ]);
 
-    const settingsRows = await db.select().from(schema.settings).all();
+    const settingsRows = await db.select().from(schema.settings).all() as SettingRow[];
     const savedKeys = settingsRows.map((row) => row.key);
 
     expect(savedKeys).toContain('routing_fallback_unit_cost');
@@ -906,11 +915,11 @@ describe('backupService', () => {
       .orderBy(asc(schema.siteApiEndpoints.sortOrder), asc(schema.siteApiEndpoints.id))
       .all();
     const restoredDisabledModels = await db.select().from(schema.siteDisabledModels).all();
-    const restoredAvailability = await db.select().from(schema.modelAvailability).all();
+    const restoredAvailability = await db.select().from(schema.modelAvailability).all() as ModelAvailabilityRow[];
     const restoredTokenAvailability = await db.select().from(schema.tokenModelAvailability).all();
     const restoredAnnouncements = await db.select().from(schema.siteAnnouncements).all();
     const restoredDownstreamKeys = await db.select().from(schema.downstreamApiKeys).all();
-    const restoredProxyLogs = await db.select().from(schema.proxyLogs).all();
+    const restoredProxyLogs = await db.select().from(schema.proxyLogs).all() as ProxyLogRow[];
     const restoredCheckinLogs = await db.select().from(schema.checkinLogs).all();
     const restoredEvents = await db.select().from(schema.events).all();
     const restoredProxyVideoTasks = await db.select().from(schema.proxyVideoTasks).all();
@@ -1153,7 +1162,7 @@ describe('backupService', () => {
 
     const sites = await db.select().from(schema.sites).all();
     const accounts = await db.select().from(schema.accounts).all();
-    const settings = await db.select().from(schema.settings).all();
+    const settings = await db.select().from(schema.settings).all() as SettingRow[];
 
     expect(sites.length).toBe(1);
     expect(accounts.length).toBe(1);
@@ -1365,10 +1374,10 @@ describe('backupService', () => {
         ]),
       );
 
-      const sites = await db.select().from(schema.sites).all();
-      const accounts = await db.select().from(schema.accounts).all();
-      const accountTokens = await db.select().from(schema.accountTokens).all();
-      const settings = await db.select().from(schema.settings).all();
+      const sites = await db.select().from(schema.sites).all() as SiteRow[];
+      const accounts = await db.select().from(schema.accounts).all() as AccountRow[];
+      const accountTokens = await db.select().from(schema.accountTokens).all() as AccountTokenRow[];
+      const settings = await db.select().from(schema.settings).all() as SettingRow[];
 
       expect(fetchSpy).not.toHaveBeenCalled();
       expect(sites).toHaveLength(7);
