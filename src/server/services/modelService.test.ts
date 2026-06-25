@@ -332,4 +332,125 @@ describe('rebuildTokenRoutesFromAvailability', () => {
     const wildcardRouteAfter = await db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, wildcardRoute.id)).get();
     expect(wildcardRouteAfter).toBeDefined();
   });
+
+  it('removes stale pattern-group channels when automatic rebuild deletes exact routes', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'site-stale-pattern',
+      url: 'https://site-stale-pattern.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'user-stale-pattern',
+      accessToken: 'access-stale-pattern',
+      status: 'active',
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'sk-stale-pattern',
+      source: 'manual',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    await db.insert(schema.tokenModelAvailability).values({
+      tokenId: token.id,
+      modelName: 'gpt-5-current',
+      available: true,
+    }).run();
+
+    const staleRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5-old',
+      enabled: true,
+    }).returning().get();
+    const patternRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 're:^gpt-5.*$',
+      displayName: 'gpt-5-group',
+      enabled: true,
+    }).returning().get();
+
+    await db.insert(schema.routeChannels).values([
+      {
+        routeId: staleRoute.id,
+        accountId: account.id,
+        tokenId: token.id,
+        sourceModel: 'gpt-5-old',
+        priority: 0,
+        weight: 10,
+        enabled: true,
+        manualOverride: false,
+      },
+      {
+        routeId: patternRoute.id,
+        accountId: account.id,
+        tokenId: token.id,
+        sourceModel: 'gpt-5-old',
+        priority: 0,
+        weight: 10,
+        enabled: true,
+        manualOverride: false,
+      },
+    ]).run();
+
+    const rebuild = await rebuildTokenRoutesFromAvailability();
+
+    expect(rebuild.removedRoutes).toBe(1);
+    expect(rebuild.patternRouteRemovedChannels).toBeGreaterThan(0);
+
+    const patternChannels = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.routeId, patternRoute.id))
+      .all();
+    expect(patternChannels.map((channel) => channel.sourceModel)).toEqual(['gpt-5-current']);
+  });
+
+  it('adds matching pattern-group channels when automatic rebuild creates exact routes', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'site-new-pattern',
+      url: 'https://site-new-pattern.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'user-new-pattern',
+      accessToken: 'access-new-pattern',
+      status: 'active',
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'sk-new-pattern',
+      source: 'manual',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    await db.insert(schema.tokenModelAvailability).values({
+      tokenId: token.id,
+      modelName: 'gpt-5-new',
+      available: true,
+    }).run();
+
+    const patternRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 're:^gpt-5.*$',
+      displayName: 'gpt-5-group',
+      enabled: true,
+    }).returning().get();
+
+    const rebuild = await rebuildTokenRoutesFromAvailability();
+
+    expect(rebuild.createdRoutes).toBe(1);
+    expect(rebuild.patternRouteCreatedChannels).toBe(1);
+
+    const patternChannels = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.routeId, patternRoute.id))
+      .all();
+    expect(patternChannels).toHaveLength(1);
+    expect(patternChannels[0]?.sourceModel).toBe('gpt-5-new');
+    expect(patternChannels[0]?.manualOverride).toBe(false);
+  });
 });

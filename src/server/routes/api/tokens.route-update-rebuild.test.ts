@@ -658,6 +658,181 @@ describe('PUT /api/routes/:id route rebuild', () => {
     expect(updated?.tokenId).toBe(seeded.token.id);
   });
 
+  it('syncs pattern-group channels when exact source route channels change or get disabled', async () => {
+    const sourceA = await seedAccountWithToken('gpt-5-alpha');
+    const sourceB = await seedAccountWithToken('gpt-5-mini');
+    const manualSource = await seedAccountWithToken('manual-special');
+
+    const exactRouteA = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5-alpha',
+      enabled: true,
+    }).returning().get();
+    const exactRouteB = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5-mini',
+      enabled: true,
+    }).returning().get();
+
+    await db.insert(schema.routeChannels).values({
+      routeId: exactRouteA.id,
+      accountId: sourceA.account.id,
+      tokenId: sourceA.token.id,
+      sourceModel: 'gpt-5-alpha',
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      manualOverride: false,
+    }).run();
+    const sourceBChannel = await db.insert(schema.routeChannels).values({
+      routeId: exactRouteB.id,
+      accountId: sourceB.account.id,
+      tokenId: sourceB.token.id,
+      sourceModel: 'gpt-5-mini',
+      priority: 3,
+      weight: 7,
+      enabled: true,
+      manualOverride: true,
+    }).returning().get();
+
+    const patternResponse = await app.inject({
+      method: 'POST',
+      url: '/api/routes',
+      payload: {
+        modelPattern: 're:^gpt-5.*$',
+        displayName: 'gpt-5-group',
+      },
+    });
+    expect(patternResponse.statusCode).toBe(200);
+    const patternRouteId = patternResponse.json().id as number;
+
+    const initialPatternChannels = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.routeId, patternRouteId))
+      .all();
+    const copiedB = initialPatternChannels.find((channel) => channel.sourceModel === 'gpt-5-mini');
+    expect(initialPatternChannels.map((channel) => channel.sourceModel).sort()).toEqual(['gpt-5-alpha', 'gpt-5-mini']);
+    expect(copiedB?.priority).toBe(3);
+    expect(copiedB?.weight).toBe(7);
+    expect(copiedB?.manualOverride).toBe(false);
+
+    const manualPatternChannel = await db.insert(schema.routeChannels).values({
+      routeId: patternRouteId,
+      accountId: manualSource.account.id,
+      tokenId: manualSource.token.id,
+      sourceModel: 'manual-special',
+      priority: 9,
+      weight: 1,
+      enabled: true,
+      manualOverride: true,
+    }).returning().get();
+
+    const deleteResponse = await app.inject({
+      method: 'DELETE',
+      url: `/api/channels/${sourceBChannel.id}`,
+    });
+    expect(deleteResponse.statusCode).toBe(200);
+
+    let patternChannels = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.routeId, patternRouteId))
+      .all();
+    expect(patternChannels.map((channel) => channel.sourceModel).sort()).toEqual(['gpt-5-alpha', 'manual-special']);
+    expect(patternChannels.some((channel) => channel.id === manualPatternChannel.id)).toBe(true);
+
+    const addResponse = await app.inject({
+      method: 'POST',
+      url: `/api/routes/${exactRouteB.id}/channels`,
+      payload: {
+        accountId: sourceB.account.id,
+        tokenId: sourceB.token.id,
+        sourceModel: 'gpt-5-mini',
+      },
+    });
+    expect(addResponse.statusCode).toBe(200);
+    const readdedSourceBChannelId = addResponse.json().id as number;
+
+    patternChannels = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.routeId, patternRouteId))
+      .all();
+    expect(patternChannels.map((channel) => channel.sourceModel).sort()).toEqual(['gpt-5-alpha', 'gpt-5-mini', 'manual-special']);
+
+    const updateResponse = await app.inject({
+      method: 'PUT',
+      url: `/api/channels/${readdedSourceBChannelId}`,
+      payload: {
+        priority: 6,
+        weight: 4,
+      },
+    });
+    expect(updateResponse.statusCode).toBe(200);
+
+    patternChannels = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.routeId, patternRouteId))
+      .all();
+    const updatedPatternB = patternChannels.find((channel) => channel.sourceModel === 'gpt-5-mini');
+    expect(updatedPatternB?.priority).toBe(6);
+    expect(updatedPatternB?.weight).toBe(4);
+    expect(updatedPatternB?.manualOverride).toBe(false);
+
+    const disableResponse = await app.inject({
+      method: 'POST',
+      url: '/api/routes/batch',
+      payload: {
+        ids: [exactRouteB.id],
+        action: 'disable',
+      },
+    });
+    expect(disableResponse.statusCode).toBe(200);
+
+    patternChannels = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.routeId, patternRouteId))
+      .all();
+    expect(patternChannels.map((channel) => channel.sourceModel).sort()).toEqual(['gpt-5-alpha', 'manual-special']);
+    expect(patternChannels.some((channel) => channel.id === manualPatternChannel.id)).toBe(true);
+  });
+
+  it('removes exact source channels from pattern groups when deleting an exact route', async () => {
+    const source = await seedAccountWithToken('gpt-5-delete-me');
+    const exactRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5-delete-me',
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.routeChannels).values({
+      routeId: exactRoute.id,
+      accountId: source.account.id,
+      tokenId: source.token.id,
+      sourceModel: 'gpt-5-delete-me',
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      manualOverride: false,
+    }).run();
+
+    const patternResponse = await app.inject({
+      method: 'POST',
+      url: '/api/routes',
+      payload: {
+        modelPattern: 're:^gpt-5.*$',
+        displayName: 'gpt-5-group',
+      },
+    });
+    expect(patternResponse.statusCode).toBe(200);
+    const patternRouteId = patternResponse.json().id as number;
+
+    let patternChannels = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.routeId, patternRouteId))
+      .all();
+    expect(patternChannels.map((channel) => channel.sourceModel)).toEqual(['gpt-5-delete-me']);
+
+    const deleteResponse = await app.inject({
+      method: 'DELETE',
+      url: `/api/routes/${exactRoute.id}`,
+    });
+    expect(deleteResponse.statusCode).toBe(200);
+
+    patternChannels = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.routeId, patternRouteId))
+      .all();
+    expect(patternChannels).toHaveLength(0);
+  });
+
   it('prefers an explicit-group display name over a colliding exact route', async () => {
     const exactCandidate = await seedAccountWithToken('claude-opus-4-6');
     const groupedCandidate = await seedAccountWithToken('claude-opus-4-5');
