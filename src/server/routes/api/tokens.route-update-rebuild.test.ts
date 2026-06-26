@@ -71,6 +71,8 @@ describe('PUT /api/routes/:id route rebuild', () => {
   beforeEach(async () => {
     resetTokenRouteReadLimitersForTests();
     await db.delete(schema.routeChannels).run();
+    await db.delete(schema.oauthRouteUnitMembers).run();
+    await db.delete(schema.oauthRouteUnits).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
@@ -786,6 +788,83 @@ describe('PUT /api/routes/:id route rebuild', () => {
       .all();
     expect(patternChannels.map((channel) => channel.sourceModel).sort()).toEqual(['gpt-5-alpha', 'manual-special']);
     expect(patternChannels.some((channel) => channel.id === manualPatternChannel.id)).toBe(true);
+  });
+
+  it('preserves OAuth route-unit channels when rebuilding pattern groups from exact routes', async () => {
+    const sourceA = await seedAccountWithToken('gpt-5-route-unit');
+    const sourceB = await seedAccountWithToken('gpt-5-route-unit');
+
+    const routeUnit = await db.insert(schema.oauthRouteUnits).values({
+      siteId: sourceA.site.id,
+      provider: 'codex',
+      name: 'Codex Route Unit',
+      strategy: 'round_robin',
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.oauthRouteUnitMembers).values([
+      { unitId: routeUnit.id, accountId: sourceA.account.id, sortOrder: 0 },
+      { unitId: routeUnit.id, accountId: sourceB.account.id, sortOrder: 1 },
+    ]).run();
+
+    const exactRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5-route-unit',
+      enabled: true,
+    }).returning().get();
+    const exactChannel = await db.insert(schema.routeChannels).values({
+      routeId: exactRoute.id,
+      accountId: sourceA.account.id,
+      tokenId: null,
+      oauthRouteUnitId: routeUnit.id,
+      sourceModel: 'gpt-5-route-unit',
+      priority: 4,
+      weight: 6,
+      enabled: true,
+      manualOverride: false,
+    }).returning().get();
+
+    const patternResponse = await app.inject({
+      method: 'POST',
+      url: '/api/routes',
+      payload: {
+        modelPattern: 're:^gpt-5-route.*$',
+        displayName: 'gpt-route-unit-group',
+      },
+    });
+    expect(patternResponse.statusCode).toBe(200);
+    const patternRouteId = patternResponse.json().id as number;
+
+    let patternChannels = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.routeId, patternRouteId))
+      .all();
+    expect(patternChannels).toHaveLength(1);
+    expect(patternChannels[0]).toMatchObject({
+      accountId: sourceA.account.id,
+      tokenId: null,
+      oauthRouteUnitId: routeUnit.id,
+      sourceModel: 'gpt-5-route-unit',
+      priority: 4,
+      weight: 6,
+      manualOverride: false,
+    });
+
+    const updateResponse = await app.inject({
+      method: 'PUT',
+      url: `/api/channels/${exactChannel.id}`,
+      payload: {
+        priority: 7,
+      },
+    });
+    expect(updateResponse.statusCode).toBe(200);
+
+    patternChannels = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.routeId, patternRouteId))
+      .all();
+    expect(patternChannels).toHaveLength(1);
+    expect(patternChannels[0]).toMatchObject({
+      oauthRouteUnitId: routeUnit.id,
+      priority: 7,
+      manualOverride: false,
+    });
   });
 
   it('removes exact source channels from pattern groups when deleting an exact route', async () => {

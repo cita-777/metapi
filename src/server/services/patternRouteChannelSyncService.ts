@@ -11,6 +11,7 @@ import { normalizeTokenRouteMode } from '../../shared/tokenRouteContract.js';
 type PatternRouteChannelCandidate = {
   tokenId: number | null;
   accountId: number;
+  oauthRouteUnitId: number | null;
   sourceModel: string;
   priority: number;
   weight: number;
@@ -47,11 +48,15 @@ function normalizeModelKey(modelName: string): string {
 function buildChannelPairKey(input: {
   accountId: number;
   tokenId: number | null;
+  oauthRouteUnitId?: number | null;
   sourceModel: string | null;
 }): string {
-  const tokenId = typeof input.tokenId === 'number' && Number.isFinite(input.tokenId) ? input.tokenId : 0;
   const sourceModel = (input.sourceModel || '').trim().toLowerCase();
-  return `${input.accountId}::${tokenId}::${sourceModel}`;
+  if (typeof input.oauthRouteUnitId === 'number' && Number.isFinite(input.oauthRouteUnitId) && input.oauthRouteUnitId > 0) {
+    return `route-unit:${input.oauthRouteUnitId}::${sourceModel}`;
+  }
+  const tokenId = typeof input.tokenId === 'number' && Number.isFinite(input.tokenId) ? input.tokenId : 0;
+  return `account:${input.accountId}::${tokenId}::${sourceModel}`;
 }
 
 async function getPatternTokenCandidates(
@@ -83,6 +88,7 @@ async function getPatternTokenCandidates(
     candidates.push({
       tokenId: row.account_tokens.id,
       accountId: row.accounts.id,
+      oauthRouteUnitId: null,
       sourceModel: modelName,
       priority: 0,
       weight: 10,
@@ -129,6 +135,7 @@ async function getMatchedExactRouteChannelCandidates(
     candidates: channels.map((channel) => ({
       tokenId: channel.tokenId ?? null,
       accountId: channel.accountId,
+      oauthRouteUnitId: channel.oauthRouteUnitId ?? null,
       sourceModel: (channel.sourceModel || routeMap.get(channel.routeId)?.modelPattern || '').trim(),
       priority: channel.priority ?? 0,
       weight: channel.weight ?? 10,
@@ -161,6 +168,7 @@ export async function populateRouteChannelsByModelPattern(
   const existingPairs = new Set(existingChannels.map((channel) => buildChannelPairKey({
     accountId: channel.accountId,
     tokenId: channel.tokenId ?? null,
+    oauthRouteUnitId: channel.oauthRouteUnitId ?? null,
     sourceModel: channel.sourceModel,
   })));
 
@@ -172,6 +180,7 @@ export async function populateRouteChannelsByModelPattern(
       routeId,
       accountId: candidate.accountId,
       tokenId: candidate.tokenId,
+      oauthRouteUnitId: candidate.oauthRouteUnitId,
       sourceModel: candidate.sourceModel,
       priority: candidate.priority,
       weight: candidate.weight,
