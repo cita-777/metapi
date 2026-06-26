@@ -39,6 +39,16 @@ describe('route refresh workflow architecture boundaries', () => {
     expectCallsRebuildRoutesOnly(statsSource);
   });
 
+  it('keeps exact-route pattern sync detection behind the pattern sync service', () => {
+    const tokensSource = readSource('./tokens.ts');
+    const patternSyncServiceSource = readSource('../../services/patternRouteChannelSyncService.ts');
+
+    expect(tokensSource).toContain('syncPatternRouteChannelsAfterAffectedRouteChanges');
+    expect(tokensSource).not.toContain('rebuildPatternRouteChannelsAfterExactSourceRouteChange');
+    expect(tokensSource).not.toContain('rebuildAllPatternRouteChannels');
+    expect(patternSyncServiceSource).toContain('syncPatternRouteChannelsAfterAffectedRouteChanges');
+  });
+
   it('keeps proxy fallback refreshes and scheduler hooks on the route refresh workflow', () => {
     const completionsSource = readSource('../proxy/completions.ts');
     const embeddingsSource = readSource('../proxy/embeddings.ts');

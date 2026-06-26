@@ -29,6 +29,21 @@ type RebuildPatternRouteOptions = {
   excludeExactModelPatterns?: string[];
 };
 
+type PatternRouteChannelAffectedRouteSnapshot = {
+  modelPattern: string;
+  routeMode?: string | null;
+};
+
+type SyncPatternRouteChannelsAfterAffectedRouteChangesInput = {
+  affectedRouteIds?: number[];
+  removedRoutes?: PatternRouteChannelAffectedRouteSnapshot[];
+};
+
+type RouteModeModelPattern = {
+  modelPattern: string;
+  routeMode?: string | null;
+};
+
 function isExactModelPattern(modelPattern: string): boolean {
   const normalized = modelPattern.trim();
   if (!normalized) return false;
@@ -36,9 +51,45 @@ function isExactModelPattern(modelPattern: string): boolean {
   return !/[\*\?]/.test(normalized);
 }
 
-function isPatternGroupRoute(route: Pick<typeof schema.tokenRoutes.$inferSelect, 'routeMode' | 'modelPattern'>): boolean {
+function isPatternGroupRoute(route: RouteModeModelPattern): boolean {
   return normalizeTokenRouteMode(route.routeMode) !== 'explicit_group'
     && !isExactModelPattern(route.modelPattern);
+}
+
+function isExactSourceRoute(route: RouteModeModelPattern): boolean {
+  return normalizeTokenRouteMode(route.routeMode) !== 'explicit_group'
+    && isExactModelPattern(route.modelPattern);
+}
+
+function normalizeAffectedRouteIds(routeIds: number[] | undefined): number[] {
+  const normalized: number[] = [];
+  for (const rawRouteId of routeIds || []) {
+    const routeId = Math.trunc(Number(rawRouteId));
+    if (!Number.isFinite(routeId) || routeId <= 0 || normalized.includes(routeId)) continue;
+    normalized.push(routeId);
+  }
+  return normalized;
+}
+
+function createEmptyPatternRouteChannelSyncResult(): PatternRouteChannelSyncResult {
+  return {
+    rebuiltRoutes: 0,
+    routeIds: [],
+    removedChannels: 0,
+    createdChannels: 0,
+  };
+}
+
+function collectRemovedExactModelPatterns(routes: PatternRouteChannelAffectedRouteSnapshot[] | undefined): string[] {
+  const normalized: string[] = [];
+  for (const route of routes || []) {
+    if (!isExactSourceRoute(route)) continue;
+    const modelPattern = route.modelPattern.trim();
+    const modelKey = normalizeModelKey(modelPattern);
+    if (!modelKey || normalized.some((item) => normalizeModelKey(item) === modelKey)) continue;
+    normalized.push(modelPattern);
+  }
+  return normalized;
 }
 
 function normalizeModelKey(modelName: string): string {
@@ -251,4 +302,35 @@ export async function rebuildAllPatternRouteChannels(
   }
 
   return result;
+}
+
+export async function syncPatternRouteChannelsAfterAffectedRouteChanges(
+  input: SyncPatternRouteChannelsAfterAffectedRouteChangesInput = {},
+): Promise<PatternRouteChannelSyncResult> {
+  const affectedRouteIds = normalizeAffectedRouteIds(input.affectedRouteIds);
+  const removedExactModelPatterns = collectRemovedExactModelPatterns(input.removedRoutes);
+  if (affectedRouteIds.length === 0 && removedExactModelPatterns.length === 0) {
+    return createEmptyPatternRouteChannelSyncResult();
+  }
+
+  let hasAffectedExactSourceRoute = false;
+  if (affectedRouteIds.length > 0) {
+    const routes = await db.select({
+      id: schema.tokenRoutes.id,
+      modelPattern: schema.tokenRoutes.modelPattern,
+      routeMode: schema.tokenRoutes.routeMode,
+    }).from(schema.tokenRoutes)
+      .where(inArray(schema.tokenRoutes.id, affectedRouteIds))
+      .all();
+
+    hasAffectedExactSourceRoute = routes.some(isExactSourceRoute);
+  }
+
+  if (!hasAffectedExactSourceRoute && removedExactModelPatterns.length === 0) {
+    return createEmptyPatternRouteChannelSyncResult();
+  }
+
+  return rebuildAllPatternRouteChannels({
+    excludeExactModelPatterns: removedExactModelPatterns,
+  });
 }
