@@ -1356,12 +1356,6 @@ function hasCustomDisplayName(route: Pick<RouteRow, 'modelPattern' | 'displayNam
 }
 
 function buildVisibleEnabledRoutes(routes: RouteRow[]): RouteRow[] {
-  const exactModelNames = new Set(
-    routes
-      .filter((route) => !isExplicitGroupRoute(route) && isExactRouteModelPattern(route.modelPattern))
-      .map((route) => (route.modelPattern || '').trim())
-      .filter(Boolean),
-  );
   const coveringGroups = routes.filter((route) => (
     route.enabled
     && (
@@ -1384,8 +1378,7 @@ function buildVisibleEnabledRoutes(routes: RouteRow[]): RouteRow[] {
 
     return !coveringGroups.some((groupRoute) => {
       if (groupRoute.id === route.id) return false;
-      const groupDisplayName = normalizeRouteDisplayName(groupRoute.displayName);
-      if (!groupDisplayName || exactModelNames.has(groupDisplayName)) return false;
+      if (!normalizeRouteDisplayName(groupRoute.displayName)) return false;
       if (isExplicitGroupRoute(groupRoute)) {
         return groupRoute.sourceRouteIds.includes(route.id);
       }

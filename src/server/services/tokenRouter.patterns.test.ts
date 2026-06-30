@@ -218,6 +218,25 @@ describe('TokenRouter patterns and model mapping', () => {
     expect(decision.actualModel).toBe('claude-opus-4-5');
   });
 
+  it('keeps exact routes out of exposed models when covered by an explicit group', async () => {
+    const source = await createRouteWithSingleChannel('gpt-5.5-openai-compact');
+    await createRouteWithSingleChannel('gpt-5.5-openai-compact-high');
+    const exact = await createRouteWithSingleChannel('gpt-5.5-openai-compact-xhigh');
+    const group = await createExplicitGroupRoute('gpt-5.5-openai-compact', [source.route.id]);
+    const router = new TokenRouter();
+
+    const exposedModels = await router.getAvailableModels();
+    const selected = await router.selectChannel('gpt-5.5-openai-compact-xhigh');
+    const decision = await router.explainSelection('gpt-5.5-openai-compact-xhigh');
+
+    expect(group.routeMode).toBe('explicit_group');
+    expect(exposedModels).toEqual(['gpt-5.5-openai-compact']);
+    expect(selected).toBeTruthy();
+    expect(selected?.channel.routeId).toBe(exact.route.id);
+    expect(decision.routeId).toBe(exact.route.id);
+    expect(decision.actualModel).toBe('gpt-5.5-openai-compact-xhigh');
+  });
+
   it('falls back to the source exact-route model when explicit-group channels omit sourceModel', async () => {
     const source = await createRouteWithSingleChannel('claude-opus-4-5');
     await createExplicitGroupRoute('claude-test-4.6-sonnet', [source.route.id]);
