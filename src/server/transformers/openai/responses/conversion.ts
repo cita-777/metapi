@@ -994,6 +994,7 @@ export function convertResponsesBodyToOpenAiBody(
     });
   };
 
+  const collectedAdditionalTools: Array<Record<string, unknown>> = [];
   const processInputItem = (item: unknown) => {
     if (typeof item === 'string') {
       flushPendingToolCalls();
@@ -1005,6 +1006,30 @@ export function convertResponsesBodyToOpenAiBody(
     if (!isRecord(item)) return;
 
     const itemType = asTrimmedString(item.type).toLowerCase();
+    if (itemType === 'additional_tools' && Array.isArray(item.tools)) {
+      for (const t of item.tools) {
+        if (!isRecord(t)) continue;
+        const fnType = asTrimmedString(t.type).toLowerCase();
+        if (fnType === 'function') {
+          const fn: Record<string, unknown> = { name: asTrimmedString(t.name) };
+          if (t.description) fn.description = t.description;
+          if (t.parameters !== undefined) fn.parameters = t.parameters;
+          if (t.strict !== undefined) fn.strict = t.strict;
+          collectedAdditionalTools.push({ type: 'function', function: fn });
+        } else if (fnType === 'namespace' && Array.isArray(t.tools)) {
+          for (const nt of t.tools) {
+            if (!isRecord(nt)) continue;
+            if (asTrimmedString(nt.type).toLowerCase() !== 'function') continue;
+            const fn: Record<string, unknown> = { name: asTrimmedString(nt.name) };
+            if (nt.description) fn.description = nt.description;
+            if (nt.parameters !== undefined) fn.parameters = nt.parameters;
+            if (nt.strict !== undefined) fn.strict = nt.strict;
+            collectedAdditionalTools.push({ type: 'function', function: fn });
+          }
+        }
+      }
+      return;
+    }
     if (itemType.startsWith('mcp_') && isResponsesMcpItem(item)) {
       const toolCall = toResponsesMcpCompatToolCall(item, `call_${Date.now()}_${functionCallIndex}`);
       if (toolCall) {
@@ -1110,6 +1135,11 @@ export function convertResponsesBodyToOpenAiBody(
   if (normalizedBody.audio !== undefined) payload.audio = cloneJsonValue(normalizedBody.audio);
   if (normalizedBody.parallel_tool_calls !== undefined) payload.parallel_tool_calls = normalizedBody.parallel_tool_calls;
   if (normalizedBody.tools !== undefined) payload.tools = convertResponsesToolsToOpenAi(normalizedBody.tools);
+  if (collectedAdditionalTools.length > 0) {
+    payload.tools = Array.isArray(payload.tools)
+      ? [...payload.tools as unknown[], ...collectedAdditionalTools]
+      : collectedAdditionalTools;
+  }
   if (normalizedBody.tool_choice !== undefined) payload.tool_choice = convertResponsesToolChoiceToOpenAi(normalizedBody.tool_choice);
   if (Array.isArray(payload.tools) && payload.tools.length === 0) {
     delete payload.tool_choice;

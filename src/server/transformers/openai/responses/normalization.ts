@@ -239,6 +239,7 @@ function sanitizeResponsesInputToolLifecycle(items: unknown[]): unknown[] {
 
 export function normalizeResponsesMessageItem(item: Record<string, unknown>): Record<string, unknown> {
   const type = asTrimmedString(item.type).toLowerCase();
+  if (type === 'additional_tools') return item;
   if (RESPONSES_TOOL_CALL_ITEM_TYPES.has(type) || RESPONSES_TOOL_OUTPUT_ITEM_TYPES.has(type)) {
     return normalizeResponsesToolLifecycleItem(item) ?? item;
   }
