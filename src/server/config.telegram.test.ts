@@ -23,4 +23,10 @@ describe('buildConfig telegram api base url', () => {
       'https://api.telegram.org',
     );
   });
+
+  it('falls back to the default when the override contains only whitespace', () => {
+    expect(buildConfig({ TELEGRAM_API_BASE_URL: '   ' }).telegramApiBaseUrl).toBe(
+      'https://api.telegram.org',
+    );
+  });
 });
