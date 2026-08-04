@@ -95,7 +95,8 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
     serverChanEnabled: parseBoolean(env.SERVERCHAN_ENABLED, true),
     serverChanKey: env.SERVERCHAN_KEY || '',
     telegramEnabled: parseBoolean(env.TELEGRAM_ENABLED, false),
-    telegramApiBaseUrl: (env.TELEGRAM_API_BASE_URL || 'https://api.telegram.org').trim().replace(/\/+$/, ''),
+    telegramApiBaseUrl:
+      (env.TELEGRAM_API_BASE_URL || '').trim().replace(/\/+$/, '') || 'https://api.telegram.org',
     telegramBotToken: env.TELEGRAM_BOT_TOKEN || '',
     telegramChatId: env.TELEGRAM_CHAT_ID || '',
     telegramUseSystemProxy: parseBoolean(env.TELEGRAM_USE_SYSTEM_PROXY, false),
