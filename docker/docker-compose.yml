@@ -2,15 +2,24 @@ services:
   metapi:
     image: 1467078763/metapi:latest
     ports:
-      - "127.0.0.1:4000:4000"
+      - "127.0.0.1:${PORT:-4000}:${PORT:-4000}"
     volumes:
       - ./data:/app/data
     environment:
       AUTH_TOKEN: ${AUTH_TOKEN:?AUTH_TOKEN is required}
       PROXY_TOKEN: ${PROXY_TOKEN:?PROXY_TOKEN is required}
-      CHECKIN_CRON: "0 8 * * *"
-      BALANCE_REFRESH_CRON: "0 * * * *"
+      CHECKIN_CRON: "${CHECKIN_CRON:-0 8 * * *}"
+      BALANCE_REFRESH_CRON: "${BALANCE_REFRESH_CRON:-0 * * * *}"
       PORT: ${PORT:-4000}
       DATA_DIR: /app/data
       TZ: ${TZ:-Asia/Shanghai}
+      NOTIFY_COOLDOWN_SEC: ${NOTIFY_COOLDOWN_SEC:-300}
+      ADMIN_IP_ALLOWLIST: "${ADMIN_IP_ALLOWLIST:-}"
+      SYSTEM_PROXY_URL: "${SYSTEM_PROXY_URL:-}"
+      TELEGRAM_ENABLED: ${TELEGRAM_ENABLED:-false}
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+      TELEGRAM_API_BASE_URL: "${TELEGRAM_API_BASE_URL:-}"
+      TELEGRAM_MESSAGE_THREAD_ID: "${TELEGRAM_MESSAGE_THREAD_ID:-}"
+      TELEGRAM_USE_SYSTEM_PROXY: ${TELEGRAM_USE_SYSTEM_PROXY:-false}
     restart: unless-stopped
