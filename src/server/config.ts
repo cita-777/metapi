@@ -182,4 +182,3 @@ export function buildFastifyOptions(
     bodyLimit: appConfig.requestBodyLimit,
   };
 }
-
