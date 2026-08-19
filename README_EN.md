@@ -590,7 +590,7 @@ Special thanks to all contributors:
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=cita-777/metapi&type=date&legend=top-left&v=2)](https://www.star-history.com/#cita-777/metapi&type=date&legend=top-left)
+[![Star History Chart](https://star-history.dera.page/svg?repos=cita-777/metapi&type=date&legend=top-left&v=2)](https://star-history.dera.page/#cita-777/metapi&type=date&legend=top-left)
 
 ---
 

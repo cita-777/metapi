@@ -464,7 +464,7 @@ Metapi 完全自托管，所有数据（账号、令牌、路由、日志）均�
 
 ## ⭐ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=cita-777/metapi&type=date&legend=top-left&v=2)](https://www.star-history.com/#cita-777/metapi&type=date&legend=top-left)
+[![Star History Chart](https://star-history.dera.page/svg?repos=cita-777/metapi&type=date&legend=top-left&v=2)](https://star-history.dera.page/#cita-777/metapi&type=date&legend=top-left)
 
 ---
 
