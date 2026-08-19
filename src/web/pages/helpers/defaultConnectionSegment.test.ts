@@ -15,6 +15,7 @@ describe('defaultConnectionSegment', () => {
 
   it('maps API-key-only platforms to the apikey segment', () => {
     expect(resolveInitialConnectionSegment('openai')).toBe('apikey');
+    expect(resolveInitialConnectionSegment('orcarouter')).toBe('apikey');
     expect(resolveInitialConnectionSegment('claude')).toBe('apikey');
     expect(resolveInitialConnectionSegment('gemini')).toBe('apikey');
     expect(resolveInitialConnectionSegment('cliproxyapi')).toBe('apikey');

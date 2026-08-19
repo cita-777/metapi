@@ -276,6 +276,37 @@ CPA 这类站点推荐直接使用 **API Key**：
 
 ---
 
+### OrcaRouter
+
+**适用平台：** [OrcaRouter](https://www.orcarouter.ai) 官方 OpenAI 兼容网关
+
+#### 站点配置
+
+| 字段 | 说明 | 示例 |
+|------|------|------|
+| **站点名称** | 自定义名称 | `OrcaRouter 网关` |
+| **站点 URL** | OrcaRouter API 端点（**不含** `/v1` 后缀） | `https://api.orcarouter.ai` |
+| **平台类型** | 选择 `orcarouter` | - |
+
+#### 账号凭证
+
+**仅支持 API Key：**
+
+- 在「API Token」字段填入：`sk-orca-xxxxxxxxxxxxxx`
+- 不支持用户名密码登录（OrcaRouter 无此接口）
+
+#### 功能限制
+
+| 功能 | 支持情况 |
+|------|----------|
+| 模型列表获取 | ✅ 支持（`/v1/models`） |
+| 代理调用 | ✅ 支持 |
+| 余额查询 | ❌ 不支持（OrcaRouter 无公开接口） |
+| 自动签到 | ❌ 不适用 |
+| 账号令牌管理 | ❌ 不适用 |
+
+---
+
 ### Claude (Anthropic)
 
 **适用场景：** 直连 Anthropic Claude API

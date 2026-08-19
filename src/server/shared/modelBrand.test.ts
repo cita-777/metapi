@@ -10,5 +10,7 @@ describe('modelBrand matching helpers', () => {
 
     expect(getBrand('openrouter/anthropic/claude-3-7-sonnet')?.name).toBe('Anthropic');
     expect(getBrand('deepinfra/meta-llama/llama-3.3-70b-instruct')?.name).toBe('Meta');
+
+    expect(getBrand('orcarouter/auto')?.name).toBe('OrcaRouter');
   });
 });

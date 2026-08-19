@@ -68,6 +68,10 @@ describe('getAdapter platform aliases', () => {
     expect(getAdapter('chatgpt-codex')?.platformName).toBe('codex');
   });
 
+  it('supports the dedicated orcarouter adapter', () => {
+    expect(getAdapter('orcarouter')?.platformName).toBe('orcarouter');
+  });
+
   it('detects anyrouter URL before generic new-api adapter', async () => {
     const adapter = await detectPlatform('https://anyrouter.top');
     expect(adapter?.platformName).toBe('anyrouter');
@@ -76,6 +80,11 @@ describe('getAdapter platform aliases', () => {
   it('detects done-hub URL before generic adapters', async () => {
     const adapter = await detectPlatform('https://demo.donehub.example');
     expect(adapter?.platformName).toBe('done-hub');
+  });
+
+  it('detects orcarouter URL via the dedicated adapter', async () => {
+    const adapter = await detectPlatform('https://api.orcarouter.ai');
+    expect(adapter?.platformName).toBe('orcarouter');
   });
 
   it('detects official openai/claude/gemini upstream URLs', async () => {

@@ -512,6 +512,15 @@ const BRAND_DEFINITIONS: BrandDefinition[] = [
     ],
   },
   {
+    name: 'OrcaRouter',
+    icon: 'orcarouter',
+    color: 'linear-gradient(135deg, #0ea5e9, #2563eb)',
+    rules: [
+      { keyword: 'orcarouter', mode: 'includes' },
+      { keyword: 'orcarouter/', mode: 'startsWith' },
+    ],
+  },
+  {
     name: 'Groq',
     icon: 'groq',
     color: 'linear-gradient(135deg, #111827, #374151)',

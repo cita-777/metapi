@@ -9,6 +9,7 @@ describe('payload rule platform options', () => {
       '',
       'codex',
       'sub2api',
+      'orcarouter',
       'new-api',
       'one-api',
       'cliproxyapi',

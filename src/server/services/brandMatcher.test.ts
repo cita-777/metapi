@@ -6,6 +6,7 @@ describe('brandMatcher', () => {
     const brands = getAllBrandNames();
 
     expect(brands).toContain('OpenRouter');
+    expect(brands).toContain('OrcaRouter');
     expect(brands).toContain('Groq');
     expect(brands).toContain('DeepInfra');
     expect(brands).toContain('Fireworks');

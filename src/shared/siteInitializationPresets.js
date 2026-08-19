@@ -78,6 +78,10 @@ const DOUBAO_CODING_RECOMMENDED_MODELS = Object.freeze([
   'doubao-seed-2.0-pro',
 ]);
 
+const ORCAROUTER_RECOMMENDED_MODELS = Object.freeze([
+  'orcarouter/auto',
+]);
+
 const SITE_INITIALIZATION_PRESETS = Object.freeze([
   Object.freeze({
     id: 'codingplan-openai',
@@ -272,6 +276,21 @@ const SITE_INITIALIZATION_PRESETS = Object.freeze([
     docsUrl: 'https://www.volcengine.com/docs/82379/2205646?lang=zh',
     matches(url) {
       return matchesHostAndPaths(url, 'ark.cn-beijing.volces.com', ['/api/coding/v3']);
+    },
+  }),
+  Object.freeze({
+    id: 'orcarouter-openai',
+    label: 'OrcaRouter / OpenAI',
+    providerLabel: 'OrcaRouter',
+    description: '适合 OrcaRouter 官方 OpenAI 兼容入口，用 sk-orca- API Key 直连网关并享受统一安全管控。',
+    platform: 'orcarouter',
+    defaultUrl: 'https://api.orcarouter.ai/v1',
+    initialSegment: 'apikey',
+    recommendedSkipModelFetch: true,
+    recommendedModels: ORCAROUTER_RECOMMENDED_MODELS,
+    docsUrl: 'https://www.orcarouter.ai',
+    matches(url) {
+      return matchesHostAndPaths(url, 'api.orcarouter.ai', ['/', '/v1']);
     },
   }),
 ]);

@@ -10,6 +10,7 @@ describe('platformIdentity', () => {
     expect(normalizePlatformAlias('chatgpt-codex')).toBe('codex');
     expect(normalizePlatformAlias('anti-gravity')).toBe('antigravity');
     expect(normalizePlatformAlias('one api')).toBe('one-api');
+    expect(normalizePlatformAlias('orcarouter')).toBe('orcarouter');
     expect(normalizePlatformAlias('')).toBe('');
   });
 
@@ -20,6 +21,7 @@ describe('platformIdentity', () => {
     expect(detectPlatformByUrlHint('https://generativelanguage.googleapis.com/v1beta')).toBe('gemini');
     expect(detectPlatformByUrlHint('https://cloudcode-pa.googleapis.com')).toBe('gemini-cli');
     expect(detectPlatformByUrlHint('http://127.0.0.1:8317/v1/models')).toBe('cliproxyapi');
+    expect(detectPlatformByUrlHint('https://api.orcarouter.ai/v1/models')).toBe('orcarouter');
     expect(detectPlatformByUrlHint('https://evil.example.com/?next=https://api.openai.com/v1/models')).toBeUndefined();
   });
 });

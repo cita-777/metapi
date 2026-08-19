@@ -17,6 +17,7 @@ export const PLATFORM_ALIASES = Object.assign(Object.create(null), {
   'done-hub': 'done-hub',
   veloera: 'veloera',
   sub2api: 'sub2api',
+  orcarouter: 'orcarouter',
   openai: 'openai',
   codex: 'codex',
   'chatgpt-codex': 'codex',
@@ -89,6 +90,7 @@ export function detectPlatformByUrlHint(url) {
   if (host.includes('onehub') || host.includes('one-hub')) return 'one-hub';
   if (host.includes('veloera')) return 'veloera';
   if (host.includes('sub2api')) return 'sub2api';
+  if (host.includes('orcarouter')) return 'orcarouter';
 
   return undefined;
 }

@@ -49,6 +49,7 @@ describe('getBrand', () => {
 
   it('detects new provider and platform brands with lobe-hub icons', () => {
     expect(getBrand('openrouter/openrouter-auto')).toMatchObject({ name: 'OpenRouter', icon: expect.any(String) });
+    expect(getBrand('orcarouter/auto')).toMatchObject({ name: 'OrcaRouter', icon: expect.any(String) });
     expect(getBrand('groq/compound-beta')).toMatchObject({ name: 'Groq', icon: expect.any(String) });
     expect(getBrand('deepinfra/deepinfra-chat')).toMatchObject({ name: 'DeepInfra', icon: expect.any(String) });
     expect(getBrand('fireworks-ai/firefunction-v2')).toMatchObject({ name: 'Fireworks', icon: expect.any(String) });

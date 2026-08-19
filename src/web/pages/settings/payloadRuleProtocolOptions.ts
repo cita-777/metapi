@@ -2,6 +2,7 @@ export const PAYLOAD_RULE_PROTOCOL_OPTIONS: Array<{ value: string; label: string
   { value: '', label: '全部平台' },
   { value: 'codex', label: 'Codex' },
   { value: 'sub2api', label: 'Sub2API' },
+  { value: 'orcarouter', label: 'OrcaRouter' },
   { value: 'new-api', label: 'New API' },
   { value: 'one-api', label: 'One API' },
   { value: 'cliproxyapi', label: 'CLIProxyAPI' },
