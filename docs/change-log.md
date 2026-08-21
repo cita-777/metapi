@@ -173,8 +173,17 @@ npx vitest run --pool=threads --poolOptions.threads.singleThread=true <test-file
 - **需求来源**：本会话需求
 - **目标**：通过个人 Fork 提交变更，避免直接写入上游仓库。
 - **实现范围**：已创建 [lengxiaouser/metapi](https://github.com/lengxiaouser/metapi) Fork，目标分支为 `codex/metapi-issues-591-590-586-585`，PR 基线为上游 `main`。
-- **验证**：Fork 的 `main` 已通过 Git 远程读取确认；待推送功能分支并创建 PR。
-- **状态**：进行中。
+- **验证**：Fork 的 `main` 已通过 Git 远程读取确认，功能分支已成功推送。
+- **状态**：已完成。
+
+### 11. 创建上游 Pull Request
+
+- **类型**：版本交付
+- **需求来源**：本会话需求
+- **目标**：请求上游仓库审核本次站点并发控制、Rerank 及四个 Issue 修复。
+- **实现范围**：创建 [PR #609](https://github.com/cita-777/metapi/pull/609)，源分支为 `lengxiaouser:codex/metapi-issues-591-590-586-585`，目标为 `cita-777:main`。
+- **验证**：GitHub API 返回 PR 编号 `609`，状态为 `open`；PR 描述已包含 Issue 链接、验证命令和变更范围。
+- **状态**：已提交，等待上游审核。
 
 ## 后续记录模板
 
