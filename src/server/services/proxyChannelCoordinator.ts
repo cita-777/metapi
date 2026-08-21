@@ -24,6 +24,18 @@ type ChannelRuntimeState = {
   queue: ChannelWaiter[];
 };
 
+type SiteWaiter = {
+  cancelled: boolean;
+  maxConcurrency: number;
+  resolve: (result: AcquireProxySiteLeaseResult) => void;
+  timer: ReturnType<typeof setTimeout> | null;
+};
+
+type SiteRuntimeState = {
+  activeLeaseIds: Set<number>;
+  queue: SiteWaiter[];
+};
+
 export type ProxyChannelLoadSnapshot = {
   channelId: number;
   sessionScoped: boolean;
@@ -43,10 +55,22 @@ export type ProxyChannelLease = {
 
 export type AcquireProxyChannelLeaseResult =
   | { status: 'acquired'; lease: ProxyChannelLease }
-  | { status: 'timeout'; waitMs: number };
+  | { status: 'timeout'; waitMs: number; scope?: 'channel' };
+
+export type ProxySiteLease = {
+  siteId: number;
+  isActive(): boolean;
+  release(): void;
+  touch(): void;
+};
+
+export type AcquireProxySiteLeaseResult =
+  | { status: 'acquired'; lease: ProxySiteLease }
+  | { status: 'timeout'; waitMs: number; scope: 'site' };
 
 const stickySessionBindings = new Map<string, StickyEntry>();
 const channelRuntimeStates = new Map<number, ChannelRuntimeState>();
+const siteRuntimeStates = new Map<number, SiteRuntimeState>();
 let nextLeaseId = 1;
 type SessionScopedChannelInput =
   | string
@@ -102,6 +126,11 @@ function getChannelConcurrencyLimit(input?: SessionScopedChannelInput): number {
   return Math.max(0, Math.trunc(config.proxySessionChannelConcurrencyLimit || 0));
 }
 
+function normalizeSiteConcurrencyLimit(input: unknown): number {
+  const value = Number(input);
+  return Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0;
+}
+
 function getOrCreateChannelRuntimeState(channelId: number): ChannelRuntimeState {
   let state = channelRuntimeStates.get(channelId);
   if (!state) {
@@ -125,6 +154,29 @@ function maybeDeleteChannelRuntimeState(channelId: number): void {
   pruneCancelledWaiters(state);
   if (state.activeLeaseIds.size <= 0 && state.queue.every((waiter) => waiter.cancelled)) {
     channelRuntimeStates.delete(channelId);
+  }
+}
+
+function getOrCreateSiteRuntimeState(siteId: number): SiteRuntimeState {
+  let state = siteRuntimeStates.get(siteId);
+  if (!state) {
+    state = { activeLeaseIds: new Set<number>(), queue: [] };
+    siteRuntimeStates.set(siteId, state);
+  }
+  return state;
+}
+
+function pruneCancelledSiteWaiters(state: SiteRuntimeState): void {
+  if (state.queue.length <= 0) return;
+  state.queue = state.queue.filter((waiter) => !waiter.cancelled);
+}
+
+function maybeDeleteSiteRuntimeState(siteId: number): void {
+  const state = siteRuntimeStates.get(siteId);
+  if (!state) return;
+  pruneCancelledSiteWaiters(state);
+  if (state.activeLeaseIds.size <= 0 && state.queue.every((waiter) => waiter.cancelled)) {
+    siteRuntimeStates.delete(siteId);
   }
 }
 
@@ -311,6 +363,73 @@ class ProxyChannelCoordinator {
     });
   }
 
+  /**
+   * 获取站点级租约，保证同一个站点的所有账号和通道共享并发上限。
+   */
+  async acquireSiteLease(input: {
+    siteId: number;
+    maxConcurrency?: number | null;
+  }): Promise<AcquireProxySiteLeaseResult> {
+    const siteId = Math.trunc(input.siteId || 0);
+    const concurrencyLimit = normalizeSiteConcurrencyLimit(input.maxConcurrency);
+    if (siteId <= 0 || concurrencyLimit <= 0) {
+      return {
+        status: 'acquired',
+        lease: this.createNoopSiteLease(siteId),
+      };
+    }
+
+    const state = getOrCreateSiteRuntimeState(siteId);
+    pruneCancelledSiteWaiters(state);
+    if (state.activeLeaseIds.size < concurrencyLimit) {
+      return {
+        status: 'acquired',
+        lease: this.createTrackedSiteLease(siteId, state),
+      };
+    }
+
+    const waitMs = getChannelQueueWaitMs();
+    if (waitMs <= 0) {
+      return { status: 'timeout', waitMs: 0, scope: 'site' };
+    }
+
+    return await new Promise<AcquireProxySiteLeaseResult>((resolve) => {
+      const waiter: SiteWaiter = {
+        cancelled: false,
+        maxConcurrency: concurrencyLimit,
+        resolve,
+        timer: null,
+      };
+      waiter.timer = setTimeout(() => {
+        waiter.cancelled = true;
+        waiter.timer = null;
+        pruneCancelledSiteWaiters(state);
+        maybeDeleteSiteRuntimeState(siteId);
+        resolve({ status: 'timeout', waitMs, scope: 'site' });
+      }, waitMs);
+      shouldUnrefTimer(waiter.timer);
+      state.queue.push(waiter);
+    });
+  }
+
+  getSiteLoadSnapshot(input: { siteId: number; maxConcurrency?: number | null }) {
+    const siteId = Math.trunc(input.siteId || 0);
+    const concurrencyLimit = normalizeSiteConcurrencyLimit(input.maxConcurrency);
+    const state = siteRuntimeStates.get(siteId);
+    if (state) pruneCancelledSiteWaiters(state);
+    const activeLeaseCount = state?.activeLeaseIds.size ?? 0;
+    const waitingCount = state?.queue.length ?? 0;
+    const denominator = concurrencyLimit > 0 ? concurrencyLimit : 1;
+    return {
+      siteId,
+      concurrencyLimit,
+      activeLeaseCount,
+      waitingCount,
+      loadRatio: (activeLeaseCount + waitingCount) / denominator,
+      saturated: concurrencyLimit > 0 && activeLeaseCount >= concurrencyLimit,
+    };
+  }
+
   private createTrackedLease(channelId: number, state: ChannelRuntimeState): ProxyChannelLease {
     const leaseId = nextLeaseId++;
     state.activeLeaseIds.add(leaseId);
@@ -356,6 +475,47 @@ class ProxyChannelCoordinator {
     };
   }
 
+  private createNoopSiteLease(siteId: number): ProxySiteLease {
+    return {
+      siteId,
+      isActive: () => false,
+      release: () => {},
+      touch: () => {},
+    };
+  }
+
+  private createTrackedSiteLease(siteId: number, state: SiteRuntimeState): ProxySiteLease {
+    const leaseId = nextLeaseId++;
+    state.activeLeaseIds.add(leaseId);
+    let released = false;
+    let expiryTimer: ReturnType<typeof setTimeout> | null = null;
+    let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+
+    const release = () => {
+      if (released) return;
+      released = true;
+      if (expiryTimer) clearTimeout(expiryTimer);
+      if (keepaliveTimer) clearInterval(keepaliveTimer);
+      state.activeLeaseIds.delete(leaseId);
+      this.drainSiteQueue(siteId, state);
+      maybeDeleteSiteRuntimeState(siteId);
+    };
+    const touch = () => {
+      if (released) return;
+      if (expiryTimer) clearTimeout(expiryTimer);
+      expiryTimer = setTimeout(release, getChannelLeaseTtlMs());
+      shouldUnrefTimer(expiryTimer);
+    };
+    touch();
+    const keepaliveMs = getChannelLeaseKeepaliveMs();
+    if (keepaliveMs > 0) {
+      keepaliveTimer = setInterval(touch, keepaliveMs);
+      shouldUnrefTimer(keepaliveTimer);
+    }
+
+    return { siteId, isActive: () => !released, release, touch };
+  }
+
   private drainQueue(channelId: number): void {
     const state = channelRuntimeStates.get(channelId);
     if (!state) return;
@@ -372,11 +532,26 @@ class ProxyChannelCoordinator {
       });
     }
   }
+
+  private drainSiteQueue(siteId: number, state: SiteRuntimeState): void {
+    pruneCancelledSiteWaiters(state);
+    while (state.queue.length > 0) {
+      const next = state.queue.find((waiter) => !waiter.cancelled);
+      if (!next || state.activeLeaseIds.size >= next.maxConcurrency) return;
+      const waiter = state.queue.shift();
+      if (!waiter || waiter.cancelled) continue;
+      if (waiter.timer) clearTimeout(waiter.timer);
+      waiter.timer = null;
+      waiter.resolve({ status: 'acquired', lease: this.createTrackedSiteLease(siteId, state) });
+      break;
+    }
+  }
 }
 
 export function resetProxyChannelCoordinatorState(): void {
   stickySessionBindings.clear();
   channelRuntimeStates.clear();
+  siteRuntimeStates.clear();
   nextLeaseId = 1;
 }
 

@@ -410,22 +410,34 @@ async function populateRouteChannelsByModelPattern(routeId: number, modelPattern
       }),
   );
 
+  // 自动补齐时，新来源按加入顺序进入下一个优先级层，避免所有通道长期堆在 P0。
+  let nextPriority = existingChannels.reduce(
+    (max, channel) => channel.manualOverride
+      ? max
+      : Math.max(max, Math.max(0, Math.trunc(channel.priority ?? 0))),
+    -1,
+  ) + 1;
+
   let created = 0;
   for (const candidate of candidates) {
     const tokenId = typeof candidate.tokenId === 'number' && Number.isFinite(candidate.tokenId) ? candidate.tokenId : 0;
     const pairKey = `${candidate.accountId}::${tokenId}::${candidate.sourceModel.trim().toLowerCase()}`;
     if (existingPairs.has(pairKey)) continue;
+    const priority = candidate.priority > 0
+      ? Math.max(candidate.priority, nextPriority)
+      : nextPriority;
     await db.insert(schema.routeChannels).values({
       routeId,
       accountId: candidate.accountId,
       tokenId: candidate.tokenId,
       sourceModel: candidate.sourceModel,
-      priority: candidate.priority,
+      priority,
       weight: candidate.weight,
       enabled: candidate.enabled,
       manualOverride: candidate.manualOverride,
     }).run();
     existingPairs.add(pairKey);
+    nextPriority = Math.max(nextPriority, priority + 1);
     created += 1;
   }
 
@@ -744,16 +756,59 @@ async function fetchChannelsForRouteRows(
     });
   }
 
+  // API 返回顺序与优先级一致，避免数据库默认行顺序掩盖拖拽后的 P 值。
+  for (const channels of channelsByActualRouteId.values()) {
+    channels.sort((left, right) => {
+      const priorityDiff = (left.priority ?? 0) - (right.priority ?? 0);
+      return priorityDiff !== 0 ? priorityDiff : (left.id ?? 0) - (right.id ?? 0);
+    });
+  }
+
   const channelsByRoute = new Map<number, any[]>();
   for (const route of routes) {
     if (isExplicitGroupRoute(route)) {
-      channelsByRoute.set(route.id, route.sourceRouteIds.flatMap((sourceRouteId) => channelsByActualRouteId.get(sourceRouteId) || []));
+      const channels = route.sourceRouteIds.flatMap((sourceRouteId) => channelsByActualRouteId.get(sourceRouteId) || []);
+      channels.sort((left, right) => {
+        const priorityDiff = (left.priority ?? 0) - (right.priority ?? 0);
+        return priorityDiff !== 0 ? priorityDiff : (left.id ?? 0) - (right.id ?? 0);
+      });
+      channelsByRoute.set(route.id, channels);
       continue;
     }
     channelsByRoute.set(route.id, channelsByActualRouteId.get(route.id) || []);
   }
 
   return channelsByRoute;
+}
+
+function normalizeBatchPriorities(
+  updates: BatchChannelPriorityUpdate[],
+  existingChannels: Array<{ id: number; routeId: number }>,
+): BatchChannelPriorityUpdate[] {
+  // 按路由把提交的优先级压缩为 P0、P1、P2...，保留同一层内的并列关系。
+  const routeIdByChannelId = new Map(existingChannels.map((channel) => [channel.id, channel.routeId]));
+  const prioritiesByRoute = new Map<number, number[]>();
+  for (const update of updates) {
+    const routeId = routeIdByChannelId.get(update.id);
+    if (routeId == null) continue;
+    if (!prioritiesByRoute.has(routeId)) prioritiesByRoute.set(routeId, []);
+    prioritiesByRoute.get(routeId)!.push(update.priority);
+  }
+
+  const priorityMaps = new Map<number, Map<number, number>>();
+  for (const [routeId, priorities] of prioritiesByRoute.entries()) {
+    const dense = new Map<number, number>();
+    Array.from(new Set(priorities)).sort((a, b) => a - b).forEach((priority, index) => {
+      dense.set(priority, index);
+    });
+    priorityMaps.set(routeId, dense);
+  }
+
+  return updates.map((update) => {
+    const routeId = routeIdByChannelId.get(update.id);
+    const densePriority = routeId == null ? update.priority : priorityMaps.get(routeId)?.get(update.priority);
+    return { ...update, priority: densePriority ?? update.priority };
+  });
 }
 
 async function fetchChannelsForRoutes(routeIds: number[]): Promise<Map<number, any[]>> {
@@ -887,6 +942,10 @@ export async function tokensRoutes(app: FastifyInstance) {
     let created = 0;
     let skipped = 0;
     const errors: string[] = [];
+    let nextPriority = existingChannels.reduce(
+      (max, channel) => Math.max(max, Math.max(0, Math.trunc(channel.priority ?? 0))),
+      -1,
+    ) + 1;
 
     for (const item of body.channels) {
       const sourceModel = typeof item.sourceModel === 'string'
@@ -912,11 +971,12 @@ export async function tokensRoutes(app: FastifyInstance) {
           accountId: item.accountId,
           tokenId: effectiveTokenId,
           sourceModel: sourceModel || null,
-          priority: 0,
+          priority: nextPriority,
           weight: 10,
           manualOverride: true,
         }).run();
         existingPairs.add(pairKey);
+        nextPriority += 1;
         created += 1;
       } catch (e: any) {
         errors.push(e.message || `添加通道失败: accountId=${item.accountId}`);
@@ -1341,12 +1401,20 @@ export async function tokensRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: '该来源模型的通道已存在' });
     }
 
+    const existingRouteChannels = await db.select({ priority: schema.routeChannels.priority })
+      .from(schema.routeChannels)
+      .where(eq(schema.routeChannels.routeId, routeId))
+      .all();
+    const defaultPriority = existingRouteChannels.reduce(
+      (max, channel) => Math.max(max, Math.max(0, Math.trunc(channel.priority ?? 0))),
+      -1,
+    ) + 1;
     const insertedChannel = await db.insert(schema.routeChannels).values({
       routeId,
       accountId: body.accountId,
       tokenId: body.tokenId,
       sourceModel: sourceModel || null,
-      priority: body.priority ?? 0,
+      priority: body.priority ?? defaultPriority,
       weight: body.weight ?? 10,
     }).run();
     const channelId = requireInsertedRowId(insertedChannel, '创建通道失败');
@@ -1377,7 +1445,9 @@ export async function tokensRoutes(app: FastifyInstance) {
       return reply.code(404).send({ success: false, message: `通道不存在: ${missingId}` });
     }
 
-    for (const update of parsed.updates) {
+    const normalizedUpdates = normalizeBatchPriorities(parsed.updates, existingChannels);
+
+    for (const update of normalizedUpdates) {
       await db.update(schema.routeChannels).set({
         priority: update.priority,
         manualOverride: true,

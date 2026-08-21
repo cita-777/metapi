@@ -58,7 +58,7 @@ import { maybeHandleWebSearchOnlySimulation } from '../webSearchSimulation.js';
 import {
   acquireSurfaceChannelLease,
   bindSurfaceStickyChannel,
-  buildSurfaceChannelBusyMessage,
+  buildSurfaceConcurrencyBusyMessage,
   buildSurfaceStickySessionKey,
   clearSurfaceStickyChannel,
   createSurfaceFailureToolkit,
@@ -681,7 +681,7 @@ export async function handleChatSurfaceRequest(
         stickySessionKey,
         selected,
       });
-      const busyMessage = buildSurfaceChannelBusyMessage(leaseResult.waitMs);
+      const busyMessage = buildSurfaceConcurrencyBusyMessage(leaseResult.scope || 'channel', leaseResult.waitMs);
       await failureToolkit.log({
         selected,
         modelRequested: requestedModel,
@@ -1510,7 +1510,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
         stickySessionKey,
         selected,
       });
-      const busyMessage = buildSurfaceChannelBusyMessage(leaseResult.waitMs);
+      const busyMessage = buildSurfaceConcurrencyBusyMessage(leaseResult.scope || 'channel', leaseResult.waitMs);
       await failureToolkit.log({
         selected,
         modelRequested: requestedModel,

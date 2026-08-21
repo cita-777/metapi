@@ -162,10 +162,11 @@ export async function acquireSurfaceChannelLease(input: {
   stickySessionKey?: string | null;
   selected: {
     channel: { id: number };
+    site: { id: number; maxConcurrency?: number | null };
     account?: { extraConfig?: string | null; oauthProvider?: string | null } | null;
   };
 }) {
-  return await proxyChannelCoordinator.acquireChannelLease({
+  const channelLeaseResult = await proxyChannelCoordinator.acquireChannelLease({
     // Only session-addressable requests should consume the guarded per-channel
     // lease pool. Requests without a stable downstream session key should keep
     // the pre-sticky-session parallel behavior instead of contending globally.
@@ -173,12 +174,26 @@ export async function acquireSurfaceChannelLease(input: {
     accountExtraConfig: input.selected.account?.extraConfig,
     accountOauthProvider: input.selected.account?.oauthProvider,
   });
+  if (channelLeaseResult.status === 'timeout') {
+    return { ...channelLeaseResult, scope: 'channel' as const };
+  }
+
+  return channelLeaseResult;
 }
 
 export function buildSurfaceChannelBusyMessage(waitMs: number): string {
   return waitMs > 0
     ? `Channel busy: waited ${waitMs}ms for an available session slot`
     : 'Channel busy: no session slot available';
+}
+
+export function buildSurfaceConcurrencyBusyMessage(scope: 'channel' | 'site', waitMs: number): string {
+  if (scope === 'site') {
+    return waitMs > 0
+      ? `Site busy: waited ${waitMs}ms for an available concurrency slot`
+      : 'Site busy: no concurrency slot available';
+  }
+  return buildSurfaceChannelBusyMessage(waitMs);
 }
 
 export async function writeSurfaceProxyLog(input: {

@@ -15,6 +15,8 @@ export const sites = sqliteTable('sites', {
   isPinned: integer('is_pinned', { mode: 'boolean' }).default(false),
   sortOrder: integer('sort_order').default(0),
   globalWeight: real('global_weight').default(1),
+  // 站点级请求并发上限，0 表示不限制。
+  maxConcurrency: integer('max_concurrency').notNull().default(0),
   apiKey: text('api_key'),
   postRefreshProbeEnabled: integer('post_refresh_probe_enabled', { mode: 'boolean' }).default(false),
   postRefreshProbeModel: text('post_refresh_probe_model').default(''),

@@ -748,6 +748,43 @@ describe('TokenRouter selection scoring', () => {
     expect((candidateB?.probability || 0)).toBeLessThan(60);
   });
 
+  it('isolates a usage-limit cooldown to the channel that failed', async () => {
+    const routeA = await createRoute('gpt-5.4');
+    const routeB = await createRoute('gpt-5.4-alt');
+    const site = await createSite('isolated-limit');
+    const account = await createAccount(site.id, 'isolated-limit-user');
+    const token = await createToken(account.id, 'isolated-limit-token');
+    const channelA = await db.insert(schema.routeChannels).values({
+      routeId: routeA.id,
+      accountId: account.id,
+      tokenId: token.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+    const channelB = await db.insert(schema.routeChannels).values({
+      routeId: routeB.id,
+      accountId: account.id,
+      tokenId: token.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    await router.recordFailure(channelA.id, {
+      status: 429,
+      errorText: 'rate limit reached for this channel',
+      modelName: 'gpt-5.4',
+    });
+
+    const updatedA = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, channelA.id)).get();
+    const updatedB = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, channelB.id)).get();
+    expect(updatedA?.cooldownUntil).toBeTruthy();
+    expect(updatedB?.cooldownUntil).toBeNull();
+    expect(updatedB?.lastFailAt).toBeNull();
+  });
+
   it('opens a site breaker after repeated transient failures and closes it after recovery', async () => {
     config.routingWeights = {
       baseWeightFactor: 1,

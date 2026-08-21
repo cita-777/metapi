@@ -66,6 +66,13 @@ function normalizeGlobalWeight(input: unknown): number | null {
   return Math.max(0.01, Math.min(100, Number(parsed.toFixed(3))));
 }
 
+function normalizeMaxConcurrency(input: unknown): number | null {
+  if (input === undefined || input === null || input === '') return null;
+  const parsed = Number(input);
+  if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 100_000) return null;
+  return parsed;
+}
+
 function normalizeOptionalExternalCheckinUrl(input: unknown): {
   valid: boolean;
   present: boolean;
@@ -485,6 +492,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       isPinned,
       sortOrder,
       globalWeight,
+      maxConcurrency,
       apiEndpoints,
     } = createBody;
     const normalizedStatus = normalizeSiteStatus(status);
@@ -514,6 +522,10 @@ export async function sitesRoutes(app: FastifyInstance) {
     const normalizedGlobalWeight = normalizeGlobalWeight(globalWeight);
     if (globalWeight !== undefined && normalizedGlobalWeight === null) {
       return reply.code(400).send({ error: 'Invalid globalWeight value. Expected a positive number.' });
+    }
+    const normalizedMaxConcurrency = normalizeMaxConcurrency(maxConcurrency);
+    if (maxConcurrency !== undefined && normalizedMaxConcurrency === null) {
+      return reply.code(400).send({ error: 'Invalid maxConcurrency value. Expected an integer from 0 to 100000.' });
     }
     const normalizedCustomHeaders = parseSiteCustomHeadersInput(customHeaders);
     if (!normalizedCustomHeaders.valid) {
@@ -584,6 +596,7 @@ export async function sitesRoutes(app: FastifyInstance) {
           isPinned: normalizedPinned ?? false,
           sortOrder: normalizedSortOrder ?? (maxSortOrder + 1),
           globalWeight: normalizedGlobalWeight ?? 1,
+          maxConcurrency: normalizedMaxConcurrency ?? 0,
         }).run();
         const siteId = getInsertedRowId(siteInsert);
         if (siteId && normalizedApiEndpoints.present && normalizedApiEndpoints.apiEndpoints.length > 0) {
@@ -666,6 +679,10 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (body.globalWeight !== undefined && normalizedGlobalWeight === null) {
       return reply.code(400).send({ error: 'Invalid globalWeight value. Expected a positive number.' });
     }
+    const normalizedMaxConcurrency = normalizeMaxConcurrency(body.maxConcurrency);
+    if (body.maxConcurrency !== undefined && normalizedMaxConcurrency === null) {
+      return reply.code(400).send({ error: 'Invalid maxConcurrency value. Expected an integer from 0 to 100000.' });
+    }
     const normalizedCustomHeaders = parseSiteCustomHeadersInput(body.customHeaders);
     if (!normalizedCustomHeaders.valid) {
       return reply.code(400).send({ error: normalizedCustomHeaders.error || 'Invalid customHeaders.' });
@@ -720,6 +737,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (body.isPinned !== undefined) updates.isPinned = normalizedPinned;
     if (body.sortOrder !== undefined) updates.sortOrder = normalizedSortOrder;
     if (body.globalWeight !== undefined) updates.globalWeight = normalizedGlobalWeight;
+    if (body.maxConcurrency !== undefined) updates.maxConcurrency = normalizedMaxConcurrency;
     const anyBody = body as Record<string, unknown>;
     if (anyBody.postRefreshProbeEnabled !== undefined) updates.postRefreshProbeEnabled = anyBody.postRefreshProbeEnabled === true || anyBody.postRefreshProbeEnabled === 1;
     if (anyBody.postRefreshProbeModel !== undefined) updates.postRefreshProbeModel = String(anyBody.postRefreshProbeModel || '').trim();

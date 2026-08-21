@@ -74,7 +74,7 @@ import { shouldAbortSameSiteEndpointFallback } from '../../services/proxyRetryPo
 import {
   acquireSurfaceChannelLease,
   bindSurfaceStickyChannel,
-  buildSurfaceChannelBusyMessage,
+  buildSurfaceConcurrencyBusyMessage,
   buildSurfaceStickySessionKey,
   clearSurfaceStickyChannel,
   createSurfaceFailureToolkit,
@@ -817,7 +817,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
           stickySessionKey,
           selected,
         });
-      const busyMessage = buildSurfaceChannelBusyMessage(leaseResult.waitMs);
+      const busyMessage = buildSurfaceConcurrencyBusyMessage(leaseResult.scope || 'channel', leaseResult.waitMs);
       await failureToolkit.log({
         selected,
         modelRequested: requestedModel,

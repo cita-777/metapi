@@ -73,6 +73,7 @@ vi.mock('../../services/proxyChannelCoordinator.js', () => ({
     bindStickyChannel: vi.fn(),
     clearStickyChannel: vi.fn(),
     acquireChannelLease: vi.fn(),
+    acquireSiteLease: vi.fn(),
   },
 }));
 

@@ -22,6 +22,7 @@ export type SiteForm = {
   customHeaders: SiteCustomHeaderField[];
   customHeadersOverrideRequestHeaders: boolean;
   globalWeight: string;
+  maxConcurrency: string;
 };
 
 export type SiteEditorState =
@@ -44,6 +45,7 @@ export type SiteSavePayload = {
   customHeaders: string;
   customHeadersOverrideRequestHeaders: boolean;
   globalWeight: number;
+  maxConcurrency?: number;
   postRefreshProbeEnabled?: boolean;
   postRefreshProbeModel?: string;
   postRefreshProbeScope?: 'single' | 'all';
@@ -83,6 +85,7 @@ export function emptySiteForm(): SiteForm {
     customHeaders: [emptySiteCustomHeader()],
     customHeadersOverrideRequestHeaders: false,
     globalWeight: '1',
+    maxConcurrency: '0',
   };
 }
 
@@ -134,7 +137,7 @@ function parseApiEndpointsForEditor(raw: unknown): SiteApiEndpointField[] {
   return ensureSiteApiEndpointRows(rows);
 }
 
-export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | 'customHeaders' | 'customHeadersOverrideRequestHeaders' | 'globalWeight' | 'externalCheckinUrl' | 'proxyUrl' | 'useSystemProxy'>> & {
+export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | 'customHeaders' | 'customHeadersOverrideRequestHeaders' | 'globalWeight' | 'externalCheckinUrl' | 'proxyUrl' | 'useSystemProxy' | 'maxConcurrency'>> & {
   externalCheckinUrl?: string | null;
   proxyUrl?: string | null;
   useSystemProxy?: boolean | null;
@@ -147,6 +150,7 @@ export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | '
   }> | null;
   customHeaders?: string | null;
   globalWeight?: number | string | null;
+  maxConcurrency?: number | string | null;
 }): SiteForm {
   const globalWeightRaw = Number(site.globalWeight);
   const globalWeight = Number.isFinite(globalWeightRaw) && globalWeightRaw > 0 ? String(globalWeightRaw) : '1';
@@ -161,6 +165,10 @@ export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | '
     customHeaders: parseCustomHeadersForEditor(site.customHeaders),
     customHeadersOverrideRequestHeaders: !!site.customHeadersOverrideRequestHeaders,
     globalWeight,
+    // 站点表中的 0 代表不限并发，表单始终以非负整数文本编辑。
+    maxConcurrency: Number.isSafeInteger(Number(site.maxConcurrency)) && Number(site.maxConcurrency) >= 0
+      ? String(Math.trunc(Number(site.maxConcurrency)))
+      : '0',
   };
 }
 

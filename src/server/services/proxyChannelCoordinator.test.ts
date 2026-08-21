@@ -229,4 +229,57 @@ describe('proxyChannelCoordinator', () => {
       saturated: false,
     });
   });
+
+  it('limits all channels that belong to the same site', async () => {
+    const first = await proxyChannelCoordinator.acquireSiteLease({ siteId: 91, maxConcurrency: 1 });
+    expect(first.status).toBe('acquired');
+    if (first.status !== 'acquired') return;
+
+    let secondSettled = false;
+    const secondPromise = proxyChannelCoordinator.acquireSiteLease({ siteId: 91, maxConcurrency: 1 })
+      .then((result) => {
+        secondSettled = true;
+        return result;
+      });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(secondSettled).toBe(false);
+
+    first.lease.release();
+    await vi.advanceTimersByTimeAsync(0);
+    const second = await secondPromise;
+    expect(second.status).toBe('acquired');
+    if (second.status === 'acquired') second.lease.release();
+  });
+
+  it('keeps different sites independent and reports site load', async () => {
+    const first = await proxyChannelCoordinator.acquireSiteLease({ siteId: 101, maxConcurrency: 1 });
+    const other = await proxyChannelCoordinator.acquireSiteLease({ siteId: 102, maxConcurrency: 1 });
+    expect(first.status).toBe('acquired');
+    expect(other.status).toBe('acquired');
+    if (first.status !== 'acquired' || other.status !== 'acquired') return;
+
+    const waiting = proxyChannelCoordinator.acquireSiteLease({ siteId: 101, maxConcurrency: 1 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(proxyChannelCoordinator.getSiteLoadSnapshot({ siteId: 101, maxConcurrency: 1 })).toEqual({
+      siteId: 101,
+      concurrencyLimit: 1,
+      activeLeaseCount: 1,
+      waitingCount: 1,
+      loadRatio: 2,
+      saturated: true,
+    });
+    first.lease.release();
+    await vi.advanceTimersByTimeAsync(0);
+    const acquired = await waiting;
+    expect(acquired.status).toBe('acquired');
+    if (acquired.status === 'acquired') acquired.lease.release();
+    other.lease.release();
+  });
+
+  it('does not gate a site when max concurrency is zero', async () => {
+    const first = await proxyChannelCoordinator.acquireSiteLease({ siteId: 111, maxConcurrency: 0 });
+    const second = await proxyChannelCoordinator.acquireSiteLease({ siteId: 111, maxConcurrency: 0 });
+    expect(first.status).toBe('acquired');
+    expect(second.status).toBe('acquired');
+  });
 });

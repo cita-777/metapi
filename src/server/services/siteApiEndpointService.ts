@@ -1,6 +1,9 @@
 import { asc, eq } from 'drizzle-orm';
+import { Headers, Response } from 'undici';
 import { db, schema } from '../db/index.js';
 import { RETRYABLE_TIMEOUT_PATTERNS } from './proxyRetryPolicy.js';
+import { proxyChannelCoordinator, type ProxySiteLease } from './proxyChannelCoordinator.js';
+import { copyObservedResponseMeta } from '../proxy-core/firstByteTimeout.js';
 
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
 const NON_RETRYABLE_STATUS_CODES = new Set([400, 401, 403, 404, 422]);
@@ -67,6 +70,104 @@ export class SiteApiEndpointRequestError extends Error {
       ? options.firstByteLatencyMs
       : null;
   }
+}
+
+function buildSiteConcurrencyBusyMessage(waitMs: number): string {
+  return waitMs > 0
+    ? `Site busy: waited ${waitMs}ms for an available concurrency slot`
+    : 'Site busy: no concurrency slot available';
+}
+
+function isResponseLike(value: unknown): value is Response {
+  return !!value
+    && typeof value === 'object'
+    && typeof (value as { body?: unknown }).body !== 'undefined'
+    && typeof (value as { status?: unknown }).status === 'number';
+}
+
+function wrapResponseWithSiteLease(response: Response, lease: ProxySiteLease): Response {
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    lease.release();
+  };
+
+  if (!response.body || response.bodyUsed) {
+    release();
+    return response;
+  }
+
+  const reader = response.body.getReader();
+  const wrappedBody = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const result = await reader.read();
+        if (result.done) {
+          release();
+          controller.close();
+          return;
+        }
+        controller.enqueue(result.value);
+      } catch (error) {
+        release();
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason);
+      } finally {
+        release();
+      }
+    },
+  });
+  let wrappedBodyResponse: Response | null = null;
+  const getWrappedBodyResponse = () => {
+    if (!wrappedBodyResponse) {
+      wrappedBodyResponse = new Response(wrappedBody, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: new Headers(response.headers),
+      });
+    }
+    return wrappedBodyResponse;
+  };
+
+  const wrappedResponse = new Proxy(response, {
+    get(target, property, receiver) {
+      if (property === 'body') return wrappedBody;
+      if (property === 'text' || property === 'json' || property === 'arrayBuffer' || property === 'blob' || property === 'formData') {
+        return (...args: unknown[]) => Promise.resolve(
+          (getWrappedBodyResponse()[property as 'text'] as (...params: unknown[]) => Promise<unknown>)(...args),
+        ).finally(release);
+      }
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  copyObservedResponseMeta(response, wrappedResponse);
+  return wrappedResponse;
+}
+
+function attachSiteLeaseToResult<T>(result: T, lease: ProxySiteLease): { result: T; held: boolean } {
+  if (!lease.isActive()) {
+    return { result, held: false };
+  }
+  if (isResponseLike(result)) {
+    return { result: wrapResponseWithSiteLease(result, lease) as T, held: !!result.body && !result.bodyUsed };
+  }
+  if (result && typeof result === 'object') {
+    const record = result as Record<string, unknown>;
+    for (const key of ['upstream', 'response']) {
+      const candidate = record[key];
+      if (!isResponseLike(candidate)) continue;
+      const wrapped = wrapResponseWithSiteLease(candidate, lease);
+      return { result: { ...record, [key]: wrapped } as T, held: !!candidate.body && !candidate.bodyUsed };
+    }
+  }
+  lease.release();
+  return { result, held: false };
 }
 
 export function normalizeSiteApiEndpointBaseUrl(raw: string): string {
@@ -251,46 +352,63 @@ export async function runWithSiteApiEndpointPool<T>(
   site: SiteRow,
   operation: (target: SiteApiEndpointTarget) => Promise<T>,
 ): Promise<T> {
+  const leaseResult = await proxyChannelCoordinator.acquireSiteLease({
+    siteId: site.id,
+    maxConcurrency: site.maxConcurrency,
+  });
+  if (leaseResult.status === 'timeout') {
+    throw new SiteApiEndpointRequestError(buildSiteConcurrencyBusyMessage(leaseResult.waitMs), {
+      status: 503,
+    });
+  }
+  const siteLease = leaseResult.lease;
+  let leaseHeldByResult = false;
   const attemptedEndpointIds = new Set<number>();
   let lastError: unknown;
 
-  while (true) {
-    const target = await selectSiteApiEndpointTarget(site);
-    if (!target) {
-      if (lastError) throw lastError;
-      throw new Error('当前站点的 API 请求地址均不可用');
-    }
-    if (target.endpointId && attemptedEndpointIds.has(target.endpointId)) {
-      if (lastError) throw lastError;
-      throw new Error('当前站点的 API 请求地址均不可用');
-    }
+  try {
+    while (true) {
+      const target = await selectSiteApiEndpointTarget(site);
+      if (!target) {
+        if (lastError) throw lastError;
+        throw new Error('当前站点的 API 请求地址均不可用');
+      }
+      if (target.endpointId && attemptedEndpointIds.has(target.endpointId)) {
+        if (lastError) throw lastError;
+        throw new Error('当前站点的 API 请求地址均不可用');
+      }
 
-    try {
-      const result = await operation(target);
-      if (target.endpointId) {
-        try {
-          await recordSiteApiEndpointSuccess(target.endpointId);
-        } catch (error) {
-          console.warn('[siteApiEndpointService] failed to record endpoint success', error);
+      try {
+        const result = await operation(target);
+        if (target.endpointId) {
+          try {
+            await recordSiteApiEndpointSuccess(target.endpointId);
+          } catch (error) {
+            console.warn('[siteApiEndpointService] failed to record endpoint success', error);
+          }
         }
-      }
-      return result;
-    } catch (error) {
-      lastError = error;
-      if (!target.endpointId) {
-        throw error;
-      }
+        const attached = attachSiteLeaseToResult(result, siteLease);
+        leaseHeldByResult = attached.held;
+        return attached.result;
+      } catch (error) {
+        lastError = error;
+        if (!target.endpointId) {
+          throw error;
+        }
 
-      const recordedFailure = await recordSiteApiEndpointFailure(target.endpointId, {
-        status: error instanceof SiteApiEndpointRequestError ? error.status : undefined,
-        message: error instanceof Error ? error.message : String(error ?? ''),
-        error,
-      });
-      if (!recordedFailure.rotateToNextEndpoint) {
-        throw error;
-      }
+        const recordedFailure = await recordSiteApiEndpointFailure(target.endpointId, {
+          status: error instanceof SiteApiEndpointRequestError ? error.status : undefined,
+          message: error instanceof Error ? error.message : String(error ?? ''),
+          error,
+        });
+        if (!recordedFailure.rotateToNextEndpoint) {
+          throw error;
+        }
 
-      attemptedEndpointIds.add(target.endpointId);
+        attemptedEndpointIds.add(target.endpointId);
+      }
     }
+  } finally {
+    if (!leaseHeldByResult) siteLease.release();
   }
 }

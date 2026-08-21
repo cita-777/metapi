@@ -26,6 +26,7 @@ const getStickyChannelIdMock = vi.fn();
 const bindStickyChannelMock = vi.fn();
 const clearStickyChannelMock = vi.fn();
 const acquireChannelLeaseMock = vi.fn();
+const acquireSiteLeaseMock = vi.fn();
 const buildStickySessionKeyMock = vi.fn();
 const consoleWarnMock = vi.spyOn(console, 'warn').mockImplementation(() => {});
 const consoleErrorMock = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -46,6 +47,7 @@ vi.mock('../../services/proxyChannelCoordinator.js', () => ({
     bindStickyChannel: (...args: unknown[]) => bindStickyChannelMock(...args),
     clearStickyChannel: (...args: unknown[]) => clearStickyChannelMock(...args),
     acquireChannelLease: (...args: unknown[]) => acquireChannelLeaseMock(...args),
+    acquireSiteLease: (...args: unknown[]) => acquireSiteLeaseMock(...args),
     buildStickySessionKey: (...args: unknown[]) => buildStickySessionKeyMock(...args),
   },
 }));
@@ -138,6 +140,7 @@ describe('selectSurfaceChannelForAttempt', () => {
     bindStickyChannelMock.mockReset();
     clearStickyChannelMock.mockReset();
     acquireChannelLeaseMock.mockReset();
+    acquireSiteLeaseMock.mockReset();
     buildStickySessionKeyMock.mockReset();
     consoleWarnMock.mockClear();
     consoleErrorMock.mockClear();

@@ -223,4 +223,37 @@ describe('sites api endpoints', () => {
       }),
     ]);
   });
+
+  it('persists maxConcurrency on create and update, and rejects values outside its range', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'concurrency-site',
+        url: 'https://panel.example.com',
+        platform: 'new-api',
+        maxConcurrency: 3,
+      },
+    });
+
+    expect(created.statusCode).toBe(200);
+    const createdSite = created.json() as { id: number; maxConcurrency?: number };
+    expect(createdSite.maxConcurrency).toBe(3);
+
+    const updated = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${createdSite.id}`,
+      payload: { maxConcurrency: 7 },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect((updated.json() as { maxConcurrency?: number }).maxConcurrency).toBe(7);
+
+    const invalid = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${createdSite.id}`,
+      payload: { maxConcurrency: 100_001 },
+    });
+    expect(invalid.statusCode).toBe(400);
+    expect((invalid.json() as { error?: string }).error).toContain('0 to 100000');
+  });
 });

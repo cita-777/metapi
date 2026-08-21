@@ -3,6 +3,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { asc, eq } from 'drizzle-orm';
+import { resetProxyChannelCoordinatorState } from './proxyChannelCoordinator.js';
 
 type DbModule = typeof import('../db/index.js');
 type SiteApiEndpointServiceModule = typeof import('./siteApiEndpointService.js');
@@ -31,6 +32,7 @@ describe('siteApiEndpointService', () => {
   });
 
   beforeEach(async () => {
+    resetProxyChannelCoordinatorState();
     await db.delete(schema.siteApiEndpoints).run();
     await db.delete(schema.sites).run();
   });
@@ -336,5 +338,34 @@ describe('siteApiEndpointService', () => {
       lastSelectedAt: '2026-03-31T12:01:00.000Z',
       lastFailureReason: null,
     });
+  });
+
+  it('holds the site lease until a streamed response is consumed', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'concurrency-site',
+      url: 'https://panel.example.com',
+      platform: 'new-api',
+      status: 'active',
+      maxConcurrency: 1,
+    }).returning().get();
+
+    const first = await (await import('./siteApiEndpointService.js')).runWithSiteApiEndpointPool(
+      site,
+      async () => ({ upstream: new Response('first') }),
+    );
+    let secondSettled = false;
+    const secondPromise = (await import('./siteApiEndpointService.js')).runWithSiteApiEndpointPool(
+      site,
+      async () => ({ upstream: new Response('second') }),
+    ).then((result) => {
+      secondSettled = true;
+      return result;
+    });
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(secondSettled).toBe(false);
+    await (first as { upstream: Response }).upstream.text();
+    const second = await secondPromise;
+    expect(await (second as { upstream: Response }).upstream.text()).toBe('second');
   });
 });

@@ -45,6 +45,10 @@ import { fetchWithObservedFirstByte, getObservedResponseMeta } from '../firstByt
 import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 import { shouldAbortSameSiteEndpointFallback } from '../../services/proxyRetryPolicy.js';
 import {
+  runWithSiteApiEndpointPool,
+  SiteApiEndpointRequestError,
+} from '../../services/siteApiEndpointService.js';
+import {
   buildSurfaceProxyDebugResponseHeaders,
   captureSurfaceProxyDebugSuccessResponseBody,
   parseSurfaceProxyDebugTextPayload,
@@ -81,6 +85,38 @@ const EMPTY_PROXY_USAGE = {
   completionTokens: 0,
   totalTokens: 0,
 };
+
+type GeminiSiteRequest = Parameters<typeof runWithSiteApiEndpointPool>[0];
+
+/** 只有明确配置正数上限的站点才进入租约池，不限流站点保持原有直连路径。 */
+async function runWithGeminiSiteConcurrency<T>(
+  site: GeminiSiteRequest,
+  operation: (siteBaseUrl: string) => Promise<T>,
+): Promise<T> {
+  const maxConcurrency = Math.max(0, Math.trunc(Number(site.maxConcurrency ?? 0)));
+  if (maxConcurrency <= 0) return operation(site.url);
+  return runWithSiteApiEndpointPool(site, (target) => operation(target.baseUrl));
+}
+
+/** 站点租约异常需要保留其 HTTP 状态，避免并发等待超时被误报为上游 502。 */
+function getGeminiRequestFailure(error: unknown) {
+  const endpointError = error as { name?: unknown; status?: unknown; rawErrText?: unknown } | null;
+  const isSiteApiEndpointError = (
+    error instanceof SiteApiEndpointRequestError
+    || (typeof error === 'object' && error !== null && endpointError?.name === 'SiteApiEndpointRequestError')
+  );
+  const status = isSiteApiEndpointError && typeof endpointError?.status === 'number'
+    ? endpointError.status
+    : 502;
+  const message = typeof endpointError?.rawErrText === 'string' && endpointError.rawErrText.trim()
+    ? endpointError.rawErrText
+    : (error instanceof Error ? error.message : 'Gemini upstream request failed');
+  return {
+    status,
+    message,
+    isSiteConcurrencyBusy: status === 503 && /^Site busy:/i.test(message),
+  };
+}
 
 function isGeminiCliPlatform(platform: unknown): boolean {
   return String(platform || '').trim().toLowerCase() === 'gemini-cli';
@@ -414,12 +450,13 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           return reply.code(200).send(filtered);
         }
 
-        const targetUrl = geminiGenerateContentTransformer.resolveModelsUrl(selected.site.url, apiVersion, selected.tokenValue);
+        let targetUrl = '';
         const upstreamPath = `/${apiVersion}/models`;
-        const upstream = await fetch(
-          targetUrl,
-          { method: 'GET' },
-        );
+        // 模型列表也受站点并发上限约束，读取完响应后才释放租约。
+        const upstream = await runWithGeminiSiteConcurrency(selected.site, async (siteBaseUrl) => {
+          targetUrl = geminiGenerateContentTransformer.resolveModelsUrl(siteBaseUrl, apiVersion, selected.tokenValue);
+          return fetch(targetUrl, { method: 'GET' });
+        });
         const text = await readRuntimeResponseText(upstream);
         await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
           attemptIndex: retryCount,
@@ -464,15 +501,19 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           return reply.code(upstream.status).type(upstream.headers.get('content-type') || 'application/json').send(text);
         }
       } catch (error) {
-        await tokenRouter.recordFailure?.(selected.channel.id, {
-          errorText: error instanceof Error ? error.message : 'Gemini upstream request failed',
-        });
-        lastStatus = 502;
+        const failure = getGeminiRequestFailure(error);
+        if (!failure.isSiteConcurrencyBusy) {
+          await tokenRouter.recordFailure?.(selected.channel.id, {
+            status: failure.status,
+            errorText: failure.message,
+          });
+        }
+        lastStatus = failure.status;
         lastContentType = 'application/json';
         lastText = JSON.stringify({
           error: {
-            message: error instanceof Error ? error.message : 'Gemini upstream request failed',
-            type: 'upstream_error',
+            message: failure.message,
+            type: failure.isSiteConcurrencyBusy ? 'server_error' : 'upstream_error',
           },
         });
         if (canRetryChannelSelection(retryCount, forcedChannelId)) {
@@ -672,7 +713,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             : resolveUpstreamPath(apiVersion, actualModelAction);
           const query = new URLSearchParams(request.query as Record<string, string>).toString();
           const channelProxyUrl = resolveChannelProxyUrl(selected.site, selected.account.extraConfig);
-          const buildDirectDispatchState = () => {
+          const buildDirectDispatchState = (siteApiBaseUrl = selected.site.url) => {
             const requestBody = isInternalGemini
               ? (
                 isCountTokensAction
@@ -698,9 +739,9 @@ export async function geminiProxyRoute(app: FastifyInstance) {
                 'Content-Type': 'application/json',
               };
             const targetUrl = isInternalGemini
-              ? `${selected.site.url}${upstreamPath}`
+              ? `${siteApiBaseUrl}${upstreamPath}`
               : geminiGenerateContentTransformer.resolveActionUrl(
-                selected.site.url,
+                siteApiBaseUrl,
                 apiVersion,
                 actualModelAction,
                 selected.tokenValue,
@@ -758,29 +799,34 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               startedAtMs: Date.now(),
             },
           );
-          let upstream = await dispatchWithObservedFirstByte();
+          let recoverApplied = false;
+          // 原生 Gemini 请求在响应消费结束前持有站点租约，流式响应因此会正确占用槽位。
+          const upstream = await runWithGeminiSiteConcurrency(selected.site, async (siteBaseUrl) => {
+            directDispatchState = buildDirectDispatchState(siteBaseUrl);
+            let response = await dispatchWithObservedFirstByte();
+            if (response.status === 401 && oauth) {
+              try {
+                const refreshed = await refreshOauthAccessTokenSingleflight(selected.account.id);
+                // 刷新成功后取消旧响应，避免旧响应继续占用上游连接。
+                await response.body?.cancel();
+                selected.tokenValue = refreshed.accessToken;
+                selected.account = {
+                  ...selected.account,
+                  accessToken: refreshed.accessToken,
+                  extraConfig: refreshed.extraConfig ?? selected.account.extraConfig,
+                };
+                oauth = getOauthInfoFromAccount(selected.account);
+                directDispatchState = buildDirectDispatchState(siteBaseUrl);
+                response = await dispatchWithObservedFirstByte();
+                recoverApplied = true;
+              } catch {
+                // 刷新失败时保留原始 401 响应，不吞掉上游错误体。
+              }
+            }
+            return response;
+          });
           let firstByteLatencyMs = getObservedResponseMeta(upstream)?.firstByteLatencyMs ?? null;
           let contentType = upstream.headers.get('content-type') || 'application/json';
-          let recoverApplied = false;
-          if (upstream.status === 401 && oauth) {
-            try {
-              const refreshed = await refreshOauthAccessTokenSingleflight(selected.account.id);
-              selected.tokenValue = refreshed.accessToken;
-              selected.account = {
-                ...selected.account,
-                accessToken: refreshed.accessToken,
-                extraConfig: refreshed.extraConfig ?? selected.account.extraConfig,
-              };
-              oauth = getOauthInfoFromAccount(selected.account);
-              directDispatchState = buildDirectDispatchState();
-              upstream = await dispatchWithObservedFirstByte();
-              firstByteLatencyMs = getObservedResponseMeta(upstream)?.firstByteLatencyMs ?? null;
-              contentType = upstream.headers.get('content-type') || 'application/json';
-              recoverApplied = true;
-            } catch {
-              // Preserve the original 401 response when refresh fails.
-            }
-          }
           if (!upstream.ok) {
             lastStatus = upstream.status;
             lastContentType = contentType;
@@ -1436,24 +1482,29 @@ export async function geminiProxyRoute(app: FastifyInstance) {
         }
         return reply.code(upstream.status).send(downstreamPayload);
       } catch (error) {
-        lastStatus = 502;
+        const failure = getGeminiRequestFailure(error);
+        lastStatus = failure.status;
         lastContentType = 'application/json';
         lastText = JSON.stringify({
           error: {
-            message: error instanceof Error ? error.message : 'Gemini upstream request failed',
-            type: 'upstream_error',
+            message: failure.message,
+            type: failure.isSiteConcurrencyBusy ? 'server_error' : 'upstream_error',
           },
         });
-        await tokenRouter.recordFailure?.(selected.channel.id, {
-          errorText: error instanceof Error ? error.message : 'Gemini upstream request failed',
-        });
+        // 并发槽位耗尽时没有请求上游，不应降低当前通道的健康度。
+        if (!failure.isSiteConcurrencyBusy) {
+          await tokenRouter.recordFailure?.(selected.channel.id, {
+            status: failure.status,
+            errorText: failure.message,
+          });
+        }
         await logProxy(
           selected,
           requestedModel,
           'failed',
-          0,
+          lastStatus,
           Date.now() - startTime,
-          error instanceof Error ? error.message : 'Gemini upstream request failed',
+          failure.message,
           retryCount,
           downstreamPath,
           upstreamPath || null,

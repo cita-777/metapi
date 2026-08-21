@@ -174,6 +174,14 @@ export function getObservedResponseMeta(response: Response | null | undefined): 
   return observedResponseMeta.get(response) ?? null;
 }
 
+export function copyObservedResponseMeta(
+  source: Response | null | undefined,
+  target: Response,
+): void {
+  const meta = getObservedResponseMeta(source);
+  if (meta) observedResponseMeta.set(target, meta);
+}
+
 export function isObservedFirstByteTimeoutResponse(response: Response | null | undefined): boolean {
   return getObservedResponseMeta(response)?.timedOutBeforeFirstByte === true;
 }
