@@ -163,7 +163,9 @@ npx vitest run --pool=threads --poolOptions.threads.singleThread=true <test-file
   - `src/server/db/schema.ts`
   - `docs/change-log.md`
 - **验证**：`npm run typecheck:server`、`npm run typecheck:web`、`npm run typecheck:web:test`、`npm run test:schema:unit`、`npm run repo:drift-check` 均通过；相关聚焦测试通过，`tokenRouter.selection.test.ts` 单独运行 26/26 通过。
-- **状态**：已验证，待推送；推送后的分支和提交链接在本条记录中补充。
+- **提交**：本地提交 `02e2308`（`feat: add proxy fixes and per-site concurrency`）。
+- **推送结果**：未推送；GitHub 返回 `403 Permission to cita-777/metapi.git denied to lengxiaouser`，当前凭据对该仓库没有写权限；远程分支尚未创建。
+- **状态**：代码已验证并在本地分支就绪，等待具备该仓库写权限的凭据后重试。
 
 ## 后续记录模板
 
