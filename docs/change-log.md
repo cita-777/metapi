@@ -167,6 +167,15 @@ npx vitest run --pool=threads --poolOptions.threads.singleThread=true <test-file
 - **推送结果**：未推送；GitHub 返回 `403 Permission to cita-777/metapi.git denied to lengxiaouser`，当前凭据对该仓库没有写权限；远程分支尚未创建。
 - **状态**：代码已验证并在本地分支就绪，等待具备该仓库写权限的凭据后重试。
 
+### 10. 创建 Fork 并准备 Pull Request
+
+- **类型**：版本交付
+- **需求来源**：本会话需求
+- **目标**：通过个人 Fork 提交变更，避免直接写入上游仓库。
+- **实现范围**：已创建 [lengxiaouser/metapi](https://github.com/lengxiaouser/metapi) Fork，目标分支为 `codex/metapi-issues-591-590-586-585`，PR 基线为上游 `main`。
+- **验证**：Fork 的 `main` 已通过 Git 远程读取确认；待推送功能分支并创建 PR。
+- **状态**：进行中。
+
 ## 后续记录模板
 
 复制下面模板追加到对应日期下，先记录需求来源，再补充实际实现和验证结果：
