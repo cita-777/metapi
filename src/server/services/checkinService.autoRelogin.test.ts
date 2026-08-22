@@ -172,14 +172,23 @@ describe('checkinService auto relogin', () => {
     // ...but the retry must use the id the site itself reported.
     expect(adapterMock.checkin.mock.calls[1][2]).toBe(500123);
 
-    // And no later write may put the guess back over it.
-    const writtenIds = updateSetMock.mock.calls
+    // And no later write may put the guess back over it. Parse the whole config,
+    // not just the id: a write that *replaced* extraConfig with only
+    // `{ platformUserId }` would satisfy an id-only assertion while dropping the
+    // autoRelogin credentials, leaving nothing to re-login with next time.
+    const writtenConfigs = updateSetMock.mock.calls
       .map((call) => (call[0] as Record<string, unknown> | undefined)?.extraConfig)
       .filter((cfg): cfg is string => typeof cfg === 'string')
-      .map((cfg) => (JSON.parse(cfg) as { platformUserId?: number }).platformUserId);
-    expect(writtenIds.length).toBeGreaterThan(0);
-    expect(writtenIds).toContain(500123);
-    expect(writtenIds).not.toContain(1999);
+      .map((cfg) => JSON.parse(cfg) as {
+        platformUserId?: number;
+        autoRelogin?: { username?: string; passwordCipher?: string };
+      });
+    expect(writtenConfigs.length).toBeGreaterThan(0);
+    expect(writtenConfigs.map((cfg) => cfg.platformUserId)).not.toContain(1999);
+    expect(writtenConfigs).toContainEqual(expect.objectContaining({
+      platformUserId: 500123,
+      autoRelogin: { username: 'alice_1999', passwordCipher: 'cipher' },
+    }));
   });
 
   it('passes guessed platform user id when config does not include it', async () => {
