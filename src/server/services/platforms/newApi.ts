@@ -1,4 +1,4 @@
-import { ApiTokenInfo, BasePlatformAdapter, CheckinResult, BalanceInfo, UserInfo, TokenVerifyResult, CreateApiTokenOptions, type SiteAnnouncement } from './base.js';
+import { ApiTokenInfo, BasePlatformAdapter, CheckinResult, BalanceInfo, UserInfo, TokenVerifyResult, CreateApiTokenOptions, type SiteAnnouncement, type LoginResult } from './base.js';
 import type { RequestInit as UndiciRequestInit } from 'undici';
 import { createContext, runInContext } from 'node:vm';
 import { withSiteProxyRequestInit } from '../siteProxy.js';
@@ -372,9 +372,16 @@ export class NewApiAdapter extends BasePlatformAdapter {
       payload?.id,
     ];
     for (const candidate of candidates) {
-      const value = typeof candidate === 'string' ? Number.parseInt(candidate, 10) : candidate;
-      if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
-        return value;
+      if (typeof candidate === 'number') {
+        if (Number.isSafeInteger(candidate) && candidate > 0) return candidate;
+        continue;
+      }
+      // Only accept a string that is *entirely* digits. `Number.parseInt` would
+      // happily turn "80305abc" or "80305.9" into 80305 and we would then send a
+      // wrong `New-Api-User` header.
+      if (typeof candidate === 'string' && /^\d+$/.test(candidate.trim())) {
+        const value = Number(candidate.trim());
+        if (Number.isSafeInteger(value) && value > 0) return value;
       }
     }
     return undefined;
@@ -971,13 +978,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
     baseUrl: string,
     username: string,
     password: string,
-  ): Promise<{
-    success: boolean;
-    accessToken?: string;
-    username?: string;
-    message?: string;
-    platformUserId?: number;
-  }> {
+  ): Promise<LoginResult> {
     try {
       const { data: res, cookieHeader } = await this.fetchJsonRawWithCookie<any>(`${baseUrl}/api/user/login`, {
         method: 'POST',

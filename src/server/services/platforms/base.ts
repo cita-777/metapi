@@ -37,7 +37,7 @@ export interface BalanceInfo {
   subscriptionSummary?: SubscriptionSummary;
 }
 
-interface LoginResult {
+export interface LoginResult {
   success: boolean;
   accessToken?: string;
   username?: string;

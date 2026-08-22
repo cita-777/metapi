@@ -92,7 +92,22 @@ function inferRewardFromBalanceDelta(previousBalance: unknown, latestBalance: un
   return Math.round(delta * 1_000_000) / 1_000_000;
 }
 
-async function tryAutoRelogin(account: any, site: any): Promise<string | null> {
+/**
+ * Result of a successful automatic re-login.
+ *
+ * The access token alone is not enough: the login may also have reported the
+ * authoritative `platformUserId`. Callers need it for the retry that follows,
+ * and they need the merged `extraConfig` so their own later
+ * `mergeAccountExtraConfig(account.extraConfig, ...)` writes do not put the
+ * pre-login copy back and undo what was just persisted.
+ */
+type AutoReloginResult = {
+  accessToken: string;
+  platformUserId?: number;
+  extraConfig?: string;
+};
+
+async function tryAutoRelogin(account: any, site: any): Promise<AutoReloginResult | null> {
   const adapter = getAdapter(site.platform);
   if (!adapter) return null;
 
@@ -125,7 +140,11 @@ async function tryAutoRelogin(account: any, site: any): Promise<string | null> {
     .where(eq(schema.accounts.id, account.id))
     .run();
 
-  return result.accessToken;
+  return {
+    accessToken: result.accessToken,
+    platformUserId: result.platformUserId,
+    extraConfig: reloginExtraConfig,
+  };
 }
 
 export async function checkinAccount(accountId: number, options?: { skipEvent?: boolean; scheduleMode?: 'cron' | 'interval' }) {
@@ -183,7 +202,7 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
   const guessedPlatformUserId = storedPlatformUserId
     ? undefined
     : guessPlatformUserIdFromUsername(account.username);
-  const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
+  let platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
 
   const accountProxyUrl = resolveProxyUrlFromExtraConfig(account.extraConfig);
   let activeAccessToken = account.accessToken;
@@ -191,9 +210,15 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
     () => adapter.checkin(site.url, activeAccessToken, platformUserId));
 
   if (!result.success && shouldAttemptAutoRelogin(result.message)) {
-    const refreshedAccessToken = await tryAutoRelogin(account, site);
-    if (refreshedAccessToken) {
-      activeAccessToken = refreshedAccessToken;
+    const relogin = await tryAutoRelogin(account, site);
+    if (relogin) {
+      activeAccessToken = relogin.accessToken;
+      // Adopt whatever the re-login reported before retrying, and refresh our
+      // in-memory copy of extraConfig — the merge writes further down start from
+      // `account.extraConfig`, so leaving the stale copy here would overwrite the
+      // id tryAutoRelogin() just persisted.
+      if (relogin.platformUserId) platformUserId = relogin.platformUserId;
+      if (relogin.extraConfig) account.extraConfig = relogin.extraConfig;
       result = await withAccountProxyOverride(accountProxyUrl,
         () => adapter.checkin(site.url, activeAccessToken, platformUserId));
     }

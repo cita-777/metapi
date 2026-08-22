@@ -208,7 +208,22 @@ async function fetchTodayIncomeFromLogs(params: {
   return Math.round(totalIncome * 1_000_000) / 1_000_000;
 }
 
-async function tryAutoRelogin(account: any, site: any): Promise<string | null> {
+/**
+ * Result of a successful automatic re-login.
+ *
+ * The access token alone is not enough: the login may also have reported the
+ * authoritative `platformUserId`. Callers need it for the retry that follows,
+ * and they need the merged `extraConfig` so their own later
+ * `mergeAccountExtraConfig(account.extraConfig, ...)` writes do not put the
+ * pre-login copy back and undo what was just persisted.
+ */
+type AutoReloginResult = {
+  accessToken: string;
+  platformUserId?: number;
+  extraConfig?: string;
+};
+
+async function tryAutoRelogin(account: any, site: any): Promise<AutoReloginResult | null> {
   const adapter = getAdapter(site.platform);
   if (!adapter) return null;
 
@@ -241,7 +256,11 @@ async function tryAutoRelogin(account: any, site: any): Promise<string | null> {
     .where(eq(schema.accounts.id, account.id))
     .run();
 
-  return loginResult.accessToken;
+  return {
+    accessToken: loginResult.accessToken,
+    platformUserId: loginResult.platformUserId,
+    extraConfig: reloginExtraConfig,
+  };
 }
 
 export async function refreshBalance(accountId: number) {
@@ -285,7 +304,7 @@ export async function refreshBalance(accountId: number) {
     };
   }
 
-  const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
+  let platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
   let activeAccessToken = account.accessToken;
   let activeExtraConfig = account.extraConfig;
   let balanceInfo: BalanceInfo | null = null;
@@ -351,9 +370,16 @@ export async function refreshBalance(accountId: number) {
         await handleBalanceError(retryErr);
       }
     } else if (shouldAttemptAutoRelogin(message)) {
-      const refreshedAccessToken = await tryAutoRelogin(account, site);
-      if (refreshedAccessToken) {
-        activeAccessToken = refreshedAccessToken;
+      const relogin = await tryAutoRelogin(account, site);
+      if (relogin) {
+        activeAccessToken = relogin.accessToken;
+        // Adopt the id the re-login reported and advance activeExtraConfig.
+        // `readBalance` closes over `platformUserId`, so without this the retry
+        // still sends the stale `New-Api-User`; and `nextExtraConfig` further down
+        // starts from `activeExtraConfig`, so the pre-login copy would be written
+        // back over the id tryAutoRelogin() just persisted.
+        if (relogin.platformUserId) platformUserId = relogin.platformUserId;
+        if (relogin.extraConfig) activeExtraConfig = relogin.extraConfig;
         try {
           balanceInfo = await readBalance(activeAccessToken);
         } catch (retryErr: any) {
