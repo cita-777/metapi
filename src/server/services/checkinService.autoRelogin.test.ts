@@ -130,6 +130,58 @@ describe('checkinService auto relogin', () => {
     expect(updateSetMock).toHaveBeenCalledWith(expect.objectContaining({ accessToken: 'fresh-token' }));
   });
 
+  it('prefers the id reported by relogin over the guess, and never writes the guess back', async () => {
+    // `alice_1999` ends in digits that are not the account id — precisely the case
+    // guessPlatformUserIdFromUsername() gets wrong, since its /(\d{3,8})$/ only
+    // knows how to read a trailing number.
+    selectAllMock.mockReturnValue([
+      {
+        accounts: {
+          id: 1,
+          username: 'alice_1999',
+          accessToken: 'expired-token',
+          status: 'active',
+          extraConfig: JSON.stringify({
+            autoRelogin: { username: 'alice_1999', passwordCipher: 'cipher' },
+          }),
+        },
+        sites: {
+          id: 3,
+          name: 'kfc',
+          url: 'https://kfc-api.sxxe.net',
+          platform: 'new-api',
+        },
+      },
+    ]);
+
+    adapterMock.checkin
+      .mockResolvedValueOnce({ success: false, message: '无权进行此操作，未登录且未提供 access token' })
+      .mockResolvedValueOnce({ success: true, message: 'checked in' });
+    decryptPasswordMock.mockReturnValue('plain-password');
+    adapterMock.login.mockResolvedValue({
+      success: true,
+      accessToken: 'fresh-token',
+      platformUserId: 500123,
+    });
+
+    const { checkinAccount } = await import('./checkinService.js');
+    await checkinAccount(1);
+
+    // The first attempt has nothing better than the guess...
+    expect(adapterMock.checkin.mock.calls[0][2]).toBe(1999);
+    // ...but the retry must use the id the site itself reported.
+    expect(adapterMock.checkin.mock.calls[1][2]).toBe(500123);
+
+    // And no later write may put the guess back over it.
+    const writtenIds = updateSetMock.mock.calls
+      .map((call) => (call[0] as Record<string, unknown> | undefined)?.extraConfig)
+      .filter((cfg): cfg is string => typeof cfg === 'string')
+      .map((cfg) => (JSON.parse(cfg) as { platformUserId?: number }).platformUserId);
+    expect(writtenIds.length).toBeGreaterThan(0);
+    expect(writtenIds).toContain(500123);
+    expect(writtenIds).not.toContain(1999);
+  });
+
   it('passes guessed platform user id when config does not include it', async () => {
     selectAllMock.mockReturnValue([
       {
