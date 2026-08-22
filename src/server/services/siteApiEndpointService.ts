@@ -53,11 +53,13 @@ export class SiteApiEndpointRequestError extends Error {
   readonly status: number | null;
   readonly rawErrText: string | null;
   readonly firstByteLatencyMs: number | null;
+  readonly siteConcurrencyTimeout: boolean;
 
   constructor(message: string, options?: {
     status?: number | null;
     rawErrText?: string | null;
     firstByteLatencyMs?: number | null;
+    siteConcurrencyTimeout?: boolean;
     cause?: unknown;
   }) {
     super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
@@ -69,6 +71,7 @@ export class SiteApiEndpointRequestError extends Error {
     this.firstByteLatencyMs = typeof options?.firstByteLatencyMs === 'number' && Number.isFinite(options.firstByteLatencyMs)
       ? options.firstByteLatencyMs
       : null;
+    this.siteConcurrencyTimeout = options?.siteConcurrencyTimeout === true;
   }
 }
 
@@ -98,6 +101,8 @@ function wrapResponseWithSiteLease(response: Response, lease: ProxySiteLease): R
     return response;
   }
 
+  // 请求已完成，后续只根据真实的流读取进度续租，避免客户端停止读取后永久占用站点槽位。
+  lease.pauseKeepalive();
   const reader = response.body.getReader();
   const wrappedBody = new ReadableStream<Uint8Array>({
     async pull(controller) {
@@ -108,10 +113,17 @@ function wrapResponseWithSiteLease(response: Response, lease: ProxySiteLease): R
           controller.close();
           return;
         }
+        lease.touch();
         controller.enqueue(result.value);
       } catch (error) {
-        release();
-        controller.error(error);
+        try {
+          await reader.cancel(error);
+        } catch {
+          // 读取失败时尽力取消底层 reader，随后仍必须释放站点租约。
+        } finally {
+          release();
+          controller.error(error);
+        }
       }
     },
     async cancel(reason) {
@@ -359,6 +371,7 @@ export async function runWithSiteApiEndpointPool<T>(
   if (leaseResult.status === 'timeout') {
     throw new SiteApiEndpointRequestError(buildSiteConcurrencyBusyMessage(leaseResult.waitMs), {
       status: 503,
+      siteConcurrencyTimeout: true,
     });
   }
   const siteLease = leaseResult.lease;

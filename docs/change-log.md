@@ -45,7 +45,7 @@
 - **实现范围**：
   - 增加 Rerank 路由，校验 `model`，将请求转发到选中的上游 `/v1/rerank`。
   - 支持站点 API 地址池、首字节超时、通道重试和失败切换。
-  - 成功与失败都记录通道状态、代理日志、用量和费用信息。
+  - 成功路径解析用量并记录计费；失败路径只记录通道失败和代理失败日志，不虚构用量或费用。
   - 路由已在 proxy router 中注册。
 - **主要文件**：
   - `src/server/routes/proxy/rerank.ts`
@@ -185,6 +185,43 @@ npx vitest run --pool=threads --poolOptions.threads.singleThread=true <test-file
 - **验证**：GitHub API 返回 PR 编号 `609`，状态为 `open`；PR 描述已包含 Issue 链接、验证命令和变更范围。
 - **状态**：已提交，等待上游审核。
 
+## 2026-08-22
+
+### 12. 修复 CodeRabbit PR 审查问题
+
+- **类型**：缺陷修复与架构重构
+- **需求来源**：CodeRabbit 对 [PR #609](https://github.com/cita-777/metapi/pull/609) 的审查；对应 Issue：[ #591](https://github.com/cita-777/metapi/issues/591)、[#590](https://github.com/cita-777/metapi/issues/590)、[#586](https://github.com/cita-777/metapi/issues/586)、[#585](https://github.com/cita-777/metapi/issues/585)
+- **目标**：修复站点并发租约释放、并发超时误判、路由通道优先级竞态、Rerank 路由职责过重和变更日志字段不完整等问题。
+- **实现范围**：
+  - 流式响应交接后暂停后台续租，按真实读取进度续租；读取失败先取消 reader，再释放站点租约。
+  - 为本地站点排队超时增加显式 `siteConcurrencyTimeout` 标记，统一由 `sharedSurface.ts` 分类，避免把真实上游 503 当成站点排队超时。
+  - 新增 `routeChannelService.ts`，用进程内串行锁和数据库事务统一处理自动通道、批量通道、单通道和批量优先级写入，并统一清理路由决策缓存。
+  - 新增 `rerankSurface.ts`，通过 `executeEndpointFlow()` 承担 Rerank 的站点地址池、首字节超时、上游请求、用量计费、日志和失败重试；路由文件只保留校验与委托。
+  - 修正 Rerank 记录：只有成功响应解析用量并计费，失败只写失败状态日志，费用和用量为零/未知不代表已发生计费。
+- **主要文件**：
+  - `src/server/services/proxyChannelCoordinator.ts`
+  - `src/server/services/siteApiEndpointService.ts`
+  - `src/server/proxy-core/surfaces/sharedSurface.ts`
+  - `src/server/proxy-core/surfaces/chatSurface.ts`
+  - `src/server/proxy-core/surfaces/openAiResponsesSurface.ts`
+  - `src/server/proxy-core/surfaces/geminiSurface.ts`
+  - `src/server/proxy-core/surfaces/rerankSurface.ts`
+  - `src/server/routes/proxy/rerank.ts`
+  - `src/server/services/routeChannelService.ts`
+  - `src/server/routes/api/tokens.ts`
+  - `docs/change-log.md`
+- **验证**：
+  - `npm run typecheck:server`：通过。
+  - `npx vitest run --pool=threads --poolOptions.threads.singleThread=true src/server/routes/proxy/rerank.test.ts src/server/services/siteApiEndpointService.test.ts src/server/services/proxyChannelCoordinator.test.ts`：通过，26 个测试通过。
+  - 路由优先级与共享 surface 回归测试：通过，`tokens.batch.test.ts`、`tokens.route-update-rebuild.test.ts` 共 21 个测试，`sharedSurface.test.ts` 与 `sharedSurface.usage-source.test.ts` 共 24 个测试。
+  - Rerank 测试实际验证上游 URL 为 `https://ark.cn-beijing.volces.com/api/coding/v3/rerank`、请求体转发和成功日志；测试环境的 quota best-effort 查询因未创建 `accounts` 表输出告警，但不影响请求结果。
+  - `npm run typecheck:web`：通过。
+  - `npm run typecheck:web:test`：通过。
+  - `npm run test:schema:unit`：通过，15 个测试通过。
+  - `npm run repo:drift-check`：通过，新增违规 0 个；报告中的 5 项为既有 tracked debt。
+- **交付物**：本地 checkout 中的修复代码和本变更日志；无新增 PDF 或截图。
+- **状态**：已完成，等待提交并更新 PR。
+
 ## 后续记录模板
 
 复制下面模板追加到对应日期下，先记录需求来源，再补充实际实现和验证结果：
@@ -199,5 +236,6 @@ npx vitest run --pool=threads --poolOptions.threads.singleThread=true <test-file
 - **主要文件**：
   - `path/to/file`
 - **验证**：
+- **交付物**：代码、文档、PDF、截图等；没有交付物时填写“无”。
 - **状态**：进行中 / 已完成 / 阻塞
 ```

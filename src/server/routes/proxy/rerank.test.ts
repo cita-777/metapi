@@ -57,7 +57,10 @@ vi.mock('./downstreamPolicy.js', () => ({
   getDownstreamRoutingPolicy: () => ({}),
   recordDownstreamCostUsage: vi.fn(),
 }));
-vi.mock('../../services/siteProxy.js', () => ({ withSiteRecordProxyRequestInit: (_site: unknown, init: RequestInit) => init }));
+vi.mock('../../services/siteProxy.js', () => ({
+  resolveChannelProxyUrl: () => undefined,
+  withSiteRecordProxyRequestInit: (_site: unknown, init: RequestInit) => init,
+}));
 vi.mock('../../services/accountExtraConfig.js', () => ({ getProxyUrlFromExtraConfig: () => undefined }));
 
 describe('/v1/rerank route', () => {

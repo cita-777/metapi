@@ -17,11 +17,12 @@ import { buildUpstreamUrl } from '../orchestration/upstreamRequest.js';
 import { recordOauthQuotaHeadersSnapshot, recordOauthQuotaResetHint } from '../../services/oauth/quota.js';
 import { refreshOauthAccessTokenSingleflight } from '../../services/oauth/refreshSingleflight.js';
 import { proxyChannelCoordinator } from '../../services/proxyChannelCoordinator.js';
+import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
 import { readRuntimeResponseText } from '../executors/types.js';
 import { selectProxyChannelForAttempt } from '../channelSelection.js';
 
 type SelectedChannel = Awaited<ReturnType<typeof tokenRouter.selectChannel>>;
-type SurfaceWarningScope = 'chat' | 'responses';
+type SurfaceWarningScope = 'chat' | 'responses' | 'rerank';
 
 type SurfaceSelectedChannel = {
   channel: { routeId: number | null; id: number };
@@ -194,6 +195,45 @@ export function buildSurfaceConcurrencyBusyMessage(scope: 'channel' | 'site', wa
       : 'Site busy: no concurrency slot available';
   }
   return buildSurfaceChannelBusyMessage(waitMs);
+}
+
+type SurfaceSiteRequest = Parameters<typeof runWithSiteApiEndpointPool>[0];
+
+/** 统一处理站点 API 地址池和站点并发租约，供各协议 surface 复用。 */
+export async function runWithSurfaceSiteConcurrency<T>(
+  site: SurfaceSiteRequest,
+  operation: (siteBaseUrl: string) => Promise<T>,
+): Promise<T> {
+  // 即使站点不限制并发，也要经过地址池；这里的 0 只表示不限制租约数量。
+  return runWithSiteApiEndpointPool(site, (target) => operation(target.baseUrl));
+}
+
+export function getSurfaceRequestFailure(error: unknown): {
+  status: number;
+  message: string;
+  isSiteConcurrencyBusy: boolean;
+} {
+  const endpointError = error as {
+    name?: unknown;
+    status?: unknown;
+    rawErrText?: unknown;
+    siteConcurrencyTimeout?: unknown;
+  } | null;
+  const isEndpointError = (
+    error instanceof SiteApiEndpointRequestError
+    || (typeof error === 'object' && error !== null && endpointError?.name === 'SiteApiEndpointRequestError')
+  );
+  const status = isEndpointError && typeof endpointError?.status === 'number'
+    ? endpointError.status
+    : 502;
+  const message = typeof endpointError?.rawErrText === 'string' && endpointError.rawErrText.trim()
+    ? endpointError.rawErrText
+    : (error instanceof Error ? error.message : 'Upstream request failed');
+  return {
+    status,
+    message,
+    isSiteConcurrencyBusy: endpointError?.siteConcurrencyTimeout === true,
+  };
 }
 
 export async function writeSurfaceProxyLog(input: {

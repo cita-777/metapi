@@ -62,6 +62,8 @@ export type ProxySiteLease = {
   isActive(): boolean;
   release(): void;
   touch(): void;
+  /** 流式响应交接后停止后台续租，只允许真实读取进度续租。 */
+  pauseKeepalive(): void;
 };
 
 export type AcquireProxySiteLeaseResult =
@@ -481,6 +483,7 @@ class ProxyChannelCoordinator {
       isActive: () => false,
       release: () => {},
       touch: () => {},
+      pauseKeepalive: () => {},
     };
   }
 
@@ -506,6 +509,12 @@ class ProxyChannelCoordinator {
       expiryTimer = setTimeout(release, getChannelLeaseTtlMs());
       shouldUnrefTimer(expiryTimer);
     };
+    const pauseKeepalive = () => {
+      if (keepaliveTimer) {
+        clearInterval(keepaliveTimer);
+        keepaliveTimer = null;
+      }
+    };
     touch();
     const keepaliveMs = getChannelLeaseKeepaliveMs();
     if (keepaliveMs > 0) {
@@ -513,7 +522,7 @@ class ProxyChannelCoordinator {
       shouldUnrefTimer(keepaliveTimer);
     }
 
-    return { siteId, isActive: () => !released, release, touch };
+    return { siteId, isActive: () => !released, release, touch, pauseKeepalive };
   }
 
   private drainQueue(channelId: number): void {

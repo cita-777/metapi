@@ -59,6 +59,7 @@ import {
   acquireSurfaceChannelLease,
   bindSurfaceStickyChannel,
   buildSurfaceConcurrencyBusyMessage,
+  getSurfaceRequestFailure,
   buildSurfaceStickySessionKey,
   clearSurfaceStickyChannel,
   createSurfaceFailureToolkit,
@@ -1223,6 +1224,26 @@ export async function handleChatSurfaceRequest(
         selected,
       });
       const endpointFailureStatus = typeof err?.status === 'number' ? err.status : null;
+      if (err?.siteConcurrencyTimeout === true) {
+        const failure = getSurfaceRequestFailure(err);
+        await failureToolkit.log({
+          selected,
+          modelRequested: requestedModel,
+          status: 'failed',
+          httpStatus: failure.status,
+          isStream,
+          latencyMs: Date.now() - startTime,
+          errorMessage: failure.message,
+          retryCount,
+        });
+        if (canRetryChannelSelection(retryCount, forcedChannelId)) {
+          retryCount += 1;
+          continue;
+        }
+        const payload = { error: { message: failure.message, type: 'server_error' as const } };
+        await finalizeDebugFailure(failure.status, payload, null);
+        return reply.code(failure.status).send(payload);
+      }
       const isSiteApiEndpointFailure = (
         err instanceof SiteApiEndpointRequestError
         || err?.name === 'SiteApiEndpointRequestError'
@@ -1671,6 +1692,26 @@ export async function handleClaudeCountTokensSurfaceRequest(
         selected,
       });
       const endpointFailureStatus = typeof error?.status === 'number' ? error.status : null;
+      if (error?.siteConcurrencyTimeout === true) {
+        const failure = getSurfaceRequestFailure(error);
+        await failureToolkit.log({
+          selected,
+          modelRequested: requestedModel,
+          status: 'failed',
+          httpStatus: failure.status,
+          isStream: false,
+          latencyMs: Date.now() - startTime,
+          errorMessage: failure.message,
+          retryCount,
+        });
+        if (canRetryChannelSelection(retryCount, forcedChannelId)) {
+          retryCount += 1;
+          continue;
+        }
+        const payload = { error: { message: failure.message, type: 'server_error' as const } };
+        await finalizeDebugFailure(failure.status, payload, null);
+        return reply.code(failure.status).send(payload);
+      }
       const isSiteApiEndpointFailure = (
         error instanceof SiteApiEndpointRequestError
         || error?.name === 'SiteApiEndpointRequestError'
