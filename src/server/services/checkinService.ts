@@ -257,7 +257,13 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
     if (shouldAdvanceLastCheckinAt) {
       updates.lastCheckinAt = new Date().toISOString();
     }
-    if (!storedPlatformUserId && guessedPlatformUserId) {
+    // Both ids above were computed before any re-login. If a re-login has since
+    // reported the authoritative one, `account.extraConfig` already carries it,
+    // and persisting the guess here would replace a known-good id with digits
+    // scraped off the end of the username. Check the current config, not the
+    // pre-login snapshot. (`guessedPlatformUserId` is only set when
+    // `storedPlatformUserId` was empty, so this stays equivalent otherwise.)
+    if (guessedPlatformUserId && !getPlatformUserIdFromExtraConfig(account.extraConfig)) {
       updates.extraConfig = mergeAccountExtraConfig(account.extraConfig, {
         platformUserId: guessedPlatformUserId,
       });
