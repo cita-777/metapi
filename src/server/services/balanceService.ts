@@ -224,9 +224,17 @@ async function tryAutoRelogin(account: any, site: any): Promise<string | null> {
   );
   if (!loginResult.success || !loginResult.accessToken) return null;
 
+  // Persist the id the site reported during re-login as well; otherwise the
+  // account keeps whatever (possibly wrong) id it had and every subsequent
+  // `/api/user/self` call has to rediscover it.
+  const reloginExtraConfig = loginResult.platformUserId
+    ? mergeAccountExtraConfig(account.extraConfig, { platformUserId: loginResult.platformUserId })
+    : undefined;
+
   await db.update(schema.accounts)
     .set({
       accessToken: loginResult.accessToken,
+      ...(reloginExtraConfig ? { extraConfig: reloginExtraConfig } : {}),
       status: account.status === 'expired' ? 'active' : account.status,
       updatedAt: new Date().toISOString(),
     })

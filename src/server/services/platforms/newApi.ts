@@ -355,6 +355,31 @@ export class NewApiAdapter extends BasePlatformAdapter {
     return { balance: quota, used, quota: total, todayIncome, todayQuotaConsumption };
   }
 
+  /**
+   * Pull the site-side user id out of the login payload.
+   *
+   * New API returns `{ success: true, data: { id, username, ... } }` on
+   * `/api/user/login`, so the id is already available at login time. Without
+   * it callers fall back to `guessPlatformUserIdFromUsername()`, which only
+   * works when the username happens to end with the id, or they pay for an
+   * extra `discoverUserId()` round trip on every checkin/balance call.
+   */
+  private extractLoginUserId(payload: any): number | undefined {
+    const candidates: unknown[] = [
+      payload?.data?.id,
+      payload?.data?.user?.id,
+      payload?.user?.id,
+      payload?.id,
+    ];
+    for (const candidate of candidates) {
+      const value = typeof candidate === 'string' ? Number.parseInt(candidate, 10) : candidate;
+      if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
+        return value;
+      }
+    }
+    return undefined;
+  }
+
   private extractLoginAccessToken(payload: any): string | null {
     const candidates: unknown[] = [
       payload?.data,
@@ -946,7 +971,13 @@ export class NewApiAdapter extends BasePlatformAdapter {
     baseUrl: string,
     username: string,
     password: string,
-  ): Promise<{ success: boolean; accessToken?: string; username?: string; message?: string }> {
+  ): Promise<{
+    success: boolean;
+    accessToken?: string;
+    username?: string;
+    message?: string;
+    platformUserId?: number;
+  }> {
     try {
       const { data: res, cookieHeader } = await this.fetchJsonRawWithCookie<any>(`${baseUrl}/api/user/login`, {
         method: 'POST',
@@ -960,11 +991,13 @@ export class NewApiAdapter extends BasePlatformAdapter {
       }
 
       const accessToken = this.extractLoginAccessToken(res);
+      const platformUserId = this.extractLoginUserId(res);
       if (res?.success && accessToken) {
         return {
           success: true,
           accessToken,
           username,
+          platformUserId,
         };
       }
       if (res?.success && this.hasUsableSessionCookie(cookieHeader)) {
@@ -972,6 +1005,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
           success: true,
           accessToken: cookieHeader,
           username,
+          platformUserId,
         };
       }
 

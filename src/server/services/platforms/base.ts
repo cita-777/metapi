@@ -42,6 +42,13 @@ interface LoginResult {
   accessToken?: string;
   username?: string;
   message?: string;
+  /**
+   * Site-side user id (the value of the `New-Api-User` header).
+   * Most New API compatible sites return it in the login payload as
+   * `data.id`, so adapters can surface it here instead of forcing callers
+   * to guess it from the username or re-discover it on every request.
+   */
+  platformUserId?: number;
 }
 
 export interface UserInfo {
