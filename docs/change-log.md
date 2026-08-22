@@ -237,10 +237,10 @@ npx vitest run --pool=threads --poolOptions.threads.singleThread=true <test-file
   - `docs/change-log.md`
 - **验证**：
   - `npm run typecheck:server`：通过。
-  - `src/server/routes/api/tokens.batch.test.ts`：6 个测试通过。
+  - `npx vitest run --pool=threads --poolOptions.threads.singleThread=true --hookTimeout=30000 src/server/routes/api/tokens.batch.test.ts`：6 个测试通过。
   - `src/server/routes/api/tokens.route-update-rebuild.test.ts`：单独运行 15 个测试通过。
 - **交付物**：代码与持续变更日志；无新增 PDF 或截图。
-- **状态**：已完成，待推送到 PR 分支。
+- **状态**：已完成，已推送到 PR 分支；本次日志修正随当前文档提交同步。
 
 ## 后续记录模板
 
