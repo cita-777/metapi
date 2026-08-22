@@ -110,8 +110,7 @@ async function insertCandidatesInTransaction(
     }
 
     // 明确传入的优先级（包括 0）必须保留；只有自动候选才使用下一个空闲层级。
-    const hasExplicitPriority = candidate.manualOverride !== false
-      && typeof candidate.priority === 'number'
+    const hasExplicitPriority = typeof candidate.priority === 'number'
       && Number.isFinite(candidate.priority);
     const priority = hasExplicitPriority
       ? normalizePriority(candidate.priority)
