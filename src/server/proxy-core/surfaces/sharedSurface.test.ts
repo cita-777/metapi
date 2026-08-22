@@ -87,6 +87,7 @@ vi.mock('../../services/alertRules.js', () => ({
 }));
 
 vi.mock('../../services/proxyRetryPolicy.js', () => ({
+  RETRYABLE_TIMEOUT_PATTERNS: [],
   shouldRetryProxyRequest: (...args: unknown[]) => shouldRetryProxyRequestMock(...args),
   shouldAbortSameSiteEndpointFallback: () => false,
 }));
