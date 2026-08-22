@@ -190,7 +190,7 @@ npx vitest run --pool=threads --poolOptions.threads.singleThread=true <test-file
 ### 12. 修复 CodeRabbit PR 审查问题
 
 - **类型**：缺陷修复与架构重构
-- **需求来源**：CodeRabbit 对 [PR #609](https://github.com/cita-777/metapi/pull/609) 的审查；对应 Issue：[ #591](https://github.com/cita-777/metapi/issues/591)、[#590](https://github.com/cita-777/metapi/issues/590)、[#586](https://github.com/cita-777/metapi/issues/586)、[#585](https://github.com/cita-777/metapi/issues/585)
+- **需求来源**：CodeRabbit 对 [PR #609](https://github.com/cita-777/metapi/pull/609) 的审查；对应 Issue：[#591](https://github.com/cita-777/metapi/issues/591)、[#590](https://github.com/cita-777/metapi/issues/590)、[#586](https://github.com/cita-777/metapi/issues/586)、[#585](https://github.com/cita-777/metapi/issues/585)
 - **目标**：修复站点并发租约释放、并发超时误判、路由通道优先级竞态、Rerank 路由职责过重和变更日志字段不完整等问题。
 - **实现范围**：
   - 流式响应交接后暂停后台续租，按真实读取进度续租；读取失败先取消 reader，再释放站点租约。
@@ -221,6 +221,26 @@ npx vitest run --pool=threads --poolOptions.threads.singleThread=true <test-file
   - `npm run repo:drift-check`：通过，新增违规 0 个；报告中的 5 项为既有 tracked debt。
 - **交付物**：本地 checkout 中的修复代码和本变更日志；无新增 PDF 或截图。
 - **状态**：已完成，等待提交并更新 PR。
+
+### 13. 修复 CodeRabbit follow-up 审查问题
+
+- **类型**：缺陷修复与文档修正
+- **需求来源**：CodeRabbit 对 [PR #609](https://github.com/cita-777/metapi/pull/609) 的 follow-up 审查
+- **目标**：修复 Issue 链接的 Markdown 空格，并确保手工通道传入的明确优先级不会被自动分配逻辑覆盖。
+- **实现范围**：
+  - 将 `[ #591]` 修正为 `[#591]`，并确认 PR/Issue 链接均为合法 Markdown。
+  - `routeChannelService` 区分明确优先级和自动候选：手工通道传入 `priority: 0`、`priority: 3` 等值时原样归一化保留；自动候选才分配下一个优先级。
+  - 自动补齐候选不再把 `priority: 0` 当成显式优先级，避免所有自动通道固定在 P0。
+- **主要文件**：
+  - `src/server/services/routeChannelService.ts`
+  - `src/server/routes/api/tokens.ts`
+  - `docs/change-log.md`
+- **验证**：
+  - `npm run typecheck:server`：通过。
+  - `src/server/routes/api/tokens.batch.test.ts`：6 个测试通过。
+  - `src/server/routes/api/tokens.route-update-rebuild.test.ts`：单独运行 15 个测试通过。
+- **交付物**：代码与持续变更日志；无新增 PDF 或截图。
+- **状态**：已完成，待推送到 PR 分支。
 
 ## 后续记录模板
 

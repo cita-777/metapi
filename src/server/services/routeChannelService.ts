@@ -109,11 +109,12 @@ async function insertCandidatesInTransaction(
       continue;
     }
 
-    const requestedPriority = typeof candidate.priority === 'number'
+    // 明确传入的优先级（包括 0）必须保留；只有自动候选才使用下一个空闲层级。
+    const hasExplicitPriority = candidate.manualOverride !== false
+      && typeof candidate.priority === 'number'
+      && Number.isFinite(candidate.priority);
+    const priority = hasExplicitPriority
       ? normalizePriority(candidate.priority)
-      : nextPriority;
-    const priority = requestedPriority > 0
-      ? Math.max(requestedPriority, nextPriority)
       : nextPriority;
     try {
       await tx.insert(schema.routeChannels).values({
@@ -127,7 +128,11 @@ async function insertCandidatesInTransaction(
         manualOverride: candidate.manualOverride ?? false,
       }).run();
       existingPairs.add(pairKey);
-      nextPriority = Math.max(nextPriority, priority + 1);
+      if (!hasExplicitPriority) {
+        nextPriority += 1;
+      } else {
+        nextPriority = Math.max(nextPriority, priority + 1);
+      }
       created += 1;
     } catch (error) {
       errors.push(error instanceof Error ? error.message : `添加通道失败: accountId=${candidate.accountId}`);
