@@ -355,38 +355,6 @@ export class NewApiAdapter extends BasePlatformAdapter {
     return { balance: quota, used, quota: total, todayIncome, todayQuotaConsumption };
   }
 
-  /**
-   * Pull the site-side user id out of the login payload.
-   *
-   * New API returns `{ success: true, data: { id, username, ... } }` on
-   * `/api/user/login`, so the id is already available at login time. Without
-   * it callers fall back to `guessPlatformUserIdFromUsername()`, which only
-   * works when the username happens to end with the id, or they pay for an
-   * extra `discoverUserId()` round trip on every checkin/balance call.
-   */
-  private extractLoginUserId(payload: any): number | undefined {
-    const candidates: unknown[] = [
-      payload?.data?.id,
-      payload?.data?.user?.id,
-      payload?.user?.id,
-      payload?.id,
-    ];
-    for (const candidate of candidates) {
-      if (typeof candidate === 'number') {
-        if (Number.isSafeInteger(candidate) && candidate > 0) return candidate;
-        continue;
-      }
-      // Only accept a string that is *entirely* digits. `Number.parseInt` would
-      // happily turn "80305abc" or "80305.9" into 80305 and we would then send a
-      // wrong `New-Api-User` header.
-      if (typeof candidate === 'string' && /^\d+$/.test(candidate.trim())) {
-        const value = Number(candidate.trim());
-        if (Number.isSafeInteger(value) && value > 0) return value;
-      }
-    }
-    return undefined;
-  }
-
   private extractLoginAccessToken(payload: any): string | null {
     const candidates: unknown[] = [
       payload?.data,

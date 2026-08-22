@@ -184,11 +184,15 @@ describe('checkinService auto relogin', () => {
         autoRelogin?: { username?: string; passwordCipher?: string };
       });
     expect(writtenConfigs.length).toBeGreaterThan(0);
-    expect(writtenConfigs.map((cfg) => cfg.platformUserId)).not.toContain(1999);
-    expect(writtenConfigs).toContainEqual(expect.objectContaining({
-      platformUserId: 500123,
-      autoRelogin: { username: 'alice_1999', passwordCipher: 'cipher' },
-    }));
+    // Credentials must survive *every* write. `toContainEqual` would only prove one
+    // write got it right, while a later one could still drop them — and a single
+    // drop leaves nothing to re-login with next round.
+    for (const cfg of writtenConfigs) {
+      expect(cfg.autoRelogin).toEqual({ username: 'alice_1999', passwordCipher: 'cipher' });
+    }
+    const writtenIds = writtenConfigs.map((cfg) => cfg.platformUserId);
+    expect(writtenIds).toContain(500123);
+    expect(writtenIds).not.toContain(1999);
   });
 
   it('passes guessed platform user id when config does not include it', async () => {
