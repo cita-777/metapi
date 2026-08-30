@@ -183,12 +183,12 @@ export default function AccountModelsModal({
                           {model.latencyMs}ms
                         </span>
                       ) : null}
-                      {model.isManual ? (
+                      {model.isManual && onRemoveManualModel ? (
                         <button
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            void onRemoveManualModel?.(model.name);
+                            void onRemoveManualModel(model.name);
                           }}
                           className="btn btn-ghost btn-xs"
                           style={{ fontSize: 10, padding: '2px 6px', color: 'var(--color-error)', flexShrink: 0 }}

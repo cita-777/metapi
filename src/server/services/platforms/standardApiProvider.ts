@@ -80,16 +80,16 @@ export abstract class StandardApiProviderAdapterBase extends BasePlatformAdapter
       : Array.isArray(payload?.data)
         ? payload.data.map((item: any) => item?.id)
         : null;
-    // Also extract and cache context_length from upstream when available
+    if (!Array.isArray(rows)) {
+      throw new Error('invalid standard models payload');
+    }
+
+    // Cache metadata only after confirming the upstream payload is valid.
     const contextLengths = extractContextLengthsFromPayload(payload);
     setModelContextLengths(
       contextLengths,
       options.contextSourceScope || buildEndpointModelContextLengthScope(normalizedBaseUrl),
     );
-
-    if (!Array.isArray(rows)) {
-      throw new Error('invalid standard models payload');
-    }
 
     return rows
       .map((item) => (typeof item === 'string' ? item.trim() : ''))

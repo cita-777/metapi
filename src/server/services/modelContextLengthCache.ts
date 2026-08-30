@@ -31,16 +31,12 @@ function getOrCreateScopeCache(sourceScope?: string): Map<string, number> {
   return next;
 }
 
-function getNormalizedModelKey(modelName: string): string {
-  return normalizeKey(modelName);
-}
-
 function isValidContextLength(value: number): boolean {
   return Number.isFinite(value) && value > 0;
 }
 
 function buildScopedEntryKey(sourceScope: string | undefined, modelName: string): [string, string] | null {
-  const normalizedModelName = getNormalizedModelKey(modelName);
+  const normalizedModelName = normalizeKey(modelName);
   if (!normalizedModelName) return null;
   return [normalizeSourceScope(sourceScope), normalizedModelName];
 }
