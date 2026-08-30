@@ -1,11 +1,15 @@
 import { FastifyInstance } from 'fastify';
-import { and, desc, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { db, schema } from '../../db/index.js';
 import { startBackgroundTask } from '../../services/backgroundTaskService.js';
 import { formatUtcSqlDateTime, getResolvedTimeZone } from '../../services/localTimeService.js';
 import { syncSiteAnnouncements } from '../../services/siteAnnouncementService.js';
+import {
+  loadSiteAnnouncements,
+  type SiteAnnouncementListRow,
+} from '../../services/siteAnnouncementStore.js';
 
-type SiteAnnouncementRow = typeof schema.siteAnnouncements.$inferSelect;
+type SiteAnnouncementRow = SiteAnnouncementListRow;
 type SiteAnnouncementsResponseFilters = {
   read?: string;
   status?: string;
@@ -125,22 +129,13 @@ export async function siteAnnouncementsRoutes(app: FastifyInstance) {
   }>('/api/site-announcements', async (request) => {
     const limit = Math.max(1, Math.min(500, Number.parseInt(request.query.limit || '50', 10)));
     const offset = Math.max(0, Number.parseInt(request.query.offset || '0', 10));
-    const filters: any[] = [];
-
     const siteId = Number.parseInt(String(request.query.siteId || ''), 10);
-    if (Number.isFinite(siteId) && siteId > 0) {
-      filters.push(eq(schema.siteAnnouncements.siteId, siteId));
-    }
-
     const platform = String(request.query.platform || '').trim();
-    if (platform) {
-      filters.push(eq(schema.siteAnnouncements.platform, platform));
-    }
 
-    const base = db.select().from(schema.siteAnnouncements);
-    const rows = filters.length > 0
-      ? await base.where(and(...filters)).orderBy(desc(schema.siteAnnouncements.firstSeenAt)).all()
-      : await base.orderBy(desc(schema.siteAnnouncements.firstSeenAt)).all();
+    const rows = await loadSiteAnnouncements({
+      siteId: Number.isFinite(siteId) && siteId > 0 ? siteId : undefined,
+      platform: platform || undefined,
+    });
 
     const filtered = buildSiteAnnouncementsResponseRows(rows, {
       read: request.query.read,
