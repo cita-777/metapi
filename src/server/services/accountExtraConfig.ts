@@ -345,6 +345,20 @@ export function resolvePlatformUserId(extraConfig?: ExtraConfigInput, username?:
   return getPlatformUserIdFromExtraConfig(extraConfig) || guessPlatformUserIdFromUsername(username);
 }
 
+/**
+ * Resolve the platform identity returned by a login, with the legacy username
+ * suffix guess retained only as a compatibility fallback.
+ *
+ * Keeping this policy in the account service layer prevents HTTP route adapters
+ * from encoding platform-specific identity rules themselves.
+ */
+export function resolvePlatformUserIdFromLogin(
+  reportedPlatformUserId: number | undefined,
+  username?: string | null,
+): number | undefined {
+  return normalizeUserId(reportedPlatformUserId) || guessPlatformUserIdFromUsername(username);
+}
+
 export function mergeAccountExtraConfig(
   extraConfig: ExtraConfigInput,
   patch: Record<string, unknown>,

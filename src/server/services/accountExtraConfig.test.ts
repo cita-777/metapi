@@ -13,6 +13,7 @@ import {
   mergeAccountExtraConfig,
   normalizeCredentialMode,
   resolvePlatformUserId,
+  resolvePlatformUserIdFromLogin,
   requiresManagedAccountTokens,
   supportsDirectAccountRoutingConnection,
 } from './accountExtraConfig.js';
@@ -34,6 +35,11 @@ describe('accountExtraConfig', () => {
 
   it('prefers configured user id over guessed user id', () => {
     expect(resolvePlatformUserId(JSON.stringify({ platformUserId: 5001 }), 'linuxdo_7659')).toBe(5001);
+  });
+
+  it('prefers the login-reported user id over the username fallback', () => {
+    expect(resolvePlatformUserIdFromLogin(500123, 'alice_1999')).toBe(500123);
+    expect(resolvePlatformUserIdFromLogin(undefined, 'alice_1999')).toBe(1999);
   });
 
   it('merges platformUserId into existing config without dropping keys', () => {

@@ -11,12 +11,12 @@ import {
 import {
   getCredentialModeFromExtraConfig,
   getProxyUrlFromExtraConfig,
-  guessPlatformUserIdFromUsername,
   hasOauthProvider,
   getSub2ApiAuthFromExtraConfig,
   mergeAccountExtraConfig,
   normalizeCredentialMode as normalizeCredentialModeInput,
   resolvePlatformUserId,
+  resolvePlatformUserIdFromLogin,
   type AccountCredentialMode,
 } from "../../services/accountExtraConfig.js";
 import { encryptAccountPassword } from "../../services/accountCredentialService.js";
@@ -538,8 +538,10 @@ export async function accountsRoutes(app: FastifyInstance) {
       // The id reported by the site itself is authoritative; guessing from the
       // username only works when it ends with the id (e.g. `linuxdo_80305`)
       // and silently fails for addresses like `alice@example.com`.
-      const guessedPlatformUserId =
-        loginResult.platformUserId || guessPlatformUserIdFromUsername(username);
+      const guessedPlatformUserId = resolvePlatformUserIdFromLogin(
+        loginResult.platformUserId,
+        username,
+      );
 
       // Auto-fetch API token(s)
       let apiToken: string | null = null;
