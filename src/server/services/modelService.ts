@@ -1261,6 +1261,11 @@ export async function refreshModelsForAccount(
   }
 
   if (accountModels.size === 0) {
+    // A failed refresh must not leave context lengths from a previous scan in
+    // the account scope. The model list is rebuilt from scratch above, so any
+    // metadata from a no-longer-available model would otherwise be advertised
+    // on the next /v1/models response.
+    setModelContextLengths(new Map(), modelContextScope);
     const firstMessage = failureMessages[0] || '';
     const errorCode = firstMessage ? classifyModelDiscoveryError(firstMessage) : 'empty_models';
     const errorMessage = buildModelFailureMessage(errorCode, firstMessage, site.platform);

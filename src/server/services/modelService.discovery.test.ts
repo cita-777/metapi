@@ -448,6 +448,33 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(parsed.runtimeHealth?.checkedAt).toMatch(/\d{4}-\d{2}-\d{2}T/);
   });
 
+  it('clears stale context lengths when a refresh discovers no models', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockResolvedValue([]);
+
+    const site = await db.insert(schema.sites).values({
+      name: 'site-context-fail',
+      url: 'https://site-context-fail.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'context-fail-user',
+      accessToken: 'expired-token',
+      apiToken: null,
+      status: 'active',
+    }).returning().get();
+    const contextScope = buildAccountModelContextLengthScope(account.id);
+    setModelContextLengths(new Map([['stale-model', 256000]]), contextScope);
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result.status).toBe('failed');
+    expect(getModelContextLength('stale-model', contextScope)).toBe(1_000_000);
+  });
+
   it('normalizes anyrouter html challenge parse errors during model discovery', async () => {
     getApiTokenMock.mockResolvedValue(null);
     getModelsMock.mockRejectedValue(new Error("Unexpected token '<', \"<html><scr\"... is not valid JSON"));
