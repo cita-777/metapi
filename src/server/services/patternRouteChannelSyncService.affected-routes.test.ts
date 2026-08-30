@@ -68,6 +68,7 @@ describe('syncPatternRouteChannelsAfterAffectedRouteChanges', () => {
   beforeEach(async () => {
     await db.delete(schema.routeChannels).run();
     await db.delete(schema.routeGroupSources).run();
+    await db.delete(schema.settings).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.accountTokens).run();
@@ -152,6 +153,58 @@ describe('syncPatternRouteChannelsAfterAffectedRouteChanges', () => {
     });
   });
 
+  it('rebuilds only pattern groups matching the affected exact model', async () => {
+    const gpt = await seedAccountWithToken('gpt-5-mini');
+    const claude = await seedAccountWithToken('claude-3-7-sonnet');
+    const exactRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5-mini',
+      enabled: true,
+    }).returning().get();
+    const gptPatternRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 're:^gpt-5.*$',
+      enabled: true,
+    }).returning().get();
+    const claudePatternRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 're:^claude-3.*$',
+      enabled: true,
+    }).returning().get();
+
+    await db.insert(schema.routeChannels).values([
+      {
+        routeId: exactRoute.id,
+        accountId: gpt.account.id,
+        tokenId: gpt.token.id,
+        sourceModel: 'gpt-5-mini',
+        enabled: true,
+        manualOverride: true,
+      },
+      {
+        routeId: claudePatternRoute.id,
+        accountId: claude.account.id,
+        tokenId: claude.token.id,
+        sourceModel: 'claude-3-7-sonnet',
+        enabled: true,
+        manualOverride: false,
+      },
+    ]).run();
+
+    const result = await syncPatternRouteChannelsAfterAffectedRouteChanges({
+      affectedRouteIds: [exactRoute.id],
+    });
+
+    expect(result.routeIds).toEqual([gptPatternRoute.id]);
+    expect(result.rebuiltRoutes).toBe(1);
+
+    const claudeChannels = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.routeId, claudePatternRoute.id))
+      .all();
+    expect(claudeChannels).toHaveLength(1);
+    expect(claudeChannels[0]).toMatchObject({
+      sourceModel: 'claude-3-7-sonnet',
+      manualOverride: false,
+    });
+  });
+
   it('uses removed exact route snapshots to clear stale pattern channels after deletion', async () => {
     const seeded = await seedAccountWithToken('gpt-5-removed');
     const exactRoute = await db.insert(schema.tokenRoutes).values({
@@ -197,6 +250,64 @@ describe('syncPatternRouteChannelsAfterAffectedRouteChanges', () => {
       .where(eq(schema.routeChannels.routeId, patternRoute.id))
       .all();
     expect(patternChannels).toHaveLength(0);
+  });
+
+  it('keeps deleted exact models excluded during later affected-route rebuilds', async () => {
+    const removed = await seedAccountWithToken('gpt-5-removed');
+    const replacement = await seedAccountWithToken('gpt-5-replacement');
+    const exactRemovedRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5-removed',
+      enabled: true,
+    }).returning().get();
+    const exactReplacementRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5-replacement',
+      enabled: true,
+    }).returning().get();
+    const patternRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 're:^gpt-5.*$',
+      enabled: true,
+    }).returning().get();
+
+    await db.insert(schema.routeChannels).values([
+      {
+        routeId: exactRemovedRoute.id,
+        accountId: removed.account.id,
+        tokenId: removed.token.id,
+        sourceModel: 'gpt-5-removed',
+        enabled: true,
+        manualOverride: true,
+      },
+      {
+        routeId: exactReplacementRoute.id,
+        accountId: replacement.account.id,
+        tokenId: replacement.token.id,
+        sourceModel: 'gpt-5-replacement',
+        enabled: true,
+        manualOverride: true,
+      },
+    ]).run();
+
+    await syncPatternRouteChannelsAfterAffectedRouteChanges({
+      affectedRouteIds: [exactRemovedRoute.id],
+    });
+    await db.delete(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, exactRemovedRoute.id)).run();
+    await syncPatternRouteChannelsAfterAffectedRouteChanges({
+      removedRoutes: [{
+        modelPattern: 'gpt-5-removed',
+        routeMode: 'pattern',
+        enabled: true,
+      }],
+    });
+
+    const laterResult = await syncPatternRouteChannelsAfterAffectedRouteChanges({
+      affectedRouteIds: [exactReplacementRoute.id],
+    });
+    expect(laterResult.routeIds).toEqual([patternRoute.id]);
+
+    const patternChannels = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.routeId, patternRoute.id))
+      .all();
+    expect(patternChannels.map((channel) => channel.sourceModel)).toEqual(['gpt-5-replacement']);
   });
 
   it('does not exclude availability models when a disabled exact route is removed', async () => {

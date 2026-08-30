@@ -7,6 +7,12 @@ import {
 import { clearRouteDecisionSnapshot, clearRouteDecisionSnapshots } from './routeDecisionSnapshotStore.js';
 import { matchesModelPattern } from './tokenRouter.js';
 import { normalizeTokenRouteMode } from '../../shared/tokenRouteContract.js';
+import { isExactTokenRouteModelPattern } from '../../shared/tokenRoutePatterns.js';
+import { upsertSetting } from '../db/upsertSetting.js';
+
+type DbExecutor = Pick<typeof db, 'select' | 'insert' | 'delete'>;
+
+const MODEL_EXCLUSIONS_SETTING_KEY = 'token_route_deleted_model_exclusions_v1';
 
 type PatternRouteChannelCandidate = {
   tokenId: number | null;
@@ -27,6 +33,7 @@ export type PatternRouteChannelSyncResult = {
 
 type RebuildPatternRouteOptions = {
   excludeExactModelPatterns?: string[];
+  includeModelPatterns?: string[];
 };
 
 type PatternRouteChannelAffectedRouteSnapshot = {
@@ -45,21 +52,14 @@ type RouteModeModelPattern = {
   routeMode?: string | null;
 };
 
-function isExactModelPattern(modelPattern: string): boolean {
-  const normalized = modelPattern.trim();
-  if (!normalized) return false;
-  if (normalized.toLowerCase().startsWith('re:')) return false;
-  return !/[\*\?]/.test(normalized);
-}
-
 function isPatternGroupRoute(route: RouteModeModelPattern): boolean {
   return normalizeTokenRouteMode(route.routeMode) !== 'explicit_group'
-    && !isExactModelPattern(route.modelPattern);
+    && !isExactTokenRouteModelPattern(route.modelPattern);
 }
 
 function isExactSourceRoute(route: RouteModeModelPattern): boolean {
   return normalizeTokenRouteMode(route.routeMode) !== 'explicit_group'
-    && isExactModelPattern(route.modelPattern);
+    && isExactTokenRouteModelPattern(route.modelPattern);
 }
 
 function normalizeAffectedRouteIds(routeIds: number[] | undefined): number[] {
@@ -97,6 +97,66 @@ function normalizeModelKey(modelName: string): string {
   return modelName.trim().toLowerCase();
 }
 
+async function getPersistedModelExclusions(database: DbExecutor = db): Promise<Set<string>> {
+  const row = await database.select({ value: schema.settings.value })
+    .from(schema.settings)
+    .where(eq(schema.settings.key, MODEL_EXCLUSIONS_SETTING_KEY))
+    .get();
+  if (!row?.value) return new Set();
+  try {
+    const parsed = JSON.parse(row.value);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed
+      .filter((modelName): modelName is string => typeof modelName === 'string')
+      .map(normalizeModelKey)
+      .filter(Boolean));
+  } catch {
+    return new Set();
+  }
+}
+
+async function savePersistedModelExclusions(
+  exclusions: Set<string>,
+  database: DbExecutor = db,
+): Promise<void> {
+  await upsertSetting(
+    MODEL_EXCLUSIONS_SETTING_KEY,
+    [...exclusions].sort(),
+    database as typeof db,
+  );
+}
+
+async function persistModelExclusions(
+  modelPatterns: string[],
+  database: DbExecutor = db,
+): Promise<void> {
+  const exclusions = new Set(modelPatterns.map(normalizeModelKey).filter(Boolean));
+  if (exclusions.size === 0) return;
+  const existing = await getPersistedModelExclusions(database);
+  let changed = false;
+  for (const modelName of exclusions) {
+    if (existing.has(modelName)) continue;
+    existing.add(modelName);
+    changed = true;
+  }
+  if (changed) await savePersistedModelExclusions(existing, database);
+}
+
+async function clearModelExclusions(
+  modelPatterns: string[],
+  database: DbExecutor = db,
+): Promise<void> {
+  const exclusions = new Set(modelPatterns.map(normalizeModelKey).filter(Boolean));
+  if (exclusions.size === 0) return;
+  const existing = await getPersistedModelExclusions(database);
+  let changed = false;
+  for (const modelName of exclusions) {
+    if (!existing.delete(modelName)) continue;
+    changed = true;
+  }
+  if (changed) await savePersistedModelExclusions(existing, database);
+}
+
 function buildChannelPairKey(input: {
   accountId: number;
   tokenId: number | null;
@@ -114,8 +174,9 @@ function buildChannelPairKey(input: {
 async function getPatternTokenCandidates(
   modelPattern: string,
   excludedExactModelNames: Set<string>,
+  database: DbExecutor = db,
 ): Promise<PatternRouteChannelCandidate[]> {
-  const rows = await db.select().from(schema.tokenModelAvailability)
+  const rows = await database.select().from(schema.tokenModelAvailability)
     .innerJoin(schema.accountTokens, eq(schema.tokenModelAvailability.tokenId, schema.accountTokens.id))
     .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
     .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
@@ -154,14 +215,15 @@ async function getPatternTokenCandidates(
 async function getMatchedExactRouteChannelCandidates(
   modelPattern: string,
   excludedExactModelNames: Set<string>,
+  database: DbExecutor = db,
 ): Promise<{
   candidates: PatternRouteChannelCandidate[];
   exactModelNames: Set<string>;
 }> {
-  const matchedExactRoutes = (await db.select().from(schema.tokenRoutes).all())
+  const matchedExactRoutes = (await database.select().from(schema.tokenRoutes).all())
     .filter((route) => (
       normalizeTokenRouteMode(route.routeMode) !== 'explicit_group'
-      && isExactModelPattern(route.modelPattern)
+      && isExactTokenRouteModelPattern(route.modelPattern)
       && matchesModelPattern(route.modelPattern, modelPattern)
     ));
 
@@ -178,7 +240,7 @@ async function getMatchedExactRouteChannelCandidates(
   const routeMap = new Map<number, typeof enabledRoutes[number]>();
   for (const route of enabledRoutes) routeMap.set(route.id, route);
 
-  const channels = await db.select().from(schema.routeChannels)
+  const channels = await database.select().from(schema.routeChannels)
     .where(inArray(schema.routeChannels.routeId, enabledRoutes.map((route) => route.id)))
     .all();
 
@@ -200,21 +262,27 @@ export async function populateRouteChannelsByModelPattern(
   routeId: number,
   modelPattern: string,
   options: RebuildPatternRouteOptions = {},
+  database: DbExecutor = db,
 ): Promise<number> {
   const excludedExactModelNames = new Set(
     (options.excludeExactModelPatterns || [])
       .map(normalizeModelKey)
       .filter(Boolean),
   );
-  const routeCandidates = await getMatchedExactRouteChannelCandidates(modelPattern, excludedExactModelNames);
-  const availabilityExclusions = isExactModelPattern(modelPattern)
+  if (!isExactTokenRouteModelPattern(modelPattern)) {
+    for (const modelName of await getPersistedModelExclusions(database)) {
+      excludedExactModelNames.add(modelName);
+    }
+  }
+  const routeCandidates = await getMatchedExactRouteChannelCandidates(modelPattern, excludedExactModelNames, database);
+  const availabilityExclusions = isExactTokenRouteModelPattern(modelPattern)
     ? excludedExactModelNames
     : routeCandidates.exactModelNames;
-  const availabilityCandidates = await getPatternTokenCandidates(modelPattern, availabilityExclusions);
+  const availabilityCandidates = await getPatternTokenCandidates(modelPattern, availabilityExclusions, database);
   const candidates = [...routeCandidates.candidates, ...availabilityCandidates];
   if (candidates.length === 0) return 0;
 
-  const existingChannels = await db.select().from(schema.routeChannels)
+  const existingChannels = await database.select().from(schema.routeChannels)
     .where(eq(schema.routeChannels.routeId, routeId))
     .all();
   const existingPairs = new Set(existingChannels.map((channel) => buildChannelPairKey({
@@ -228,7 +296,7 @@ export async function populateRouteChannelsByModelPattern(
   for (const candidate of candidates) {
     const pairKey = buildChannelPairKey(candidate);
     if (existingPairs.has(pairKey)) continue;
-    await db.insert(schema.routeChannels).values({
+    await database.insert(schema.routeChannels).values({
       routeId,
       accountId: candidate.accountId,
       tokenId: candidate.tokenId,
@@ -251,28 +319,33 @@ export async function rebuildAutomaticRouteChannelsByModelPattern(
   modelPattern: string,
   options: RebuildPatternRouteOptions = {},
 ): Promise<PatternRouteChannelSyncResult> {
-  const removableChannels = await db.select().from(schema.routeChannels)
-    .where(
-      and(
-        eq(schema.routeChannels.routeId, routeId),
-        eq(schema.routeChannels.manualOverride, false),
-      ),
-    )
-    .all();
+  let removedChannels = 0;
+  let createdChannels = 0;
+  await db.transaction(async (tx) => {
+    const removableChannels = await tx.select().from(schema.routeChannels)
+      .where(
+        and(
+          eq(schema.routeChannels.routeId, routeId),
+          eq(schema.routeChannels.manualOverride, false),
+        ),
+      )
+      .all();
 
-  for (const channel of removableChannels) {
-    await db.delete(schema.routeChannels).where(eq(schema.routeChannels.id, channel.id)).run();
-  }
+    for (const channel of removableChannels) {
+      await tx.delete(schema.routeChannels).where(eq(schema.routeChannels.id, channel.id)).run();
+    }
 
-  const createdChannels = await populateRouteChannelsByModelPattern(routeId, modelPattern, options);
-  if (removableChannels.length > 0 || createdChannels > 0) {
+    createdChannels = await populateRouteChannelsByModelPattern(routeId, modelPattern, options, tx);
+    removedChannels = removableChannels.length;
+  });
+  if (removedChannels > 0 || createdChannels > 0) {
     await clearRouteDecisionSnapshot(routeId);
   }
 
   return {
     rebuiltRoutes: 1,
     routeIds: [routeId],
-    removedChannels: removableChannels.length,
+    removedChannels,
     createdChannels,
   };
 }
@@ -280,8 +353,16 @@ export async function rebuildAutomaticRouteChannelsByModelPattern(
 export async function rebuildAllPatternRouteChannels(
   options: RebuildPatternRouteOptions = {},
 ): Promise<PatternRouteChannelSyncResult> {
+  const includedModelPatterns = (options.includeModelPatterns || [])
+    .map((modelPattern) => modelPattern.trim())
+    .filter(Boolean);
   const patternRoutes = (await db.select().from(schema.tokenRoutes).all())
-    .filter((route) => route.enabled && isPatternGroupRoute(route));
+    .filter((route) => (
+      route.enabled
+      && isPatternGroupRoute(route)
+      && (includedModelPatterns.length === 0
+        || includedModelPatterns.some((modelPattern) => matchesModelPattern(modelPattern, route.modelPattern)))
+    ));
 
   const result: PatternRouteChannelSyncResult = {
     rebuiltRoutes: 0,
@@ -317,6 +398,7 @@ export async function syncPatternRouteChannelsAfterAffectedRouteChanges(
   }
 
   let hasAffectedExactSourceRoute = false;
+  const affectedExactModelPatterns: string[] = [];
   if (affectedRouteIds.length > 0) {
     const routes = await db.select({
       id: schema.tokenRoutes.id,
@@ -327,13 +409,22 @@ export async function syncPatternRouteChannelsAfterAffectedRouteChanges(
       .all();
 
     hasAffectedExactSourceRoute = routes.some(isExactSourceRoute);
+    for (const route of routes) {
+      if (isExactSourceRoute(route)) affectedExactModelPatterns.push(route.modelPattern);
+    }
   }
 
   if (!hasAffectedExactSourceRoute && !hasRemovedExactSourceRoute) {
     return createEmptyPatternRouteChannelSyncResult();
   }
 
+  await clearModelExclusions(affectedExactModelPatterns);
+  await persistModelExclusions(removedExactModelPatterns);
+
   return rebuildAllPatternRouteChannels({
     excludeExactModelPatterns: removedExactModelPatterns,
+    includeModelPatterns: [...affectedExactModelPatterns, ...removedRoutes
+      .filter(isExactSourceRoute)
+      .map((route) => route.modelPattern)],
   });
 }
