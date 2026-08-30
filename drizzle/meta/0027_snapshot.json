@@ -3500,6 +3500,14 @@
           "notNull": false,
           "autoincrement": false
         },
+        "custom_headers_override_request_headers": {
+          "name": "custom_headers_override_request_headers",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": false
+        },
         "status": {
           "name": "status",
           "type": "text",
