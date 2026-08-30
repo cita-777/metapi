@@ -112,6 +112,19 @@ export function buildUpstreamUrl(siteUrl: string, requestPath: string): string {
   let path = (requestQueryIndex >= 0 ? pathWithQuery.slice(0, requestQueryIndex) : pathWithQuery);
   path = path.startsWith('/') ? path : `/${path}`;
 
+  const stripVersionPrefix = (baseVersion?: string) => {
+    const requestVersionMatch = path.match(/^\/(v\d+(?:beta)?)(?=\/|$)/i);
+    if (!requestVersionMatch) return;
+    const requestVersion = requestVersionMatch[1];
+    const normalizedRequestVersion = requestVersion.toLowerCase();
+    const normalizedBaseVersion = baseVersion?.toLowerCase();
+    // Compatibility endpoints conventionally receive a /v1 request prefix,
+    // while native Gemini paths use /v1beta and must remain intact when the
+    // configured base is a different API version.
+    if (normalizedRequestVersion !== 'v1' && normalizedRequestVersion !== normalizedBaseVersion) return;
+    path = path.slice(requestVersion.length + 1) || '/';
+  };
+
   if (!fallbackBase) return path || '/';
   if (!path || path === '/') return fallbackBase;
 
@@ -134,11 +147,7 @@ export function buildUpstreamUrl(siteUrl: string, requestPath: string): string {
     const baseHasVersionSuffix = !!baseVersionMatch;
     if (baseHasVersionSuffix) {
       const baseVersion = baseVersionMatch?.[1] || 'v1';
-      if (path.toLowerCase() === `/${baseVersion.toLowerCase()}`) {
-        path = '/';
-      } else if (path.toLowerCase().startsWith(`/${baseVersion.toLowerCase()}/`)) {
-        path = path.slice(baseVersion.length + 1) || '/';
-      }
+      stripVersionPrefix(baseVersion);
     }
 
     const joinedPath = joinPath(basePath, path);
@@ -153,11 +162,7 @@ export function buildUpstreamUrl(siteUrl: string, requestPath: string): string {
     const baseHasVersionSuffix = !!baseVersionMatch;
     if (baseHasVersionSuffix) {
       const baseVersion = baseVersionMatch?.[1] || 'v1';
-      if (path.toLowerCase() === `/${baseVersion.toLowerCase()}`) {
-        path = '/';
-      } else if (path.toLowerCase().startsWith(`/${baseVersion.toLowerCase()}/`)) {
-        path = path.slice(baseVersion.length + 1) || '/';
-      }
+      stripVersionPrefix(baseVersion);
     }
 
     const query = requestQuery ? `?${requestQuery}` : '';
