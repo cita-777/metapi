@@ -17,6 +17,7 @@ type ModelsSurfaceInput = {
     explainSelection(modelName: string, excludeChannelIds: number[], downstreamPolicy: unknown): Promise<{
       selectedChannelId?: number | null;
       selectedAccountId?: number | null;
+      actualModel?: string | null;
       candidates?: Array<{
         accountId?: number | null;
         eligible?: boolean;
@@ -60,10 +61,11 @@ function resolveModelContextLength(
 }
 
 async function readVisibleModels(
-  input: ModelsSurfaceInput,
+input: ModelsSurfaceInput,
 ): Promise<Array<{
   id: string;
   selectedAccountId?: number | null;
+  actualModel?: string;
   candidates?: Array<{ accountId?: number | null; eligible?: boolean; sourceModel?: string }>;
 }>> {
   const deduped = Array.from(new Set(await input.tokenRouter.getAvailableModels()))
@@ -72,6 +74,7 @@ async function readVisibleModels(
   const allowed: Array<{
     id: string;
     selectedAccountId?: number | null;
+    actualModel?: string;
     candidates?: Array<{ accountId?: number | null; eligible?: boolean; sourceModel?: string }>;
   }> = [];
   for (const modelName of deduped) {
@@ -83,6 +86,9 @@ async function readVisibleModels(
       allowed.push({
         id: modelName,
         selectedAccountId: decision.selectedAccountId,
+        actualModel: typeof decision.actualModel === 'string' && decision.actualModel.trim()
+          ? decision.actualModel.trim()
+          : modelName,
         candidates: decision.candidates,
       });
     }
@@ -112,7 +118,7 @@ export async function listModelsSurface(input: ModelsSurfaceInput) {
         type: 'model' as const,
         display_name: model.id,
         created_at: now.toISOString(),
-        context_length: resolveModelContextLength(model.id, model.selectedAccountId, model.candidates),
+        context_length: resolveModelContextLength(model.actualModel || model.id, model.selectedAccountId, model.candidates),
       });
     }
     return {
@@ -130,7 +136,7 @@ export async function listModelsSurface(input: ModelsSurfaceInput) {
       object: 'model' as const,
       created: Math.floor(now.getTime() / 1000),
       owned_by: 'metapi',
-      context_length: resolveModelContextLength(model.id, model.selectedAccountId, model.candidates),
+      context_length: resolveModelContextLength(model.actualModel || model.id, model.selectedAccountId, model.candidates),
     })),
   };
 }

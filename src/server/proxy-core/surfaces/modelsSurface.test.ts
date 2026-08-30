@@ -135,6 +135,29 @@ describe('listModelsSurface', () => {
     expect(result.data[0]?.context_length).toBe(128000);
   });
 
+  it('uses the selected actual model when resolving mapped context length', async () => {
+    clearModelContextLengthCache();
+    setModelContextLength('claude-opus-4-5', 200000, buildAccountModelContextLengthScope(44));
+
+    const result = await listModelsSurface({
+      downstreamPolicy: { type: 'all' },
+      responseFormat: 'openai',
+      tokenRouter: {
+        getAvailableModels: vi.fn().mockResolvedValue(['claude-opus-4-6']),
+        explainSelection: vi.fn().mockResolvedValue({
+          selectedChannelId: 44,
+          selectedAccountId: 44,
+          actualModel: 'claude-opus-4-5',
+        }),
+      },
+      refreshModelsAndRebuildRoutes: vi.fn(),
+      isModelAllowed: vi.fn().mockResolvedValue(true),
+      now: () => new Date('2026-03-19T00:00:00.000Z'),
+    });
+
+    expect(result.data[0]?.context_length).toBe(200000);
+  });
+
   it('applies downstream policy filtering before selection checks and refreshes once when the first read is empty', async () => {
     clearModelContextLengthCache();
     setModelContextLength('allowed-model', 64000, buildAccountModelContextLengthScope(33));

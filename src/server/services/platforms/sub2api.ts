@@ -10,6 +10,11 @@ import {
   UserInfo,
 } from './base.js';
 import { stripTrailingSlashes } from '../urlNormalization.js';
+import {
+  buildEndpointModelContextLengthScope,
+  extractContextLengthsFromPayload,
+  setModelContextLengths,
+} from '../modelContextLengthCache.js';
 
 function normalizeBaseUrl(baseUrl: string): string {
   return stripTrailingSlashes(baseUrl || '');
@@ -515,7 +520,7 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
     return [];
   }
 
-  private async fetchModelsByToken(baseUrl: string, token: string): Promise<string[]> {
+  private async fetchModelsByToken(baseUrl: string, token: string, contextSourceScope?: string): Promise<string[]> {
     const authToken = this.normalizeTokenKeyForCompare(token);
     if (!authToken) return [];
 
@@ -524,6 +529,10 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
         const res = await this.fetchJson<any>(url, {
           headers: { Authorization: `Bearer ${authToken}` },
         });
+        setModelContextLengths(
+          extractContextLengthsFromPayload(res),
+          contextSourceScope || buildEndpointModelContextLengthScope(baseUrl),
+        );
         const models = this.extractModelIds(res);
         if (models.length > 0) return models;
       } catch {}
@@ -728,10 +737,15 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
   }
 
   // --- Models: Standard OpenAI-compatible endpoint ---
-  async getModels(baseUrl: string, apiToken: string): Promise<string[]> {
+  async getModels(
+    baseUrl: string,
+    apiToken: string,
+    _platformUserId?: number,
+    contextSourceScope?: string,
+  ): Promise<string[]> {
     const normalizedBase = normalizeBaseUrl(baseUrl);
     const managementBase = this.resolveManagementBaseUrl(normalizedBase);
-    const directModels = await this.fetchModelsByToken(normalizedBase, apiToken);
+    const directModels = await this.fetchModelsByToken(normalizedBase, apiToken, contextSourceScope);
     if (directModels.length > 0) return directModels;
 
     // Session JWT cannot access /v1/models directly; discover a user key first.
@@ -740,7 +754,7 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
     if (this.normalizeTokenKeyForCompare(discoveredApiToken) === this.normalizeTokenKeyForCompare(apiToken)) {
       return [];
     }
-    return this.fetchModelsByToken(normalizedBase, discoveredApiToken);
+    return this.fetchModelsByToken(normalizedBase, discoveredApiToken, contextSourceScope);
   }
 
   override async getSiteAnnouncements(baseUrl: string, accessToken: string): Promise<SiteAnnouncement[]> {

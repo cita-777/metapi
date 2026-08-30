@@ -2,6 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { Sub2ApiAdapter } from './sub2api.js';
+import {
+  clearModelContextLengthCache,
+  getModelContextLength,
+} from '../modelContextLengthCache.js';
 
 describe('Sub2ApiAdapter', () => {
   let server: ReturnType<typeof createServer> | undefined;
@@ -257,6 +261,25 @@ describe('Sub2ApiAdapter', () => {
 
     const models = await adapter.getModels(baseUrl, 'jwt-token');
     expect(models).toEqual(['gpt-4o', 'claude-3-opus']);
+  });
+
+  it('caches context lengths from model discovery under the provided scope', async () => {
+    clearModelContextLengthCache();
+    await startServer((req, res) => {
+      if (req.url === '/v1/models') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          data: [{ id: 'gpt-4o', context_length: 128000 }],
+        }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    const scope = 'account:sub2api-context-test';
+    await adapter.getModels(baseUrl, 'jwt-token', undefined, scope);
+
+    expect(getModelContextLength('gpt-4o', scope)).toBe(128000);
   });
 
   it('fetches gemini models via /v1beta/models when ai base url already targets gemini endpoint', async () => {
