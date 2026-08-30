@@ -20,6 +20,7 @@ type ModelsSurfaceInput = {
       candidates?: Array<{
         accountId?: number | null;
         eligible?: boolean;
+        sourceModel?: string;
       }>;
     }>;
   };
@@ -31,20 +32,19 @@ type ModelsSurfaceInput = {
 function resolveModelContextLength(
   modelName: string,
   selectedAccountId?: number | null,
-  candidates?: Array<{ accountId?: number | null; eligible?: boolean }>,
+  candidates?: Array<{ accountId?: number | null; eligible?: boolean; sourceModel?: string }>,
 ): number {
-  const eligibleAccountIds = Array.from(new Set(
-    (Array.isArray(candidates) ? candidates : [])
-      .filter((candidate) => candidate?.eligible !== false)
-      .map((candidate) => candidate?.accountId)
-      .filter((accountId): accountId is number => typeof accountId === 'number' && accountId > 0),
-  ));
+  const eligibleCandidates = (Array.isArray(candidates) ? candidates : [])
+    .filter((candidate) => candidate?.eligible !== false)
+    .filter((candidate): candidate is { accountId: number; eligible?: boolean; sourceModel?: string } => (
+      typeof candidate?.accountId === 'number' && candidate.accountId > 0
+    ));
 
-  if (eligibleAccountIds.length > 0) {
-    return eligibleAccountIds.reduce((minValue, accountId) => {
+  if (eligibleCandidates.length > 0) {
+    return eligibleCandidates.reduce((minValue, candidate) => {
       const currentValue = getModelContextLength(
-        modelName,
-        buildAccountModelContextLengthScope(accountId),
+        candidate.sourceModel || modelName,
+        buildAccountModelContextLengthScope(candidate.accountId),
       );
       return Math.min(minValue, currentValue);
     }, Number.POSITIVE_INFINITY);
@@ -64,7 +64,7 @@ async function readVisibleModels(
 ): Promise<Array<{
   id: string;
   selectedAccountId?: number | null;
-  candidates?: Array<{ accountId?: number | null; eligible?: boolean }>;
+  candidates?: Array<{ accountId?: number | null; eligible?: boolean; sourceModel?: string }>;
 }>> {
   const deduped = Array.from(new Set(await input.tokenRouter.getAvailableModels()))
     .filter((modelName) => !isSearchPseudoModel(modelName))
@@ -72,7 +72,7 @@ async function readVisibleModels(
   const allowed: Array<{
     id: string;
     selectedAccountId?: number | null;
-    candidates?: Array<{ accountId?: number | null; eligible?: boolean }>;
+    candidates?: Array<{ accountId?: number | null; eligible?: boolean; sourceModel?: string }>;
   }> = [];
   for (const modelName of deduped) {
     if (!await input.isModelAllowed(modelName, input.downstreamPolicy)) {

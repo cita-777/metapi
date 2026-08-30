@@ -2025,6 +2025,12 @@ export class TokenRouter {
         username: row.account.username || `account-${row.account.id}`,
         siteName: row.site.name || 'unknown',
         tokenName: row.token?.name || 'default',
+        sourceModel: resolveActualModelForSelectedChannel(
+          requestedModel,
+          match.route,
+          mappedModel,
+          row.channel.sourceModel,
+        ),
         priority: row.channel.priority ?? 0,
         weight: row.channel.weight ?? 10,
         eligible,

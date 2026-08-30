@@ -151,7 +151,7 @@ describe('refreshModelsForAccount credential discovery', () => {
 
       if (token === 'session-token') {
         setModelContextLengths(new Map([
-          ['model-a', 128000],
+          ['model-a', 256000],
           ['model-b', 256000],
         ]), contextScope);
         return ['model-a', 'model-b'];
@@ -705,6 +705,8 @@ describe('refreshModelsForAccount credential discovery', () => {
       latencyMs: 120,
       checkedAt: '2026-03-21T11:30:00.000Z',
     }).run();
+    const contextScope = buildAccountModelContextLengthScope(account.id);
+    setModelContextLengths(new Map([['gpt-4.1', 128000]]), contextScope);
 
     await db.insert(schema.tokenModelAvailability).values({
       tokenId: token.id,
@@ -743,6 +745,7 @@ describe('refreshModelsForAccount credential discovery', () => {
       modelName: 'gpt-4.1',
       available: true,
     });
+    expect(getModelContextLength('gpt-4.1', contextScope)).toBe(128000);
   });
 
   it('does not scan masked_pending placeholders as token credentials', async () => {

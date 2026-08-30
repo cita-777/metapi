@@ -112,6 +112,29 @@ describe('listModelsSurface', () => {
     });
   });
 
+  it('looks up context length using each candidate source model for display-name routes', async () => {
+    clearModelContextLengthCache();
+    setModelContextLength('gpt-4.1', 128000, buildAccountModelContextLengthScope(51));
+
+    const result = await listModelsSurface({
+      downstreamPolicy: { type: 'all' },
+      responseFormat: 'openai',
+      tokenRouter: {
+        getAvailableModels: vi.fn().mockResolvedValue(['friendly-gpt']),
+        explainSelection: vi.fn().mockResolvedValue({
+          selectedChannelId: 5101,
+          selectedAccountId: 51,
+          candidates: [{ accountId: 51, eligible: true, sourceModel: 'gpt-4.1' }],
+        }),
+      },
+      refreshModelsAndRebuildRoutes: vi.fn(),
+      isModelAllowed: vi.fn().mockResolvedValue(true),
+      now: () => new Date('2026-03-19T00:00:00.000Z'),
+    });
+
+    expect(result.data[0]?.context_length).toBe(128000);
+  });
+
   it('applies downstream policy filtering before selection checks and refreshes once when the first read is empty', async () => {
     clearModelContextLengthCache();
     setModelContextLength('allowed-model', 64000, buildAccountModelContextLengthScope(33));

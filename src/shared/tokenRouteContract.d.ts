@@ -6,6 +6,8 @@ export type RouteDecisionCandidate = {
     username: string;
     siteName: string;
     tokenName: string;
+    /** Actual upstream model used by this channel after mapping/display-name resolution. */
+    sourceModel?: string;
     priority: number;
     weight: number;
     eligible: boolean;

@@ -255,13 +255,38 @@ function isExactModelPattern(modelPattern: string): boolean {
   return !/[\*\?]/.test(normalized);
 }
 
-async function withTimeout<T>(fn: () => Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
+async function withTimeout<T>(
+  fn: () => Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string,
+  onLateSettlement?: () => void,
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let timedOut = false;
+  let operation: Promise<T>;
+  try {
+    operation = Promise.resolve(fn());
+  } catch (error) {
+    operation = Promise.reject(error);
+  }
+  // A timeout does not cancel the underlying request. Give callers a hook to
+  // clean up resources written after the race has already rejected.
+  operation.then(
+    () => {
+      if (timedOut) onLateSettlement?.();
+    },
+    () => {
+      if (timedOut) onLateSettlement?.();
+    },
+  );
   try {
     return await Promise.race([
-      fn(),
+      operation,
       new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+        timer = setTimeout(() => {
+          timedOut = true;
+          reject(new Error(timeoutMessage));
+        }, timeoutMs);
       }),
     ]);
   } finally {
@@ -625,8 +650,12 @@ export async function refreshModelsForAccount(
   const oauth = getOauthInfoFromAccount(account);
   const adapter = getAdapter(site.platform);
   const accountProxyUrl = resolveProxyUrlFromExtraConfig(account.extraConfig);
+  const modelContextScope = buildAccountModelContextLengthScope(account.id);
 
   const restoreAvailabilityOnFailure = options?.allowInactive === true;
+  const previousModelContextLengths = restoreAvailabilityOnFailure
+    ? new Map(getAllModelContextLengths(modelContextScope))
+    : null;
   const previousAccountTokens = restoreAvailabilityOnFailure
     ? await db.select()
       .from(schema.accountTokens)
@@ -1148,7 +1177,6 @@ export async function refreshModelsForAccount(
 
   const accountModels = new Map<string, string>();   // lowercase key → original name (first-wins)
   const modelLatency = new Map<string, number | null>();
-  const modelContextScope = buildAccountModelContextLengthScope(account.id);
   const modelContextRefreshScope = `${modelContextScope}:refresh:${randomUUID()}`;
   const discoveredContextLengths = new Map<string, number>();
   let modelContextScanCounter = 0;
@@ -1179,7 +1207,11 @@ export async function refreshModelsForAccount(
 
   const collectModelContextLengthsFromScope = (sourceScope: string) => {
     for (const [modelName, contextLength] of getAllModelContextLengths(sourceScope)) {
-      discoveredContextLengths.set(modelName, contextLength);
+      const previous = discoveredContextLengths.get(modelName);
+      discoveredContextLengths.set(
+        modelName,
+        previous === undefined ? contextLength : Math.min(previous, contextLength),
+      );
     }
     clearModelContextLengthCache(sourceScope);
   };
@@ -1201,6 +1233,7 @@ export async function refreshModelsForAccount(
             () => adapter.getModels(aiBaseUrl, credential, platformUserId, credentialContextScope)),
           MODEL_DISCOVERY_TIMEOUT_MS,
           `model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
+          () => clearModelContextLengthCache(credentialContextScope),
         ),
       );
     } catch (err) {
@@ -1232,6 +1265,7 @@ export async function refreshModelsForAccount(
             () => adapter.getModels(aiBaseUrl, token.token, platformUserId, tokenContextScope)),
           MODEL_DISCOVERY_TIMEOUT_MS,
           `model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
+          () => clearModelContextLengthCache(tokenContextScope),
         ),
       );
     } catch (err) {
@@ -1265,7 +1299,11 @@ export async function refreshModelsForAccount(
     // the account scope. The model list is rebuilt from scratch above, so any
     // metadata from a no-longer-available model would otherwise be advertised
     // on the next /v1/models response.
-    setModelContextLengths(new Map(), modelContextScope);
+    if (previousModelContextLengths) {
+      setModelContextLengths(previousModelContextLengths, modelContextScope);
+    } else {
+      setModelContextLengths(new Map(), modelContextScope);
+    }
     const firstMessage = failureMessages[0] || '';
     const errorCode = firstMessage ? classifyModelDiscoveryError(firstMessage) : 'empty_models';
     const errorMessage = buildModelFailureMessage(errorCode, firstMessage, site.platform);
