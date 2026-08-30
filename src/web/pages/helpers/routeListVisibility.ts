@@ -28,6 +28,16 @@ export function buildVisibleRouteList<T extends RouteListVisibilityItem>(
   isExactModelPattern: (pattern: string) => boolean,
   matchesModelPattern: (model: string, pattern: string) => boolean,
 ): T[] {
+  const exactModelNames = new Set(
+    routes
+      .filter((route) => (
+        !isExplicitGroupRoute(route)
+        && isExactModelPattern(route.modelPattern)
+        && !!(route.displayName || '').trim()
+      ))
+      .map((route) => (route.modelPattern || '').trim().toLowerCase())
+      .filter(Boolean),
+  );
   const coveringGroups = routes.filter((route) => (
     route.enabled
     && (
@@ -48,7 +58,8 @@ export function buildVisibleRouteList<T extends RouteListVisibilityItem>(
 
     return !coveringGroups.some((groupRoute) => {
       if (groupRoute.id === route.id) return false;
-      if (!((groupRoute.displayName || '').trim())) return false;
+      const groupDisplayName = (groupRoute.displayName || '').trim();
+      if (!groupDisplayName || exactModelNames.has(groupDisplayName.toLowerCase())) return false;
       if (isExplicitGroupRoute(groupRoute)) {
         return (groupRoute.sourceRouteIds || []).includes(route.id);
       }
