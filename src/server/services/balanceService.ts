@@ -423,14 +423,32 @@ export async function refreshBalance(accountId: number) {
     } catch {}
   }
 
+  const hasTodayIncomeUpdate =
+    typeof balanceInfo.todayIncome === 'number' && Number.isFinite(balanceInfo.todayIncome);
+  const hasSubscriptionUpdate =
+    !!balanceInfo.subscriptionSummary && isSub2ApiPlatform(site.platform);
   let nextExtraConfig = activeExtraConfig;
-  if (typeof balanceInfo.todayIncome === 'number' && Number.isFinite(balanceInfo.todayIncome)) {
-    nextExtraConfig = updateTodayIncomeSnapshot(nextExtraConfig, balanceInfo.todayIncome);
-  }
-  if (balanceInfo.subscriptionSummary && isSub2ApiPlatform(site.platform)) {
-    nextExtraConfig = mergeAccountExtraConfig(nextExtraConfig, {
-      sub2apiSubscription: buildStoredSub2ApiSubscriptionSummary(balanceInfo.subscriptionSummary),
-    });
+  let shouldPersistNextExtraConfig = false;
+
+  if (hasTodayIncomeUpdate || hasSubscriptionUpdate) {
+    // A retried balance request or income fallback may outlive another settings
+    // update. Merge only the new balance metadata into the latest configuration
+    // instead of replaying the snapshot captured immediately after re-login.
+    const latestAccount = await db.select({ extraConfig: schema.accounts.extraConfig })
+      .from(schema.accounts)
+      .where(eq(schema.accounts.id, account.id))
+      .get();
+    nextExtraConfig = latestAccount ? latestAccount.extraConfig : activeExtraConfig;
+
+    if (hasTodayIncomeUpdate) {
+      nextExtraConfig = updateTodayIncomeSnapshot(nextExtraConfig, balanceInfo.todayIncome!);
+    }
+    if (hasSubscriptionUpdate) {
+      nextExtraConfig = mergeAccountExtraConfig(nextExtraConfig, {
+        sub2apiSubscription: buildStoredSub2ApiSubscriptionSummary(balanceInfo.subscriptionSummary!),
+      });
+    }
+    shouldPersistNextExtraConfig = true;
   }
 
   const existingRuntimeHealth = extractRuntimeHealth(nextExtraConfig);
@@ -444,7 +462,7 @@ export async function refreshBalance(accountId: number) {
     lastBalanceRefresh: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
-  if (nextExtraConfig !== account.extraConfig) {
+  if (shouldPersistNextExtraConfig) {
     updates.extraConfig = nextExtraConfig;
   }
 
