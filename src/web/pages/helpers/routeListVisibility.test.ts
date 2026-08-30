@@ -63,7 +63,7 @@ describe('routeListVisibility', () => {
       {
         id: 3,
         modelPattern: 're:^gpt-5\\.5.*$',
-        displayName: 'gpt-5.5',
+        displayName: 'gpt-5.5-group',
         routeMode: 'pattern',
         sourceRouteIds: [],
         enabled: true,
@@ -106,6 +106,35 @@ describe('routeListVisibility', () => {
       routes,
       (pattern) => !pattern.includes('*') && !pattern.startsWith('re:'),
       (model, pattern) => pattern.startsWith('re:') && /^gpt-5\.5.*$/.test(model),
+    );
+
+    expect(visible.map((route) => route.id)).toEqual([1, 2]);
+  });
+
+  it('keeps an unnamed exact route visible when a pattern alias collides with it', () => {
+    const routes = [
+      {
+        id: 1,
+        modelPattern: 'gpt-5',
+        displayName: null,
+        routeMode: 'pattern',
+        sourceRouteIds: [],
+        enabled: true,
+      },
+      {
+        id: 2,
+        modelPattern: 're:^gpt-5.*$',
+        displayName: 'gpt-5',
+        routeMode: 'pattern',
+        sourceRouteIds: [],
+        enabled: true,
+      },
+    ];
+
+    const visible = buildVisibleRouteList(
+      routes,
+      (pattern) => !pattern.includes('*') && !pattern.startsWith('re:'),
+      (model, pattern) => pattern.startsWith('re:') && /^gpt-5.*$/.test(model),
     );
 
     expect(visible.map((route) => route.id)).toEqual([1, 2]);

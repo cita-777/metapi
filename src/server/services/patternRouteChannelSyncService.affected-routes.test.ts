@@ -11,6 +11,8 @@ describe('syncPatternRouteChannelsAfterAffectedRouteChanges', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let syncPatternRouteChannelsAfterAffectedRouteChanges: PatternRouteChannelSyncServiceModule['syncPatternRouteChannelsAfterAffectedRouteChanges'];
+  let TokenRouter: typeof import('./tokenRouter.js')['TokenRouter'];
+  let invalidateTokenRouterCache: typeof import('./tokenRouter.js')['invalidateTokenRouterCache'];
   let dataDir = '';
   let seedId = 0;
 
@@ -59,10 +61,13 @@ describe('syncPatternRouteChannelsAfterAffectedRouteChanges', () => {
     await import('../db/migrate.js');
     const dbModule = await import('../db/index.js');
     const serviceModule = await import('./patternRouteChannelSyncService.js');
+    const tokenRouterModule = await import('./tokenRouter.js');
 
     db = dbModule.db;
     schema = dbModule.schema;
     syncPatternRouteChannelsAfterAffectedRouteChanges = serviceModule.syncPatternRouteChannelsAfterAffectedRouteChanges;
+    TokenRouter = tokenRouterModule.TokenRouter;
+    invalidateTokenRouterCache = tokenRouterModule.invalidateTokenRouterCache;
   });
 
   beforeEach(async () => {
@@ -75,9 +80,11 @@ describe('syncPatternRouteChannelsAfterAffectedRouteChanges', () => {
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
     seedId = 0;
+    invalidateTokenRouterCache();
   });
 
   afterAll(() => {
+    invalidateTokenRouterCache();
     delete process.env.DATA_DIR;
   });
 
@@ -341,5 +348,110 @@ describe('syncPatternRouteChannelsAfterAffectedRouteChanges', () => {
       tokenId: seeded.token.id,
       sourceModel: 'gpt-5-disabled',
     });
+  });
+
+  it('canonicalizes provider-qualified availability names when persisting exclusions', async () => {
+    const seeded = await seedAccountWithToken('openai/gpt-5');
+    const exactRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5',
+      enabled: true,
+    }).returning().get();
+    const patternRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: '*',
+      enabled: true,
+    }).returning().get();
+
+    await db.insert(schema.routeChannels).values({
+      routeId: exactRoute.id,
+      accountId: seeded.account.id,
+      tokenId: seeded.token.id,
+      sourceModel: 'gpt-5',
+      enabled: true,
+      manualOverride: true,
+    }).run();
+    await syncPatternRouteChannelsAfterAffectedRouteChanges({
+      affectedRouteIds: [exactRoute.id],
+    });
+    await db.delete(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, exactRoute.id)).run();
+
+    await syncPatternRouteChannelsAfterAffectedRouteChanges({
+      removedRoutes: [{
+        modelPattern: 'gpt-5',
+        routeMode: 'pattern',
+        enabled: true,
+      }],
+    });
+
+    const patternChannels = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.routeId, patternRoute.id))
+      .all();
+    expect(patternChannels).toHaveLength(0);
+  });
+
+  it('serializes concurrent deleted-model exclusion updates', async () => {
+    const first = await seedAccountWithToken('gpt-5-first');
+    const second = await seedAccountWithToken('gpt-5-second');
+    const firstRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5-first',
+      enabled: true,
+    }).returning().get();
+    const secondRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5-second',
+      enabled: true,
+    }).returning().get();
+    const patternRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: '*',
+      enabled: true,
+    }).returning().get();
+
+    await db.delete(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, firstRoute.id)).run();
+    await db.delete(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, secondRoute.id)).run();
+
+    await Promise.all([
+      syncPatternRouteChannelsAfterAffectedRouteChanges({
+        removedRoutes: [{ modelPattern: 'gpt-5-first', routeMode: 'pattern', enabled: true }],
+      }),
+      syncPatternRouteChannelsAfterAffectedRouteChanges({
+        removedRoutes: [{ modelPattern: 'gpt-5-second', routeMode: 'pattern', enabled: true }],
+      }),
+    ]);
+
+    const exclusion = await db.select({ value: schema.settings.value })
+      .from(schema.settings)
+      .where(eq(schema.settings.key, 'token_route_deleted_model_exclusions_v1'))
+      .get();
+    const exclusions = JSON.parse(exclusion?.value || '[]') as string[];
+    expect(exclusions).toEqual(expect.arrayContaining(['gpt-5-first', 'gpt-5-second']));
+    const patternChannels = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.routeId, patternRoute.id))
+      .all();
+    expect(patternChannels).toHaveLength(0);
+  });
+
+  it('invalidates router caches after replacing automatic pattern channels', async () => {
+    const seeded = await seedAccountWithToken('gpt-5-cache-old');
+    const patternRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: '*',
+      enabled: true,
+    }).returning().get();
+
+    await syncPatternRouteChannelsAfterAffectedRouteChanges({
+      rebuildAllPatternRoutes: true,
+      allowedModelNames: ['gpt-5-cache-old'],
+    });
+    const router = new TokenRouter();
+    expect((await router.selectChannel('gpt-5-cache-old'))?.channel.routeId).toBe(patternRoute.id);
+
+    await db.update(schema.tokenModelAvailability)
+      .set({ modelName: 'gpt-5-cache-new' })
+      .where(eq(schema.tokenModelAvailability.tokenId, seeded.token.id))
+      .run();
+    await syncPatternRouteChannelsAfterAffectedRouteChanges({
+      rebuildAllPatternRoutes: true,
+      allowedModelNames: ['gpt-5-cache-new'],
+    });
+
+    expect(await router.selectChannel('gpt-5-cache-old')).toBeNull();
+    expect((await router.selectChannel('gpt-5-cache-new'))?.channel.routeId).toBe(patternRoute.id);
   });
 });

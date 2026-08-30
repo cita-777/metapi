@@ -29,8 +29,10 @@ describe('rebuildTokenRoutesFromAvailability', () => {
   beforeEach(async () => {
     await db.delete(schema.routeChannels).run();
     await db.delete(schema.tokenRoutes).run();
+    await db.delete(schema.settings).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
+    await db.delete(schema.siteDisabledModels).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
@@ -452,5 +454,49 @@ describe('rebuildTokenRoutesFromAvailability', () => {
     expect(patternChannels).toHaveLength(1);
     expect(patternChannels[0]?.sourceModel).toBe('gpt-5-new');
     expect(patternChannels[0]?.manualOverride).toBe(false);
+  });
+
+  it('force-rebuilds pattern groups when a manual rebuild finds stable exact routes', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'site-manual-pattern-refresh',
+      url: 'https://site-manual-pattern-refresh.example.com',
+      platform: 'new-api',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'user-manual-pattern-refresh',
+      accessToken: 'access-manual-pattern-refresh',
+      status: 'active',
+    }).returning().get();
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'sk-manual-pattern-refresh',
+      source: 'manual',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+    await db.insert(schema.tokenModelAvailability).values({
+      tokenId: token.id,
+      modelName: 'gpt-5-stable',
+      available: true,
+    }).run();
+    const patternRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 're:^gpt-5.*$',
+      displayName: 'gpt-5-group',
+      enabled: true,
+    }).returning().get();
+
+    await rebuildTokenRoutesFromAvailability();
+    await db.delete(schema.routeChannels)
+      .where(eq(schema.routeChannels.routeId, patternRoute.id))
+      .run();
+
+    const rebuild = await rebuildTokenRoutesFromAvailability({ rebuildPatternRoutes: true });
+    expect(rebuild.rebuiltPatternRoutes).toBe(1);
+    const channels = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.routeId, patternRoute.id))
+      .all();
+    expect(channels.map((channel) => channel.sourceModel)).toEqual(['gpt-5-stable']);
   });
 });

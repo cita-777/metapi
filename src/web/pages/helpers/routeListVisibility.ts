@@ -63,7 +63,16 @@ export function buildVisibleRouteList<T extends RouteListVisibilityItem>(
     return !coveringGroups.some((groupRoute) => {
       if (groupRoute.id === route.id) return false;
       const groupDisplayName = (groupRoute.displayName || '').trim();
-      if (!groupDisplayName || exactModelNames.has(groupDisplayName.toLowerCase())) return false;
+      if (
+        !groupDisplayName
+        || exactModelNames.has(groupDisplayName.toLowerCase())
+        // Pattern aliases do not override exact dispatch matches; keep a
+        // colliding unnamed exact route visible in the management UI.
+        || (
+          !isExplicitGroupRoute(groupRoute)
+          && groupDisplayName.toLowerCase() === exactModel.toLowerCase()
+        )
+      ) return false;
       if (isExplicitGroupRoute(groupRoute)) {
         return (groupRoute.sourceRouteIds || []).includes(route.id);
       }

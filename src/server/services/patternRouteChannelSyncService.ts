@@ -5,7 +5,7 @@ import {
   isUsableAccountToken,
 } from './accountTokenService.js';
 import { clearRouteDecisionSnapshot, clearRouteDecisionSnapshots } from './routeDecisionSnapshotStore.js';
-import { matchesModelPattern } from './tokenRouter.js';
+import { invalidateTokenRouterCache, matchesModelPattern, normalizeModelAlias } from './tokenRouter.js';
 import { normalizeTokenRouteMode } from '../../shared/tokenRouteContract.js';
 import { isExactTokenRouteModelPattern } from '../../shared/tokenRoutePatterns.js';
 import { upsertSetting } from '../db/upsertSetting.js';
@@ -31,9 +31,22 @@ export type PatternRouteChannelSyncResult = {
   createdChannels: number;
 };
 
-type RebuildPatternRouteOptions = {
+export type RebuildPatternRouteOptions = {
   excludeExactModelPatterns?: string[];
   includeModelPatterns?: string[];
+  /**
+   * Restrict availability-backed candidates to the models that survived the
+   * normal model rebuild filters (whitelist, site disables, and brand rules).
+   * `undefined` means no restriction; an empty array intentionally allows no
+   * availability-backed candidates.
+  */
+  allowedModelNames?: string[];
+  /**
+   * Restrict token-availability candidates to the exact account/token/model
+   * tuples that survived the model rebuild filters. This preserves
+   * per-site filtering when another site still exposes the same model.
+   */
+  allowedAvailabilityCandidateKeys?: string[];
 };
 
 type PatternRouteChannelAffectedRouteSnapshot = {
@@ -45,7 +58,29 @@ type PatternRouteChannelAffectedRouteSnapshot = {
 type SyncPatternRouteChannelsAfterAffectedRouteChangesInput = {
   affectedRouteIds?: number[];
   removedRoutes?: PatternRouteChannelAffectedRouteSnapshot[];
+  allowedModelNames?: string[];
+  allowedAvailabilityCandidateKeys?: string[];
+  rebuildAllPatternRoutes?: boolean;
 };
+
+// Route mutations can arrive concurrently from separate requests.  Keep the
+// read/modify/write of the persisted exclusion set and the corresponding
+// pattern replacement together so one deletion cannot overwrite another.
+let patternRouteMutationTail: Promise<void> = Promise.resolve();
+
+async function withPatternRouteMutation<T>(operation: () => Promise<T>): Promise<T> {
+  const previous = patternRouteMutationTail;
+  let release!: () => void;
+  patternRouteMutationTail = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+  }
+}
 
 type RouteModeModelPattern = {
   modelPattern: string;
@@ -94,7 +129,25 @@ function collectRemovedExactModelPatterns(routes: PatternRouteChannelAffectedRou
 }
 
 function normalizeModelKey(modelName: string): string {
-  return modelName.trim().toLowerCase();
+  return normalizeModelAlias(modelName);
+}
+
+function normalizeAllowedModelKeys(modelNames: string[] | undefined): Set<string> | undefined {
+  if (modelNames === undefined) return undefined;
+  return new Set(modelNames.map(normalizeModelKey).filter(Boolean));
+}
+
+function normalizeAllowedAvailabilityCandidateKeys(keys: string[] | undefined): Set<string> | undefined {
+  if (keys === undefined) return undefined;
+  return new Set(keys.map((key) => key.trim().toLowerCase()).filter(Boolean));
+}
+
+function buildAvailabilityCandidateKey(input: {
+  accountId: number;
+  tokenId: number;
+  modelName: string;
+}): string {
+  return `${input.accountId}:${input.tokenId}:${normalizeModelKey(input.modelName)}`;
 }
 
 async function getPersistedModelExclusions(database: DbExecutor = db): Promise<Set<string>> {
@@ -174,6 +227,8 @@ function buildChannelPairKey(input: {
 async function getPatternTokenCandidates(
   modelPattern: string,
   excludedExactModelNames: Set<string>,
+  allowedModelKeys: Set<string> | undefined,
+  allowedAvailabilityCandidateKeys: Set<string> | undefined,
   database: DbExecutor = db,
 ): Promise<PatternRouteChannelCandidate[]> {
   const rows = await database.select().from(schema.tokenModelAvailability)
@@ -197,6 +252,12 @@ async function getPatternTokenCandidates(
     const modelName = row.token_model_availability.modelName?.trim();
     if (!modelName) continue;
     if (excludedExactModelNames.has(normalizeModelKey(modelName))) continue;
+    if (allowedModelKeys && !allowedModelKeys.has(normalizeModelKey(modelName))) continue;
+    if (allowedAvailabilityCandidateKeys && !allowedAvailabilityCandidateKeys.has(buildAvailabilityCandidateKey({
+      accountId: row.accounts.id,
+      tokenId: row.account_tokens.id,
+      modelName,
+    }))) continue;
     if (!matchesModelPattern(modelName, modelPattern)) continue;
     candidates.push({
       tokenId: row.account_tokens.id,
@@ -258,7 +319,7 @@ async function getMatchedExactRouteChannelCandidates(
   };
 }
 
-export async function populateRouteChannelsByModelPattern(
+async function populateRouteChannelsByModelPatternInternal(
   routeId: number,
   modelPattern: string,
   options: RebuildPatternRouteOptions = {},
@@ -278,7 +339,13 @@ export async function populateRouteChannelsByModelPattern(
   const availabilityExclusions = isExactTokenRouteModelPattern(modelPattern)
     ? excludedExactModelNames
     : routeCandidates.exactModelNames;
-  const availabilityCandidates = await getPatternTokenCandidates(modelPattern, availabilityExclusions, database);
+  const availabilityCandidates = await getPatternTokenCandidates(
+    modelPattern,
+    availabilityExclusions,
+    normalizeAllowedModelKeys(options.allowedModelNames),
+    normalizeAllowedAvailabilityCandidateKeys(options.allowedAvailabilityCandidateKeys),
+    database,
+  );
   const candidates = [...routeCandidates.candidates, ...availabilityCandidates];
   if (candidates.length === 0) return 0;
 
@@ -314,7 +381,21 @@ export async function populateRouteChannelsByModelPattern(
   return created;
 }
 
-export async function rebuildAutomaticRouteChannelsByModelPattern(
+export async function populateRouteChannelsByModelPattern(
+  routeId: number,
+  modelPattern: string,
+  options: RebuildPatternRouteOptions = {},
+  database: DbExecutor = db,
+): Promise<number> {
+  return withPatternRouteMutation(() => populateRouteChannelsByModelPatternInternal(
+    routeId,
+    modelPattern,
+    options,
+    database,
+  ));
+}
+
+async function rebuildAutomaticRouteChannelsByModelPatternInternal(
   routeId: number,
   modelPattern: string,
   options: RebuildPatternRouteOptions = {},
@@ -335,11 +416,12 @@ export async function rebuildAutomaticRouteChannelsByModelPattern(
       await tx.delete(schema.routeChannels).where(eq(schema.routeChannels.id, channel.id)).run();
     }
 
-    createdChannels = await populateRouteChannelsByModelPattern(routeId, modelPattern, options, tx);
+    createdChannels = await populateRouteChannelsByModelPatternInternal(routeId, modelPattern, options, tx);
     removedChannels = removableChannels.length;
   });
   if (removedChannels > 0 || createdChannels > 0) {
     await clearRouteDecisionSnapshot(routeId);
+    invalidateTokenRouterCache();
   }
 
   return {
@@ -350,7 +432,19 @@ export async function rebuildAutomaticRouteChannelsByModelPattern(
   };
 }
 
-export async function rebuildAllPatternRouteChannels(
+export async function rebuildAutomaticRouteChannelsByModelPattern(
+  routeId: number,
+  modelPattern: string,
+  options: RebuildPatternRouteOptions = {},
+): Promise<PatternRouteChannelSyncResult> {
+  return withPatternRouteMutation(() => rebuildAutomaticRouteChannelsByModelPatternInternal(
+    routeId,
+    modelPattern,
+    options,
+  ));
+}
+
+async function rebuildAllPatternRouteChannelsInternal(
   options: RebuildPatternRouteOptions = {},
 ): Promise<PatternRouteChannelSyncResult> {
   const includedModelPatterns = (options.includeModelPatterns || [])
@@ -372,7 +466,7 @@ export async function rebuildAllPatternRouteChannels(
   };
 
   for (const route of patternRoutes) {
-    const routeResult = await rebuildAutomaticRouteChannelsByModelPattern(route.id, route.modelPattern, options);
+    const routeResult = await rebuildAutomaticRouteChannelsByModelPatternInternal(route.id, route.modelPattern, options);
     result.rebuiltRoutes += 1;
     result.routeIds.push(route.id);
     result.removedChannels += routeResult.removedChannels;
@@ -381,19 +475,27 @@ export async function rebuildAllPatternRouteChannels(
 
   if (result.removedChannels > 0 || result.createdChannels > 0) {
     await clearRouteDecisionSnapshots(result.routeIds);
+    invalidateTokenRouterCache();
   }
 
   return result;
 }
 
-export async function syncPatternRouteChannelsAfterAffectedRouteChanges(
+export async function rebuildAllPatternRouteChannels(
+  options: RebuildPatternRouteOptions = {},
+): Promise<PatternRouteChannelSyncResult> {
+  return withPatternRouteMutation(() => rebuildAllPatternRouteChannelsInternal(options));
+}
+
+async function syncPatternRouteChannelsAfterAffectedRouteChangesInternal(
   input: SyncPatternRouteChannelsAfterAffectedRouteChangesInput = {},
 ): Promise<PatternRouteChannelSyncResult> {
   const affectedRouteIds = normalizeAffectedRouteIds(input.affectedRouteIds);
   const removedRoutes = input.removedRoutes || [];
   const removedExactModelPatterns = collectRemovedExactModelPatterns(removedRoutes);
   const hasRemovedExactSourceRoute = removedRoutes.some(isExactSourceRoute);
-  if (affectedRouteIds.length === 0 && !hasRemovedExactSourceRoute) {
+  const rebuildAllPatternRoutes = input.rebuildAllPatternRoutes === true;
+  if (affectedRouteIds.length === 0 && !hasRemovedExactSourceRoute && !rebuildAllPatternRoutes) {
     return createEmptyPatternRouteChannelSyncResult();
   }
 
@@ -414,17 +516,29 @@ export async function syncPatternRouteChannelsAfterAffectedRouteChanges(
     }
   }
 
-  if (!hasAffectedExactSourceRoute && !hasRemovedExactSourceRoute) {
+  if (!hasAffectedExactSourceRoute && !hasRemovedExactSourceRoute && !rebuildAllPatternRoutes) {
     return createEmptyPatternRouteChannelSyncResult();
   }
 
   await clearModelExclusions(affectedExactModelPatterns);
   await persistModelExclusions(removedExactModelPatterns);
 
-  return rebuildAllPatternRouteChannels({
+  const rebuildOptions: RebuildPatternRouteOptions = {
     excludeExactModelPatterns: removedExactModelPatterns,
     includeModelPatterns: [...affectedExactModelPatterns, ...removedRoutes
       .filter(isExactSourceRoute)
       .map((route) => route.modelPattern)],
-  });
+    allowedModelNames: input.allowedModelNames,
+    allowedAvailabilityCandidateKeys: input.allowedAvailabilityCandidateKeys,
+  };
+  if (rebuildAllPatternRoutes) {
+    delete rebuildOptions.includeModelPatterns;
+  }
+  return rebuildAllPatternRouteChannelsInternal(rebuildOptions);
+}
+
+export async function syncPatternRouteChannelsAfterAffectedRouteChanges(
+  input: SyncPatternRouteChannelsAfterAffectedRouteChangesInput = {},
+): Promise<PatternRouteChannelSyncResult> {
+  return withPatternRouteMutation(() => syncPatternRouteChannelsAfterAffectedRouteChangesInternal(input));
 }

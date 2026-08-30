@@ -541,7 +541,7 @@ describe('TokenRouter runtime cache', () => {
     expect(record?.failCount).toBe(1);
   });
 
-  it('applies short-window cooldown to sibling channels that share the same account-level credential', async () => {
+  it('keeps short-window cooldown scoped to the channel that received the failure', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'shared-credential-site',
       url: 'https://shared-credential.example.com',
@@ -609,10 +609,15 @@ describe('TokenRouter runtime cache', () => {
     const cooledSibling = await db.select().from(schema.routeChannels)
       .where(eq(schema.routeChannels.id, siblingChannel.id))
       .get();
+    const cooledPrimary = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.id, primaryChannel.id))
+      .get();
 
-    expect(cooledSibling?.cooldownUntil).toBeTruthy();
+    expect(cooledPrimary?.cooldownUntil).toBeTruthy();
+    expect(cooledSibling?.cooldownUntil).toBeNull();
+    expect(cooledSibling?.lastFailAt).toBeNull();
     expect(cooledSibling?.failCount).toBe(0);
-    expect(await router.selectChannel('gpt-4o-mini')).toBeNull();
+    expect((await router.selectChannel('gpt-4o-mini'))?.channel.id).toBe(siblingChannel.id);
   });
 
   it('clears short-window cooldown on sibling channels after a successful recovery probe', async () => {

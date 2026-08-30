@@ -1389,7 +1389,17 @@ function buildVisibleEnabledRoutes(routes: RouteRow[]): RouteRow[] {
     return !coveringGroups.some((groupRoute) => {
       if (groupRoute.id === route.id) return false;
       const groupDisplayName = normalizeRouteDisplayName(groupRoute.displayName);
-      if (!groupDisplayName || exactModelNames.has(groupDisplayName.toLowerCase())) return false;
+      if (
+        !groupDisplayName
+        || exactModelNames.has(groupDisplayName.toLowerCase())
+        // A pattern alias that is identical to an unnamed exact route cannot
+        // replace that route in dispatch: findRoute() gives exact matches
+        // precedence. Keep the exact route visible so the UI reflects this.
+        || (
+          !isExplicitGroupRoute(groupRoute)
+          && groupDisplayName.toLowerCase() === exactModel.toLowerCase()
+        )
+      ) return false;
       if (isExplicitGroupRoute(groupRoute)) {
         return groupRoute.sourceRouteIds.includes(route.id);
       }
@@ -1398,7 +1408,7 @@ function buildVisibleEnabledRoutes(routes: RouteRow[]): RouteRow[] {
   });
 }
 
-function normalizeModelAlias(modelName: string): string {
+export function normalizeModelAlias(modelName: string): string {
   const normalized = (modelName || '').trim().toLowerCase();
   if (!normalized) return '';
   const slashIndex = normalized.lastIndexOf('/');

@@ -1364,12 +1364,12 @@ export async function tokensRoutes(app: FastifyInstance) {
 
     const body = parsedBody.data;
     if (body.refreshModels === false) {
-      const rebuild = await routeRefreshWorkflow.rebuildRoutesOnly();
+      const rebuild = await routeRefreshWorkflow.rebuildRoutesOnly({ rebuildPatternRoutes: true });
       return { success: true, rebuild };
     }
 
     if (body.wait) {
-      const result = await routeRefreshWorkflow.refreshModelsAndRebuildRoutes();
+      const result = await routeRefreshWorkflow.refreshModelsAndRebuildRoutes({ rebuildPatternRoutes: true });
       return { success: true, ...result };
     }
 
@@ -1386,7 +1386,7 @@ export async function tokensRoutes(app: FastifyInstance) {
         },
         failureMessage: (currentTask) => `刷新模型并重建路由失败：${currentTask.error || 'unknown error'}`,
       },
-      async () => routeRefreshWorkflow.refreshModelsAndRebuildRoutes(),
+      async () => routeRefreshWorkflow.refreshModelsAndRebuildRoutes({ rebuildPatternRoutes: true }),
     );
 
     return reply.code(202).send({

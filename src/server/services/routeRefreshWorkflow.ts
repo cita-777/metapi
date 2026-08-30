@@ -1,11 +1,12 @@
 import { startBackgroundTask } from './backgroundTaskService.js';
 import {
   rebuildTokenRoutesFromAvailability,
+  type RebuildTokenRoutesOptions,
   refreshModelsAndRebuildRoutes as refreshModelsAndRebuildRoutesViaModelService,
 } from './modelService.js';
 
-export async function rebuildRoutesOnly() {
-  return rebuildTokenRoutesFromAvailability();
+export async function rebuildRoutesOnly(options: RebuildTokenRoutesOptions = {}) {
+  return rebuildTokenRoutesFromAvailability(options);
 }
 
 export async function rebuildRoutesBestEffort() {
@@ -17,8 +18,8 @@ export async function rebuildRoutesBestEffort() {
   }
 }
 
-export async function refreshModelsAndRebuildRoutes() {
-  return refreshModelsAndRebuildRoutesViaModelService();
+export async function refreshModelsAndRebuildRoutes(options: RebuildTokenRoutesOptions = {}) {
+  return refreshModelsAndRebuildRoutesViaModelService(options);
 }
 
 export function queueRefreshModelsAndRebuildRoutesTask(input: {

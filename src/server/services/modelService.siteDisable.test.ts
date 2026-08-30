@@ -32,6 +32,7 @@ describe('rebuildTokenRoutesFromAvailability with site disabled models', () => {
         await db.delete(schema.tokenModelAvailability).run();
         await db.delete(schema.modelAvailability).run();
         await db.delete(schema.siteDisabledModels).run();
+        await db.delete(schema.settings).run();
         await db.delete(schema.accountTokens).run();
         await db.delete(schema.accounts).run();
         await db.delete(schema.sites).run();
@@ -173,5 +174,96 @@ describe('rebuildTokenRoutesFromAvailability with site disabled models', () => {
             .where(eq(schema.tokenRoutes.modelPattern, 'gpt-5'))
             .get();
         expect(route).toBeDefined();
+    });
+
+    it('does not repopulate a pattern group with a model filtered from the rebuild', async () => {
+        const disabledSite = await db.insert(schema.sites).values({
+            name: 'filtered-pattern-disabled-site',
+            url: 'https://filtered-pattern-disabled-site.example.com',
+            platform: 'new-api',
+        }).returning().get();
+        const allowedSite = await db.insert(schema.sites).values({
+            name: 'filtered-pattern-allowed-site',
+            url: 'https://filtered-pattern-allowed-site.example.com',
+            platform: 'new-api',
+        }).returning().get();
+        const disabledAccount = await db.insert(schema.accounts).values({
+            siteId: disabledSite.id,
+            username: 'filtered-pattern-disabled-user',
+            accessToken: 'filtered-pattern-access',
+            status: 'active',
+        }).returning().get();
+        const allowedAccount = await db.insert(schema.accounts).values({
+            siteId: allowedSite.id,
+            username: 'filtered-pattern-allowed-user',
+            accessToken: 'filtered-pattern-allowed-access',
+            status: 'active',
+        }).returning().get();
+        const disabledToken = await db.insert(schema.accountTokens).values({
+            accountId: disabledAccount.id,
+            name: 'default',
+            token: 'sk-filtered-pattern',
+            source: 'manual',
+            enabled: true,
+            isDefault: true,
+        }).returning().get();
+        const allowedToken = await db.insert(schema.accountTokens).values({
+            accountId: allowedAccount.id,
+            name: 'default',
+            token: 'sk-filtered-pattern-allowed',
+            source: 'manual',
+            enabled: true,
+            isDefault: true,
+        }).returning().get();
+        await db.insert(schema.tokenModelAvailability).values({
+            tokenId: disabledToken.id,
+            modelName: 'gpt-filtered',
+            available: true,
+        }).run();
+        await db.insert(schema.tokenModelAvailability).values({
+            tokenId: allowedToken.id,
+            modelName: 'gpt-filtered',
+            available: true,
+        }).run();
+        const exactRoute = await db.insert(schema.tokenRoutes).values({
+            modelPattern: 'gpt-filtered',
+            enabled: true,
+        }).returning().get();
+        const patternRoute = await db.insert(schema.tokenRoutes).values({
+            modelPattern: '*',
+            displayName: 'all-models',
+            enabled: true,
+        }).returning().get();
+        await db.insert(schema.routeChannels).values([
+            {
+            routeId: exactRoute.id,
+            accountId: disabledAccount.id,
+            tokenId: disabledToken.id,
+            sourceModel: 'gpt-filtered',
+                enabled: true,
+                manualOverride: false,
+            },
+            {
+            routeId: patternRoute.id,
+            accountId: disabledAccount.id,
+            tokenId: disabledToken.id,
+                sourceModel: 'gpt-filtered',
+                enabled: true,
+                manualOverride: false,
+            },
+        ]).run();
+        await db.insert(schema.siteDisabledModels).values({
+            siteId: disabledSite.id,
+            modelName: 'gpt-filtered',
+        }).run();
+
+        const rebuild = await rebuildTokenRoutesFromAvailability();
+        expect(rebuild.removedChannels).toBeGreaterThan(0);
+        const patternChannels = await db.select().from(schema.routeChannels)
+            .where(eq(schema.routeChannels.routeId, patternRoute.id))
+            .all();
+        expect(patternChannels).toHaveLength(1);
+        expect(patternChannels[0]?.accountId).toBe(allowedAccount.id);
+        expect(patternChannels[0]?.tokenId).toBe(allowedToken.id);
     });
 });

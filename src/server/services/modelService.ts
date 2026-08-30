@@ -18,12 +18,14 @@ import {
   resolvePlatformUserId,
   supportsDirectAccountRoutingConnection,
 } from './accountExtraConfig.js';
-import { invalidateTokenRouterCache } from './tokenRouter.js';
+import { invalidateTokenRouterCache, normalizeModelAlias } from './tokenRouter.js';
 import { getBlockedBrandRules, isModelBlockedByBrand } from './brandMatcher.js';
 import { config } from '../config.js';
 import { setAccountRuntimeHealth } from './accountHealthService.js';
 import { clearAllRouteDecisionSnapshots } from './routeDecisionSnapshotStore.js';
-import { rebuildAllPatternRouteChannels } from './patternRouteChannelSyncService.js';
+import {
+  syncPatternRouteChannelsAfterAffectedRouteChanges,
+} from './patternRouteChannelSyncService.js';
 import { withAccountProxyOverride } from './siteProxy.js';
 import { isCodexPlatform } from './oauth/codexAccount.js';
 import { buildStoredOauthStateFromAccount, getOauthInfoFromAccount } from './oauth/oauthAccount.js';
@@ -47,6 +49,11 @@ import { probeRuntimeModel, type RuntimeModelProbeStatus } from './runtimeModelP
 const API_TOKEN_DISCOVERY_TIMEOUT_MS = 8_000;
 const MODEL_DISCOVERY_TIMEOUT_MS = 12_000;
 const MODEL_REFRESH_BATCH_SIZE = 3;
+
+export type RebuildTokenRoutesOptions = {
+  /** Rebuild every enabled pattern group even when exact-route topology is unchanged. */
+  rebuildPatternRoutes?: boolean;
+};
 const GEMINI_CLI_STATIC_MODELS = [
   'gemini-2.5-pro',
   'gemini-2.5-flash',
@@ -1382,7 +1389,9 @@ async function refreshModelsForAllActiveAccounts(): Promise<ModelRefreshResult[]
   return results;
 }
 
-export async function rebuildTokenRoutesFromAvailability() {
+export async function rebuildTokenRoutesFromAvailability(
+  options: RebuildTokenRoutesOptions = {},
+) {
   const tokenRows = await db.select().from(schema.tokenModelAvailability)
     .innerJoin(schema.accountTokens, eq(schema.tokenModelAvailability.tokenId, schema.accountTokens.id))
     .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
@@ -1521,6 +1530,12 @@ export async function rebuildTokenRoutesFromAvailability() {
   let createdChannels = 0;
   let removedChannels = 0;
   let removedRoutes = 0;
+  const affectedExactRouteIds = new Set<number>();
+  const removedExactRouteSnapshots: Array<{
+    modelPattern: string;
+    routeMode: string | null;
+    enabled: boolean;
+  }> = [];
 
   for (const [modelName, candidateMap] of modelCandidates.entries()) {
     let route = routes.find((r) => (r.routeMode || 'pattern') !== 'explicit_group' && r.modelPattern === modelName);
@@ -1536,6 +1551,7 @@ export async function rebuildTokenRoutesFromAvailability() {
       if (!route) continue;
       routes.push(route);
       createdRoutes++;
+      affectedExactRouteIds.add(route.id);
     }
 
     const routeChannels = channels.filter((channel) => channel.routeId === route.id);
@@ -1561,6 +1577,7 @@ export async function rebuildTokenRoutesFromAvailability() {
       if (!created) continue;
       channels.push(created);
       createdChannels++;
+      affectedExactRouteIds.add(route.id);
       desiredKeys.add(candidateKey);
     }
 
@@ -1577,6 +1594,7 @@ export async function rebuildTokenRoutesFromAvailability() {
             .set({ tokenId: preferred.id })
             .where(eq(schema.routeChannels.id, channel.id))
             .run();
+          affectedExactRouteIds.add(route.id);
           continue;
         }
       }
@@ -1584,6 +1602,7 @@ export async function rebuildTokenRoutesFromAvailability() {
       if (!channel.manualOverride) {
         await db.delete(schema.routeChannels).where(eq(schema.routeChannels.id, channel.id)).run();
         removedChannels++;
+        affectedExactRouteIds.add(route.id);
       }
     }
   }
@@ -1606,12 +1625,29 @@ export async function rebuildTokenRoutesFromAvailability() {
     const deleted = (await db.delete(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, route.id)).run()).changes;
     if (deleted > 0) {
       removedRoutes += deleted;
+      if ((route.routeMode || 'pattern') !== 'explicit_group') {
+        removedExactRouteSnapshots.push({
+          modelPattern,
+          routeMode: route.routeMode,
+          enabled: !!route.enabled,
+        });
+      }
     }
   }
 
   const exactRouteTopologyChanged = createdRoutes > 0 || createdChannels > 0 || removedChannels > 0 || removedRoutes > 0;
-  const patternRouteSync = exactRouteTopologyChanged
-    ? await rebuildAllPatternRouteChannels()
+  const patternRouteSync = exactRouteTopologyChanged || options.rebuildPatternRoutes
+    ? await syncPatternRouteChannelsAfterAffectedRouteChanges({
+      affectedRouteIds: [...affectedExactRouteIds],
+      removedRoutes: removedExactRouteSnapshots,
+      allowedModelNames: [...modelCandidates.keys()],
+      allowedAvailabilityCandidateKeys: Array.from(modelCandidates.entries()).flatMap(([modelName, candidates]) => (
+        Array.from(candidates.values())
+          .filter((candidate) => candidate.tokenId != null)
+          .map((candidate) => `${candidate.accountId}:${candidate.tokenId}:${normalizeModelAlias(modelName)}`)
+      )),
+      rebuildAllPatternRoutes: options.rebuildPatternRoutes === true,
+    })
     : {
       rebuiltRoutes: 0,
       routeIds: [],
@@ -1639,20 +1675,20 @@ export async function rebuildTokenRoutesFromAvailability() {
   };
 }
 
-async function runRefreshModelsAndRebuildRoutes() {
+async function runRefreshModelsAndRebuildRoutes(options: RebuildTokenRoutesOptions = {}) {
   const refresh = await refreshModelsForAllActiveAccounts();
-  const rebuild = await rebuildTokenRoutesFromAvailability();
+  const rebuild = await rebuildTokenRoutesFromAvailability(options);
   return { refresh, rebuild };
 }
 
-export async function refreshModelsAndRebuildRoutes() {
+export async function refreshModelsAndRebuildRoutes(options: RebuildTokenRoutesOptions = {}) {
   if (inFlightRefreshModelsAndRebuildRoutes) {
     return inFlightRefreshModelsAndRebuildRoutes;
   }
 
   inFlightRefreshModelsAndRebuildRoutes = (async () => {
     try {
-      return await runRefreshModelsAndRebuildRoutes();
+      return await runRefreshModelsAndRebuildRoutes(options);
     } finally {
       inFlightRefreshModelsAndRebuildRoutes = null;
     }
