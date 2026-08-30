@@ -51,6 +51,7 @@ export function buildVisibleRouteList<T extends RouteListVisibilityItem>(
   return routes.filter((route) => {
     if (isExplicitGroupRoute(route)) return true;
     if (!isExactModelPattern(route.modelPattern)) return true;
+    if (!route.enabled) return true;
     if (hasCustomDisplayName(route)) return true;
 
     const exactModel = (route.modelPattern || '').trim();

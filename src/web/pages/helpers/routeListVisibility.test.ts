@@ -81,4 +81,33 @@ describe('routeListVisibility', () => {
 
     expect(visible.map((route) => route.id)).toEqual([3]);
   });
+
+  it('keeps disabled exact routes visible when a group covers their model', () => {
+    const routes = [
+      {
+        id: 1,
+        modelPattern: 'gpt-5.5',
+        displayName: null,
+        routeMode: 'pattern',
+        sourceRouteIds: [],
+        enabled: false,
+      },
+      {
+        id: 2,
+        modelPattern: 're:^gpt-5.5.*$',
+        displayName: 'gpt-5-group',
+        routeMode: 'pattern',
+        sourceRouteIds: [],
+        enabled: true,
+      },
+    ];
+
+    const visible = buildVisibleRouteList(
+      routes,
+      (pattern) => !pattern.includes('*') && !pattern.startsWith('re:'),
+      (model, pattern) => pattern.startsWith('re:') && /^gpt-5\.5.*$/.test(model),
+    );
+
+    expect(visible.map((route) => route.id)).toEqual([1, 2]);
+  });
 });

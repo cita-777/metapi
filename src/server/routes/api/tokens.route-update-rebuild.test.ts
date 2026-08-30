@@ -73,6 +73,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
     await db.delete(schema.routeChannels).run();
     await db.delete(schema.oauthRouteUnitMembers).run();
     await db.delete(schema.oauthRouteUnits).run();
+    await db.delete(schema.settings).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
