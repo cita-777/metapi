@@ -8,6 +8,7 @@ import type { UpdateCenterVersionCandidate, UpdateCenterVersionSource } from './
 export type UpdateCenterStatusSnapshot = {
   githubRelease: UpdateCenterVersionCandidate | null;
   dockerHubTag: UpdateCenterVersionCandidate | null;
+  dockerHubRecentTags: UpdateCenterVersionCandidate[];
   helper: UpdateCenterHelperStatus | null;
 };
 
@@ -66,6 +67,13 @@ function normalizeVersionCandidate(input: unknown): UpdateCenterVersionCandidate
   };
 }
 
+function normalizeVersionCandidates(input: unknown): UpdateCenterVersionCandidate[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((entry) => normalizeVersionCandidate(entry))
+    .filter((entry): entry is UpdateCenterVersionCandidate => !!entry);
+}
+
 function normalizeHelperHistoryEntry(input: unknown): NonNullable<UpdateCenterHelperStatus['history']>[number] | null {
   if (!input || typeof input !== 'object') return null;
   const record = input as Record<string, unknown>;
@@ -109,6 +117,7 @@ function normalizeStatusSnapshot(input: unknown): UpdateCenterStatusSnapshot | n
   return {
     githubRelease: normalizeVersionCandidate(record.githubRelease),
     dockerHubTag: normalizeVersionCandidate(record.dockerHubTag),
+    dockerHubRecentTags: normalizeVersionCandidates(record.dockerHubRecentTags),
     helper: normalizeHelperSnapshot(record.helper),
   };
 }

@@ -2089,6 +2089,30 @@
           "notNull": false,
           "defaultValue": "1",
           "primaryKey": false
+        },
+        "post_refresh_probe_enabled": {
+          "logicalType": "boolean",
+          "notNull": false,
+          "defaultValue": "false",
+          "primaryKey": false
+        },
+        "post_refresh_probe_model": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": "''",
+          "primaryKey": false
+        },
+        "post_refresh_probe_scope": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": "'single'",
+          "primaryKey": false
+        },
+        "post_refresh_probe_latency_threshold_ms": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": "0",
+          "primaryKey": false
         }
       }
     },

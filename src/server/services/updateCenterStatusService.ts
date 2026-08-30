@@ -2,7 +2,7 @@ import { config as runtimeConfig } from '../config.js';
 import { formatUtcSqlDateTime } from './localTimeService.js';
 import { listBackgroundTasks } from './backgroundTaskService.js';
 import {
-  fetchLatestDockerHubTag,
+  fetchDockerHubTagCandidates,
   fetchLatestStableGitHubRelease,
   getCurrentRuntimeVersion,
   type UpdateCenterVersionCandidate,
@@ -71,6 +71,7 @@ export type UpdateCenterStatusResult = {
   config: UpdateCenterConfig;
   githubRelease: UpdateCenterVersionCandidate | null;
   dockerHubTag: UpdateCenterVersionCandidate | null;
+  dockerHubRecentTags: UpdateCenterVersionCandidate[];
   helper: UpdateCenterHelperStatus;
   runningTask: ReturnType<typeof getDeployTasks>[number] | null;
   lastFinishedTask: ReturnType<typeof getDeployTasks>[number] | null;
@@ -92,16 +93,17 @@ function buildUnavailableHelperStatus(error: string | null = null): UpdateCenter
   };
 }
 
-function buildStatusSnapshot(status: Pick<UpdateCenterStatusResult, 'githubRelease' | 'dockerHubTag' | 'helper'>): UpdateCenterStatusSnapshot {
+function buildStatusSnapshot(status: Pick<UpdateCenterStatusResult, 'githubRelease' | 'dockerHubTag' | 'dockerHubRecentTags' | 'helper'>): UpdateCenterStatusSnapshot {
   return {
     githubRelease: status.githubRelease || null,
     dockerHubTag: status.dockerHubTag || null,
+    dockerHubRecentTags: status.dockerHubRecentTags || [],
     helper: status.helper || null,
   };
 }
 
 function buildNextRuntimeState(
-  status: Pick<UpdateCenterStatusResult, 'currentVersion' | 'githubRelease' | 'dockerHubTag' | 'helper'>,
+  status: Pick<UpdateCenterStatusResult, 'currentVersion' | 'githubRelease' | 'dockerHubTag' | 'dockerHubRecentTags' | 'helper'>,
   previousRuntime: UpdateCenterRuntimeState,
   checkedAt: string,
 ): { candidate: UpdateReminderCandidate | null; nextRuntime: UpdateCenterRuntimeState } {
@@ -137,6 +139,7 @@ function buildResponseFromState(config: UpdateCenterConfig, runtime: UpdateCente
     config,
     githubRelease: snapshot?.githubRelease || null,
     dockerHubTag: snapshot?.dockerHubTag || null,
+    dockerHubRecentTags: snapshot?.dockerHubRecentTags || [],
     helper: snapshot?.helper || buildUnavailableHelperStatus(runtime.lastCheckError),
     runningTask,
     lastFinishedTask,
@@ -150,7 +153,7 @@ export async function buildUpdateCenterStatus(): Promise<UpdateCenterStatusResul
 
   const [githubLookup, dockerLookup, helperLookup, runtime] = await Promise.all([
     settleOptional(config.githubReleasesEnabled, async () => await fetchLatestStableGitHubRelease()),
-    settleOptional(config.dockerHubTagsEnabled, async () => await fetchLatestDockerHubTag()),
+    settleOptional(config.dockerHubTagsEnabled, async () => await fetchDockerHubTagCandidates()),
     settleOptional(!!config.helperBaseUrl, async () => {
       if (!helperToken) {
         throw new Error('DEPLOY_HELPER_TOKEN is required');
@@ -160,8 +163,10 @@ export async function buildUpdateCenterStatus(): Promise<UpdateCenterStatusResul
     loadUpdateCenterRuntimeState(),
   ]);
 
-  const githubRelease = githubLookup.value as UpdateCenterVersionCandidate | null;
-  const dockerHubTag = dockerLookup.value as UpdateCenterVersionCandidate | null;
+  const githubRelease = githubLookup.value;
+  const dockerHubCandidates = dockerLookup.value;
+  const dockerHubTag = dockerHubCandidates?.primary || null;
+  const dockerHubRecentTags = dockerHubCandidates?.recentNonStable || [];
   const helper = (helperLookup.value as UpdateCenterHelperStatus | null) || buildUnavailableHelperStatus(helperLookup.error);
 
   const tasks = getDeployTasks();
@@ -173,6 +178,7 @@ export async function buildUpdateCenterStatus(): Promise<UpdateCenterStatusResul
     config,
     githubRelease,
     dockerHubTag,
+    dockerHubRecentTags,
     helper,
     runningTask,
     lastFinishedTask,

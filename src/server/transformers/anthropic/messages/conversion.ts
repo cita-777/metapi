@@ -12,6 +12,11 @@ const VALID_ANTHROPIC_THINKING_TYPES = new Set(['enabled', 'disabled', 'adaptive
 const VALID_ANTHROPIC_EFFORTS = new Set(['low', 'medium', 'high', 'max']);
 const MAX_ANTHROPIC_CACHE_CONTROL_BREAKPOINTS = 4;
 const ADAPTIVE_ANTHROPIC_CACHE_CONTROL_BLOCK_WINDOW = 20;
+const ANTHROPIC_WEB_SEARCH_TOOL_TYPES = new Set([
+  'web_search',
+  'web_search_20250305',
+  'google_search',
+]);
 
 function asTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -179,6 +184,20 @@ function normalizeOpenAiToolArguments(raw: unknown): string {
     return safeJsonStringify(raw);
   }
   return '';
+}
+
+function isAnthropicWebSearchTool(value: Record<string, unknown>): boolean {
+  const type = asTrimmedString(value.type).toLowerCase();
+  const name = asTrimmedString(value.name).toLowerCase();
+  return ANTHROPIC_WEB_SEARCH_TOOL_TYPES.has(type) || name === 'web_search' || name === 'google_search';
+}
+
+function convertAnthropicWebSearchToolToOpenAi(value: Record<string, unknown>): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...value };
+  const type = asTrimmedString(value.type).toLowerCase();
+  next.type = type === 'google_search' ? 'web_search' : 'web_search';
+  next.name = 'web_search';
+  return next;
 }
 
 export function normalizeAnthropicToolInput(raw: unknown): unknown {
@@ -802,6 +821,14 @@ export function convertOpenAiToolsToAnthropic(rawTools: unknown): unknown {
       if (!isRecord(item)) return null;
 
       const type = asTrimmedString(item.type).toLowerCase();
+      if (isAnthropicWebSearchTool(item)) {
+        return {
+          ...item,
+          type: 'web_search_20250305',
+          name: 'web_search',
+        };
+      }
+
       if (type === 'function' && isRecord(item.function)) {
         const fn = item.function;
         const name = asTrimmedString(fn.name);
@@ -824,6 +851,16 @@ export function convertOpenAiToolsToAnthropic(rawTools: unknown): unknown {
     .filter((item): item is Record<string, unknown> => !!item);
 
   return converted.length > 0 ? converted : rawTools;
+}
+
+export function convertAnthropicToolsToOpenAi(rawTools: unknown): unknown {
+  if (!Array.isArray(rawTools)) return rawTools;
+
+  return rawTools.map((item) => {
+    if (!isRecord(item)) return item;
+    if (isAnthropicWebSearchTool(item)) return convertAnthropicWebSearchToolToOpenAi(item);
+    return item;
+  });
 }
 
 export function convertOpenAiToolChoiceToAnthropic(rawToolChoice: unknown): unknown {

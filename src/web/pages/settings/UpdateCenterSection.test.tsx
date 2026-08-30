@@ -73,6 +73,28 @@ describe('UpdateCenterSection', () => {
         displayVersion: 'latest @ sha256:efb2ee655386',
         publishedAt: '2026-03-29T11:54:35.591877Z',
       },
+      dockerHubRecentTags: [
+        {
+          normalizedVersion: 'dev',
+          tagName: 'dev',
+          digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          displayVersion: 'dev @ sha256:aaaaaaaaaaaa',
+          publishedAt: '2026-03-30T11:54:35.591877Z',
+        },
+        {
+          normalizedVersion: 'dev-20260417-f67ade2',
+          tagName: 'dev-20260417-f67ade2',
+          digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          displayVersion: 'dev-20260417-f67ade2 @ sha256:bbbbbbbbbbbb',
+          publishedAt: '2026-03-30T10:54:35.591877Z',
+        },
+        {
+          normalizedVersion: 'feature-without-raw-tag',
+          digest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+          displayVersion: 'feature-without-raw-tag @ sha256:cccccccccccc',
+          publishedAt: '2026-03-30T09:54:35.591877Z',
+        },
+      ],
       helper: {
         ok: true,
         healthy: true,
@@ -159,6 +181,15 @@ describe('UpdateCenterSection', () => {
         displayVersion: 'latest @ sha256:efb2ee655386',
         publishedAt: '2026-03-29T11:54:35.591877Z',
       },
+      dockerHubRecentTags: [
+        {
+          normalizedVersion: 'dev',
+          tagName: 'dev',
+          digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          displayVersion: 'dev @ sha256:aaaaaaaaaaaa',
+          publishedAt: '2026-03-30T11:54:35.591877Z',
+        },
+      ],
       helper: {
         ok: true,
         healthy: true,
@@ -424,6 +455,153 @@ describe('UpdateCenterSection', () => {
         source: 'docker-hub-tag',
         targetTag: 'dev-20260417-f67ade2',
         targetDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      });
+      expect(apiMock.streamUpdateCenterTaskLogs).toHaveBeenCalledWith('task-1', expect.any(Object));
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('deploys auto-discovered recent non-stable Docker Hub tags without manual input', async () => {
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ToastProvider>
+              <UpdateCenterSection />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('Digest：sha256:bbbbbbbbbbbb');
+      expect(collectText(root.root)).not.toContain('feature-without-raw-tag');
+      expect(collectText(root.root)).toContain('dev-20260417-f67ade2 @ sha256:bbbbbbbbbbbb');
+
+      const deployRecentButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).includes('部署 dev-20260417-f67ade2')
+      ));
+
+      expect(deployRecentButton.props.disabled).toBe(false);
+
+      await act(async () => {
+        await deployRecentButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.deployUpdateCenter).toHaveBeenCalledWith({
+        source: 'docker-hub-tag',
+        targetTag: 'dev-20260417-f67ade2',
+        targetDigest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      });
+      expect(apiMock.streamUpdateCenterTaskLogs).toHaveBeenCalledWith('task-1', expect.any(Object));
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('disables only the recent Docker candidate that already matches the running helper image', async () => {
+    apiMock.getUpdateCenterStatus.mockResolvedValueOnce({
+      currentVersion: '1.2.3',
+      config: {
+        enabled: true,
+        helperBaseUrl: 'http://metapi-deploy-helper.ai.svc.cluster.local:9850',
+        namespace: 'ai',
+        releaseName: 'metapi',
+        chartRef: 'oci://ghcr.io/cita-777/charts/metapi',
+        imageRepository: '1467078763/metapi',
+        githubReleasesEnabled: true,
+        dockerHubTagsEnabled: true,
+        defaultDeploySource: 'docker-hub-tag',
+      },
+      githubRelease: {
+        normalizedVersion: '1.3.0',
+        displayVersion: '1.3.0',
+      },
+      dockerHubTag: {
+        normalizedVersion: 'latest',
+        tagName: 'latest',
+        digest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
+        displayVersion: 'latest @ sha256:efb2ee655386',
+      },
+      dockerHubRecentTags: [
+        {
+          normalizedVersion: 'dev',
+          tagName: 'dev',
+          digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          displayVersion: 'dev @ sha256:aaaaaaaaaaaa',
+          publishedAt: '2026-03-30T11:54:35.591877Z',
+        },
+        {
+          normalizedVersion: 'dev-20260417-next',
+          tagName: 'dev-20260417-next',
+          digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          displayVersion: 'dev-20260417-next @ sha256:bbbbbbbbbbbb',
+          publishedAt: '2026-03-30T10:54:35.591877Z',
+        },
+      ],
+      helper: {
+        ok: true,
+        healthy: true,
+        revision: '17',
+        imageTag: 'dev',
+        imageDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        history: [],
+      },
+      runtime: {
+        lastCheckedAt: '2026-03-30 20:30:00',
+        lastCheckError: null,
+        lastResolvedSource: 'docker-hub-tag',
+        lastResolvedDisplayVersion: 'dev',
+        lastResolvedCandidateKey: 'docker-hub-tag:dev@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        lastNotifiedCandidateKey: null,
+        lastNotifiedAt: null,
+      },
+      runningTask: null,
+      lastFinishedTask: null,
+    });
+
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ToastProvider>
+              <UpdateCenterSection />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const runningCandidateButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node) === '部署 dev'
+      ));
+      const nextCandidateButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node) === '部署 dev-20260417-next'
+      ));
+
+      expect(runningCandidateButton.props.disabled).toBe(true);
+      expect(runningCandidateButton.props.title).toContain('当前已运行该镜像');
+      expect(nextCandidateButton.props.disabled).toBe(false);
+
+      await act(async () => {
+        await nextCandidateButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.deployUpdateCenter).toHaveBeenCalledWith({
+        source: 'docker-hub-tag',
+        targetTag: 'dev-20260417-next',
+        targetDigest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
       });
       expect(apiMock.streamUpdateCenterTaskLogs).toHaveBeenCalledWith('task-1', expect.any(Object));
     } finally {

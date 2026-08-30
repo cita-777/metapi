@@ -1059,6 +1059,79 @@ describe('convertOpenAiBodyToResponsesBody', () => {
     });
   });
 
+  it('maps legacy chat functions, function_call and role:function messages into Responses request fields', () => {
+    const result = convertOpenAiBodyToResponsesBody(
+      {
+        model: 'gpt-5',
+        messages: [
+          { role: 'user', content: 'lookup weather' },
+          { role: 'function', name: 'legacy_weather', content: '{"temp":21}' },
+        ],
+        functions: [
+          {
+            name: 'legacy_weather',
+            description: 'Lookup weather',
+            parameters: {
+              type: 'object',
+              properties: { city: { type: 'string' } },
+            },
+          },
+        ],
+        function_call: { name: 'legacy_weather' },
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result.tools).toEqual([
+      {
+        type: 'function',
+        name: 'legacy_weather',
+        description: 'Lookup weather',
+        parameters: {
+          type: 'object',
+          properties: { city: { type: 'string' } },
+        },
+      },
+    ]);
+    expect(result.tool_choice).toEqual({
+      type: 'function',
+      name: 'legacy_weather',
+    });
+    expect(result.input).toEqual([
+      {
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: 'lookup weather' }],
+      },
+      {
+        type: 'function_call_output',
+        call_id: 'legacy_weather',
+        output: '{"temp":21}',
+      },
+    ]);
+  });
+
+  it('preserves OpenAI web_search and google_search server tools in Responses request bodies', () => {
+    const result = convertOpenAiBodyToResponsesBody(
+      {
+        model: 'gpt-5',
+        messages: [{ role: 'user', content: 'search docs' }],
+        tools: [
+          { type: 'web_search_preview', search_context_size: 'low' },
+          { type: 'google_search', max_results: 3 },
+        ],
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result.tools).toEqual([
+      { type: 'web_search_preview', search_context_size: 'low', name: 'web_search' },
+      { type: 'web_search', max_results: 3, name: 'web_search' },
+    ]);
+  });
+
   it('drops function tools with blank names when converting OpenAI-compatible input into Responses bodies', () => {
     const result = convertOpenAiBodyToResponsesBody(
       {

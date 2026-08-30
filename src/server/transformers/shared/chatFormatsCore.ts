@@ -973,11 +973,25 @@ function convertClaudeToolsToOpenAiChat(rawTools: unknown): unknown {
     if (!isRecord(item)) return item;
 
     const type = asTrimmedString(item.type).toLowerCase();
+    const name = asTrimmedString(item.name);
+    if (
+      type === 'web_search'
+      || type === 'web_search_20250305'
+      || type === 'google_search'
+      || name === 'web_search'
+      || name === 'google_search'
+    ) {
+      return {
+        ...item,
+        type: 'web_search',
+        name: 'web_search',
+      };
+    }
+
     if (type === 'function' || type === 'custom' || type === 'image_generation') {
       return item;
     }
 
-    const name = asTrimmedString(item.name);
     if (!name) return item;
 
     return {

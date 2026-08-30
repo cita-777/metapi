@@ -66,6 +66,9 @@ import {
   shouldFallbackCompactResponsesToResponses,
 } from '../capabilities/responsesCompact.js';
 import { detectDownstreamClientContext } from '../downstreamClientContext.js';
+import { validateExternalResponsesHttpRequest } from '../responsesPreflight.js';
+import { applyOpenAiServiceTierPolicy } from '../serviceTierPolicy.js';
+import { maybeHandleWebSearchOnlySimulation } from '../webSearchSimulation.js';
 import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 import { shouldAbortSameSiteEndpointFallback } from '../../services/proxyRetryPolicy.js';
 import {
@@ -262,6 +265,14 @@ export async function handleOpenAiResponsesSurfaceRequest(
     const defaultEncryptedReasoningInclude = isCodexResponsesSurface(
       request.headers as Record<string, unknown>,
     );
+    if (!isResponsesWebsocketTransportRequest(request.headers as Record<string, unknown>)) {
+      const preflight = validateExternalResponsesHttpRequest(body, {
+        allowContinuationToolOutput: defaultEncryptedReasoningInclude,
+      });
+      if (!preflight.ok) {
+        return reply.code(preflight.statusCode).send(preflight.payload);
+      }
+    }
     const parsedRequestEnvelope = openAiResponsesTransformer.transformRequest(body, {
       defaultEncryptedReasoningInclude,
     });
@@ -279,6 +290,16 @@ export async function handleOpenAiResponsesSurfaceRequest(
           type: 'invalid_request_error',
         },
       });
+    }
+    if (!isCompactRequest) {
+      const handledSearch = await maybeHandleWebSearchOnlySimulation({
+        app: request.server,
+        request,
+        reply,
+        downstreamFormat: 'responses',
+        body: requestEnvelope.parsed.normalizedBody,
+      });
+      if (handledSearch) return;
     }
     if (!await ensureModelAllowedForDownstreamKey(request, reply, requestedModel)) return;
     const downstreamPolicy = getDownstreamRoutingPolicy(request);
@@ -400,6 +421,21 @@ export async function handleOpenAiResponsesSurfaceRequest(
         model: modelName,
         stream: isStream,
       };
+      const serviceTierPolicy = applyOpenAiServiceTierPolicy({
+        body: normalizedResponsesBody,
+        context: {
+          requestedModel,
+          actualModel: modelName,
+          sitePlatform: selected.site.platform,
+          accountType: oauth?.planType,
+        },
+        rules: (config as any).openAiServiceTierRules,
+      });
+      if (!serviceTierPolicy.ok) {
+        await finalizeDebugFailure(serviceTierPolicy.statusCode, serviceTierPolicy.payload, null);
+        return reply.code(serviceTierPolicy.statusCode).send(serviceTierPolicy.payload);
+      }
+      normalizedResponsesBody = serviceTierPolicy.body;
       if (body.generate === false) {
         normalizedResponsesBody.generate = false;
       }

@@ -26,6 +26,10 @@ describe('buildSiteSaveAction', () => {
         customHeaders: '{"x-site-token":"alpha"}',
         useSystemProxy: false,
         globalWeight: 1.2,
+        postRefreshProbeEnabled: true,
+        postRefreshProbeModel: 'gpt-4o',
+        postRefreshProbeScope: 'single',
+        postRefreshProbeLatencyThresholdMs: 2500,
       },
     );
 
@@ -44,6 +48,10 @@ describe('buildSiteSaveAction', () => {
         customHeaders: '{"x-site-token":"alpha"}',
         useSystemProxy: false,
         globalWeight: 1.2,
+        postRefreshProbeEnabled: true,
+        postRefreshProbeModel: 'gpt-4o',
+        postRefreshProbeScope: 'single',
+        postRefreshProbeLatencyThresholdMs: 2500,
       },
     });
   });

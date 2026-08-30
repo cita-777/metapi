@@ -22,6 +22,14 @@ function toStringList(value: unknown): string[] {
       .filter((item) => item.length > 0);
   }
   if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) {
+        return toStringList(parsed);
+      }
+    } catch {
+      // Fall back to comma splitting for legacy plain-string lists.
+    }
     return value
       .split(',')
       .map((item) => item.trim())

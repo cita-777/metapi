@@ -39,11 +39,17 @@ export type DockerHubTagRecord = {
   digest?: string | null;
 };
 
+export type DockerHubTagCandidates = {
+  primary: UpdateCenterVersionCandidate | null;
+  recentNonStable: UpdateCenterVersionCandidate[];
+};
+
 const STABLE_SEMVER_PATTERN = /^v?(\d+)\.(\d+)\.(\d+)(?:\+[\w.-]+)?$/i;
 const GITHUB_RELEASES_URL = 'https://api.github.com/repos/cita-777/metapi/releases';
 const DOCKER_HUB_TAGS_URL = 'https://hub.docker.com/v2/repositories/1467078763/metapi/tags?page_size=100';
 const UPDATE_CENTER_VERSION_FETCH_TIMEOUT_MS = 5_000;
 const PREFERRED_DOCKER_HUB_TAG_ALIASES = ['latest', 'main'] as const;
+const MAX_RECENT_NON_STABLE_DOCKER_HUB_TAGS = 5;
 
 async function fetchJsonWithTimeout(url: string, init: UndiciRequestInit, timeoutLabel: string): Promise<unknown> {
   const controller = new AbortController();
@@ -133,6 +139,21 @@ function normalizeDockerHubTagRecord(input: string | DockerHubTagRecord): Docker
   return input;
 }
 
+function normalizeDockerHubTagName(input: string | null | undefined): string {
+  return String(input || '').trim();
+}
+
+function isPreferredDockerHubAlias(input: string | null | undefined): boolean {
+  const tag = normalizeDockerHubTagName(input);
+  return PREFERRED_DOCKER_HUB_TAG_ALIASES.includes(tag as typeof PREFERRED_DOCKER_HUB_TAG_ALIASES[number]);
+}
+
+function isStableDockerHubTag(input: string | null | undefined): boolean {
+  const tag = normalizeDockerHubTagName(input);
+  if (!tag) return false;
+  return isPreferredDockerHubAlias(tag) || !!parseStableSemVer(tag);
+}
+
 function normalizeDockerDigest(input: string | null | undefined): string | null {
   const digest = String(input || '').trim();
   return /^sha256:[a-f0-9]{64}$/i.test(digest) ? digest.toLowerCase() : null;
@@ -141,6 +162,22 @@ function normalizeDockerDigest(input: string | null | undefined): string | null 
 function getDockerHubTagPublishedAt(record: DockerHubTagRecord): string | null {
   const value = String(record.tag_last_pushed || record.last_updated || '').trim();
   return value || null;
+}
+
+function getDockerHubTagPublishedTimestamp(record: DockerHubTagRecord): number {
+  const publishedAt = getDockerHubTagPublishedAt(record);
+  if (!publishedAt) return Number.NEGATIVE_INFINITY;
+  const timestamp = Date.parse(publishedAt);
+  return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
+}
+
+function getRecentNonStableDockerHubPriority(input: string | null | undefined): number {
+  const tag = normalizeDockerHubTagName(input).toLowerCase();
+  if (!tag) return 99;
+  if (tag === 'dev') return 0;
+  if (tag.startsWith('dev-')) return 1;
+  if (tag.startsWith('sha-')) return 2;
+  return 3;
 }
 
 function toShortDigest(digest: string | null | undefined): string | null {
@@ -194,6 +231,44 @@ export function selectLatestDockerHubTag(tags: Array<string | DockerHubTagRecord
   return buildDockerHubVersionCandidate(selected.record, selected.semver.normalized);
 }
 
+export function selectRecentNonStableDockerHubTags(
+  tags: Array<string | DockerHubTagRecord>,
+  limit = MAX_RECENT_NON_STABLE_DOCKER_HUB_TAGS,
+): UpdateCenterVersionCandidate[] {
+  const records = tags
+    .map((tag) => normalizeDockerHubTagRecord(tag))
+    .filter((record) => normalizeDockerHubTagName(record.name))
+    .filter((record) => !isStableDockerHubTag(record.name));
+
+  const deduped = new Map<string, DockerHubTagRecord>();
+  for (const record of records) {
+    const tagName = normalizeDockerHubTagName(record.name);
+    const previous = deduped.get(tagName);
+    if (!previous || getDockerHubTagPublishedTimestamp(record) > getDockerHubTagPublishedTimestamp(previous)) {
+      deduped.set(tagName, record);
+    }
+  }
+
+  return Array.from(deduped.values())
+    .sort((a, b) => {
+      const priorityDelta = getRecentNonStableDockerHubPriority(a.name) - getRecentNonStableDockerHubPriority(b.name);
+      if (priorityDelta !== 0) return priorityDelta;
+      const publishedDelta = getDockerHubTagPublishedTimestamp(b) - getDockerHubTagPublishedTimestamp(a);
+      if (publishedDelta !== 0) return publishedDelta;
+      return normalizeDockerHubTagName(a.name).localeCompare(normalizeDockerHubTagName(b.name));
+    })
+    .slice(0, Math.max(0, limit))
+    .map((record) => buildDockerHubVersionCandidate(record, normalizeDockerHubTagName(record.name)))
+    .filter((candidate): candidate is UpdateCenterVersionCandidate => !!candidate);
+}
+
+export function selectDockerHubTagCandidates(tags: Array<string | DockerHubTagRecord>): DockerHubTagCandidates {
+  return {
+    primary: selectLatestDockerHubTag(tags),
+    recentNonStable: selectRecentNonStableDockerHubTags(tags),
+  };
+}
+
 export function resolvePreferredDeploySource(input: {
   defaultSource: UpdateCenterVersionSource;
   githubRelease: UpdateCenterVersionCandidate | null;
@@ -216,13 +291,17 @@ export async function fetchLatestStableGitHubRelease(): Promise<UpdateCenterVers
 }
 
 export async function fetchLatestDockerHubTag(): Promise<UpdateCenterVersionCandidate | null> {
+  return (await fetchDockerHubTagCandidates()).primary;
+}
+
+export async function fetchDockerHubTagCandidates(): Promise<DockerHubTagCandidates> {
   const payload = await fetchJsonWithTimeout(DOCKER_HUB_TAGS_URL, {
     headers: {
       accept: 'application/json',
       'user-agent': 'metapi-update-center/1.0',
     },
   }, 'Docker Hub tag lookup') as { results?: DockerHubTagRecord[] };
-  return selectLatestDockerHubTag(Array.isArray(payload?.results) ? payload.results : []);
+  return selectDockerHubTagCandidates(Array.isArray(payload?.results) ? payload.results : []);
 }
 
 export function getCurrentRuntimeVersion(): string {

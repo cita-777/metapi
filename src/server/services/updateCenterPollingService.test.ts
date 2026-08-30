@@ -97,6 +97,7 @@ describe('updateCenterPollingService', () => {
             publishedAt: '2026-03-31T12:00:00Z',
           },
           dockerHubTag: null,
+          dockerHubRecentTags: [],
           helper: {
             ok: true,
             releaseName: 'metapi',
@@ -115,6 +116,7 @@ describe('updateCenterPollingService', () => {
           currentVersion: '1.2.3',
           githubRelease: runtime.statusSnapshot.githubRelease,
           dockerHubTag: null,
+          dockerHubRecentTags: [],
           helper: runtime.statusSnapshot.helper,
           runtime,
         },
@@ -151,15 +153,16 @@ describe('updateCenterPollingService', () => {
       lastResolvedSource: 'github-release',
       lastResolvedCandidateKey: 'github-release:v1.3.0',
       lastNotifiedCandidateKey: 'github-release:v1.3.0',
-      statusSnapshot: {
+      statusSnapshot: expect.objectContaining({
         githubRelease: expect.objectContaining({
           normalizedVersion: '1.3.0',
         }),
         dockerHubTag: null,
+        dockerHubRecentTags: [],
         helper: expect.objectContaining({
           imageTag: '1.2.3',
         }),
-      },
+      }),
     }));
 
     await vi.advanceTimersByTimeAsync(60_000);
@@ -205,6 +208,7 @@ describe('updateCenterPollingService', () => {
             publishedAt: '2026-03-31T12:01:00Z',
           },
           dockerHubTag: null,
+          dockerHubRecentTags: [],
           helper: {
             ok: true,
             releaseName: 'metapi',
@@ -223,6 +227,7 @@ describe('updateCenterPollingService', () => {
           currentVersion: '1.2.3',
           githubRelease: runtime.statusSnapshot.githubRelease,
           dockerHubTag: null,
+          dockerHubRecentTags: [],
           helper: runtime.statusSnapshot.helper,
           runtime,
         },
@@ -251,15 +256,16 @@ describe('updateCenterPollingService', () => {
       lastResolvedCandidateKey: 'github-release:v1.3.0',
       lastNotifiedCandidateKey: 'github-release:v1.3.0',
       lastNotifiedAt: expect.any(String),
-      statusSnapshot: {
+      statusSnapshot: expect.objectContaining({
         githubRelease: expect.objectContaining({
           normalizedVersion: '1.3.0',
         }),
         dockerHubTag: null,
+        dockerHubRecentTags: [],
         helper: expect.objectContaining({
           imageTag: '1.2.3',
         }),
-      },
+      }),
     }));
   });
 });

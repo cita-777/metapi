@@ -88,6 +88,18 @@ describe('updateCenterRuntimeStateService', () => {
           displayVersion: 'latest @ sha256:efb2ee655386',
           publishedAt: '2026-03-30T20:30:00Z',
         },
+        dockerHubRecentTags: [
+          {
+            source: 'docker-hub-tag',
+            rawVersion: 'dev',
+            normalizedVersion: 'dev',
+            url: null,
+            tagName: 'dev',
+            digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            displayVersion: 'dev @ sha256:aaaaaaaaaaaa',
+            publishedAt: '2026-03-30T20:35:00Z',
+          },
+        ],
         helper: {
           ok: true,
           releaseName: 'metapi',
@@ -142,6 +154,18 @@ describe('updateCenterRuntimeStateService', () => {
           displayVersion: 'latest @ sha256:efb2ee655386',
           publishedAt: '2026-03-30T20:30:00Z',
         },
+        dockerHubRecentTags: [
+          {
+            source: 'docker-hub-tag',
+            rawVersion: 'dev',
+            normalizedVersion: 'dev',
+            url: null,
+            tagName: 'dev',
+            digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            displayVersion: 'dev @ sha256:aaaaaaaaaaaa',
+            publishedAt: '2026-03-30T20:35:00Z',
+          },
+        ],
         helper: {
           ok: true,
           releaseName: 'metapi',

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  convertAnthropicToolsToOpenAi,
   convertOpenAiBodyToAnthropicMessagesBody,
   convertOpenAiToolChoiceToAnthropic,
+  convertOpenAiToolsToAnthropic,
   sanitizeAnthropicMessagesBody,
 } from './conversion.js';
 import { anthropicMessagesInbound } from './inbound.js';
@@ -27,6 +29,24 @@ describe('sanitizeAnthropicMessagesBody', () => {
       type: 'enabled',
       budget_tokens: 512,
     });
+  });
+
+  it('maps web_search server tools between OpenAI-compatible and Anthropic Messages requests', () => {
+    expect(convertOpenAiToolsToAnthropic([
+      { type: 'web_search', max_results: 3 },
+      { type: 'google_search' },
+    ])).toEqual([
+      { type: 'web_search_20250305', max_results: 3, name: 'web_search' },
+      { type: 'web_search_20250305', name: 'web_search' },
+    ]);
+
+    expect(convertAnthropicToolsToOpenAi([
+      { type: 'web_search_20250305', max_uses: 2 },
+      { name: 'lookup_weather', input_schema: { type: 'object' } },
+    ])).toEqual([
+      { type: 'web_search', max_uses: 2, name: 'web_search' },
+      { name: 'lookup_weather', input_schema: { type: 'object' } },
+    ]);
   });
 
   it('normalizes string system and message content before rebuilding cache anchors', () => {

@@ -44,4 +44,14 @@ describe('applyRuntimeSettings', () => {
 
     expect(config.smtpPort).toBe(587);
   });
+
+  it('hydrates legacy double-encoded global model allowlist values', () => {
+    config.globalAllowedModels = [];
+
+    applyRuntimeSettings(new Map([
+      ['global_allowed_models', JSON.stringify(JSON.stringify(['model-alpha', ' model-beta ', 'model-gamma']))],
+    ]));
+
+    expect(config.globalAllowedModels).toEqual(['model-alpha', 'model-beta', 'model-gamma']);
+  });
 });

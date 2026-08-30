@@ -395,6 +395,7 @@ describe('responses websocket transport', () => {
     upstreamRequests = [];
     (config as any).codexResponsesWebsocketBeta = originalCodexResponsesWebsocketBeta;
     (config as any).codexUpstreamWebsocketEnabled = true;
+    (config as any).openAiServiceTierRules = undefined;
     rejectedUpgradeStatus = 426;
     rejectedUpgradeStatusText = 'Upgrade Required';
     rejectedUpgradeBody = 'Upgrade Required';
@@ -1554,6 +1555,79 @@ describe('responses websocket transport', () => {
       call_id: 'call_1',
       output: 'tool result',
     });
+  });
+
+  it('applies service_tier policy to websocket frames before upstream dispatch', async () => {
+    (config as any).openAiServiceTierRules = [{
+      action: 'filter',
+      tiers: ['priority'],
+      platforms: ['openai'],
+    }];
+    const selectedChannel = createSelectedChannel({
+      sitePlatform: 'openai',
+      actualModel: 'gpt-4.1',
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    fetchMock.mockResolvedValueOnce(createSseResponse([
+      'event: response.completed\n',
+      'data: {"type":"response.completed","response":{"id":"resp_ws_tier","model":"gpt-4.1","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+
+    const socket = createClientSocket(baseUrl);
+    await waitForSocketOpen(socket);
+    const responsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-4.1',
+      service_tier: 'fast',
+      input: [],
+    }));
+    await responsePromise;
+    socket.close();
+
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const forwardedBody = JSON.parse(String(options.body));
+    expect(forwardedBody.service_tier).toBeUndefined();
+    (config as any).openAiServiceTierRules = undefined;
+  });
+
+  it('blocks websocket service_tier before upstream dispatch', async () => {
+    (config as any).openAiServiceTierRules = [{
+      action: 'block',
+      tiers: ['priority'],
+      platforms: ['openai'],
+    }];
+    const selectedChannel = createSelectedChannel({
+      sitePlatform: 'openai',
+      actualModel: 'gpt-4.1',
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+
+    const socket = createClientSocket(baseUrl);
+    await waitForSocketOpen(socket);
+    const errorPromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'error',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-4.1',
+      service_tier: 'fast',
+      input: [],
+    }));
+    const message = await errorPromise;
+    socket.close();
+
+    expect(message.status).toBe(400);
+    expect(message.error.message).toContain('service_tier');
+    expect(fetchMock).not.toHaveBeenCalled();
+    (config as any).openAiServiceTierRules = undefined;
   });
 
   it('keeps streamed output items for follow-up turns when the terminal HTTP fallback payload has an empty output array', async () => {

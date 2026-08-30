@@ -71,6 +71,19 @@ function cloneJsonValue<T>(value: T): T {
   return value;
 }
 
+const OPENAI_WEB_SEARCH_TOOL_TYPES = new Set([
+  'web_search',
+  'web_search_preview',
+  'web_search_preview_2025_03_11',
+  'google_search',
+]);
+
+function isOpenAiWebSearchToolRecord(item: Record<string, unknown>): boolean {
+  const type = asTrimmedString(item.type).toLowerCase();
+  const name = asTrimmedString(item.name).toLowerCase();
+  return OPENAI_WEB_SEARCH_TOOL_TYPES.has(type) || name === 'web_search' || name === 'google_search';
+}
+
 function normalizeOptionalTrimmedString(value: unknown): string | undefined {
   const trimmed = asTrimmedString(value);
   return trimmed || undefined;
@@ -287,9 +300,20 @@ function collectOpenAiToolNames(body: Record<string, unknown>): string[] {
     }
   }
 
+  const rawFunctions = Array.isArray(body.functions) ? body.functions : [];
+  for (const item of rawFunctions) {
+    if (!isRecord(item)) continue;
+    pushName(item.name);
+  }
+
   const toolChoice = isRecord(body.tool_choice) ? body.tool_choice : null;
   if (toolChoice && asTrimmedString(toolChoice.type).toLowerCase() === 'function') {
     pushName(isRecord(toolChoice.function) ? toolChoice.function.name : toolChoice.name);
+  }
+
+  const legacyFunctionCall = isRecord(body.function_call) ? body.function_call : null;
+  if (legacyFunctionCall) {
+    pushName(legacyFunctionCall.name);
   }
 
   const rawMessages = Array.isArray(body.messages) ? body.messages : [];
@@ -344,6 +368,14 @@ function convertOpenAiToolsToResponses(
         return item;
       }
 
+      if (isOpenAiWebSearchToolRecord(item)) {
+        return {
+          ...item,
+          type: type === 'google_search' ? 'web_search' : (type || 'web_search'),
+          name: asTrimmedString(item.name) || 'web_search',
+        };
+      }
+
       if (type === 'custom' && asTrimmedString(item.name)) {
         return item;
       }
@@ -353,6 +385,43 @@ function convertOpenAiToolsToResponses(
     .filter((item): item is Record<string, unknown> => !!item);
 
   return converted;
+}
+
+function convertOpenAiFunctionsToResponses(
+  rawFunctions: unknown,
+  toolNameMap: Record<string, string>,
+): Array<Record<string, unknown>> {
+  if (!Array.isArray(rawFunctions)) return [];
+
+  return rawFunctions
+    .map((item) => {
+      if (!isRecord(item)) return null;
+      const name = asTrimmedString(item.name);
+      if (!name) return null;
+
+      const mapped: Record<string, unknown> = {
+        type: 'function',
+        name: getShortToolName(name, toolNameMap),
+      };
+      const description = asTrimmedString(item.description);
+      if (description) mapped.description = description;
+      if (item.parameters !== undefined) mapped.parameters = item.parameters;
+      if (item.strict !== undefined) mapped.strict = item.strict;
+      return mapped;
+    })
+    .filter((item): item is Record<string, unknown> => !!item);
+}
+
+function mergeOpenAiToolsAndFunctionsToResponses(
+  rawTools: unknown,
+  rawFunctions: unknown,
+  toolNameMap: Record<string, string>,
+): unknown {
+  const convertedTools = convertOpenAiToolsToResponses(rawTools, toolNameMap);
+  const toolList = Array.isArray(convertedTools) ? convertedTools : [];
+  const functionList = convertOpenAiFunctionsToResponses(rawFunctions, toolNameMap);
+  if (toolList.length <= 0 && functionList.length <= 0) return convertedTools;
+  return [...toolList, ...functionList];
 }
 
 function convertOpenAiToolChoiceToResponses(
@@ -371,6 +440,26 @@ function convertOpenAiToolChoiceToResponses(
   }
 
   return rawToolChoice;
+}
+
+function convertOpenAiFunctionCallToResponsesToolChoice(
+  rawFunctionCall: unknown,
+  toolNameMap: Record<string, string>,
+): unknown {
+  if (rawFunctionCall === undefined) return undefined;
+  if (typeof rawFunctionCall === 'string') {
+    const normalized = rawFunctionCall.trim().toLowerCase();
+    if (normalized === 'none' || normalized === 'auto' || normalized === 'required') return normalized;
+    return rawFunctionCall;
+  }
+  if (!isRecord(rawFunctionCall)) return rawFunctionCall;
+
+  const name = asTrimmedString(rawFunctionCall.name);
+  if (!name) return 'required';
+  return {
+    type: 'function',
+    name: getShortToolName(name, toolNameMap),
+  };
 }
 
 function normalizeResponsesBodyForCompatibility(
@@ -596,6 +685,23 @@ export function convertOpenAiBodyToResponsesBody(
       continue;
     }
 
+    if (role === 'function') {
+      const callId = asTrimmedString(item.name) || asTrimmedString(item.id);
+      if (!callId) continue;
+      const output = normalizeToolOutput(item.content);
+      inputItems.push({
+        type: 'function_call_output',
+        call_id: callId,
+        output: (
+          (typeof output === 'string' && output === '')
+          || (Array.isArray(output) && output.length === 0)
+        )
+          ? '(empty)'
+          : output,
+      });
+      continue;
+    }
+
     const normalizedContent = normalizeResponsesMessageContent('user', item.content);
     if (normalizedContent.length <= 0) continue;
     inputItems.push({
@@ -639,7 +745,13 @@ export function convertOpenAiBodyToResponsesBody(
   if (openaiBody.reasoning_budget !== undefined) body.reasoning_budget = openaiBody.reasoning_budget;
   if (openaiBody.reasoning_summary !== undefined) body.reasoning_summary = openaiBody.reasoning_summary;
   if (openaiBody.parallel_tool_calls !== undefined) body.parallel_tool_calls = openaiBody.parallel_tool_calls;
-  if (openaiBody.tools !== undefined) body.tools = convertOpenAiToolsToResponses(openaiBody.tools, toolNameMap);
+  if (openaiBody.tools !== undefined || openaiBody.functions !== undefined) {
+    body.tools = mergeOpenAiToolsAndFunctionsToResponses(
+      openaiBody.tools,
+      openaiBody.functions,
+      toolNameMap,
+    );
+  }
   if (openaiBody.safety_identifier !== undefined) body.safety_identifier = openaiBody.safety_identifier;
   if (openaiBody.max_tool_calls !== undefined) body.max_tool_calls = openaiBody.max_tool_calls;
   if (openaiBody.prompt_cache_key !== undefined) body.prompt_cache_key = openaiBody.prompt_cache_key;
@@ -665,7 +777,9 @@ export function convertOpenAiBodyToResponsesBody(
     body.text = textConfig;
   }
 
-  const responsesToolChoice = convertOpenAiToolChoiceToResponses(openaiBody.tool_choice, toolNameMap);
+  const responsesToolChoice = openaiBody.tool_choice !== undefined
+    ? convertOpenAiToolChoiceToResponses(openaiBody.tool_choice, toolNameMap)
+    : convertOpenAiFunctionCallToResponsesToolChoice(openaiBody.function_call, toolNameMap);
   if (responsesToolChoice !== undefined) body.tool_choice = responsesToolChoice;
   if (Array.isArray(body.tools) && body.tools.length === 0) {
     delete body.tool_choice;

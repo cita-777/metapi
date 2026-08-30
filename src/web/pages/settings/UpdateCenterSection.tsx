@@ -39,6 +39,13 @@ type UpdateCenterStatus = {
     digest?: string | null;
     publishedAt?: string | null;
   } | null;
+  dockerHubRecentTags?: Array<{
+    normalizedVersion?: string;
+    displayVersion?: string;
+    tagName?: string;
+    digest?: string | null;
+    publishedAt?: string | null;
+  }> | null;
   helper?: {
     ok?: boolean;
     healthy?: boolean;
@@ -212,6 +219,17 @@ function formatImageTarget(tag?: string | null, digest?: string | null) {
   if (normalizedTag) return normalizedTag;
   if (shortDigest) return shortDigest;
   return '';
+}
+
+type RecentDockerCandidate = NonNullable<NonNullable<UpdateCenterStatus['dockerHubRecentTags']>[number]>;
+
+function normalizeRecentDockerCandidates(
+  input?: UpdateCenterStatus['dockerHubRecentTags'] | null,
+): Array<RecentDockerCandidate & { tagName: string }> {
+  if (!Array.isArray(input)) return [];
+  return input.filter(
+    (entry): entry is RecentDockerCandidate & { tagName: string } => !!String(entry?.tagName || '').trim(),
+  );
 }
 
 export default function UpdateCenterSection() {
@@ -432,6 +450,7 @@ export default function UpdateCenterSection() {
   const canDeployDocker = !deploying && dockerDeployState.canDeploy;
   const manualDockerTag = String(manualDockerTarget.tag || '').trim();
   const manualDockerDigest = String(manualDockerTarget.digest || '').trim();
+  const recentDockerCandidates = normalizeRecentDockerCandidates(status?.dockerHubRecentTags);
   const canDeployManualDocker = !deploying
     && config.enabled
     && config.dockerHubTagsEnabled
@@ -570,7 +589,7 @@ export default function UpdateCenterSection() {
           />
           <span style={{ display: 'grid', gap: 4 }}>
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>Docker Hub</span>
-            <span style={fieldHintStyle}>自动发现优先稳定标签；dev / 分支 / 临时标签可在下方手动部署。</span>
+            <span style={fieldHintStyle}>自动发现会保留稳定主候选，并额外列出最近的 dev / 分支 / sha 标签。</span>
           </span>
         </label>
       </div>
@@ -731,7 +750,7 @@ export default function UpdateCenterSection() {
                 ) : null}
               </div>
             </div>
-            <div style={{ ...fieldHintStyle, marginBottom: 10 }}>自动候选优先 latest / main / 稳定 SemVer；dev / 分支 / sha 标签可手动填写部署。</div>
+            <div style={{ ...fieldHintStyle, marginBottom: 10 }}>主候选优先 latest / main / 稳定 SemVer；下方还会自动列出最近的 dev / 分支 / sha 标签。</div>
             <div className={dockerDeployState.highlight ? 'stat-value-glow' : ''} style={{ ...summaryValueStyle, fontFamily: 'var(--font-mono)', marginBottom: 8 }}>
               {status?.dockerHubTag?.displayVersion || status?.dockerHubTag?.normalizedVersion || '未发现'}
             </div>
@@ -773,12 +792,97 @@ export default function UpdateCenterSection() {
                 </button>
               ) : null}
             </div>
+            <div style={{ borderTop: '1px dashed var(--color-border-light)', marginTop: 4, paddingTop: 12, marginBottom: 12 }}>
+              <div style={{ fontSize: 12, color: 'var(--color-text-primary)', fontWeight: 600, marginBottom: 6 }}>
+                最近非稳定 Docker 标签
+              </div>
+              <div style={{ ...fieldHintStyle, marginBottom: 10 }}>
+                自动列出最近推送的 dev / 分支 / sha 标签；点部署即可直接使用，不必手动输入 tag 和 digest。
+              </div>
+              {recentDockerCandidates.length ? (
+                <div style={{ display: 'grid', gap: 8 }}>
+                  {recentDockerCandidates.map((candidate) => {
+                    const candidateTag = String(candidate.tagName || '').trim();
+                    const candidateDigest = String(candidate.digest || '').trim();
+                    const candidateLabel = candidate.displayVersion || candidate.normalizedVersion || candidateTag;
+                    const candidateDeployState = describeDockerDeployState({
+                      enabled: config.enabled && config.dockerHubTagsEnabled,
+                      helperHealthy,
+                      helperError: status?.helper?.error,
+                      currentVersion: status?.currentVersion,
+                      helper: status?.helper,
+                      candidate,
+                    });
+                    const canDeployCandidate = !deploying && candidateDeployState.canDeploy;
+                    return (
+                      <div
+                        key={`${candidateTag}:${candidateDigest || 'no-digest'}`}
+                        style={{
+                          border: '1px solid var(--color-border-light)',
+                          borderRadius: 'var(--radius-sm)',
+                          padding: 10,
+                          display: 'grid',
+                          gap: 8,
+                        }}
+                      >
+                        <div style={{ ...summaryValueStyle, fontFamily: 'var(--font-mono)', marginBottom: 0 }}>
+                          {candidateLabel}
+                        </div>
+                        <div style={fieldHintStyle}>
+                          最近推送：{formatTaskTime(candidate.publishedAt)}
+                        </div>
+                        {candidateDigest ? (
+                          <div style={{ ...fieldHintStyle, fontFamily: 'var(--font-mono)' }} title={candidateDigest}>
+                            Digest：{formatShortDigest(candidateDigest)}
+                          </div>
+                        ) : null}
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            style={{ border: '1px solid var(--color-border)' }}
+                            disabled={!canDeployCandidate || !candidateTag}
+                            title={candidateDeployState.reason}
+                            onClick={() => {
+                              if (!canDeployCandidate || !candidateTag) return;
+                              void runDeploy('docker-hub-tag', {
+                                tag: candidateTag,
+                                digest: candidateDigest || null,
+                              });
+                            }}
+                          >
+                            部署 {candidateTag}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            style={{ border: '1px solid var(--color-border)' }}
+                            onClick={() => {
+                              setManualDockerTarget({
+                                tag: candidateTag,
+                                digest: candidateDigest,
+                              });
+                            }}
+                          >
+                            填入手动区
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div style={fieldHintStyle}>
+                  暂未发现最近的 dev / 分支 / sha 标签；仍可在下方手动填写任意 Docker 标签。
+                </div>
+              )}
+            </div>
             <div style={{ borderTop: '1px dashed var(--color-border-light)', marginTop: 4, paddingTop: 12 }}>
               <div style={{ fontSize: 12, color: 'var(--color-text-primary)', fontWeight: 600, marginBottom: 6 }}>
                 手动部署 Docker Hub 标签
               </div>
               <div style={{ ...fieldHintStyle, marginBottom: 10 }}>
-                自动候选不会覆盖所有分支标签。若要切到 dev、feature、临时或 sha 标签，直接在这里填写。
+                自动发现已经覆盖最近的非稳定标签；如果你要部署更老或更特殊的 tag，仍可直接在这里填写。
               </div>
               <div
                 style={{

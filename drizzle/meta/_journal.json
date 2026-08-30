@@ -169,6 +169,20 @@
       "when": 1775731596826,
       "tag": "0024_projection_leases",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1776943800000,
+      "tag": "0025_site_post_refresh_probe",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1776944000000,
+      "tag": "0026_site_probe_latency_threshold",
+      "breakpoints": true
     }
   ]
 }

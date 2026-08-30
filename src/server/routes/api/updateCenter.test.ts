@@ -9,13 +9,13 @@ import { waitForBackgroundTaskToReachTerminalState } from '../../test-fixtures/b
 
 const {
   fetchLatestStableGitHubReleaseMock,
-  fetchLatestDockerHubTagMock,
+  fetchDockerHubTagCandidatesMock,
   getUpdateCenterHelperStatusMock,
   streamUpdateCenterDeployMock,
   streamUpdateCenterRollbackMock,
 } = vi.hoisted(() => ({
   fetchLatestStableGitHubReleaseMock: vi.fn(),
-  fetchLatestDockerHubTagMock: vi.fn(),
+  fetchDockerHubTagCandidatesMock: vi.fn(),
   getUpdateCenterHelperStatusMock: vi.fn(),
   streamUpdateCenterDeployMock: vi.fn(),
   streamUpdateCenterRollbackMock: vi.fn(),
@@ -26,7 +26,7 @@ vi.mock('../../services/updateCenterVersionService.js', async () => {
   return {
     ...actual,
     fetchLatestStableGitHubRelease: (...args: unknown[]) => fetchLatestStableGitHubReleaseMock(...args),
-    fetchLatestDockerHubTag: (...args: unknown[]) => fetchLatestDockerHubTagMock(...args),
+    fetchDockerHubTagCandidates: (...args: unknown[]) => fetchDockerHubTagCandidatesMock(...args),
   };
 });
 
@@ -103,7 +103,7 @@ describe('update center routes', () => {
 
   beforeEach(async () => {
     fetchLatestStableGitHubReleaseMock.mockReset();
-    fetchLatestDockerHubTagMock.mockReset();
+    fetchDockerHubTagCandidatesMock.mockReset();
     getUpdateCenterHelperStatusMock.mockReset();
     streamUpdateCenterDeployMock.mockReset();
     streamUpdateCenterRollbackMock.mockReset();
@@ -139,6 +139,18 @@ describe('update center routes', () => {
       publishedAt: '2026-03-29T11:54:35.591877Z',
       url: null,
     } as const;
+    const dockerHubRecentTags = [
+      {
+        source: 'docker-hub-tag',
+        rawVersion: 'dev',
+        normalizedVersion: 'dev',
+        tagName: 'dev',
+        digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        displayVersion: 'dev @ sha256:aaaaaaaaaaaa',
+        publishedAt: '2026-03-29T12:54:35.591877Z',
+        url: null,
+      },
+    ] as const;
     const helperStatus = {
       ok: true,
       releaseName: 'metapi',
@@ -161,7 +173,10 @@ describe('update center routes', () => {
       ],
     } as const;
     fetchLatestStableGitHubReleaseMock.mockResolvedValue(githubRelease);
-    fetchLatestDockerHubTagMock.mockResolvedValue(dockerHubTag);
+    fetchDockerHubTagCandidatesMock.mockResolvedValue({
+      primary: dockerHubTag,
+      recentNonStable: dockerHubRecentTags,
+    });
     getUpdateCenterHelperStatusMock.mockResolvedValue(helperStatus);
 
     const saveResponse = await app.inject({
@@ -216,6 +231,13 @@ describe('update center routes', () => {
         displayVersion: 'latest @ sha256:efb2ee655386',
         digest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
       },
+      dockerHubRecentTags: [
+        {
+          normalizedVersion: 'dev',
+          displayVersion: 'dev @ sha256:aaaaaaaaaaaa',
+          digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        },
+      ],
       helper: {
         ok: true,
         healthy: true,
@@ -242,11 +264,14 @@ describe('update center routes', () => {
 
   it('returns partial status when a single version source lookup fails', async () => {
     fetchLatestStableGitHubReleaseMock.mockRejectedValue(new Error('GitHub releases lookup timed out'));
-    fetchLatestDockerHubTagMock.mockResolvedValue({
-      source: 'docker-hub-tag',
-      rawVersion: '1.3.1',
-      normalizedVersion: '1.3.1',
-      url: null,
+    fetchDockerHubTagCandidatesMock.mockResolvedValue({
+      primary: {
+        source: 'docker-hub-tag',
+        rawVersion: '1.3.1',
+        normalizedVersion: '1.3.1',
+        url: null,
+      },
+      recentNonStable: [],
     });
     getUpdateCenterHelperStatusMock.mockResolvedValue({
       ok: true,
@@ -426,6 +451,18 @@ describe('update center routes', () => {
           publishedAt: '2026-03-31T09:00:00Z',
           url: null,
         },
+        dockerHubRecentTags: [
+          {
+            source: 'docker-hub-tag',
+            rawVersion: 'dev',
+            normalizedVersion: 'dev',
+            tagName: 'dev',
+            digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            displayVersion: 'dev @ sha256:aaaaaaaaaaaa',
+            publishedAt: '2026-03-31T09:05:00Z',
+            url: null,
+          },
+        ],
         helper: {
           ok: true,
           releaseName: 'metapi',
@@ -454,6 +491,12 @@ describe('update center routes', () => {
       dockerHubTag: {
         displayVersion: 'latest @ sha256:efb2ee655386',
       },
+      dockerHubRecentTags: [
+        {
+          normalizedVersion: 'dev',
+          displayVersion: 'dev @ sha256:aaaaaaaaaaaa',
+        },
+      ],
       helper: {
         imageDigest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
       },
@@ -462,7 +505,7 @@ describe('update center routes', () => {
       },
     });
     expect(fetchLatestStableGitHubReleaseMock).not.toHaveBeenCalled();
-    expect(fetchLatestDockerHubTagMock).not.toHaveBeenCalled();
+    expect(fetchDockerHubTagCandidatesMock).not.toHaveBeenCalled();
     expect(getUpdateCenterHelperStatusMock).not.toHaveBeenCalled();
   });
 
@@ -477,15 +520,29 @@ describe('update center routes', () => {
       publishedAt: '2026-03-31T10:00:00Z',
       url: 'https://github.com/cita-777/metapi/releases/tag/v1.3.1',
     });
-    fetchLatestDockerHubTagMock.mockResolvedValue({
-      source: 'docker-hub-tag',
-      rawVersion: 'latest',
-      normalizedVersion: 'latest',
-      tagName: 'latest',
-      digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
-      displayVersion: 'latest @ sha256:dddddddddddd',
-      publishedAt: '2026-03-31T10:00:00Z',
-      url: null,
+    fetchDockerHubTagCandidatesMock.mockResolvedValue({
+      primary: {
+        source: 'docker-hub-tag',
+        rawVersion: 'latest',
+        normalizedVersion: 'latest',
+        tagName: 'latest',
+        digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+        displayVersion: 'latest @ sha256:dddddddddddd',
+        publishedAt: '2026-03-31T10:00:00Z',
+        url: null,
+      },
+      recentNonStable: [
+        {
+          source: 'docker-hub-tag',
+          rawVersion: 'dev-20260417-f67ade2',
+          normalizedVersion: 'dev-20260417-f67ade2',
+          tagName: 'dev-20260417-f67ade2',
+          digest: 'sha256:abababababababababababababababababababababababababababababababab',
+          displayVersion: 'dev-20260417-f67ade2 @ sha256:abababababab',
+          publishedAt: '2026-03-31T10:05:00Z',
+          url: null,
+        },
+      ],
     });
     getUpdateCenterHelperStatusMock.mockResolvedValue({
       ok: true,
@@ -512,6 +569,12 @@ describe('update center routes', () => {
       dockerHubTag: {
         digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
       },
+      dockerHubRecentTags: [
+        {
+          normalizedVersion: 'dev-20260417-f67ade2',
+          digest: 'sha256:abababababababababababababababababababababababababababababababab',
+        },
+      ],
       helper: {
         revision: '13',
       },
@@ -520,7 +583,7 @@ describe('update center routes', () => {
       },
     });
     expect(fetchLatestStableGitHubReleaseMock).toHaveBeenCalledTimes(1);
-    expect(fetchLatestDockerHubTagMock).toHaveBeenCalledTimes(1);
+    expect(fetchDockerHubTagCandidatesMock).toHaveBeenCalledTimes(1);
     expect(getUpdateCenterHelperStatusMock).toHaveBeenCalledTimes(1);
     expect(await loadUpdateCenterRuntimeState()).toEqual(expect.objectContaining({
       lastResolvedSource: 'github-release',
@@ -532,6 +595,11 @@ describe('update center routes', () => {
         dockerHubTag: expect.objectContaining({
           digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
         }),
+        dockerHubRecentTags: [
+          expect.objectContaining({
+            normalizedVersion: 'dev-20260417-f67ade2',
+          }),
+        ],
         helper: expect.objectContaining({
           revision: '13',
         }),

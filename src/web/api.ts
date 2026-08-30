@@ -786,6 +786,12 @@ export const api = {
     }),
   getSiteAvailableModels: (siteId: number) =>
     request(`/api/sites/${siteId}/available-models`),
+  probeSiteNow: (siteId: number, options?: { scope?: 'single' | 'all'; modelName?: string; latencyThresholdMs?: number }) =>
+    request(`/api/sites/${siteId}/probe-now`, {
+      method: 'POST',
+      body: JSON.stringify(options || {}),
+      timeoutMs: options?.scope === 'all' ? 120_000 : 30_000,
+    }),
 
   // Accounts
   getAccounts: async (params?: { includeOauth?: boolean }) => {

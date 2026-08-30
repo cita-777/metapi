@@ -14,12 +14,15 @@ vi.mock('undici', async () => {
 
 import {
   compareStableSemVer,
+  fetchDockerHubTagCandidates,
   fetchLatestDockerHubTag,
   fetchLatestStableGitHubRelease,
   parseStableSemVer,
   resolvePreferredDeploySource,
+  selectDockerHubTagCandidates,
   selectLatestDockerHubTag,
   selectLatestStableGitHubRelease,
+  selectRecentNonStableDockerHubTags,
 } from './updateCenterVersionService.js';
 
 describe('update center version service', () => {
@@ -129,6 +132,84 @@ describe('update center version service', () => {
         normalizedVersion: 'latest',
         source: 'docker-hub-tag',
       });
+    });
+  });
+
+  describe('selectRecentNonStableDockerHubTags', () => {
+    it('returns recent non-stable docker tags with dev-like tags prioritized ahead of generic branch tags', () => {
+      const candidates = selectRecentNonStableDockerHubTags([
+        {
+          name: 'feature-login',
+          digest: 'sha256:1111111111111111111111111111111111111111111111111111111111111111',
+          tag_last_pushed: '2026-04-17T10:00:00Z',
+        },
+        {
+          name: 'sha-a2c2ae6',
+          digest: 'sha256:2222222222222222222222222222222222222222222222222222222222222222',
+          tag_last_pushed: '2026-04-17T09:00:00Z',
+        },
+        {
+          name: 'dev',
+          digest: 'sha256:3333333333333333333333333333333333333333333333333333333333333333',
+          tag_last_pushed: '2026-04-17T08:00:00Z',
+        },
+        {
+          name: 'dev-20260417-f67ade2',
+          digest: 'sha256:4444444444444444444444444444444444444444444444444444444444444444',
+          tag_last_pushed: '2026-04-17T07:00:00Z',
+        },
+        {
+          name: 'latest',
+          digest: 'sha256:5555555555555555555555555555555555555555555555555555555555555555',
+          tag_last_pushed: '2026-04-17T11:00:00Z',
+        },
+        {
+          name: '1.10.0',
+          digest: 'sha256:6666666666666666666666666666666666666666666666666666666666666666',
+          tag_last_pushed: '2026-04-16T11:00:00Z',
+        },
+      ]);
+
+      expect(candidates).toHaveLength(4);
+      expect(candidates.map((candidate) => candidate.tagName)).toEqual([
+        'dev',
+        'dev-20260417-f67ade2',
+        'sha-a2c2ae6',
+        'feature-login',
+      ]);
+      expect(candidates[0]).toMatchObject({
+        displayVersion: 'dev @ sha256:333333333333',
+      });
+    });
+  });
+
+  describe('selectDockerHubTagCandidates', () => {
+    it('returns both the stable primary candidate and recent non-stable candidates from one tag list', () => {
+      const candidates = selectDockerHubTagCandidates([
+        {
+          name: 'latest',
+          digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          tag_last_pushed: '2026-04-17T12:00:00Z',
+        },
+        {
+          name: 'dev-20260417-f67ade2',
+          digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          tag_last_pushed: '2026-04-17T11:00:00Z',
+        },
+        {
+          name: 'sha-f67ade2',
+          digest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+          tag_last_pushed: '2026-04-17T10:00:00Z',
+        },
+      ]);
+
+      expect(candidates.primary).toMatchObject({
+        tagName: 'latest',
+      });
+      expect(candidates.recentNonStable.map((candidate) => candidate.tagName)).toEqual([
+        'dev-20260417-f67ade2',
+        'sha-f67ade2',
+      ]);
     });
   });
 
@@ -261,6 +342,42 @@ describe('update center version service', () => {
         digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
         displayVersion: '1.10.0 @ sha256:aaaaaaaaaaaa',
       });
+    });
+  });
+
+  describe('fetchDockerHubTagCandidates', () => {
+    it('returns the stable docker candidate plus recent non-stable tags from one lookup', async () => {
+      fetchMock.mockResolvedValue(new Response(JSON.stringify({
+        results: [
+          {
+            name: 'latest',
+            digest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
+            tag_last_pushed: '2026-03-29T11:54:35.591877Z',
+          },
+          {
+            name: 'dev',
+            digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            tag_last_pushed: '2026-03-30T11:54:35.591877Z',
+          },
+          {
+            name: 'sha-f67ade2',
+            digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+            tag_last_pushed: '2026-03-30T10:54:35.591877Z',
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+
+      const candidates = await fetchDockerHubTagCandidates();
+      expect(candidates.primary).toMatchObject({
+        tagName: 'latest',
+      });
+      expect(candidates.recentNonStable.map((candidate) => candidate.tagName)).toEqual([
+        'dev',
+        'sha-f67ade2',
+      ]);
     });
   });
 });

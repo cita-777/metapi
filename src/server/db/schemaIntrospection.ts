@@ -207,7 +207,12 @@ function normalizeDefaultValueForColumn(
   if (rawDefaultValue == null) return null;
 
   let normalized = String(rawDefaultValue).trim();
-  if (!normalized) return null;
+  // MySQL stores DEFAULT '' as an empty string in information_schema.COLUMNS.COLUMN_DEFAULT.
+  // An empty string here is a valid empty-string literal default, not "no default".
+  // Encode it as two single-quotes so it round-trips through schemaContract correctly.
+  if (!normalized) {
+    return (logicalType === 'text' || logicalType === 'json') ? "''" : null;
+  }
 
   normalized = normalized.replace(/^default\s+/i, '').trim();
   normalized = unwrapSurroundingParentheses(normalized);

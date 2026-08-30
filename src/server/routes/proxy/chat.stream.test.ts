@@ -112,10 +112,12 @@ describe('chat proxy stream behavior', () => {
   beforeAll(async () => {
     const { chatProxyRoute, claudeMessagesProxyRoute } = await import('./chat.js');
     const { responsesProxyRoute } = await import('./responses.js');
+    const { searchProxyRoute } = await import('./search.js');
     app = Fastify();
     await app.register(chatProxyRoute);
     await app.register(claudeMessagesProxyRoute);
     await app.register(responsesProxyRoute);
+    await app.register(searchProxyRoute);
   });
 
   beforeEach(() => {
@@ -156,6 +158,7 @@ describe('chat proxy stream behavior', () => {
       filter: [],
     };
     (config as any).disableCrossProtocolFallback = false;
+    (config as any).openAiServiceTierRules = undefined;
     config.proxyEmptyContentFailEnabled = false;
     config.proxyErrorKeywords = [];
   });
@@ -193,7 +196,7 @@ describe('chat proxy stream behavior', () => {
       },
     });
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode, response.body).toBe(200);
     expect(response.headers['content-type']).toContain('text/event-stream');
     expect(response.body).toContain('data: ');
     expect(response.body).toContain('"chat.completion.chunk"');
@@ -233,7 +236,7 @@ describe('chat proxy stream behavior', () => {
       },
     });
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode, response.body).toBe(200);
     expect(response.json()?.choices?.[0]?.message?.content).toBe('你好，来自 zstd 非流式响应');
   });
 
@@ -268,7 +271,7 @@ describe('chat proxy stream behavior', () => {
       },
     });
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode, response.body).toBe(200);
     expect(response.headers['content-type']).toContain('text/event-stream');
     expect(response.body).toContain('"chat.completion.chunk"');
     expect(response.body).toContain('你好，来自 zstd 流式回退');
@@ -300,7 +303,7 @@ describe('chat proxy stream behavior', () => {
       },
     });
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode, response.body).toBe(200);
     expect(response.headers['content-type']).toContain('text/event-stream');
     expect(response.body).toContain('"chat.completion.chunk"');
     expect(response.body).toContain('你好，来自 zstd 原生 SSE');
@@ -513,7 +516,7 @@ describe('chat proxy stream behavior', () => {
       },
     });
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode, response.body).toBe(200);
     expect(response.headers['content-type']).toContain('text/event-stream');
     expect(response.body).toContain('visible answer despite zero output usage');
     expect(response.body).toContain('data: [DONE]');
@@ -563,7 +566,7 @@ describe('chat proxy stream behavior', () => {
       },
     });
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode, response.body).toBe(200);
     expect(response.headers['content-type']).toContain('text/event-stream');
     expect(response.headers['cache-control']).toContain('no-transform');
     expect(response.headers['x-accel-buffering']).toBe('no');
@@ -600,7 +603,7 @@ describe('chat proxy stream behavior', () => {
       },
     });
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode, response.body).toBe(200);
     expect(response.body).toContain('"reasoning_content":"plan quietly"');
     expect(response.body).toContain('"content":"visible answer"');
     expect(response.body).not.toContain('<think>');
@@ -639,7 +642,7 @@ describe('chat proxy stream behavior', () => {
       },
     });
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode, response.body).toBe(200);
     expect(response.body).toContain('"reasoning_content":"plan "');
     expect(response.body).toContain('"reasoning_content":"quietly"');
     expect(response.body).toContain('"content":"visible "');
@@ -710,7 +713,7 @@ describe('chat proxy stream behavior', () => {
       },
     });
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode, response.body).toBe(200);
     expect(response.headers['content-type']).toContain('text/event-stream');
     expect(response.body).toContain('"chat.completion.chunk"');
     expect(response.body).toContain('"delta":{"content":"hello"}');
@@ -777,7 +780,7 @@ describe('chat proxy stream behavior', () => {
       },
     });
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode, response.body).toBe(200);
     const body = response.json();
     expect(body.type).toBe('message');
     expect(body.role).toBe('assistant');
@@ -815,7 +818,7 @@ describe('chat proxy stream behavior', () => {
       },
     });
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode, response.body).toBe(200);
     expect(response.headers['content-type']).toContain('text/event-stream');
     expect(response.body).toContain('event: message_start');
     expect(response.body).toContain('event: content_block_delta');
@@ -2018,7 +2021,7 @@ describe('chat proxy stream behavior', () => {
     });
   });
 
-  it('preserves sub2api responses semantics across compatibility retries without using a strict field-dropping body', async () => {
+  it('rejects external HTTP previous_response_id before sub2api compatibility retries', async () => {
     selectChannelMock.mockReturnValue({
       channel: { id: 11, routeId: 22 },
       site: { name: 'sub2api-site', url: 'https://sub2api.example.com', platform: 'sub2api' },
@@ -2076,48 +2079,9 @@ describe('chat proxy stream behavior', () => {
       },
     });
 
-    expect(response.statusCode).toBe(200);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-
-    const [, firstOptions] = fetchMock.mock.calls[0] as [string, any];
-    const [, secondOptions] = fetchMock.mock.calls[1] as [string, any];
-    const firstBody = JSON.parse(firstOptions.body);
-    const secondBody = JSON.parse(secondOptions.body);
-
-    expect(firstOptions.headers.accept).toBe('text/event-stream');
-    expect(secondOptions.headers.accept).toBe('text/event-stream');
-    expect(firstOptions.headers['openai-beta']).toBe('responses-2025-03-11');
-    expect(secondOptions.headers['openai-beta']).toBe('responses-2025-03-11');
-    expect(firstOptions.headers.originator).toBe('codex_cli_rs');
-    expect(secondOptions.headers.originator).toBe('codex_cli_rs');
-    expect(secondOptions.headers['accept-language']).toBe('zh-CN');
-    expect(secondOptions.headers.session_id).toBe('session-123');
-    expect(secondOptions.headers.conversation_id).toBe('conversation-123');
-    expect(secondOptions.headers['x-codex-turn-state']).toBe('turn-state');
-    expect(secondOptions.headers['x-codex-turn-metadata']).toBe('turn-metadata');
-    expect(secondOptions.headers['x-stainless-lang']).toBeUndefined();
-    expect(secondOptions.headers.version).toBeUndefined();
-    expect(secondOptions.headers['user-agent']).toBe('lightMyRequest');
-    expect(firstBody).toMatchObject({
-      stream: true,
-      store: false,
-      previous_response_id: 'resp_prev_1',
-      include: ['reasoning.encrypted_content'],
-      reasoning: { effort: 'high' },
-      prompt_cache_key: 'cache-key-1',
-      service_tier: 'priority',
-      background: true,
-    });
-    expect(secondBody).toMatchObject({
-      stream: true,
-      store: false,
-      previous_response_id: 'resp_prev_1',
-      include: ['reasoning.encrypted_content'],
-      reasoning: { effort: 'high' },
-      prompt_cache_key: 'cache-key-1',
-      service_tier: 'priority',
-      background: true,
-    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.message).toContain('HTTP /v1/responses');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('retries generic 400 /v1/responses with minimal headers for strict compatibility fallback', async () => {
@@ -2863,7 +2827,7 @@ describe('chat proxy stream behavior', () => {
       },
     });
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode, response.body).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [targetUrl] = fetchMock.mock.calls[0] as [string, any];
     expect(targetUrl).toContain('/v1/responses');
@@ -4695,6 +4659,184 @@ describe('chat proxy stream behavior', () => {
     expect(forwardedBody.input.some((item: any) => item?.type === 'function_call_output')).toBe(true);
     expect(forwardedBody.tools?.[0]?.name).toBe('Glob');
     expect(forwardedBody.tool_choice).toEqual({ type: 'function', name: 'Glob' });
+  });
+
+  it('forwards legacy functions/function_call when /v1/chat/completions is routed to /v1/responses upstream', async () => {
+    fetchModelPricingCatalogMock.mockResolvedValue({
+      models: [
+        {
+          modelName: 'upstream-gpt',
+          supportedEndpointTypes: ['/v1/responses'],
+        },
+      ],
+      groupRatio: {},
+    });
+
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'resp_legacy_chat',
+      object: 'response',
+      model: 'upstream-gpt',
+      status: 'completed',
+      output: [],
+      output_text: 'ok',
+      usage: { input_tokens: 3, output_tokens: 2, total_tokens: 5 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        model: 'gpt-4o-mini',
+        stream: false,
+        functions: [{
+          name: 'legacy_lookup',
+          parameters: { type: 'object' },
+        }],
+        function_call: { name: 'legacy_lookup' },
+        messages: [
+          {
+            role: 'function',
+            name: 'legacy_lookup',
+            content: '{"ok":true}',
+          },
+          {
+            role: 'user',
+            content: 'continue',
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const [targetUrl, options] = fetchMock.mock.calls[0] as [string, any];
+    expect(targetUrl).toContain('/v1/responses');
+    const forwardedBody = JSON.parse(options.body);
+    expect(forwardedBody.tools).toEqual([
+      { type: 'function', name: 'legacy_lookup', parameters: { type: 'object' } },
+    ]);
+    expect(forwardedBody.tool_choice).toEqual({ type: 'function', name: 'legacy_lookup' });
+    expect(forwardedBody.input).toContainEqual({
+      type: 'function_call_output',
+      call_id: 'legacy_lookup',
+      output: '{"ok":true}',
+    });
+  });
+
+  it('returns synthetic Anthropic web_search server tool results without adding a new search dependency', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      object: 'search.result',
+      data: [{ title: 'Metapi', url: 'https://example.com/metapi' }],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/messages',
+      payload: {
+        model: 'claude-opus-4-6',
+        max_tokens: 256,
+        stream: false,
+        tools: [{ type: 'web_search_20250305', max_uses: 2 }],
+        messages: [{ role: 'user', content: 'metapi protocol compatibility' }],
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(selectChannelMock).toHaveBeenCalledWith('__search', expect.anything());
+    const [targetUrl, options] = fetchMock.mock.calls[0] as [string, any];
+    expect(targetUrl).toBe('https://upstream.example.com/v1/search');
+    expect(JSON.parse(options.body)).toMatchObject({
+      query: 'metapi protocol compatibility',
+      max_results: 2,
+    });
+
+    const body = response.json();
+    expect(body.content?.[0]).toMatchObject({
+      type: 'server_tool_use',
+      name: 'web_search',
+    });
+    expect(body.content?.[1]).toMatchObject({
+      type: 'web_search_tool_result',
+    });
+  });
+
+  it('streams synthetic Anthropic web_search server tool results over SSE', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      object: 'search.result',
+      data: [{ title: 'Metapi SSE' }],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/messages',
+      payload: {
+        model: 'claude-opus-4-6',
+        max_tokens: 256,
+        stream: true,
+        tools: [{ type: 'web_search_20250305' }],
+        messages: [{ role: 'user', content: 'metapi sse search' }],
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.headers['content-type']).toContain('text/event-stream');
+    expect(response.body).toContain('"type":"server_tool_use"');
+    expect(response.body).toContain('"type":"web_search_tool_result"');
+    expect(response.body).toContain('message_stop');
+  });
+
+  it('returns synthetic Responses web_search results without touching completions upstreams', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      object: 'search.result',
+      data: [{ title: 'Metapi Responses', url: 'https://example.com/responses' }],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'gpt-4.1',
+        stream: false,
+        tools: [{ type: 'web_search', name: 'web_search', max_results: 3 }],
+        input: 'metapi responses web search',
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(selectChannelMock).toHaveBeenCalledWith('__search', expect.anything());
+    const [targetUrl, options] = fetchMock.mock.calls[0] as [string, any];
+    expect(targetUrl).toBe('https://upstream.example.com/v1/search');
+    expect(JSON.parse(options.body)).toMatchObject({
+      query: 'metapi responses web search',
+      max_results: 3,
+    });
+
+    const body = response.json();
+    expect(body.object).toBe('response');
+    expect(body.output_text).toContain('Metapi Responses');
+    expect(body.output?.[0]).toMatchObject({
+      type: 'web_search_call',
+      status: 'completed',
+      action: {
+        type: 'search',
+        query: 'metapi responses web search',
+      },
+    });
+    expect(body.output?.[1]?.content?.[0]?.text).toContain('Metapi Responses');
   });
 
   it('routes gemini platform to OpenAI-compatible upstream endpoint path', async () => {
