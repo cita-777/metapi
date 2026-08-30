@@ -11,12 +11,14 @@ const refreshBalanceMock = vi.fn();
 const decryptPasswordMock = vi.fn();
 
 const selectAllMock = vi.fn();
+const selectGetMock = vi.fn();
 const insertValuesMock = vi.fn();
 const updateSetMock = vi.fn();
 
 vi.mock('../db/index.js', () => {
   const selectChain = {
     all: () => selectAllMock(),
+    get: () => selectGetMock(),
     where: () => selectChain,
     innerJoin: () => selectChain,
     from: () => selectChain,
@@ -50,7 +52,7 @@ vi.mock('../db/index.js', () => {
       }),
     },
     schema: {
-      accounts: { id: 'id', siteId: 'siteId', checkinEnabled: 'checkinEnabled', status: 'status' },
+      accounts: { id: 'id', siteId: 'siteId', checkinEnabled: 'checkinEnabled', status: 'status', extraConfig: 'extraConfig' },
       sites: { id: 'id' },
       checkinLogs: {},
       events: {},
@@ -87,6 +89,7 @@ describe('checkinService auto relogin', () => {
     refreshBalanceMock.mockReset();
     decryptPasswordMock.mockReset();
     selectAllMock.mockReset();
+    selectGetMock.mockReset();
     insertValuesMock.mockReset();
     updateSetMock.mockReset();
   });
@@ -193,6 +196,65 @@ describe('checkinService auto relogin', () => {
     const writtenIds = writtenConfigs.map((cfg) => cfg.platformUserId);
     expect(writtenIds).toContain(500123);
     expect(writtenIds).not.toContain(1999);
+  });
+
+  it('preserves account configuration updated while auto relogin is in flight', async () => {
+    const autoRelogin = { username: 'alice@example.com', passwordCipher: 'cipher' };
+    let currentExtraConfig = JSON.stringify({
+      autoRelogin,
+      proxyUrl: 'http://old-proxy.example',
+    });
+    selectAllMock.mockReturnValue([
+      {
+        accounts: {
+          id: 15,
+          username: 'alice@example.com',
+          accessToken: 'expired-token',
+          status: 'active',
+          extraConfig: currentExtraConfig,
+        },
+        sites: {
+          id: 15,
+          name: 'concurrent-settings',
+          url: 'https://example.com',
+          platform: 'new-api',
+        },
+      },
+    ]);
+    selectGetMock.mockImplementation(() => ({ extraConfig: currentExtraConfig }));
+
+    adapterMock.checkin
+      .mockResolvedValueOnce({ success: false, message: 'access token required' })
+      .mockResolvedValueOnce({ success: true, message: 'checked in' });
+    decryptPasswordMock.mockReturnValue('plain-password');
+    adapterMock.login.mockImplementation(async () => {
+      currentExtraConfig = JSON.stringify({
+        autoRelogin,
+        proxyUrl: 'http://new-proxy.example',
+      });
+      return {
+        success: true,
+        accessToken: 'fresh-token',
+        platformUserId: 500123,
+      };
+    });
+
+    const { checkinAccount } = await import('./checkinService.js');
+    await checkinAccount(15);
+
+    expect(selectGetMock).toHaveBeenCalled();
+    const writtenConfigs = updateSetMock.mock.calls
+      .map((call) => call[0]?.extraConfig)
+      .filter((value): value is string => typeof value === 'string')
+      .map((value) => JSON.parse(value) as Record<string, unknown>);
+    expect(writtenConfigs.length).toBeGreaterThan(0);
+    for (const config of writtenConfigs) {
+      expect(config).toMatchObject({
+        autoRelogin,
+        proxyUrl: 'http://new-proxy.example',
+      });
+    }
+    expect(writtenConfigs.some((config) => config.platformUserId === 500123)).toBe(true);
   });
 
   it('passes guessed platform user id when config does not include it', async () => {

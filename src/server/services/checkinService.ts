@@ -123,11 +123,20 @@ async function tryAutoRelogin(account: any, site: any): Promise<AutoReloginResul
   );
   if (!result.success || !result.accessToken) return null;
 
-  // Persist the id the site reported during re-login as well; otherwise the
-  // account keeps whatever (possibly wrong) id it had and every subsequent
-  // `/api/user/self` call has to rediscover it.
+  // Re-read after the network request: account settings may have changed while
+  // login was in flight, and merging into the original snapshot would overwrite
+  // those newer fields when the whole extraConfig value is persisted.
+  const latestAccount = result.platformUserId
+    ? await db.select({ extraConfig: schema.accounts.extraConfig })
+      .from(schema.accounts)
+      .where(eq(schema.accounts.id, account.id))
+      .get()
+    : undefined;
   const reloginExtraConfig = result.platformUserId
-    ? mergeAccountExtraConfig(account.extraConfig, { platformUserId: result.platformUserId })
+    ? mergeAccountExtraConfig(
+      latestAccount ? latestAccount.extraConfig : account.extraConfig,
+      { platformUserId: result.platformUserId },
+    )
     : undefined;
 
   await db.update(schema.accounts)
