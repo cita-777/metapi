@@ -7,6 +7,9 @@ export type RouteListVisibilityItem = {
   routeMode?: string | null;
   sourceRouteIds?: number[];
   enabled: boolean;
+  kind?: string;
+  readOnly?: boolean;
+  isVirtual?: boolean;
 };
 
 function normalizeRouteMode(routeMode: string | null | undefined): 'pattern' | 'explicit_group' {
@@ -51,7 +54,7 @@ export function buildVisibleRouteList<T extends RouteListVisibilityItem>(
   return routes.filter((route) => {
     if (isExplicitGroupRoute(route)) return true;
     if (!isExactModelPattern(route.modelPattern)) return true;
-    if (!route.enabled) return true;
+    if (!route.enabled && route.kind !== 'zero_channel' && route.readOnly !== true && route.isVirtual !== true) return true;
     if (hasCustomDisplayName(route)) return true;
 
     const exactModel = (route.modelPattern || '').trim();
