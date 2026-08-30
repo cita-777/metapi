@@ -32,6 +32,7 @@ type RebuildPatternRouteOptions = {
 type PatternRouteChannelAffectedRouteSnapshot = {
   modelPattern: string;
   routeMode?: string | null;
+  enabled?: boolean | null;
 };
 
 type SyncPatternRouteChannelsAfterAffectedRouteChangesInput = {
@@ -83,7 +84,7 @@ function createEmptyPatternRouteChannelSyncResult(): PatternRouteChannelSyncResu
 function collectRemovedExactModelPatterns(routes: PatternRouteChannelAffectedRouteSnapshot[] | undefined): string[] {
   const normalized: string[] = [];
   for (const route of routes || []) {
-    if (!isExactSourceRoute(route)) continue;
+    if (!isExactSourceRoute(route) || route.enabled !== true) continue;
     const modelPattern = route.modelPattern.trim();
     const modelKey = normalizeModelKey(modelPattern);
     if (!modelKey || normalized.some((item) => normalizeModelKey(item) === modelKey)) continue;
@@ -308,8 +309,10 @@ export async function syncPatternRouteChannelsAfterAffectedRouteChanges(
   input: SyncPatternRouteChannelsAfterAffectedRouteChangesInput = {},
 ): Promise<PatternRouteChannelSyncResult> {
   const affectedRouteIds = normalizeAffectedRouteIds(input.affectedRouteIds);
-  const removedExactModelPatterns = collectRemovedExactModelPatterns(input.removedRoutes);
-  if (affectedRouteIds.length === 0 && removedExactModelPatterns.length === 0) {
+  const removedRoutes = input.removedRoutes || [];
+  const removedExactModelPatterns = collectRemovedExactModelPatterns(removedRoutes);
+  const hasRemovedExactSourceRoute = removedRoutes.some(isExactSourceRoute);
+  if (affectedRouteIds.length === 0 && !hasRemovedExactSourceRoute) {
     return createEmptyPatternRouteChannelSyncResult();
   }
 
@@ -326,7 +329,7 @@ export async function syncPatternRouteChannelsAfterAffectedRouteChanges(
     hasAffectedExactSourceRoute = routes.some(isExactSourceRoute);
   }
 
-  if (!hasAffectedExactSourceRoute && removedExactModelPatterns.length === 0) {
+  if (!hasAffectedExactSourceRoute && !hasRemovedExactSourceRoute) {
     return createEmptyPatternRouteChannelSyncResult();
   }
 

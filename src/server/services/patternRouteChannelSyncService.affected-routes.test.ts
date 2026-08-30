@@ -186,6 +186,7 @@ describe('syncPatternRouteChannelsAfterAffectedRouteChanges', () => {
       removedRoutes: [{
         modelPattern: exactRoute.modelPattern,
         routeMode: exactRoute.routeMode,
+        enabled: true,
       }],
     });
 
@@ -196,5 +197,38 @@ describe('syncPatternRouteChannelsAfterAffectedRouteChanges', () => {
       .where(eq(schema.routeChannels.routeId, patternRoute.id))
       .all();
     expect(patternChannels).toHaveLength(0);
+  });
+
+  it('does not exclude availability models when a disabled exact route is removed', async () => {
+    const seeded = await seedAccountWithToken('gpt-5-disabled');
+    const exactRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5-disabled',
+      enabled: false,
+    }).returning().get();
+    const patternRoute = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 're:^gpt-5.*$',
+      enabled: true,
+    }).returning().get();
+
+    await db.delete(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, exactRoute.id)).run();
+
+    const result = await syncPatternRouteChannelsAfterAffectedRouteChanges({
+      removedRoutes: [{
+        modelPattern: exactRoute.modelPattern,
+        routeMode: exactRoute.routeMode,
+        enabled: false,
+      }],
+    });
+
+    expect(result.rebuiltRoutes).toBe(1);
+    const patternChannels = await db.select().from(schema.routeChannels)
+      .where(eq(schema.routeChannels.routeId, patternRoute.id))
+      .all();
+    expect(patternChannels).toHaveLength(1);
+    expect(patternChannels[0]).toMatchObject({
+      accountId: seeded.account.id,
+      tokenId: seeded.token.id,
+      sourceModel: 'gpt-5-disabled',
+    });
   });
 });

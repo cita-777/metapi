@@ -220,9 +220,13 @@ describe('TokenRouter patterns and model mapping', () => {
 
   it('keeps exact routes out of exposed models when covered by an explicit group', async () => {
     const source = await createRouteWithSingleChannel('gpt-5.5-openai-compact');
-    await createRouteWithSingleChannel('gpt-5.5-openai-compact-high');
+    const high = await createRouteWithSingleChannel('gpt-5.5-openai-compact-high');
     const exact = await createRouteWithSingleChannel('gpt-5.5-openai-compact-xhigh');
-    const group = await createExplicitGroupRoute('gpt-5.5-openai-compact', [source.route.id]);
+    const group = await createExplicitGroupRoute('gpt-5.5-openai-compact', [
+      source.route.id,
+      high.route.id,
+      exact.route.id,
+    ]);
     const router = new TokenRouter();
 
     const exposedModels = await router.getAvailableModels();

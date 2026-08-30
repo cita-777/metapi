@@ -13,16 +13,38 @@ permissions:
   packages: write
 
 concurrency:
-  group: ghcr-publish-${{ github.ref }}
+  # The tag is the shared output resource; serialize runs targeting the same tag.
+  group: ghcr-publish-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
+  validate_tag:
+    name: 校验镜像标签
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.validate.outputs.tag }}
+    steps:
+      - name: 校验 Docker 标签格式
+        id: validate
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$INPUT_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "Invalid Docker tag: $INPUT_TAG" >&2
+            exit 1
+          fi
+          printf 'tag=%s\n' "$INPUT_TAG" >> "$GITHUB_OUTPUT"
+
   publish-ghcr-arch:
     name: 发布 GHCR 镜像（${{ matrix.arch }}）
+    needs: validate_tag
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     env:
       GHCR_IMAGE: ghcr.io/${{ github.repository }}
+      IMAGE_TAG: ${{ needs.validate_tag.outputs.tag }}
     strategy:
       fail-fast: false
       matrix:
@@ -61,7 +83,7 @@ jobs:
         with:
           images: ${{ env.GHCR_IMAGE }}
           tags: |
-            type=raw,value=${{ inputs.tag }}
+            type=raw,value=${{ needs.validate_tag.outputs.tag }}
 
       - name: 为每个架构追加后缀
         id: arch-tags
@@ -93,11 +115,12 @@ jobs:
 
   publish-ghcr-manifest:
     name: 发布 GHCR Manifest
-    needs: publish-ghcr-arch
+    needs: [validate_tag, publish-ghcr-arch]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       GHCR_IMAGE: ghcr.io/${{ github.repository }}
+      IMAGE_TAG: ${{ needs.validate_tag.outputs.tag }}
 
     steps:
       - name: 检出仓库
@@ -117,7 +140,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tag="${GHCR_IMAGE}:${{ inputs.tag }}"
+          tag="${GHCR_IMAGE}:${IMAGE_TAG}"
           docker buildx imagetools create \
             --tag "$tag" \
             "${tag}-amd64" \

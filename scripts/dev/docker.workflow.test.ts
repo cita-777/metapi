@@ -50,4 +50,16 @@ describe('docker workflows', () => {
     expect(dockerfile).toContain('RUN npm run build:web && npm run build:server');
     expect(dockerfile).toContain('npm prune --omit=dev --no-audit --no-fund');
   });
+
+  it('validates manual GHCR tags before using them in publish commands', () => {
+    const workflow = readFileSync(resolve(process.cwd(), '.github/workflows/publish-ghcr.yml'), 'utf8');
+
+    expect(workflow).toContain('validate_tag:');
+    expect(workflow).toContain('INPUT_TAG: ${{ inputs.tag }}');
+    expect(workflow).toContain('^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$');
+    expect(workflow).toContain('tag: ${{ steps.validate.outputs.tag }}');
+    expect(workflow).toContain('type=raw,value=${{ needs.validate_tag.outputs.tag }}');
+    expect(workflow).toContain('tag="${GHCR_IMAGE}:${IMAGE_TAG}"');
+    expect(workflow).not.toContain('tag="${GHCR_IMAGE}:${{ inputs.tag }}"');
+  });
 });

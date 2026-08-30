@@ -1117,6 +1117,7 @@ export async function tokensRoutes(app: FastifyInstance) {
         removedRoutes: modelPatternChanged ? [{
           modelPattern: existingRoute.modelPattern,
           routeMode: existingRoute.routeMode,
+          enabled: existingRoute.enabled,
         }] : [],
       });
     }
@@ -1142,6 +1143,7 @@ export async function tokensRoutes(app: FastifyInstance) {
       removedRoutes: existingRoute ? [{
         modelPattern: existingRoute.modelPattern,
         routeMode: existingRoute.routeMode,
+        enabled: existingRoute.enabled,
       }] : [],
     });
     invalidateTokenRouterCache();
