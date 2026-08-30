@@ -87,6 +87,11 @@ describe('getAdapter platform aliases', () => {
     expect(adapter?.platformName).toBe('orcarouter');
   });
 
+  it('does not detect OrcaRouter from an unrelated URL component', async () => {
+    const adapter = await detectPlatform('https://evil.example.com/orcarouter');
+    expect(adapter?.platformName).not.toBe('orcarouter');
+  });
+
   it('detects official openai/claude/gemini upstream URLs', async () => {
     const openai = await detectPlatform('https://api.openai.com');
     const claude = await detectPlatform('https://api.anthropic.com');

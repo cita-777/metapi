@@ -22,6 +22,9 @@ describe('platformIdentity', () => {
     expect(detectPlatformByUrlHint('https://cloudcode-pa.googleapis.com')).toBe('gemini-cli');
     expect(detectPlatformByUrlHint('http://127.0.0.1:8317/v1/models')).toBe('cliproxyapi');
     expect(detectPlatformByUrlHint('https://api.orcarouter.ai/v1/models')).toBe('orcarouter');
+    expect(detectPlatformByUrlHint('https://gateway.orcarouter.ai/v1/models')).toBe('orcarouter');
+    expect(detectPlatformByUrlHint('https://evil.example.com/orcarouter/v1/models')).toBeUndefined();
+    expect(detectPlatformByUrlHint('https://evil.example.com/?next=https://api.orcarouter.ai/v1/models')).toBeUndefined();
     expect(detectPlatformByUrlHint('https://evil.example.com/?next=https://api.openai.com/v1/models')).toBeUndefined();
   });
 });

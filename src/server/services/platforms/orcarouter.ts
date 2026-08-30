@@ -1,11 +1,11 @@
 import { StandardApiProviderAdapterBase } from './standardApiProvider.js';
+import { detectPlatformByUrlHint } from '../../../shared/platformIdentity.js';
 
 export class OrcaRouterAdapter extends StandardApiProviderAdapterBase {
   readonly platformName = 'orcarouter';
 
   async detect(url: string): Promise<boolean> {
-    const normalized = (url || '').toLowerCase();
-    return normalized.includes('orcarouter');
+    return detectPlatformByUrlHint(url) === this.platformName;
   }
 
   async getModels(baseUrl: string, apiToken: string): Promise<string[]> {
