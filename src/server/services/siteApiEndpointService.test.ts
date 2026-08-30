@@ -368,4 +368,39 @@ describe('siteApiEndpointService', () => {
     const second = await secondPromise;
     expect(await (second as { upstream: Response }).upstream.text()).toBe('second');
   });
+
+  it('releases the site lease when a streamed response is cancelled', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'cancelled-stream-site',
+      url: 'https://panel.example.com',
+      platform: 'new-api',
+      status: 'active',
+      maxConcurrency: 1,
+    }).returning().get();
+
+    const first = await (await import('./siteApiEndpointService.js')).runWithSiteApiEndpointPool(
+      site,
+      async () => ({
+        upstream: new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('first'));
+          },
+        })),
+      }),
+    );
+    let secondSettled = false;
+    const secondPromise = (await import('./siteApiEndpointService.js')).runWithSiteApiEndpointPool(
+      site,
+      async () => ({ upstream: new Response('second') }),
+    ).then((result) => {
+      secondSettled = true;
+      return result;
+    });
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(secondSettled).toBe(false);
+    await (first as { upstream: Response }).upstream.body?.cancel('client disconnected');
+    const second = await secondPromise;
+    expect(await (second as { upstream: Response }).upstream.text()).toBe('second');
+  });
 });
