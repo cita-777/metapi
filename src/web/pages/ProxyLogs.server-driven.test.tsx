@@ -369,6 +369,39 @@ describe('ProxyLogs server-driven page', () => {
     }
   });
 
+  it('does not reload the debug snapshot just because the settings modal opens', async () => {
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const initialRuntimeCalls = apiMock.getRuntimeSettings.mock.calls.length;
+      const debugSettingsButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '调试设置'
+      ));
+
+      await act(async () => {
+        debugSettingsButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getRuntimeSettings).toHaveBeenCalledTimes(initialRuntimeCalls);
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('paginates debug traces in groups of five instead of rendering the whole trace list at once', async () => {
     apiMock.getProxyDebugTraces.mockResolvedValue({
       items: Array.from({ length: 7 }, (_, index) => ({
@@ -583,9 +616,85 @@ describe('ProxyLogs server-driven page', () => {
       });
       await flushMicrotasks();
 
-      expect(apiMock.getProxyDebugTraceDetail).toHaveBeenCalledWith(701);
+      expect(apiMock.getProxyDebugTraceDetail).toHaveBeenCalledWith(
+        701,
+        expect.objectContaining({ signal: expect.anything() }),
+      );
       expect(collectText(root.root)).toContain('原始下游请求头');
       expect(collectText(root.root)).toContain('Attempt 记录');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('clears canceled detail loading so reopening the same trace retries', async () => {
+    let resolveFirst!: (value: unknown) => void;
+    let firstSignal!: AbortSignal;
+    apiMock.getProxyDebugTraceDetail
+      .mockImplementationOnce((_id: number, options?: { signal?: AbortSignal }) => {
+        firstSignal = options?.signal as AbortSignal;
+        return new Promise((resolve) => {
+          resolveFirst = resolve;
+        });
+      })
+      .mockResolvedValueOnce({
+        trace: {
+          id: 701,
+          requestedModel: 'gpt-4o',
+          sessionId: 'sess-debug-1',
+          requestHeadersJson: '{"reopened":true}',
+        },
+        attempts: [],
+      });
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const findViewDetailButton = () => root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '查看详情'
+      ));
+
+      await act(async () => {
+        findViewDetailButton().props.onClick();
+      });
+      await flushMicrotasks();
+      expect(firstSignal).toBeInstanceOf(AbortSignal);
+      expect(collectText(root.root)).toContain('加载追踪详情中...');
+
+      const closeButton = root.root.findByProps({ 'aria-label': '关闭弹框' });
+      await act(async () => {
+        closeButton.props.onClick();
+      });
+      expect(firstSignal.aborted).toBe(true);
+
+      // Resolve the abandoned request as a non-cooperative adapter might;
+      // the stale guard must ignore it after the modal has been closed.
+      resolveFirst({
+        trace: { id: 701, requestHeadersJson: '{"stale":true}' },
+        attempts: [],
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findViewDetailButton().props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getProxyDebugTraceDetail).toHaveBeenCalledTimes(2);
+      expect(collectText(root.root)).toContain('原始下游请求头');
+      expect(collectText(root.root)).not.toContain('stale');
     } finally {
       root?.unmount();
     }
@@ -716,6 +825,72 @@ describe('ProxyLogs server-driven page', () => {
 
       expect(collectText(root.root)).toContain('原始下游请求头');
       expect(collectText(root.root)).not.toContain('加载追踪详情中...');
+    } finally {
+      await act(async () => {
+        root?.unmount();
+      });
+      vi.runOnlyPendingTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps cached debug detail visible when a polling refresh fails', async () => {
+    vi.useFakeTimers();
+    apiMock.getRuntimeSettings.mockResolvedValue({
+      proxyDebugTraceEnabled: true,
+      proxyDebugCaptureHeaders: true,
+      proxyDebugCaptureBodies: false,
+      proxyDebugCaptureStreamChunks: false,
+      proxyDebugTargetSessionId: '',
+      proxyDebugTargetClientKind: '',
+      proxyDebugTargetModel: '',
+      proxyDebugRetentionHours: 24,
+      proxyDebugMaxBodyBytes: 262144,
+    });
+    apiMock.getProxyDebugTraceDetail
+      .mockResolvedValueOnce({
+        trace: {
+          id: 701,
+          requestedModel: 'gpt-4o',
+          sessionId: 'sess-debug-1',
+          requestHeadersJson: '{"cached":true}',
+        },
+        attempts: [],
+      })
+      .mockRejectedValueOnce(new Error('临时刷新失败'));
+
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const viewDetailButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '查看详情'
+      ));
+      await act(async () => {
+        viewDetailButton.props.onClick();
+      });
+      await flushMicrotasks();
+      expect(collectText(root.root)).toContain('原始下游请求头');
+
+      await act(async () => {
+        vi.advanceTimersByTime(2100);
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('原始下游请求头');
+      expect(collectText(root.root)).toContain('刷新详情失败：临时刷新失败');
     } finally {
       await act(async () => {
         root?.unmount();
@@ -970,7 +1145,10 @@ describe('ProxyLogs server-driven page', () => {
       await flushMicrotasks();
 
       expect(apiMock.getProxyLogDetail).toHaveBeenCalledTimes(1);
-      expect(apiMock.getProxyLogDetail).toHaveBeenCalledWith(101);
+      expect(apiMock.getProxyLogDetail).toHaveBeenCalledWith(
+        101,
+        expect.objectContaining({ signal: expect.anything() }),
+      );
     } finally {
       root?.unmount();
     }
@@ -1068,6 +1246,55 @@ describe('ProxyLogs server-driven page', () => {
       expect(rendered).toContain('main-site');
     } finally {
       root?.unmount();
+    }
+  });
+
+  it('keeps automatic log refresh single-flight when the server is slow', async () => {
+    vi.useFakeTimers();
+    let resolvePoll!: (value: any) => void;
+    apiMock.getProxyLogs
+      .mockResolvedValueOnce(buildListResponse())
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolvePoll = resolve;
+      }));
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/logs']}>
+            <ToastProvider>
+              <ProxyLogs />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const toggle = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && node.props.title === '开启自动刷新（每2秒）'
+      ));
+      await act(async () => {
+        toggle.props.onClick();
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(2_000);
+      });
+      await flushMicrotasks();
+      await act(async () => {
+        vi.advanceTimersByTime(6_000);
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getProxyLogs).toHaveBeenCalledTimes(2);
+      await act(async () => resolvePoll(buildListResponse()));
+      await flushMicrotasks();
+    } finally {
+      await act(async () => root?.unmount());
+      vi.runOnlyPendingTimers();
+      vi.useRealTimers();
     }
   });
 });

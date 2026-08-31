@@ -1,9 +1,23 @@
-import { Suspense, lazy, useEffect, useState, useCallback } from "react";
+import {
+  Suspense,
+  lazy,
+  useEffect,
+  useState,
+  useCallback,
+  useMemo,
+  useRef,
+} from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api.js";
 import { useToast } from "../components/Toast.js";
 import { useIsMobile } from "../components/useIsMobile.js";
+import { useAsyncResource } from "../components/useAsyncResource.js";
 import { formatCompactTokenMetric } from "../numberFormat.js";
+import {
+  probeSiteSpeed,
+  probeSiteSpeeds,
+  type SiteSpeedProbeResult,
+} from "./helpers/siteSpeedProbe.js";
 
 const ModelAnalysisPanel = lazy(
   () => import("../components/ModelAnalysisPanel.js"),
@@ -56,6 +70,7 @@ function ChartFallback({ height = 280 }: { height?: number }) {
 type SiteSpeedState =
   | { status: "loading" }
   | { status: "timeout" }
+  | { status: "error" }
   | { status: "done"; ms: number }
   | undefined;
 
@@ -223,23 +238,134 @@ export default function Dashboard({
   adminName?: string;
 }) {
   const isMobile = useIsMobile();
-  const [data, setData] = useState<any>(null);
-  const [insightsData, setInsightsData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [insightsLoading, setInsightsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const [siteDistribution, setSiteDistribution] = useState<any[]>([]);
-  const [siteTrend, setSiteTrend] = useState<any[]>([]);
-  const [siteLoading, setSiteLoading] = useState(true);
-  const [sites, setSites] = useState<any[]>([]);
   const [siteSpeedStates, setSiteSpeedStates] = useState<
     Record<string, SiteSpeedState>
   >({});
+  const [isSpeedProbing, setIsSpeedProbing] = useState(false);
+  const speedProbeControllerRef = useRef<AbortController | null>(null);
+  const speedProbeGenerationRef = useRef(0);
   const [trendDays, setTrendDays] = useState(7);
   const [showInactiveSites, setShowInactiveSites] = useState(false);
   const toast = useToast();
   const normalizedAdminName = (adminName || "").trim() || "\u7ba1\u7406\u5458";
+
+  const dashboardLoader = useCallback(
+    (signal: AbortSignal, context: { forceRefresh: boolean }) =>
+      api.getDashboardSnapshot({
+        refresh: context.forceRefresh,
+        signal,
+      }),
+    [],
+  );
+  const dashboardResource = useAsyncResource(dashboardLoader, {
+    onError: (requestError, context) => {
+      if (context.forceRefresh) toast.error(requestError.message);
+    },
+  });
+  const insightsLoader = useCallback(
+    (signal: AbortSignal, context: { forceRefresh: boolean }) =>
+      api.getDashboardInsights({
+        refresh: context.forceRefresh,
+        signal,
+      }),
+    [],
+  );
+  const insightsResource = useAsyncResource(insightsLoader);
+  const siteStatsLoader = useCallback(
+    (signal: AbortSignal, context: { forceRefresh: boolean }) =>
+      api.getSiteSnapshot(trendDays, {
+        refresh: context.forceRefresh,
+        signal,
+      }),
+    [trendDays],
+  );
+  const siteStatsResource = useAsyncResource(siteStatsLoader);
+
+  const data = dashboardResource.data;
+  const insightsData = insightsResource.data;
+  const siteSnapshot = siteStatsResource.data;
+  const loading = dashboardResource.loading && !data;
+  const insightsLoading =
+    insightsResource.loading || insightsResource.refreshing;
+  const siteLoading =
+    siteStatsResource.loading || siteStatsResource.refreshing;
+  const error = dashboardResource.error?.message || null;
+  const refreshing =
+    dashboardResource.refreshing ||
+    (dashboardResource.loading && data !== null) ||
+    insightsResource.loading ||
+    insightsResource.refreshing ||
+    siteStatsResource.loading ||
+    siteStatsResource.refreshing;
+
+  const siteDistribution = useMemo(
+    () => (Array.isArray(siteSnapshot?.distribution)
+      ? siteSnapshot.distribution
+      : []),
+    [siteSnapshot],
+  );
+  const siteTrend = useMemo(
+    () => (Array.isArray(siteSnapshot?.trend) ? siteSnapshot.trend : []),
+    [siteSnapshot],
+  );
+  const sites = useMemo(() => {
+    const rows = Array.isArray(siteSnapshot?.sites)
+      ? siteSnapshot.sites
+      : [];
+    return rows.filter((site: any) => site?.status !== "disabled");
+  }, [siteSnapshot]);
+  useEffect(() => {
+    if (!siteSnapshot) return;
+    speedProbeGenerationRef.current += 1;
+    speedProbeControllerRef.current?.abort();
+    speedProbeControllerRef.current = null;
+    setIsSpeedProbing(false);
+    setSiteSpeedStates({});
+  }, [siteSnapshot]);
+
+  useEffect(
+    () => () => {
+      speedProbeGenerationRef.current += 1;
+      speedProbeControllerRef.current?.abort();
+      speedProbeControllerRef.current = null;
+    },
+    [],
+  );
+
+  const load = useCallback(
+    (silent = false, dedupe = false) =>
+      dashboardResource.reload({
+        silent,
+        forceRefresh: silent,
+        dedupe,
+      }),
+    [dashboardResource.reload],
+  );
+  const loadInsights = useCallback(
+    (forceRefresh = false, dedupe = false) =>
+      insightsResource.reload({
+        silent: forceRefresh,
+        forceRefresh,
+        dedupe,
+      }),
+    [insightsResource.reload],
+  );
+  const loadSiteStats = useCallback(
+    (forceRefresh = false, dedupe = false) =>
+      siteStatsResource.reload({
+        silent: forceRefresh,
+        forceRefresh,
+        dedupe,
+      }),
+    [siteStatsResource.reload],
+  );
+
+  const previousTrendDaysRef = useRef(trendDays);
+  useEffect(() => {
+    if (previousTrendDaysRef.current === trendDays) return;
+    previousTrendDaysRef.current = trendDays;
+    void loadSiteStats(false, false);
+  }, [loadSiteStats, trendDays]);
 
   const getSiteSpeedKey = (site: any, idx: number) => String(site?.id ?? idx);
 
@@ -247,99 +373,124 @@ export default function Dashboard({
     setSiteSpeedStates((current) => ({ ...current, [siteKey]: nextState }));
   };
 
-  const load = useCallback(
-    async (silent = false) => {
-      if (!silent) setLoading(true);
-      else setRefreshing(true);
-      setError(null);
-
-      try {
-        const result = await api.getDashboardSnapshot(
-          silent ? { refresh: true } : undefined,
-        );
-        setData(result);
-      } catch (err: any) {
-        const message = err?.message || "加载仪表盘失败";
-        setError(message);
-        if (silent) toast.error(message);
-      } finally {
-        setLoading(false);
-        setRefreshing(false);
+  const applySiteSpeedResult = useCallback(
+    (siteKey: string, result: SiteSpeedProbeResult) => {
+      if (result.status === "done" && typeof result.ms === "number") {
+        setSiteSpeedState(siteKey, { status: "done", ms: result.ms });
+      } else if (result.status === "timeout") {
+        setSiteSpeedState(siteKey, { status: "timeout" });
+      } else if (result.status === "error") {
+        setSiteSpeedState(siteKey, { status: "error" });
       }
     },
-    [toast],
+    [],
   );
 
-  const loadInsights = useCallback(async (forceRefresh = false) => {
-    setInsightsLoading(true);
+  const runSiteSpeedProbe = useCallback(
+    async (site: any, idx: number) => {
+      speedProbeControllerRef.current?.abort();
+      setSiteSpeedStates({});
+      const controller = new AbortController();
+      speedProbeControllerRef.current = controller;
+      setIsSpeedProbing(true);
+      const generation = ++speedProbeGenerationRef.current;
+      const siteKey = getSiteSpeedKey(site, idx);
+      setSiteSpeedState(siteKey, { status: "loading" });
+      try {
+        const result = await probeSiteSpeed(String(site?.url || ""), {
+          signal: controller.signal,
+        });
+        if (
+          controller.signal.aborted ||
+          generation !== speedProbeGenerationRef.current
+        ) {
+          return;
+        }
+        applySiteSpeedResult(siteKey, result);
+        if (result.status === "done" && typeof result.ms === "number") {
+          toast.success(`${site.name}: ${result.ms}ms`);
+        } else if (result.status !== "aborted") {
+          toast.error(`${site.name}: 测速失败`);
+        }
+      } finally {
+        if (speedProbeControllerRef.current === controller) {
+          speedProbeControllerRef.current = null;
+          setIsSpeedProbing(false);
+        }
+      }
+    },
+    [applySiteSpeedResult, toast],
+  );
+
+  const runAllSiteSpeedProbes = useCallback(async () => {
+    speedProbeControllerRef.current?.abort();
+    setSiteSpeedStates({});
+    const controller = new AbortController();
+    speedProbeControllerRef.current = controller;
+    setIsSpeedProbing(true);
+    const generation = ++speedProbeGenerationRef.current;
+    sites.forEach((site: any, idx: number) => {
+      setSiteSpeedState(getSiteSpeedKey(site, idx), { status: "loading" });
+    });
     try {
-      const result = await api.getDashboardInsights(
-        forceRefresh ? { refresh: true } : undefined,
-      );
-      setInsightsData(result);
-    } catch (err) {
-      console.error("Failed to load dashboard insights:", err);
-    } finally {
-      setInsightsLoading(false);
-    }
-  }, []);
-
-  const loadSiteStats = useCallback(
-    async (forceRefresh = false) => {
-      setSiteLoading(true);
-      try {
-        const snapshot = await api.getSiteSnapshot(
-          trendDays,
-          forceRefresh ? { refresh: true } : undefined,
-        );
-        setSiteDistribution(snapshot.distribution || []);
-        setSiteTrend(snapshot.trend || []);
-        const siteRows = Array.isArray(snapshot.sites) ? snapshot.sites : [];
-        setSites(siteRows.filter((site: any) => site?.status !== "disabled"));
-        setSiteSpeedStates({});
-      } catch (err) {
-        console.error("Failed to load site stats:", err);
-      } finally {
-        setSiteLoading(false);
+      await probeSiteSpeeds(sites, {
+        concurrency: 4,
+        signal: controller.signal,
+        onResult: (siteKey, result) => {
+          if (
+            !controller.signal.aborted &&
+            generation === speedProbeGenerationRef.current
+          ) {
+            applySiteSpeedResult(siteKey, result);
+          }
+        },
+      });
+      if (
+        controller.signal.aborted ||
+        generation !== speedProbeGenerationRef.current
+      ) {
+        return;
       }
-    },
-    [trendDays],
-  );
+      toast.success("全部测速完成");
+    } finally {
+      if (speedProbeControllerRef.current === controller) {
+        speedProbeControllerRef.current = null;
+        setIsSpeedProbing(false);
+      }
+    }
+  }, [applySiteSpeedResult, sites, toast]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  useEffect(() => {
-    void loadInsights();
-  }, [loadInsights]);
-
-  useEffect(() => {
-    loadSiteStats();
-  }, [loadSiteStats]);
+  const dashboardBusyRef = useRef(false);
+  dashboardBusyRef.current =
+    dashboardResource.loading || dashboardResource.refreshing;
 
   useEffect(() => {
     let timer: ReturnType<typeof setInterval> | null = null;
     let disposed = false;
+    let wasVisible =
+      typeof document !== "undefined" && document.visibilityState === "visible";
 
-    const pollDashboard = async () => {
+    const isVisible = () =>
+      typeof document !== "undefined" && document.visibilityState === "visible";
+
+    const pollDashboard = () => {
       if (
-        typeof document !== "undefined" &&
-        document.visibilityState !== "visible"
+        disposed ||
+        !isVisible() ||
+        dashboardBusyRef.current
       )
         return;
-      try {
-        const next = await api.getDashboardSnapshot();
-        if (!disposed) setData(next);
-      } catch {
-        // ignore polling errors
-      }
+      void dashboardResource.reload({
+        silent: true,
+        forceRefresh: false,
+        dedupe: true,
+      });
     };
 
     const start = () => {
-      if (timer) return;
+      if (timer || !isVisible()) return;
       timer = setInterval(() => {
-        void pollDashboard();
+        pollDashboard();
       }, 30000);
     };
 
@@ -350,13 +501,12 @@ export default function Dashboard({
     };
 
     const handleVisibilityChange = () => {
-      if (
-        typeof document !== "undefined" &&
-        document.visibilityState === "visible"
-      ) {
-        void pollDashboard();
+      if (isVisible()) {
+        if (!wasVisible) pollDashboard();
+        wasVisible = true;
         start();
       } else {
+        wasVisible = false;
         stop();
       }
     };
@@ -376,7 +526,7 @@ export default function Dashboard({
         );
       }
     };
-  }, []);
+  }, [dashboardResource.reload]);
 
   if (loading && !data) {
     return (
@@ -552,6 +702,10 @@ export default function Dashboard({
       return "超时";
     }
 
+    if (speedState.status === "error") {
+      return "失败";
+    }
+
     const ms = speedState.ms;
     const color = getLatencyColor(ms);
 
@@ -591,9 +745,9 @@ export default function Dashboard({
         <div style={{ display: "flex", gap: 8 }}>
           <button
             onClick={() => {
-              void load(true);
-              void loadInsights(true);
-              void loadSiteStats(true);
+              void load(true, false);
+              void loadInsights(true, false);
+              void loadSiteStats(true, false);
             }}
             disabled={refreshing}
             className="topbar-icon-btn"
@@ -1344,26 +1498,9 @@ export default function Dashboard({
                   alignItems: "center",
                   gap: 4,
                 }}
-                onClick={async () => {
-                  await Promise.all(
-                    sites.map(async (s: any, idx: number) => {
-                      const siteKey = getSiteSpeedKey(s, idx);
-                      setSiteSpeedState(siteKey, { status: "loading" });
-                      try {
-                        const start = performance.now();
-                        await fetch(`${s.url}/v1/models`, {
-                          method: "GET",
-                          mode: "no-cors",
-                        });
-                        const ms = Math.round(performance.now() - start);
-                        setSiteSpeedState(siteKey, { status: "done", ms });
-                      } catch {
-                        setSiteSpeedState(siteKey, { status: "timeout" });
-                      }
-                    }),
-                  );
-                  toast.success("全部测速完成");
-                }}
+                onClick={() => void runAllSiteSpeedProbes()}
+                disabled={isSpeedProbing}
+                aria-label="一键测速"
               >
                 <svg
                   width="12"
@@ -1425,23 +1562,8 @@ export default function Dashboard({
                         alignItems: "center",
                         gap: 3,
                       }}
-                      onClick={async () => {
-                        const siteKey = getSiteSpeedKey(site, idx);
-                        setSiteSpeedState(siteKey, { status: "loading" });
-                        try {
-                          const start = performance.now();
-                          await fetch(`${site.url}/v1/models`, {
-                            method: "GET",
-                            mode: "no-cors",
-                          });
-                          const ms = Math.round(performance.now() - start);
-                          setSiteSpeedState(siteKey, { status: "done", ms });
-                          toast.success(`${site.name}: ${ms}ms`);
-                        } catch {
-                          setSiteSpeedState(siteKey, { status: "timeout" });
-                          toast.error(`${site.name}: 测速失败`);
-                        }
-                      }}
+                      onClick={() => void runSiteSpeedProbe(site, idx)}
+                      disabled={isSpeedProbing}
                     >
                       <svg
                         width="12"
