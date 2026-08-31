@@ -21,7 +21,7 @@ import {
   ensureModelAllowedForDownstreamKey,
   getDownstreamRoutingPolicy,
   recordDownstreamCostUsage,
-} from '../../routes/proxy/downstreamPolicy.js';
+} from '../../services/downstreamPolicyService.js';
 import { executeEndpointFlow, type BuiltEndpointRequest } from '../orchestration/endpointFlow.js';
 import { detectProxyFailure } from '../../services/proxyFailureJudge.js';
 import { openAiChatTransformer } from '../../transformers/openai/chat/index.js';
