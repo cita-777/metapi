@@ -429,6 +429,32 @@ body {
   border-width: 3px;
 }
 
+.ui-loading-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.ui-visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.empty-state-action,
+.error-state-action {
+  margin-top: 12px;
+}
+
 /* ===== Topbar ===== */
 .topbar {
   height: var(--topbar-height);
@@ -794,6 +820,13 @@ body {
   cursor: not-allowed;
   transform: none !important;
   box-shadow: none !important;
+}
+
+.btn-primary .spinner,
+.btn-danger .spinner,
+.btn-success .spinner {
+  border-color: rgba(255, 255, 255, 0.3);
+  border-top-color: white;
 }
 
 .btn::after {
@@ -4216,6 +4249,11 @@ textarea {
   opacity: 0.4;
 }
 
+.empty-state-icon > svg {
+  width: 100%;
+  height: 100%;
+}
+
 .empty-state-title {
   font-size: 15px;
   font-weight: 600;
@@ -4543,6 +4581,15 @@ textarea {
 .modern-select-option.is-active {
   background: rgba(37, 99, 235, 0.14);
   color: #1d4ed8;
+}
+
+.modern-select-option.is-highlighted {
+  background: rgba(37, 99, 235, 0.1);
+  outline: none;
+}
+
+.modern-select-option.is-active.is-highlighted {
+  background: rgba(37, 99, 235, 0.18);
 }
 
 .modern-select-option.is-disabled {

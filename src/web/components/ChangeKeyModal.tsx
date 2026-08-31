@@ -1,27 +1,17 @@
-import React, { useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
+import React, { useState } from 'react';
 import { api } from '../api.js';
 import { useToast } from './Toast.js';
 import { persistAuthSession } from '../authSession.js';
-import { useAnimatedVisibility } from './useAnimatedVisibility.js';
+import CenteredModal from './CenteredModal.js';
+import { AsyncButton, Button } from './ui/Button.js';
 
 export default function ChangeKeyModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const presence = useAnimatedVisibility(open, 200);
   const [oldToken, setOldToken] = useState('');
   const [newToken, setNewToken] = useState('');
   const [confirmToken, setConfirmToken] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const toast = useToast();
-
-  useEffect(() => {
-    if (!open || typeof document === 'undefined') return;
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = previous;
-    };
-  }, [open]);
 
   const handleSubmit = async () => {
     setError('');
@@ -51,14 +41,12 @@ export default function ChangeKeyModal({ open, onClose }: { open: boolean; onClo
       } else {
         setError(res.message || '更新失败');
       }
-    } catch (e: any) {
-      setError(e.message || '更新失败');
+    } catch (error: unknown) {
+      setError(error instanceof Error ? error.message : '更新失败');
     } finally {
       setSaving(false);
     }
   };
-
-  if (!presence.shouldRender) return null;
 
   const inputStyle: React.CSSProperties = {
     width: '100%', padding: '10px 14px', border: '1px solid var(--color-border)',
@@ -66,12 +54,26 @@ export default function ChangeKeyModal({ open, onClose }: { open: boolean; onClo
     background: 'var(--color-bg)', color: 'var(--color-text-primary)',
   };
 
-  const modal = (
-    <div className={`modal-backdrop ${presence.isVisible ? '' : 'is-closing'}`.trim()} onClick={onClose}>
-      <div className={`modal-content ${presence.isVisible ? '' : 'is-closing'}`.trim()} onClick={e => e.stopPropagation()} style={{ maxWidth: 420 }}>
-        <div className="modal-header">修改管理员 Token</div>
-
-        <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+  return (
+    <CenteredModal
+      open={open}
+      onClose={onClose}
+      title="修改管理员 Token"
+      maxWidth={420}
+      closeOnBackdrop
+      closeOnEscape={false}
+      showCloseButton={false}
+      bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 12 }}
+      footer={(
+        <>
+          <Button onClick={onClose} variant="ghost">取消</Button>
+          <AsyncButton onClick={() => void handleSubmit()} variant="primary" loading={saving} loadingLabel="更新中...">
+            确认修改
+          </AsyncButton>
+        </>
+      )}
+    >
+      <>
           <div>
             <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--color-text-secondary)', display: 'block', marginBottom: 6 }}>旧 Token</label>
             <input
@@ -108,17 +110,7 @@ export default function ChangeKeyModal({ open, onClose }: { open: boolean; onClo
               {error}
             </div>
           )}
-        </div>
-
-        <div className="modal-footer">
-          <button onClick={onClose} className="btn btn-ghost">取消</button>
-          <button onClick={handleSubmit} disabled={saving} className="btn btn-primary">
-            {saving ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} />更新中...</> : '确认修改'}
-          </button>
-        </div>
-      </div>
-    </div>
+      </>
+    </CenteredModal>
   );
-
-  return typeof document !== 'undefined' ? createPortal(modal, document.body) : modal;
 }

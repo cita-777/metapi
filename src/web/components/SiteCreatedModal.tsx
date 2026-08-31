@@ -1,4 +1,5 @@
 import CenteredModal from './CenteredModal.js';
+import { Button } from './ui/Button.js';
 import { getSiteInitializationPreset } from '../../shared/siteInitializationPresets.js';
 
 type NextStepChoice = 'session' | 'apikey' | 'later';
@@ -56,22 +57,22 @@ export default function SiteCreatedModal({
       bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 12 }}
       footer={(
         <>
-          <button onClick={() => onChoice('later')} className="btn btn-ghost">
+          <Button onClick={() => onChoice('later')} variant="ghost">
             稍后配置
-          </button>
-          <button
+          </Button>
+          <Button
             onClick={() => onChoice(secondaryAction.choice)}
-            className="btn btn-ghost"
+            variant="ghost"
             style={{ border: '1px solid var(--color-border)' }}
           >
             {secondaryAction.label}
-          </button>
-          <button
+          </Button>
+          <Button
             onClick={() => onChoice(primaryAction.choice)}
-            className="btn btn-primary"
+            variant="primary"
           >
             {primaryAction.label}
-          </button>
+          </Button>
         </>
       )}
     >

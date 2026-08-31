@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import ModernSelect from '../components/ModernSelect.js';
 import { ToastProvider } from '../components/Toast.js';
 import Accounts from './Accounts.js';
-import { TokensPanel } from './Tokens.js';
+import { TokensPanel } from './tokens/TokensPanel.js';
 import { installAccountsSnapshotCompat } from './testApiCompat.js';
 
 const { apiMock } = vi.hoisted(() => ({

@@ -125,4 +125,19 @@ describe('useIsMobile', () => {
       }
     }
   });
+
+  it('detaches from the captured host when global window is replaced before unmount', async () => {
+    let root!: WebTestRenderer;
+
+    await act(async () => {
+      root = create(<Probe />);
+    });
+
+    // Simulate an embedded host teardown/replacement while the React tree is
+    // still mounted. Cleanup should use the original listener owner.
+    vi.stubGlobal('window', undefined);
+    await expect(act(async () => {
+      root.unmount();
+    })).resolves.toBeUndefined();
+  });
 });

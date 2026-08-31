@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { act, create, type ReactTestInstance } from 'react-test-renderer';
 import ModernSelect from './ModernSelect.js';
 
@@ -89,5 +89,48 @@ describe('ModernSelect', () => {
       && node.props.className.includes('modern-select-option')
     ));
     expect(optionButtons.map((node) => collectInstanceText(node))).toEqual(['Gamma APIhttps://third.example.com']);
+  });
+
+  it('keeps keyboard navigation and selection inside the facade contract', async () => {
+    const onChange = vi.fn();
+    const root = create(
+      <ModernSelect
+        value="alpha"
+        onChange={onChange}
+        options={[
+          { value: 'alpha', label: 'Alpha' },
+          { value: 'disabled', label: 'Disabled', disabled: true },
+          { value: 'beta', label: 'Beta' },
+        ]}
+      />,
+    );
+    const trigger = root.root.find((node) => (
+      node.type === 'button'
+      && typeof node.props.className === 'string'
+      && node.props.className.includes('modern-select-trigger')
+    ));
+
+    await act(async () => {
+      trigger.props.onClick();
+    });
+    expect(trigger.props['aria-expanded']).toBe(true);
+
+    await act(async () => {
+      trigger.props.onKeyDown({ key: 'ArrowDown', preventDefault: vi.fn() });
+    });
+    let highlighted = root.root.findAll((node) => (
+      node.type === 'button'
+      && typeof node.props.className === 'string'
+      && node.props.className.includes('modern-select-option')
+      && node.props.className.includes('is-highlighted')
+    ));
+    expect(highlighted).toHaveLength(1);
+    expect(collectInstanceText(highlighted[0])).toContain('Beta');
+
+    await act(async () => {
+      trigger.props.onKeyDown({ key: 'Enter', preventDefault: vi.fn() });
+    });
+    expect(onChange).toHaveBeenCalledWith('beta');
+    expect(trigger.props['aria-expanded']).toBe(false);
   });
 });

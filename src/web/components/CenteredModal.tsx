@@ -1,8 +1,9 @@
-import React, { useEffect } from 'react';
-import { createPortal } from 'react-dom';
-import { useAnimatedVisibility } from './useAnimatedVisibility.js';
+import type React from 'react';
+import { Dialog } from './ui/Dialog.js';
 
-type CenteredModalProps = {
+// Compatibility facade: the Dialog wrapper owns useAnimatedVisibility and
+// createPortal while preserving the modal-backdrop/modal-content class names.
+export type CenteredModalProps = {
   open: boolean;
   onClose: () => void;
   title: React.ReactNode;
@@ -27,64 +28,20 @@ export default function CenteredModal({
   closeOnEscape = false,
   showCloseButton = true,
 }: CenteredModalProps) {
-  const presence = useAnimatedVisibility(open, 220);
-  const canUsePortal = typeof document !== 'undefined'
-    && !!document.body
-    && typeof document.body.appendChild === 'function'
-    && typeof document.body.removeChild === 'function';
-
-  useEffect(() => {
-    if (!open || !canUsePortal) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [canUsePortal, open]);
-
-  useEffect(() => {
-    if (!open || !closeOnEscape || !canUsePortal) return;
-    const handleKeydown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', handleKeydown);
-    return () => {
-      document.removeEventListener('keydown', handleKeydown);
-    };
-  }, [canUsePortal, closeOnEscape, open, onClose]);
-
-  if (!presence.shouldRender) return null;
-
-  const modal = (
-    <div
-      className={`modal-backdrop ${presence.isVisible ? '' : 'is-closing'}`.trim()}
-      onClick={closeOnBackdrop ? onClose : undefined}
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title={title}
+      footer={footer}
+      maxWidth={maxWidth}
+      bodyStyle={bodyStyle}
+      closeOnBackdrop={closeOnBackdrop}
+      closeOnEscape={closeOnEscape}
+      showCloseButton={showCloseButton}
+      closeLabel="关闭弹框"
     >
-      <div
-        className={`modal-content ${presence.isVisible ? '' : 'is-closing'}`.trim()}
-        style={{ maxWidth }}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="modal-header">
-          <div className="modal-title">{title}</div>
-          {showCloseButton ? (
-            <button
-              type="button"
-              className="modal-close-button"
-              onClick={onClose}
-              aria-label="关闭弹框"
-            >
-              ×
-            </button>
-          ) : null}
-        </div>
-        <div className="modal-body" style={bodyStyle}>
-          {children}
-        </div>
-        {footer ? <div className="modal-footer">{footer}</div> : null}
-      </div>
-    </div>
+      {children}
+    </Dialog>
   );
-
-  return canUsePortal ? createPortal(modal, document.body) : modal;
 }

@@ -7,12 +7,17 @@ export function useIsMobile(breakpoint = MOBILE_BREAKPOINT) {
   ));
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    // Capture the host object for the complete effect lifetime. Embedded
+    // shells and tests may replace globalThis.window while the component is
+    // still mounted; cleanup must detach from the same object that received
+    // the listener instead of reading a possibly missing global later.
+    const hostWindow = typeof window === 'undefined' ? null : window;
+    if (!hostWindow) return;
     const query = breakpoint === MOBILE_BREAKPOINT
       ? MOBILE_MEDIA_QUERY
       : `(max-width: ${breakpoint}px)`;
-    const media = typeof window.matchMedia === 'function' ? window.matchMedia(query) : null;
-    const update = () => setIsMobile(media ? media.matches : window.innerWidth <= breakpoint);
+    const media = typeof hostWindow.matchMedia === 'function' ? hostWindow.matchMedia(query) : null;
+    const update = () => setIsMobile(media ? media.matches : hostWindow.innerWidth <= breakpoint);
     update();
 
     if (media && typeof media.addEventListener === 'function') {
@@ -24,14 +29,14 @@ export function useIsMobile(breakpoint = MOBILE_BREAKPOINT) {
       };
     }
 
-    const addResizeListener = typeof window.addEventListener === 'function';
-    const removeResizeListener = typeof window.removeEventListener === 'function';
+    const addResizeListener = typeof hostWindow.addEventListener === 'function';
+    const removeResizeListener = typeof hostWindow.removeEventListener === 'function';
     if (!addResizeListener) return;
 
-    window.addEventListener('resize', update);
+    hostWindow.addEventListener('resize', update);
     return () => {
       if (removeResizeListener) {
-        window.removeEventListener('resize', update);
+        hostWindow.removeEventListener('resize', update);
       }
     };
   }, [breakpoint]);

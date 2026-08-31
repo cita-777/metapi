@@ -1,8 +1,16 @@
-import React, { createContext, useContext, useState, useCallback, useMemo, useRef } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
-type ToastType = 'success' | 'error' | 'info';
+export type ToastType = 'success' | 'error' | 'info';
 
-interface Toast {
+type Toast = {
   id: number;
   type: ToastType;
   message: string;
@@ -33,18 +41,53 @@ const icons: Record<ToastType, React.ReactNode> = {
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const idRef = useRef(0);
+  // React runs child effects before parent effects. Start true so a child that
+  // emits a toast from its first effect is not dropped before this provider's
+  // mount effect has run; the cleanup flips it to false on unmount.
+  const mountedRef = useRef(true);
+  const dismissTimersRef = useRef(new Map<number, ReturnType<typeof globalThis.setTimeout>>());
+  const removeTimersRef = useRef(new Map<number, ReturnType<typeof globalThis.setTimeout>>());
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      dismissTimersRef.current.forEach((timer) => globalThis.clearTimeout(timer));
+      removeTimersRef.current.forEach((timer) => globalThis.clearTimeout(timer));
+      dismissTimersRef.current.clear();
+      removeTimersRef.current.clear();
+    };
+  }, []);
+
+  const clearDismissTimer = useCallback((id: number) => {
+    const timer = dismissTimersRef.current.get(id);
+    if (timer === undefined) return;
+    globalThis.clearTimeout(timer);
+    dismissTimersRef.current.delete(id);
+  }, []);
 
   const removeToast = useCallback((id: number) => {
+    if (!mountedRef.current) return;
+    clearDismissTimer(id);
+    if (removeTimersRef.current.has(id)) return;
     setToasts(prev => prev.map(t => t.id === id ? { ...t, exiting: true } : t));
-    setTimeout(() => {
+    const timer = globalThis.setTimeout(() => {
+      removeTimersRef.current.delete(id);
+      if (!mountedRef.current) return;
       setToasts(prev => prev.filter(t => t.id !== id));
     }, 250);
-  }, []);
+    removeTimersRef.current.set(id, timer);
+  }, [clearDismissTimer]);
 
   const addToast = useCallback((type: ToastType, message: string) => {
     const id = ++idRef.current;
+    if (!mountedRef.current) return;
     setToasts(prev => [...prev, { id, type, message }]);
-    setTimeout(() => removeToast(id), 3200);
+    const timer = globalThis.setTimeout(() => {
+      dismissTimersRef.current.delete(id);
+      removeToast(id);
+    }, 3200);
+    dismissTimersRef.current.set(id, timer);
   }, [removeToast]);
 
   const success = useCallback((msg: string) => addToast('success', msg), [addToast]);
@@ -63,17 +106,34 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <div className="toast-container">
+      <div
+        className="toast-container"
+        role="region"
+        aria-live="polite"
+        aria-relevant="additions text"
+        aria-label="通知"
+      >
         {toasts.map(t => (
           <div
             key={t.id}
             className={`toast toast-${t.type} ${t.exiting ? 'toast-exit' : ''}`}
             onClick={() => removeToast(t.id)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                removeToast(t.id);
+              }
+            }}
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            tabIndex={0}
+            aria-label={t.message}
             style={{ cursor: 'pointer' }}
           >
             <span style={{ flexShrink: 0, marginTop: 1 }}>{icons[t.type]}</span>
             <span style={{ fontSize: 13, lineHeight: 1.5 }}>{t.message}</span>
-            <div className="toast-progress" />
+            <div className="toast-progress" aria-hidden="true" />
           </div>
         ))}
       </div>

@@ -1,5 +1,6 @@
 import React from 'react';
 import CenteredModal from './CenteredModal.js';
+import { AsyncButton, Button } from './ui/Button.js';
 
 type DeleteConfirmModalProps = {
   open: boolean;
@@ -31,12 +32,10 @@ export default function DeleteConfirmModal({
       bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 12 }}
       footer={(
         <>
-          <button onClick={onClose} className="btn btn-ghost" disabled={loading}>{cancelText}</button>
-          <button onClick={onConfirm} className="btn btn-danger" disabled={loading}>
-            {loading
-              ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 删除中...</>
-              : confirmText}
-          </button>
+          <Button onClick={onClose} variant="ghost" disabled={loading}>{cancelText}</Button>
+          <AsyncButton onClick={onConfirm} variant="danger" loading={loading} loadingLabel="删除中...">
+            {confirmText}
+          </AsyncButton>
         </>
       )}
     >
