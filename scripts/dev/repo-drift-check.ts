@@ -36,18 +36,28 @@ type RunOptions = {
 };
 
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx']);
+const STYLE_EXTENSIONS = new Set(['.css', '.scss', '.less']);
 
-const ROUTES_PROXY_IMPORT_ALLOWLIST = new Set([
-  'src/server/proxy-core/surfaces/chatSurface.ts',
-  'src/server/proxy-core/surfaces/filesSurface.ts',
-  'src/server/proxy-core/surfaces/geminiSurface.ts',
-  'src/server/proxy-core/surfaces/openAiResponsesSurface.ts',
-  'src/server/proxy-core/surfaces/sharedSurface.ts',
-]);
+// Keep this empty: proxy-core helpers now have neutral owners under services.
+// Any future route-layer import is a new violation, not tracked debt.
+const ROUTES_PROXY_IMPORT_ALLOWLIST = new Set<string>();
 
-const TOP_LEVEL_PAGE_IMPORT_ALLOWLIST = new Set([
-  'src/web/pages/Accounts.tsx',
-]);
+// TokensPanel now lives under the tokens domain, so no top-level page import
+// debt remains. Keep this ratchet empty so a new page-to-page dependency is a
+// visible violation that cannot be hidden by an allowlist.
+const TOP_LEVEL_PAGE_IMPORT_ALLOWLIST = new Set<string>();
+
+// Third-party interaction primitives are intentionally hidden behind the
+// Metapi-owned components/ui boundary. Keep this list small and explicit so a
+// future UI dependency cannot silently leak into routed pages or domain
+// components. The rule is source-based by design: it catches static imports,
+// require calls and dynamic imports without trying to resolve the module graph.
+const WEB_UI_IMPORT_PATTERN = /(?:\bfrom\s+|\bimport\s*(?:\(|\s)|\brequire\s*\()["'](?:@radix-ui\/|@mui\/|@chakra-ui\/|@headlessui\/|@mantine\/|@ariakit\/|antd(?:\/|["']))/;
+const WEB_STYLE_RUNTIME_IMPORT_PATTERN = /(?:from\s+|import\s*\(|require\s*\()["'](?:styled-components|@emotion\/(?:react|styled)|@vanilla-extract\/|[^"']+\.module\.(?:css|scss|less))["']/;
+
+function isWebUiWrapperFile(file: string): boolean {
+  return file.startsWith('src/web/components/ui/');
+}
 
 function normalizeRelativePath(root: string, fullPath: string): string {
   return relative(root, fullPath).replaceAll('\\', '/');
@@ -73,7 +83,7 @@ function walkFiles(root: string, currentDir = root): string[] {
     }
 
     const extension = extname(entry);
-    if (SOURCE_EXTENSIONS.has(extension)) {
+    if (SOURCE_EXTENSIONS.has(extension) || STYLE_EXTENSIONS.has(extension)) {
       files.push(fullPath);
     }
   }
@@ -145,6 +155,31 @@ function createRules(): RuleSpec[] {
         return `top-level page imports ${imported}`;
       },
       allowlistedFiles: TOP_LEVEL_PAGE_IMPORT_ALLOWLIST,
+    },
+    {
+      id: 'web-ui-third-party-import',
+      description: 'Web pages and domain components must use the Metapi-owned UI wrapper boundary',
+      fileFilter: (file) => file.startsWith('src/web/')
+        && isNonTestSource(file)
+        && !isWebUiWrapperFile(file),
+      lineMatch: (line) => WEB_UI_IMPORT_PATTERN.test(line),
+      message: 'web source imports a third-party UI primitive outside src/web/components/ui',
+    },
+    {
+      id: 'web-style-runtime-import',
+      description: 'Web production code must use the shared CSS token/class entrypoint',
+      fileFilter: (file) => file.startsWith('src/web/') && isNonTestSource(file),
+      lineMatch: (line) => WEB_STYLE_RUNTIME_IMPORT_PATTERN.test(line),
+      message: 'web source imports a page-specific style runtime or CSS module',
+    },
+    {
+      id: 'web-tailwind-entry',
+      description: 'Tailwind must remain a single shared entrypoint',
+      fileFilter: (file) => file.startsWith('src/web/')
+        && STYLE_EXTENSIONS.has(extname(file))
+        && file !== 'src/web/index.css',
+      lineMatch: (line) => /@import\s+["']tailwindcss["']/.test(line),
+      message: 'web stylesheet imports Tailwind outside src/web/index.css',
     },
   ];
 }

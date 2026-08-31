@@ -1,0 +1,9 @@
+{"file":".trellis/spec/guides/documentation-language.md","reason":"检查任务验收和实现变更中的 Trellis 文档是否遵循简体中文默认语言，以及机器可读字段是否保持不变。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查前端验证门和回归风险"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查服务端边界和测试要求"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查跨层回归与契约漂移"}
+{"file": ".trellis/tasks/08-31-project-wide-simplification/audit.md", "reason": "核对实现是否回应已记录的热点和边界"}
+{"file": ".trellis/tasks/08-31-project-wide-simplification/research/repository-baseline.md", "reason": "核对构建、drift、Git dirty 状态和数据库范围"}
+{"file": ".trellis/tasks/08-31-project-wide-simplification/research/frontend-architecture.md", "reason": "核对页面、请求、样式和候选性能改动边界"}
+{"file": ".trellis/tasks/08-31-project-wide-simplification/research/backend-architecture.md", "reason": "核对服务端继承关系、proxy log owner 和跨层债务"}
+{"file": ".trellis/tasks/08-31-project-wide-simplification/research/trellis-runtime.md", "reason": "核对 workflow、session pointer、JSONL 和 hook 运行时契约"}

@@ -1,0 +1,33 @@
+{
+  "id": "project-wide-simplification",
+  "name": "project-wide-simplification",
+  "title": "全项目简化与前端一致性",
+  "description": "采用 Iris-like 的 Radix 原语 + 项目封装层，分阶段收敛前端 UI、请求性能/UX 与服务端边界重复，保持现有能力和协议/数据库语义不变。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": "web-server",
+  "package": null,
+  "priority": "P2",
+  "creator": "cita-777",
+  "assignee": "cita-777",
+  "createdAt": "2026-08-31",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "08-31-frontend-ui-foundation",
+    "08-31-frontend-performance-ux",
+    "08-31-server-boundary-simplification"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "architecture": "iris-like-radix-wrappers",
+    "planning_baseline": "2026-08-31"
+  }
+}

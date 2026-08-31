@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"组件 props、Radix wrapper 和无障碍约束"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"前端测试和 drift gate"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"facade 与第三方类型边界"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"避免重复 modal/select/button"}
+{"file":".trellis/spec/guides/documentation-language.md","reason":"保持 Trellis 实施文档和清单使用简体中文"}

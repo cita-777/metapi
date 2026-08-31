@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/directory-structure.md","reason":"service/route/proxy 所有权"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"诊断和日志错误语义"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"架构测试和类型检查"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"服务端重复收敛"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"路由、服务和代理契约"}
+{"file":".trellis/spec/guides/documentation-language.md","reason":"保持 Trellis 实施文档和清单使用简体中文"}

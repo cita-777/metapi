@@ -1,0 +1,3 @@
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"检查取消和 cleanup"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查性能证据和行为回归"}
+{"file":".trellis/spec/guides/documentation-language.md","reason":"检查新增任务说明是否遵循中文文档约定"}
