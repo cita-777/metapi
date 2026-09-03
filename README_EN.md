@@ -23,14 +23,14 @@ into <strong>one API Key, one endpoint</strong>, with automatic model discovery,
 --><a href="https://github.com/cita-777/metapi/stargazers">
   <img alt="GitHub Stars" src="https://img.shields.io/github/stars/cita-777/metapi?style=flat&logo=github&label=Stars">
 </a><!--
+--><a href="https://github.com/cita-777/metapi/graphs/contributors">
+  <img alt="Contributors" src="https://img.shields.io/github/contributors/cita-777/metapi?style=flat">
+</a><!--
 --><a href="https://deepwiki.com/cita-777/metapi">
   <img alt="Ask DeepWiki" src="https://deepwiki.com/badge.svg">
 </a><!--
 --><a href="https://hub.docker.com/r/1467078763/metapi">
   <img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/1467078763/metapi?style=flat&logo=docker&label=Docker%20Pulls">
-</a><!--
---><a href="https://hub.docker.com/r/1467078763/metapi">
-  <img alt="Docker Image" src="https://img.shields.io/badge/docker-1467078763%2Fmetapi-blue?logo=docker&style=flat">
 </a><!--
 --><a href="LICENSE">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat">
@@ -102,6 +102,26 @@ The AI ecosystem is seeing a growing number of aggregation relay stations based 
 | Balances scattered everywhere | **Centralized dashboard** — at-a-glance overview with low-balance alerts |
 | Daily check-ins across sites | **Auto check-in** — scheduled execution with reward tracking |
 | Don't know which site has which models | **Auto model discovery** — new upstream models appear with zero config |
+
+---
+
+<a id="sponsors"></a>
+## ❤️ Sponsors
+
+Thank you to all our sponsors for supporting the project's long-term feature development and maintenance. We are also grateful to every user, contributor, and community member for using, testing, sharing, and improving Metapi.
+
+> [Want to appear here?](mailto:juricek.chen@gmail.com)
+
+<div>
+  <p>
+    <a href="https://www.ipwo.net/?ref=githubmetapi">
+      <img src="docs/sponsors/ipwo.png" alt="IPWO Residential Proxies" width="100%">
+    </a>
+  </p>
+  <p>
+    IPWO covers 195+ regions with dynamic residential proxies, static residential proxies, and unlimited residential proxies supporting HTTP, HTTPS, and SOCKS5 protocols. Built for AI developers and API applications requiring multi-region network access, ideal for AI model calls, API access, automation, and data scraping. Free testing available with exclusive promo code: <code>0205</code>. Welcome to explore via the <a href="https://www.ipwo.net/?ref=githubmetapi">exclusive link</a>.
+  </p>
+</div>
 
 ---
 
@@ -581,12 +601,9 @@ Thanks to everyone who has contributed code, bug reports, ideas, and real-world 
 
 Special thanks to all contributors:
 
-<!-- metapi-contributors:start -->
-<p align="left">
-  <a href="https://github.com/cita-777"><img src="https://avatars.githubusercontent.com/u/177306803?v=4&s=48" width="48" height="48" alt="cita-777" title="cita-777"/></a> <a href="https://github.com/Hureru"><img src="https://avatars.githubusercontent.com/u/121702350?v=4&s=48" width="48" height="48" alt="Hureru" title="Hureru"/></a> <a href="https://github.com/bnvnvnv"><img src="https://avatars.githubusercontent.com/u/4243616?v=4&s=48" width="48" height="48" alt="bnvnvnv" title="bnvnvnv"/></a> <a href="https://github.com/ksmaze"><img src="https://avatars.githubusercontent.com/u/480916?v=4&s=48" width="48" height="48" alt="ksmaze" title="ksmaze"/></a> <a href="https://github.com/DeliciousBuding"><img src="https://avatars.githubusercontent.com/u/101502465?v=4&s=48" width="48" height="48" alt="DeliciousBuding" title="DeliciousBuding"/></a> <a href="https://github.com/Shinku-Chen"><img src="https://avatars.githubusercontent.com/u/17696928?v=4&s=48" width="48" height="48" alt="Shinku-Chen" title="Shinku-Chen"/></a> <a href="https://github.com/weijiafu14"><img src="https://avatars.githubusercontent.com/u/17469139?v=4&s=48" width="48" height="48" alt="weijiafu14" title="weijiafu14"/></a> <a href="https://github.com/ShicYang"><img src="https://avatars.githubusercontent.com/u/61652316?v=4&s=48" width="48" height="48" alt="ShicYang" title="ShicYang"/></a> <a href="https://github.com/Babylonehy"><img src="https://avatars.githubusercontent.com/u/30937892?v=4&s=48" width="48" height="48" alt="Babylonehy" title="Babylonehy"/></a> <a href="https://github.com/zmoon460"><img src="https://avatars.githubusercontent.com/u/42328751?v=4&s=48" width="48" height="48" alt="zmoon460" title="zmoon460"/></a>
-  <a href="https://github.com/Brucents"><img src="https://avatars.githubusercontent.com/u/81791987?v=4&s=48" width="48" height="48" alt="Brucents" title="Brucents"/></a> <a href="https://github.com/ImgBotApp"><img src="https://avatars.githubusercontent.com/u/31427850?v=4&s=48" width="48" height="48" alt="ImgBotApp" title="ImgBotApp"/></a> <a href="https://github.com/Zhou-Ruichen"><img src="https://avatars.githubusercontent.com/u/191002401?v=4&s=48" width="48" height="48" alt="Zhou-Ruichen" title="Zhou-Ruichen"/></a> <a href="https://github.com/nodca"><img src="https://avatars.githubusercontent.com/u/96775880?v=4&s=48" width="48" height="48" alt="nodca" title="nodca"/></a> <a href="https://github.com/puyujian"><img src="https://avatars.githubusercontent.com/u/46592377?v=4&s=48" width="48" height="48" alt="puyujian" title="puyujian"/></a> <a href="https://github.com/rcocco"><img src="https://avatars.githubusercontent.com/u/46603462?v=4&s=48" width="48" height="48" alt="rcocco" title="rcocco"/></a> <a href="https://github.com/xuyufengfei"><img src="https://avatars.githubusercontent.com/u/188047874?v=4&s=48" width="48" height="48" alt="xuyufengfei" title="xuyufengfei"/></a>
-</p>
-<!-- metapi-contributors:end -->
+<a href="https://github.com/cita-777/metapi/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=cita-777/metapi" alt="Contributors" />
+</a>
 
 ---
 

@@ -16,6 +16,8 @@
   <img alt="GitHub Release" src="https://img.shields.io/github/v/release/cita-777/metapi?label=Release&logo=github&style=flat">
 </a><a href="https://github.com/cita-777/metapi/stargazers">
   <img alt="GitHub Stars" src="https://img.shields.io/github/stars/cita-777/metapi?style=flat&logo=github&label=Stars">
+</a><a href="https://github.com/cita-777/metapi/graphs/contributors">
+  <img alt="Contributors" src="https://img.shields.io/github/contributors/cita-777/metapi?style=flat">
 </a><a href="https://atomgit.com/cita-777/metapi">
   <img alt="AtomGit Stars" src="https://atomgit.com/cita-777/metapi/star/badge.svg">
 </a><a href="https://deepwiki.com/cita-777/metapi">
@@ -85,6 +87,26 @@
 | 📊 余额分散在各处，不知道还剩多少     | **集中看板** 一目了然，余额不足自动告警                          |
 | ✅ 每天得去各站签到领额度             | **自动签到** 定时执行，奖励自动追踪                              |
 | 🤷 不知道哪个站有什么模型             | **自动模型发现**，上游新增模型零配置出现在你的模型列表里         |
+
+---
+
+<a id="sponsors"></a>
+## ❤️ 赞助商
+
+感谢所有赞助者对本项目的支持，这些支持助力项目长期的功能更新与维护。也感谢每一位用户、贡献者和社区伙伴的使用、反馈、测试、分享与贡献。
+
+> [想出现在这里？](mailto:juricek.chen@gmail.com)
+
+<div>
+  <p>
+    <a href="https://www.ipwo.net/?ref=githubmetapi">
+      <img src="docs/sponsors/ipwo.png" alt="IPWO 住宅代理" width="100%">
+    </a>
+  </p>
+  <p>
+    IPWO 覆盖 195+ 地区动态住宅代理、静态住宅代理和不限量住宅代理，支持 HTTP、HTTPS 及 SOCKS5 协议，适用于 AI 开发者及 API 应用的多地区网络访问。可用于 AI 模型调用、API 访问、自动化及数据采集等场景。支持免费测试，专属折扣码：<code>0205</code>，欢迎通过<a href="https://www.ipwo.net/?ref=githubmetapi">专属链接</a>体验。
+  </p>
+</div>
 
 ---
 
