@@ -242,6 +242,24 @@ npx vitest run --pool=threads --poolOptions.threads.singleThread=true <test-file
 - **交付物**：代码与持续变更日志；无新增 PDF 或截图。
 - **状态**：已完成，已推送到 PR 分支；本次日志修正随当前文档提交同步。
 
+## 2026-09-04
+
+### 14. 修复 Issue #611：ESA 挑战诊断与签到可靠性
+
+- **类型**：缺陷修复
+- **需求来源**：[Issue #611](https://github.com/cita-777/metapi/issues/611)
+- **目标**：避免新版阿里云 ESA 挑战退化为 HTML JSON 解析错误，并修复批量签到不可观测及过期余额缓存导致的假奖励。
+- **实现范围**：识别 `aliyun_waf_aa/bb` 新版挑战并返回需要真实浏览器的稳定提示；保留旧版 `acw_sc__v2` 计算流程；批量签到结束写入汇总事件；仅在 5 分钟内刷新过余额时推导奖励。
+- **主要文件**：
+  - `src/server/services/platforms/newApiShield.ts`
+  - `src/server/services/platforms/newApi.ts`
+  - `src/server/services/platforms/newApi.test.ts`
+  - `src/server/services/checkinService.ts`
+  - `src/server/services/checkinService.autoRelogin.test.ts`
+- **验证**：聚焦 Vitest 通过（51 个测试）；`npm run typecheck:server` 通过；`npm run repo:drift-check` 通过（新增违规 0）。
+- **交付物**：代码、回归测试和本变更日志。
+- **状态**：已完成
+
 ## 后续记录模板
 
 复制下面模板追加到对应日期下，先记录需求来源，再补充实际实现和验证结果：

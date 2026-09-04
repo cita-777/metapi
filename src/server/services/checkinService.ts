@@ -21,6 +21,9 @@ import { withAccountProxyOverride } from './siteProxy.js';
 
 type CheckinExecutionStatus = 'success' | 'failed' | 'skipped';
 
+// 只有刚刚刷新过的余额才能用于推导本次签到奖励，避免把多日累计变化误记为奖励。
+const REWARD_BALANCE_MAX_AGE_MS = 5 * 60 * 1000;
+
 function isSiteDisabled(status?: string | null): boolean {
   return (status || 'active') === 'disabled';
 }
@@ -90,6 +93,14 @@ function inferRewardFromBalanceDelta(previousBalance: unknown, latestBalance: un
   const delta = after - before;
   if (!Number.isFinite(delta) || delta <= 0) return 0;
   return Math.round(delta * 1_000_000) / 1_000_000;
+}
+
+function hasFreshBalanceSnapshot(lastBalanceRefresh: unknown, now = Date.now()): boolean {
+  if (typeof lastBalanceRefresh !== 'string' || !lastBalanceRefresh.trim()) return false;
+  const refreshedAt = Date.parse(lastBalanceRefresh);
+  if (!Number.isFinite(refreshedAt)) return false;
+  const age = now - refreshedAt;
+  return age >= 0 && age <= REWARD_BALANCE_MAX_AGE_MS;
 }
 
 /**
@@ -297,7 +308,9 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
 
     const parsedReward = parseCheckinRewardAmount(logReward) || parseCheckinRewardAmount(result.message);
     if (directCheckinSuccess && parsedReward <= 0) {
-      const inferredReward = inferRewardFromBalanceDelta(account.balance, refreshedBalanceInfo?.balance);
+      const inferredReward = hasFreshBalanceSnapshot(account.lastBalanceRefresh)
+        ? inferRewardFromBalanceDelta(account.balance, refreshedBalanceInfo?.balance)
+        : 0;
       if (inferredReward > 0) {
         logReward = inferredReward.toString();
       }
@@ -408,5 +421,22 @@ export async function checkinAll(options?: { accountIds?: number[]; scheduleMode
   });
 
   await Promise.all(promises);
+
+  if (results.length > 0) {
+    const success = results.filter((entry) => entry.result?.status === 'success').length;
+    const skipped = results.filter((entry) => entry.result?.status === 'skipped').length;
+    const failed = results.length - success - skipped;
+    const createdAt = formatUtcSqlDateTime(new Date());
+    // 批量任务抑制账号级事件后写一条汇总，确保定时签到也能被事件通知和看板发现。
+    await db.insert(schema.events).values({
+      type: 'checkin',
+      title: 'checkin summary',
+      message: `签到批次完成：总计 ${results.length}，成功 ${success}，跳过 ${skipped}，失败 ${failed}`,
+      level: failed > 0 ? 'warning' : 'info',
+      relatedType: 'account',
+      createdAt,
+    }).run();
+  }
+
   return results;
 }
