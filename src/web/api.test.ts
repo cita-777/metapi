@@ -496,6 +496,7 @@ describe('api proxy test timeout handling', () => {
       controller.signal,
     );
     const bodyPromise = response.json();
+    await vi.advanceTimersByTimeAsync(30_000);
     controller.abort();
 
     await expect(bodyPromise).rejects.toMatchObject({ name: 'AbortError' });
@@ -530,28 +531,37 @@ describe('api proxy test timeout handling', () => {
     });
   });
 
-  it('normalizes a timeout from a returned streaming Response body', async () => {
-    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
-      Promise.resolve(createAbortAwarePendingResponse(init?.signal)),
+  it('releases the initial deadline after a proxy stream is established', async () => {
+    let sourceController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const encoder = new TextEncoder();
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          sourceController = controller;
+          controller.enqueue(encoder.encode('first'));
+        },
+      }), { status: 200 }),
     );
     vi.stubGlobal('fetch', fetchMock);
 
     const response = await api.proxyTestStream({
       method: 'POST',
-      path: '/v1/embeddings',
+      path: '/v1/chat/completions',
       requestKind: 'json',
-      jsonBody: { model: 'demo', input: 'hello' },
+      stream: true,
+      jsonBody: { model: 'demo', messages: [] },
     });
-    const bodyResult = response.json().then(
-      (value) => ({ ok: true as const, value }),
-      (error) => ({ ok: false as const, error }),
-    );
+    const reader = response.body!.getReader();
+    await expect(reader.read()).resolves.toMatchObject({ done: false });
 
     await vi.advanceTimersByTimeAsync(30_000);
-    await expect(bodyResult).resolves.toMatchObject({
-      ok: false,
-      error: { message: '请求超时（30s）' },
-    });
+    expect(vi.getTimerCount()).toBe(0);
+
+    const secondRead = reader.read();
+    sourceController!.enqueue(encoder.encode('second'));
+    sourceController!.close();
+    await expect(secondRead).resolves.toMatchObject({ done: false });
+    await expect(reader.read()).resolves.toMatchObject({ done: true });
   });
 
   it('cancels a returned body promptly even when its source ignores abort', async () => {

@@ -851,6 +851,40 @@ export default function ModelTester() {
   }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      streamStopRequestedRef.current = true;
+      streamGenerationRef.current += 1;
+      streamBatcherRef.current?.flush();
+      streamBatcherRef.current?.dispose();
+      streamBatcherRef.current = null;
+      const reader = streamReaderRef.current;
+      streamReaderRef.current = null;
+      cancelStreamReader(reader);
+      try {
+        streamAbortRef.current?.abort();
+      } catch {
+        // no-op
+      }
+      streamAbortRef.current = null;
+      if (scrollTimerRef.current !== null) {
+        clearTimeout(scrollTimerRef.current);
+        scrollTimerRef.current = null;
+      }
+      if (persistenceTimerRef.current !== null) {
+        clearTimeout(persistenceTimerRef.current);
+        persistenceTimerRef.current = null;
+        if (!skipPersistenceRef.current) {
+          persistSessionRef.current?.();
+        }
+      }
+      pendingPollAbortRef.current?.abort();
+      pendingPollAbortRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
     const restored = typeof localStorage === 'undefined'
       ? null
       : parseModelTesterSession(localStorage.getItem(MODEL_TESTER_STORAGE_KEY));
@@ -1113,46 +1147,6 @@ export default function ModelTester() {
       }
     };
   }, [messages, sending]);
-
-  useEffect(() => {
-    // React StrictMode replays mount effects in development.  Resetting this
-    // flag in setup keeps the second (real) mount live after the probe cleanup.
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      streamStopRequestedRef.current = true;
-      streamGenerationRef.current += 1;
-      // Flush before disposal so a teardown cannot leave a scheduled batch (or
-      // its timer) behind.  The mounted guard suppresses React state commits,
-      // while the batcher still drains its raw/delta queues deterministically.
-      streamBatcherRef.current?.flush();
-      streamBatcherRef.current?.dispose();
-      streamBatcherRef.current = null;
-      const reader = streamReaderRef.current;
-      streamReaderRef.current = null;
-      cancelStreamReader(reader);
-      try {
-        streamAbortRef.current?.abort();
-      } catch {
-        // no-op
-      }
-      streamAbortRef.current = null;
-      if (scrollTimerRef.current !== null) {
-        clearTimeout(scrollTimerRef.current);
-        scrollTimerRef.current = null;
-      }
-      if (persistenceTimerRef.current !== null) {
-        clearTimeout(persistenceTimerRef.current);
-        persistenceTimerRef.current = null;
-      }
-      // Do not write a snapshot during teardown: a replacement ModelTester
-      // instance may already own the storage key, and an old cleanup must not
-      // overwrite its newer state.  Normal debounce commits happen before
-      // teardown; clearChat explicitly suppresses the next commit.
-      pendingPollAbortRef.current?.abort();
-      pendingPollAbortRef.current = null;
-    };
-  }, []);
 
   const handleUploadChange = useCallback(async (
     fileList: FileList | null,

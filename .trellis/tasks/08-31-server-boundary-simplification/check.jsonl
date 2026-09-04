@@ -1,4 +1,0 @@
-{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查 route/service/transformer 边界"}
-{"file":".trellis/spec/backend/error-handling.md","reason":"检查 status、timeout 和 best-effort"}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查协议和数据库行为不变"}
-{"file":".trellis/spec/guides/documentation-language.md","reason":"检查新增任务说明是否遵循中文文档约定"}

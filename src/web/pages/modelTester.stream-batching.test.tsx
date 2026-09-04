@@ -156,7 +156,9 @@ describe('ModelTester stream batching', () => {
         .filter((snapshot) => snapshot.includes('[DONE]'));
       expect(new Set(rawSnapshots).size).toBe(1);
     } finally {
-      root?.unmount();
+      await act(async () => {
+        root?.unmount();
+      });
     }
   });
 
@@ -204,7 +206,9 @@ describe('ModelTester stream batching', () => {
       expect(collectText(root!.toJSON())).toContain('a');
       expect(readerCancelled).toBe(true);
     } finally {
-      root?.unmount();
+      await act(async () => {
+        root?.unmount();
+      });
       vi.useRealTimers();
     }
   });
@@ -241,7 +245,9 @@ describe('ModelTester stream batching', () => {
       expect(signal.aborted).toBe(true);
       expect(apiMock.deleteProxyTestJob).toHaveBeenCalledWith('job-42');
     } finally {
-      root?.unmount();
+      await act(async () => {
+        root?.unmount();
+      });
     }
   });
 });

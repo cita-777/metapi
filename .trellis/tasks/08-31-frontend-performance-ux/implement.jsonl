@@ -1,5 +1,0 @@
-{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"异步取消、timer 和 stale guard"}
-{"file":".trellis/spec/frontend/state-management.md","reason":"保持页面本地 server state"}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"性能/UX 回归和测试门"}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"API/SSE/跨域测速边界"}
-{"file":".trellis/spec/guides/documentation-language.md","reason":"保持 Trellis 实施文档和清单使用简体中文"}

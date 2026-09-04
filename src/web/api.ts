@@ -14,6 +14,8 @@ type RequestOptions = RequestInit & {
 type FetchResponseOptions = {
   /** Wrap a returned stream when the caller owns the Response lifecycle. */
   wrapBody?: boolean;
+  /** Stop the initial request deadline once response headers are available. */
+  releaseTimeoutAfterHeaders?: boolean;
 };
 
 type ResponseLifecycle = {
@@ -22,6 +24,7 @@ type ResponseLifecycle = {
   externalSignal?: AbortSignal;
   timedOut: boolean;
   externallyAborted: boolean;
+  releaseTimeout: () => void;
   cleanup: () => void;
   normalizeError: (error: unknown) => unknown;
 };
@@ -59,6 +62,11 @@ function createResponseLifecycle(
   let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
   let externalAbortHandler: (() => void) | null = null;
   let cleaned = false;
+  const releaseTimeout = () => {
+    if (timeoutHandle === null) return;
+    clearTimeout(timeoutHandle);
+    timeoutHandle = null;
+  };
 
   const lifecycle: ResponseLifecycle = {
     controller,
@@ -66,13 +74,11 @@ function createResponseLifecycle(
     externalSignal,
     timedOut: false,
     externallyAborted: !!externalSignal?.aborted,
+    releaseTimeout,
     cleanup: () => {
       if (cleaned) return;
       cleaned = true;
-      if (timeoutHandle !== null) {
-        clearTimeout(timeoutHandle);
-        timeoutHandle = null;
-      }
+      releaseTimeout();
       if (externalSignal && externalAbortHandler) {
         externalSignal.removeEventListener("abort", externalAbortHandler);
         externalAbortHandler = null;
@@ -221,6 +227,7 @@ async function consumeResponseBody<T>(
 function attachResponseLifecycle(
   response: Response,
   lifecycle: ResponseLifecycle,
+  releaseTimeoutAfterHeaders = false,
 ): Response {
   // A native Response with a null body has nothing left to wait for.  Keep a
   // lifecycle for test/adaptor response doubles that omit `body` but expose a
@@ -232,6 +239,10 @@ function attachResponseLifecycle(
   if (body === null && isNativeResponse) {
     lifecycle.cleanup();
     return response;
+  }
+
+  if (releaseTimeoutAfterHeaders) {
+    lifecycle.releaseTimeout();
   }
 
   if (body == null) {
@@ -529,7 +540,11 @@ async function fetchAuthenticatedResponse(
       throw new Error("Session expired");
     }
     if (responseOptions.wrapBody) {
-      return attachResponseLifecycle(res, lifecycle);
+      return attachResponseLifecycle(
+        res,
+        lifecycle,
+        responseOptions.releaseTimeoutAfterHeaders,
+      );
     }
     const body = res.body;
     const isNativeResponse =
@@ -750,7 +765,7 @@ async function proxyTestStreamRequest(
       body: JSON.stringify(data),
       timeoutMs: resolveProxyTestTimeoutMs(data),
     },
-    { wrapBody: true },
+    { wrapBody: true, releaseTimeoutAfterHeaders: true },
   );
 }
 
