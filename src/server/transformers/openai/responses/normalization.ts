@@ -123,8 +123,9 @@ function normalizeResponsesContentItem(
   if (type === 'input_image' || type === 'image_url') {
     const imageUrl = normalizeImageUrlValue(item.image_url) ?? normalizeImageUrlValue(item.url);
     if (!imageUrl) return null;
+    const { file_id: _ignoredFileId, ...rest } = item as Record<string, unknown>;
     return {
-      ...item,
+      ...rest,
       type: 'input_image',
       image_url: imageUrl,
     };
