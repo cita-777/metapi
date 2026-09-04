@@ -7,7 +7,7 @@
 ## 必须遵循的模式
 
 - 通过 `src/server/contracts/` 中的 Zod helper 解析外部 body。
-- 通过 `executeEndpointFlow()` 和共享 proxy surface 处理 route endpoint fallback；整包上游读取使用 `readRuntimeResponseText()`。
+- 通过 `executeEndpointFlow()` 和共享 proxy surface 处理 route endpoint fallback；surface/orchestration 收到 runtime `Response` 时，整包上游读取使用 `readRuntimeResponseText()`。
 - 将平台 capability/discovery 行为放在声明式 registry/profile 层，不要散落 `if (platform === ...)` 分支。
 - 不要假设所有 platform adapter 共享同一继承树：`OneApiAdapter` 与 `VeloeraAdapter` 当前直接继承 `BasePlatformAdapter`，`StandardApiProviderAdapterBase` 只覆盖其 provider 子类的 standard endpoint/default 行为。跨平台抽象必须用 header、quota、check-in、models/context cache 的参数化测试证明。
 - 使用共享 insert/upsert/query helper，以及 `database-guidelines.md` 描述的 transaction 边界。
@@ -18,7 +18,7 @@
 - 在 route adapter 中放业务逻辑、持久化、计费、retry 策略或 stream 生命周期。
 - transformer 从 routes、Fastify、OAuth/token-router/runtime-dispatch module 导入。
 - 在 db 层之外直接使用 `.returning()`/`lastInsertRowid`。
-- 在 proxy-core surface 中直接使用 `.text()` 读取整包 body。
+- 在 proxy-core surface 中直接使用 `.text()` 读取整包 runtime body（`responsesSseFinal.ts` 为无 `headers` 的最小测试 double 保留兼容分支；真实 `Response` 仍走 `readRuntimeResponseText()`）。
 - 已有 helper 由 `routeRefreshWorkflow.ts`、`sharedSurface.ts`、`insertHelpers.ts` 或 transformer facade 拥有时，再实现一套平行版本。
 - proxy log 从 local `logProxy` 迁移到共享 owner 时，必须保留 `downstreamPath`、`upstreamPath`、`usageSource`、billing/token 默认值、stream timing、warning scope 和 status/retry 语义。
 - 记录 secret、cookie、authorization header 或完整 proxy body。

@@ -1,0 +1,146 @@
+# Trellis 配置
+# Trellis 工作流的项目级设置
+#
+# 所有值都有合理默认值；只覆盖确实需要调整的部分。
+
+#-------------------------------------------------------------------------------
+# Session 记录
+#-------------------------------------------------------------------------------
+
+# 运行 add_session.py 后，自动提交 journal/index 变更时使用的 commit message
+session_commit_message: "chore: record journal"
+
+# journal 文件轮换前允许的最大行数
+max_journal_lines: 2000
+
+#-------------------------------------------------------------------------------
+# Session 自动提交
+#-------------------------------------------------------------------------------
+
+# session journal 和 task archive 操作的自动提交行为。
+# - true（默认）：运行 add_session.py / task.py archive 后，脚本自动 stage 并提交
+#   journal / task 变更。
+# - false：脚本不触碰 git。journal-*.md 和 task archive 移动仍会写入磁盘，
+#   由你自行决定何时 git add / commit。
+#
+# 如果项目的 .gitignore 有意排除 .trellis/，或你希望每次先手工审阅 staged
+# 变更，可以使用 false。
+#
+# 接受的值：true / false / yes / no / 1 / 0 / on / off（不区分大小写）。
+#
+# session_auto_commit: true
+
+#-------------------------------------------------------------------------------
+# Task 生命周期 Hook
+#-------------------------------------------------------------------------------
+
+# task 生命周期事件之后执行的 shell command。
+# 每个 hook 都会收到指向 task.json 的 TASK_JSON_PATH 环境变量。
+# hook 失败只打印 warning，不阻塞主操作。
+#
+# hooks:
+#   after_create:
+#     - "echo '任务已创建'"
+#   after_start:
+#     - "echo '任务已开始'"
+#   after_finish:
+#     - "echo '任务已结束'"
+#   after_archive:
+#     - "echo '任务已归档'"
+
+#-------------------------------------------------------------------------------
+# Monorepo / Package
+#-------------------------------------------------------------------------------
+
+# 为 monorepo 项目声明 package。
+# Trellis 会在 trellis init 时自动检测 workspace，也可以在这里手工配置。
+#
+# packages:
+#   frontend:
+#     path: packages/frontend
+#   backend:
+#     path: packages/backend
+#   docs:
+#     path: docs-site
+#     type: submodule
+#   # 对于每个子目录都有独立 .git 的 polyrepo / meta-repo 布局，
+#   # 使用 git: true 标记 package。runtime 会将其作为独立仓库处理，
+#   # 例如用于 git-context 展示。
+#   webapp:
+#     path: ./webapp
+#     git: true
+
+# 未指定 --package 时使用的默认 package。
+# default_package: frontend
+
+#-------------------------------------------------------------------------------
+# Channel worker OOM 守卫
+#-------------------------------------------------------------------------------
+# trellis channel spawn worker 的默认保护措施。守卫在 spawn 时运行（清理过期
+# idle worker，然后限制 live worker 数量），也在每个 supervisor 内运行
+# （worker 连续 idle 超过 idle_timeout 后自行终止）。
+#
+# 优先级：CLI flag > 环境变量（TRELLIS_CHANNEL_WORKER_IDLE_TIMEOUT /
+# TRELLIS_CHANNEL_MAX_LIVE_WORKERS）> 本配置 > 内置默认值。
+#
+# idle_timeout: 0 会禁用 idle cleanup（除非显式 kill 或传入 --timeout，worker
+# 可以永久 idle）。
+# max_live_workers: 0 会禁用 spawn 时的预算检查。
+#
+# trusted_context_dirs 会把 --file/--jsonl/--agent 的 containment 检查范围扩展
+# 到 worker cwd 之外；当 .trellis/tasks 或 .trellis/workspace 是指向外部目录的
+# symlink 时很有用。列出的目录下的 realpath 会和 cwd 一样被接受。
+# auto_trust_trellis_symlinks: false 会关闭对顶层 .trellis/tasks /
+# .trellis/workspace symlink 的窄范围自动信任（默认开启）。
+#
+channel:
+  worker_guard:
+    idle_timeout: 5m
+    max_live_workers: 6
+  # trusted_context_dirs:
+  #   - /work/user/trellis_workspace
+  # auto_trust_trellis_symlinks: false
+
+#-------------------------------------------------------------------------------
+# Codex（dispatch 行为）
+#-------------------------------------------------------------------------------
+# 仅 Codex 使用的开关，其他平台忽略。默认（"auto"）会 dispatch
+# trellis-implement / trellis-check / trellis-research sub-agent。它不依赖父 session
+# transcript 的继承：fork_turns 仍由调用方控制；受信任时 Codex 原生
+# SubagentStart hook 注入 task context，不可用时由 child-side loading 兜底。
+# 只有明确设置为 "inline" 才会让实现和检查留在主 session。"sub-agent" 是
+# 向后兼容的 "auto" 别名。无效的显式值会安全回退到 inline。
+#
+# 在 "auto" 模式下，dispatch 的 sub-agent 默认继承主 session 的 model，除非
+# 手工固定。若想为 implement/check/research 使用更快或更便宜的 model，直接
+# 编辑生成的 .codex/agents/trellis-*.toml 中的 model /
+# model_reasoning_effort（参见文件内注释）；config.yaml 没有对应开关，
+# trellis update 会在重新生成时保留这些编辑。
+#
+# codex:
+#   dispatch_mode: auto  # 或 "inline"；旧别名："sub-agent"
+
+#-------------------------------------------------------------------------------
+# Sub-agent 上下文注入限制
+#-------------------------------------------------------------------------------
+# 限制注入 sub-agent 首个 prompt 的 task context 大小（implement.jsonl /
+# check.jsonl 引用的文件，加上 prd.md / design.md / implement.md）。
+# 超大文件会带提示截断；总 payload 达到上限后，剩余文件降级为索引行
+#（path + reason + size），不再内联全文。
+#
+# 所有值均为字节数；0 表示关闭对应限制。
+#
+# context_injection:
+#   max_file_bytes: 32768        # 每个 implement.jsonl / check.jsonl 引用文件
+#   max_artifact_bytes: 65536    # 每个 task artifact（prd/design/implement.md）
+#   max_total_bytes: 131072      # 整个注入 payload；超出后降级为索引行
+
+#-------------------------------------------------------------------------------
+# 每轮 Prompt 注入
+#-------------------------------------------------------------------------------
+# per-turn <workflow-state> breadcrumb 的 escape hatch。当用户 prompt 包含独立
+# 的 skip keyword（不区分大小写，按单词边界匹配；"no-trellisfoo" 不算）时，
+# 仅本轮跳过 breadcrumb；不影响 SessionStart 或 sub-agent context injection。
+#
+# prompt_injection:
+#   skip_keyword: "no-trellis"   # "" 表示完全关闭 escape hatch

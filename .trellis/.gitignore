@@ -1,0 +1,32 @@
+# 开发者身份（仅本地）
+.developer
+
+# 当前任务指针（每位开发者可使用不同任务）
+.current-task
+
+# 按 session/window 隔离的运行时状态
+.runtime/
+
+# Ralph Loop 状态文件
+.ralph-state.json
+
+# Agent 运行时文件
+.agents/
+.agent-log
+.session-id
+
+# 任务目录运行时文件
+.plan-log
+
+# 原子更新临时文件
+*.tmp
+
+# 更新备份目录
+.backup-*
+
+# 冲突解决临时文件
+*.new
+
+# Python 缓存
+**/__pycache__/
+**/*.pyc
