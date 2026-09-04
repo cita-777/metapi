@@ -51,6 +51,19 @@ describe('Radix browser renderer', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it('moves initial focus into a dialog when it opens', async () => {
+    await act(async () => {
+      root.render(
+        <Dialog open onClose={() => {}} title="聚焦对话框" showCloseButton={false}>
+          <button type="button">首个操作</button>
+        </Dialog>,
+      );
+    });
+
+    const firstAction = document.body.querySelector('[data-ui-surface="dialog"] button');
+    expect(document.activeElement).toBe(firstAction);
+  });
+
   it('restores the document scroll state after the browser surface unmounts', async () => {
     document.body.style.overflow = 'scroll';
     await act(async () => {
@@ -78,6 +91,19 @@ describe('Radix browser renderer', () => {
     const panel = document.body.querySelector('[data-ui-surface="drawer"]');
     expect(panel?.className).toContain('mobile-drawer-panel-right');
     expect(document.body.querySelector('.mobile-drawer-backdrop')).toBeTruthy();
+  });
+
+  it('moves initial focus into a drawer when it opens', async () => {
+    await act(async () => {
+      root.render(
+        <Drawer open onClose={() => {}} title="聚焦抽屉" showCloseButton={false}>
+          <button type="button">首个操作</button>
+        </Drawer>,
+      );
+    });
+
+    const firstAction = document.body.querySelector('[data-ui-surface="drawer"] button');
+    expect(document.activeElement).toBe(firstAction);
   });
 
   it('honors the explicit Escape policy in the Radix path', async () => {

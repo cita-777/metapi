@@ -383,7 +383,6 @@ function DialogSurface({
                 className={panelClassName}
                 style={contentStyle}
                 onClick={(event) => event.stopPropagation()}
-                onOpenAutoFocus={(event) => event.preventDefault()}
                 onCloseAutoFocus={(event) => event.preventDefault()}
                 onEscapeKeyDown={(event) => {
                   if (!closeOnEscape) event.preventDefault();
@@ -433,7 +432,6 @@ function DialogSurface({
                 className={panelClassName}
                 style={contentStyle}
                 onClick={(event) => event.stopPropagation()}
-                onOpenAutoFocus={(event) => event.preventDefault()}
                 onCloseAutoFocus={(event) => event.preventDefault()}
                 onEscapeKeyDown={(event) => {
                   if (!closeOnEscape) event.preventDefault();
