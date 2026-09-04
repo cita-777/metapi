@@ -40,6 +40,7 @@ const icons: Record<ToastType, React.ReactNode> = {
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const toastsRef = useRef<Toast[]>([]);
   const idRef = useRef(0);
   // React runs child effects before parent effects. Start true so a child that
   // emits a toast from its first effect is not dropped before this provider's
@@ -48,17 +49,6 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const dismissTimersRef = useRef(new Map<number, ReturnType<typeof globalThis.setTimeout>>());
   const removeTimersRef = useRef(new Map<number, ReturnType<typeof globalThis.setTimeout>>());
 
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      dismissTimersRef.current.forEach((timer) => globalThis.clearTimeout(timer));
-      removeTimersRef.current.forEach((timer) => globalThis.clearTimeout(timer));
-      dismissTimersRef.current.clear();
-      removeTimersRef.current.clear();
-    };
-  }, []);
-
   const clearDismissTimer = useCallback((id: number) => {
     const timer = dismissTimersRef.current.get(id);
     if (timer === undefined) return;
@@ -66,29 +56,71 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     dismissTimersRef.current.delete(id);
   }, []);
 
+  const scheduleRemoveTimer = useCallback((id: number) => {
+    if (!mountedRef.current || removeTimersRef.current.has(id)) return;
+    const timer = globalThis.setTimeout(() => {
+      removeTimersRef.current.delete(id);
+      if (!mountedRef.current) return;
+      setToasts((prev) => {
+        const next = prev.filter((toast) => toast.id !== id);
+        toastsRef.current = next;
+        return next;
+      });
+    }, 250);
+    removeTimersRef.current.set(id, timer);
+  }, []);
+
   const removeToast = useCallback((id: number) => {
     if (!mountedRef.current) return;
     clearDismissTimer(id);
     if (removeTimersRef.current.has(id)) return;
-    setToasts(prev => prev.map(t => t.id === id ? { ...t, exiting: true } : t));
-    const timer = globalThis.setTimeout(() => {
-      removeTimersRef.current.delete(id);
-      if (!mountedRef.current) return;
-      setToasts(prev => prev.filter(t => t.id !== id));
-    }, 250);
-    removeTimersRef.current.set(id, timer);
-  }, [clearDismissTimer]);
+    setToasts((prev) => {
+      const next = prev.map((toast) => toast.id === id ? { ...toast, exiting: true } : toast);
+      toastsRef.current = next;
+      return next;
+    });
+    scheduleRemoveTimer(id);
+  }, [clearDismissTimer, scheduleRemoveTimer]);
 
-  const addToast = useCallback((type: ToastType, message: string) => {
-    const id = ++idRef.current;
-    if (!mountedRef.current) return;
-    setToasts(prev => [...prev, { id, type, message }]);
+  const scheduleDismissTimer = useCallback((id: number) => {
+    if (!mountedRef.current || dismissTimersRef.current.has(id) || removeTimersRef.current.has(id)) return;
     const timer = globalThis.setTimeout(() => {
       dismissTimersRef.current.delete(id);
       removeToast(id);
     }, 3200);
     dismissTimersRef.current.set(id, timer);
   }, [removeToast]);
+
+  const addToast = useCallback((type: ToastType, message: string) => {
+    const id = ++idRef.current;
+    if (!mountedRef.current) return;
+    const nextToast = { id, type, message };
+    toastsRef.current = [...toastsRef.current, nextToast];
+    setToasts((prev) => {
+      const next = [...prev, nextToast];
+      toastsRef.current = next;
+      return next;
+    });
+    scheduleDismissTimer(id);
+  }, [scheduleDismissTimer]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    toastsRef.current.forEach((toast) => {
+      if (toast.exiting) {
+        scheduleRemoveTimer(toast.id);
+      } else {
+        scheduleDismissTimer(toast.id);
+      }
+    });
+    return () => {
+      mountedRef.current = false;
+      dismissTimersRef.current.forEach((timer) => globalThis.clearTimeout(timer));
+      removeTimersRef.current.forEach((timer) => globalThis.clearTimeout(timer));
+      dismissTimersRef.current.clear();
+      removeTimersRef.current.clear();
+    };
+  }, [scheduleDismissTimer, scheduleRemoveTimer]);
 
   const success = useCallback((msg: string) => addToast('success', msg), [addToast]);
   const error = useCallback((msg: string) => addToast('error', msg), [addToast]);
