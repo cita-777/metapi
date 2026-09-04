@@ -13,7 +13,7 @@ import { getOauthInfoFromAccount } from '../../services/oauth/oauthAccount.js';
 import { refreshOauthAccessTokenSingleflight } from '../../services/oauth/refreshSingleflight.js';
 import { resolveChannelProxyUrl, withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
-import { getDownstreamRoutingPolicy } from '../../routes/proxy/downstreamPolicy.js';
+import { getDownstreamRoutingPolicy } from '../../services/downstreamPolicyService.js';
 import { executeEndpointFlow, type BuiltEndpointRequest } from '../orchestration/endpointFlow.js';
 import { composeProxyLogMessage } from '../../services/proxyLogMessage.js';
 import {

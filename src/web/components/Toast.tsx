@@ -1,8 +1,16 @@
-import React, { createContext, useContext, useState, useCallback, useMemo, useRef } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
-type ToastType = 'success' | 'error' | 'info';
+export type ToastType = 'success' | 'error' | 'info';
 
-interface Toast {
+type Toast = {
   id: number;
   type: ToastType;
   message: string;
@@ -32,20 +40,87 @@ const icons: Record<ToastType, React.ReactNode> = {
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const toastsRef = useRef<Toast[]>([]);
   const idRef = useRef(0);
+  // React runs child effects before parent effects. Start true so a child that
+  // emits a toast from its first effect is not dropped before this provider's
+  // mount effect has run; the cleanup flips it to false on unmount.
+  const mountedRef = useRef(true);
+  const dismissTimersRef = useRef(new Map<number, ReturnType<typeof globalThis.setTimeout>>());
+  const removeTimersRef = useRef(new Map<number, ReturnType<typeof globalThis.setTimeout>>());
+
+  const clearDismissTimer = useCallback((id: number) => {
+    const timer = dismissTimersRef.current.get(id);
+    if (timer === undefined) return;
+    globalThis.clearTimeout(timer);
+    dismissTimersRef.current.delete(id);
+  }, []);
+
+  const scheduleRemoveTimer = useCallback((id: number) => {
+    if (!mountedRef.current || removeTimersRef.current.has(id)) return;
+    const timer = globalThis.setTimeout(() => {
+      removeTimersRef.current.delete(id);
+      if (!mountedRef.current) return;
+      setToasts((prev) => {
+        const next = prev.filter((toast) => toast.id !== id);
+        toastsRef.current = next;
+        return next;
+      });
+    }, 250);
+    removeTimersRef.current.set(id, timer);
+  }, []);
 
   const removeToast = useCallback((id: number) => {
-    setToasts(prev => prev.map(t => t.id === id ? { ...t, exiting: true } : t));
-    setTimeout(() => {
-      setToasts(prev => prev.filter(t => t.id !== id));
-    }, 250);
-  }, []);
+    if (!mountedRef.current) return;
+    clearDismissTimer(id);
+    if (removeTimersRef.current.has(id)) return;
+    setToasts((prev) => {
+      const next = prev.map((toast) => toast.id === id ? { ...toast, exiting: true } : toast);
+      toastsRef.current = next;
+      return next;
+    });
+    scheduleRemoveTimer(id);
+  }, [clearDismissTimer, scheduleRemoveTimer]);
+
+  const scheduleDismissTimer = useCallback((id: number) => {
+    if (!mountedRef.current || dismissTimersRef.current.has(id) || removeTimersRef.current.has(id)) return;
+    const timer = globalThis.setTimeout(() => {
+      dismissTimersRef.current.delete(id);
+      removeToast(id);
+    }, 3200);
+    dismissTimersRef.current.set(id, timer);
+  }, [removeToast]);
 
   const addToast = useCallback((type: ToastType, message: string) => {
     const id = ++idRef.current;
-    setToasts(prev => [...prev, { id, type, message }]);
-    setTimeout(() => removeToast(id), 3200);
-  }, [removeToast]);
+    if (!mountedRef.current) return;
+    const nextToast = { id, type, message };
+    toastsRef.current = [...toastsRef.current, nextToast];
+    setToasts((prev) => {
+      const next = [...prev, nextToast];
+      toastsRef.current = next;
+      return next;
+    });
+    scheduleDismissTimer(id);
+  }, [scheduleDismissTimer]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    toastsRef.current.forEach((toast) => {
+      if (toast.exiting) {
+        scheduleRemoveTimer(toast.id);
+      } else {
+        scheduleDismissTimer(toast.id);
+      }
+    });
+    return () => {
+      mountedRef.current = false;
+      dismissTimersRef.current.forEach((timer) => globalThis.clearTimeout(timer));
+      removeTimersRef.current.forEach((timer) => globalThis.clearTimeout(timer));
+      dismissTimersRef.current.clear();
+      removeTimersRef.current.clear();
+    };
+  }, [scheduleDismissTimer, scheduleRemoveTimer]);
 
   const success = useCallback((msg: string) => addToast('success', msg), [addToast]);
   const error = useCallback((msg: string) => addToast('error', msg), [addToast]);
@@ -63,17 +138,34 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <div className="toast-container">
+      <div
+        className="toast-container"
+        role="region"
+        aria-live="polite"
+        aria-relevant="additions text"
+        aria-label="通知"
+      >
         {toasts.map(t => (
           <div
             key={t.id}
             className={`toast toast-${t.type} ${t.exiting ? 'toast-exit' : ''}`}
             onClick={() => removeToast(t.id)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                removeToast(t.id);
+              }
+            }}
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            tabIndex={0}
+            aria-label={t.message}
             style={{ cursor: 'pointer' }}
           >
             <span style={{ flexShrink: 0, marginTop: 1 }}>{icons[t.type]}</span>
             <span style={{ fontSize: 13, lineHeight: 1.5 }}>{t.message}</span>
-            <div className="toast-progress" />
+            <div className="toast-progress" aria-hidden="true" />
           </div>
         ))}
       </div>

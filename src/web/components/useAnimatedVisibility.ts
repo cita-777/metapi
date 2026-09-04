@@ -1,10 +1,18 @@
 import { useEffect, useState } from 'react';
 
-export function useAnimatedVisibility(visible: boolean, durationMs = 220) {
+export function useAnimatedVisibility(
+  visible: boolean,
+  durationMs = 220,
+  manageLifecycle = true,
+) {
   const [shouldRender, setShouldRender] = useState(visible);
   const [isVisible, setIsVisible] = useState(visible);
 
   useEffect(() => {
+    // A shared surface may receive an already-managed presence object from a
+    // parent during an incremental migration. Keep the hook call unconditional
+    // (React's rules of hooks) but do not schedule a second RAF/timer owner.
+    if (!manageLifecycle) return undefined;
     if (visible) {
       setShouldRender(true);
       if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
@@ -23,7 +31,7 @@ export function useAnimatedVisibility(visible: boolean, durationMs = 220) {
 
     const timerId = globalThis.setTimeout(() => setShouldRender(false), durationMs);
     return () => globalThis.clearTimeout(timerId);
-  }, [visible, durationMs]);
+  }, [durationMs, manageLifecycle, visible]);
 
   return { shouldRender, isVisible };
 }

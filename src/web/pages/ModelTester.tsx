@@ -58,7 +58,13 @@ import {
 } from './helpers/conversationFileCapabilities.js';
 import ConversationComposer from './model-tester/ConversationComposer.js';
 import DebugPanel from './model-tester/DebugPanel.js';
+import {
+  createStreamUpdateBatcher,
+  type StreamDelta,
+  type StreamUpdateBatcher,
+} from './model-tester/streamBatcher.js';
 import ModernSelect from '../components/ModernSelect.js';
+import { isAbortError, isTimeoutError } from '../components/useAsyncResource.js';
 import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import { tr } from '../i18n.js';
@@ -90,7 +96,45 @@ type ForcedChannelOption = {
 };
 
 const POLL_INTERVAL_MS = 1200;
-const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const createAbortError = () => {
+  const error = new Error('The operation was aborted.');
+  error.name = 'AbortError';
+  return error;
+};
+const cancelStreamReader = (reader: ReadableStreamDefaultReader<Uint8Array> | null) => {
+  if (!reader) return;
+  try {
+    void Promise.resolve(reader.cancel()).catch(() => { });
+  } catch {
+    // no-op
+  }
+};
+const cancelResponseBody = (body: ReadableStream<Uint8Array> | null) => {
+  if (!body) return;
+  try {
+    void Promise.resolve(body.cancel()).catch(() => { });
+  } catch {
+    // no-op
+  }
+};
+const wait = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
+  if (signal?.aborted) {
+    reject(createAbortError());
+    return;
+  }
+
+  let timer: ReturnType<typeof setTimeout>;
+  const onAbort = () => {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', onAbort);
+    reject(createAbortError());
+  };
+  timer = setTimeout(() => {
+    signal?.removeEventListener('abort', onAbort);
+    resolve();
+  }, ms);
+  signal?.addEventListener('abort', onAbort, { once: true });
+});
 
 const createConversationFileLocalId = () =>
   `draft-file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -420,7 +464,40 @@ const applyAssistantDelta = (
   return replaceMessageAt(messages, targetIndex, next);
 };
 
-const parseStreamErrorText = async (response: Response): Promise<string> => {
+const createModelTesterStreamBatcher = (
+  isCurrentRun: () => boolean,
+  rawEvents: string[],
+  setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>,
+  setDebugResponse: React.Dispatch<React.SetStateAction<string>>,
+) => {
+  let rawDebugText = '';
+  return createStreamUpdateBatcher(({ deltas, rawEvents: nextRawEvents }) => {
+    const canCommit = isCurrentRun();
+    // Append the common case incrementally.  Rebuild only when the existing
+    // 500-event retention window drops entries, preserving the exact newline
+    // sequence while avoiding an O(n) join for every flush.
+    if (nextRawEvents.length > 0) {
+      const shouldTrim = rawEvents.length + nextRawEvents.length > 500;
+      rawEvents.push(...nextRawEvents);
+      if (shouldTrim) {
+        rawEvents.splice(0, rawEvents.length - 500);
+        rawDebugText = rawEvents.join('\n');
+      } else {
+        const appended = nextRawEvents.join('\n');
+        rawDebugText = rawDebugText ? `${rawDebugText}\n${appended}` : appended;
+      }
+      if (canCommit) setDebugResponse(rawDebugText);
+    }
+    if (canCommit && deltas.length > 0) {
+      setMessages((prev) => deltas.reduce(
+        (current, delta) => applyAssistantDelta(current, delta),
+        prev,
+      ));
+    }
+  });
+};
+
+export const parseStreamErrorText = async (response: Response): Promise<string> => {
   try {
     const text = await response.text();
     if (!text) return `HTTP ${response.status}`;
@@ -430,7 +507,14 @@ const parseStreamErrorText = async (response: Response): Promise<string> => {
     } catch {
       return text;
     }
-  } catch {
+  } catch (error) {
+    // A managed streaming response keeps its timeout/abort lifecycle alive
+    // while the body is consumed.  Do not turn those lifecycle errors into a
+    // misleading generic HTTP status; the outer stream handler needs the
+    // original error to preserve cancellation/timeout semantics.
+    if (isAbortError(error) || isTimeoutError(error)) {
+      throw error;
+    }
     return `HTTP ${response.status}`;
   }
 };
@@ -456,9 +540,7 @@ const parseSseBlock = (block: string): { event: string; data: string | null } =>
   };
 };
 
-const parseAnyStreamDelta = (eventPayload: any): {
-  contentDelta?: string;
-  reasoningDelta?: string;
+const parseAnyStreamDelta = (eventPayload: any): StreamDelta & {
   done?: boolean;
 } => {
   if (!eventPayload || typeof eventPayload !== 'object') return {};
@@ -707,7 +789,17 @@ export default function ModelTester() {
   const conversationFileInputRef = useRef<HTMLInputElement>(null);
   const restoredSessionRef = useRef<ReturnType<typeof parseModelTesterSession>>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
+  const streamReaderRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
+  const streamBatcherRef = useRef<StreamUpdateBatcher | null>(null);
+  const streamGenerationRef = useRef(0);
   const streamStopRequestedRef = useRef(false);
+  const pendingPollAbortRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
+  const autoScrollRef = useRef(true);
+  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const persistenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const skipPersistenceRef = useRef(false);
+  const persistSessionRef = useRef<(() => void) | null>(null);
   const conversationFileCapability = useMemo(
     () => resolveConversationFileCapability(inputs.protocol),
     [inputs.protocol],
@@ -759,7 +851,43 @@ export default function ModelTester() {
   }, []);
 
   useEffect(() => {
-    const restored = parseModelTesterSession(localStorage.getItem(MODEL_TESTER_STORAGE_KEY));
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      streamStopRequestedRef.current = true;
+      streamGenerationRef.current += 1;
+      streamBatcherRef.current?.flush();
+      streamBatcherRef.current?.dispose();
+      streamBatcherRef.current = null;
+      const reader = streamReaderRef.current;
+      streamReaderRef.current = null;
+      cancelStreamReader(reader);
+      try {
+        streamAbortRef.current?.abort();
+      } catch {
+        // no-op
+      }
+      streamAbortRef.current = null;
+      if (scrollTimerRef.current !== null) {
+        clearTimeout(scrollTimerRef.current);
+        scrollTimerRef.current = null;
+      }
+      if (persistenceTimerRef.current !== null) {
+        clearTimeout(persistenceTimerRef.current);
+        persistenceTimerRef.current = null;
+        if (!skipPersistenceRef.current) {
+          persistSessionRef.current?.();
+        }
+      }
+      pendingPollAbortRef.current?.abort();
+      pendingPollAbortRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const restored = typeof localStorage === 'undefined'
+      ? null
+      : parseModelTesterSession(localStorage.getItem(MODEL_TESTER_STORAGE_KEY));
     restoredSessionRef.current = restored;
     if (!restored) return;
 
@@ -795,13 +923,17 @@ export default function ModelTester() {
   }, [pushDebug]);
 
   useEffect(() => {
+    let active = true;
     const fetchModels = async () => {
+      if (!active || !mountedRef.current) return;
       setLoadingModels(true);
       try {
         const [marketResult, routesResult] = await Promise.allSettled([
           api.getModelsMarketplace({ includePricing: false }),
           api.getRoutes(),
         ]);
+
+        if (!active || !mountedRef.current) return;
 
         if (marketResult.status === 'rejected' && routesResult.status === 'rejected') {
           throw marketResult.reason || routesResult.reason || new Error('failed to fetch models');
@@ -825,15 +957,21 @@ export default function ModelTester() {
           setInputs((prev) => ({ ...prev, model: nextModel }));
         }
       } catch {
+        if (!active || !mountedRef.current) return;
         setError('加载模型列表失败。');
         pushDebug('error', '获取模型列表失败。');
       } finally {
-        setLoadingModels(false);
-        setForcedChannelHydrationReady(true);
+        if (active && mountedRef.current) {
+          setLoadingModels(false);
+          setForcedChannelHydrationReady(true);
+        }
       }
     };
 
     void fetchModels();
+    return () => {
+      active = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -903,8 +1041,8 @@ export default function ModelTester() {
     };
   }, [customRequestMode, forcedChannelHydrationReady, inputs.mode, inputs.model]);
 
-  useEffect(() => {
-    if (!inputs.model) return;
+  const persistSession = useCallback(() => {
+    if (!inputs.model || typeof localStorage === 'undefined') return;
     localStorage.setItem(MODEL_TESTER_STORAGE_KEY, serializeModelTesterSession({
       input,
       inputs,
@@ -932,17 +1070,16 @@ export default function ModelTester() {
     }));
   }, [
     activeDebugTab,
+    assetPrompt,
     customRequestBody,
     customRequestMode,
+    conversationFiles,
+    embeddingInputText,
     forcedChannelId,
+    imageMaskFile?.dataUrl,
     input,
     inputs,
     messages,
-    conversationFiles,
-    assetPrompt,
-    customRequestBody,
-    embeddingInputText,
-    imageMaskFile?.dataUrl,
     parameterEnabled,
     pendingJobId,
     pendingPayload,
@@ -952,6 +1089,64 @@ export default function ModelTester() {
     showDebugPanel,
     videoInspectId,
   ]);
+
+  // Keep the latest snapshot available to the unmount cleanup without making
+  // the cleanup effect restart for every streamed delta.
+  persistSessionRef.current = persistSession;
+
+  useEffect(() => {
+    if (!inputs.model) return;
+    if (skipPersistenceRef.current) {
+      // clearChat removes the snapshot intentionally; do not immediately
+      // recreate it from the state updates caused by clearing the page.
+      skipPersistenceRef.current = false;
+      return;
+    }
+    if (persistenceTimerRef.current !== null) {
+      clearTimeout(persistenceTimerRef.current);
+    }
+    persistenceTimerRef.current = setTimeout(() => {
+      persistenceTimerRef.current = null;
+      persistSessionRef.current?.();
+    }, 350);
+
+    return () => {
+      if (persistenceTimerRef.current !== null) {
+        clearTimeout(persistenceTimerRef.current);
+        persistenceTimerRef.current = null;
+      }
+    };
+  }, [inputs.model, persistSession]);
+
+  const handleChatScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    const target = event.currentTarget;
+    const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+    autoScrollRef.current = distanceFromBottom <= 96;
+  }, []);
+
+  useEffect(() => {
+    if (!autoScrollRef.current) return;
+    if (scrollTimerRef.current !== null) {
+      clearTimeout(scrollTimerRef.current);
+    }
+    scrollTimerRef.current = setTimeout(() => {
+      scrollTimerRef.current = null;
+      if (!autoScrollRef.current) return;
+      const end = chatEndRef.current;
+      if (!end || typeof end.scrollIntoView !== 'function') return;
+      end.scrollIntoView({
+        behavior: sending ? 'auto' : 'smooth',
+        block: 'end',
+      });
+    }, 24);
+
+    return () => {
+      if (scrollTimerRef.current !== null) {
+        clearTimeout(scrollTimerRef.current);
+        scrollTimerRef.current = null;
+      }
+    };
+  }, [messages, sending]);
 
   const handleUploadChange = useCallback(async (
     fileList: FileList | null,
@@ -1422,16 +1617,25 @@ export default function ModelTester() {
     if (!pendingJobId) return;
 
     let active = true;
+    const pollController = new AbortController();
+    pendingPollAbortRef.current = pollController;
     setSending(true);
 
     const pollTask = async () => {
       while (active) {
         try {
-          const status = await api.getProxyTestJob(pendingJobId) as ChatJobResponse;
-          if (!active) return;
+          const status = await api.getProxyTestJob(
+            pendingJobId,
+            { signal: pollController.signal },
+          ) as ChatJobResponse;
+          if (!active || pollController.signal.aborted || !mountedRef.current) return;
 
           if (status.status === 'pending') {
-            await wait(POLL_INTERVAL_MS);
+            try {
+              await wait(POLL_INTERVAL_MS, pollController.signal);
+            } catch {
+              return;
+            }
             continue;
           }
 
@@ -1462,9 +1666,14 @@ export default function ModelTester() {
           finalizeJob(pendingJobId);
           return;
         } catch (pollError) {
+          if (!active || pollController.signal.aborted || !mountedRef.current) return;
           const message = (pollError as any)?.message || '未知轮询错误';
           pushDebug('warn', `轮询 ${pendingJobId} 失败一次：${message}`);
-          await wait(POLL_INTERVAL_MS);
+          try {
+            await wait(POLL_INTERVAL_MS, pollController.signal);
+          } catch {
+            return;
+          }
         }
       }
     };
@@ -1472,12 +1681,12 @@ export default function ModelTester() {
     void pollTask();
     return () => {
       active = false;
+      pollController.abort();
+      if (pendingPollAbortRef.current === pollController) {
+        pendingPollAbortRef.current = null;
+      }
     };
   }, [finalizeJob, pendingJobId, pushDebug]);
-
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
 
   const turnCount = useMemo(() => countConversationTurns(messages), [messages]);
   const filteredModels = useMemo(
@@ -1533,6 +1742,10 @@ export default function ModelTester() {
   }, [pushDebug]);
 
   const startStream = useCallback(async (payload: TestChatPayload) => {
+    if (!mountedRef.current) return;
+    const runId = streamGenerationRef.current + 1;
+    streamGenerationRef.current = runId;
+    const isCurrentRun = () => mountedRef.current && streamGenerationRef.current === runId;
     const controller = new AbortController();
     streamAbortRef.current = controller;
     streamStopRequestedRef.current = false;
@@ -1544,16 +1757,21 @@ export default function ModelTester() {
     const decoder = new TextDecoder('utf-8');
     let buffer = '';
     const rawEvents: string[] = [];
-    const appendRawEvent = (raw: string) => {
-      rawEvents.push(raw);
-      if (rawEvents.length > 500) {
-        rawEvents.splice(0, rawEvents.length - 500);
-      }
-      setDebugResponse(rawEvents.join('\n'));
-    };
+    const batcher = createModelTesterStreamBatcher(
+      isCurrentRun,
+      rawEvents,
+      setMessages,
+      setDebugResponse,
+    );
+    streamBatcherRef.current = batcher;
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
 
     try {
       const response = await api.proxyTestStream(payload, controller.signal);
+      if (!isCurrentRun()) {
+        cancelResponseBody(response.body);
+        return;
+      }
       if (response.status === 401 || response.status === 403) {
         const hadToken = Boolean(getAuthToken(localStorage));
         clearAuthSession(localStorage);
@@ -1568,12 +1786,14 @@ export default function ModelTester() {
       }
 
       setActiveDebugTab(DEBUG_TABS.RESPONSE);
-      const reader = response.body.getReader();
+      reader = response.body.getReader();
+      streamReaderRef.current = reader;
       let doneReceived = false;
       let hasAnyContent = false;
       let hasAnyReasoning = false;
 
       while (true) {
+        if (!isCurrentRun()) return;
         const { done, value } = await reader.read();
         if (done) break;
         if (!value) continue;
@@ -1583,9 +1803,10 @@ export default function ModelTester() {
         buffer = chunks.pop() || '';
 
         for (const chunk of chunks) {
+          if (!isCurrentRun()) return;
           const parsed = parseSseBlock(chunk);
           if (!parsed.data) continue;
-          appendRawEvent(parsed.data);
+          batcher.enqueueRawEvent(parsed.data);
 
           if (parsed.data === '[DONE]') {
             doneReceived = true;
@@ -1613,15 +1834,17 @@ export default function ModelTester() {
             hasAnyContent = true;
           }
           if (delta.reasoningDelta || delta.contentDelta) {
-            setMessages((prev) => applyAssistantDelta(prev, {
+            batcher.enqueueDelta({
               reasoningDelta: delta.reasoningDelta,
               contentDelta: delta.contentDelta,
-            }));
+            });
           }
           if (delta.done) doneReceived = true;
         }
       }
 
+      batcher.flush();
+      if (!isCurrentRun()) return;
       const emptyOutput = !hasAnyContent && !hasAnyReasoning;
 
       setMessages((prev) => {
@@ -1655,6 +1878,8 @@ export default function ModelTester() {
           : '流式传输未收到 [DONE] 信号，已在本地完成。');
       }
     } catch (streamError: any) {
+      batcher.flush();
+      if (!isCurrentRun()) return;
       const abortedByUser = controller.signal.aborted && streamStopRequestedRef.current;
       const abortedUnexpectedly = controller.signal.aborted
         || streamError?.name === 'AbortError'
@@ -1678,9 +1903,18 @@ export default function ModelTester() {
         pushDebug('error', `流式传输失败：${message}`);
       }
     } finally {
+      batcher.flush();
+      batcher.dispose();
+      if (streamBatcherRef.current === batcher) streamBatcherRef.current = null;
+      if (reader && streamReaderRef.current === reader) {
+        streamReaderRef.current = null;
+        cancelStreamReader(reader);
+      }
       if (streamAbortRef.current === controller) streamAbortRef.current = null;
-      streamStopRequestedRef.current = false;
-      setSending(false);
+      if (isCurrentRun()) {
+        streamStopRequestedRef.current = false;
+        setSending(false);
+      }
     }
   }, [pushDebug]);
 
@@ -1688,6 +1922,10 @@ export default function ModelTester() {
     envelope: ProxyTestEnvelope,
     nextMessages: ChatMessage[],
   ) => {
+    if (!mountedRef.current) return;
+    const runId = streamGenerationRef.current + 1;
+    streamGenerationRef.current = runId;
+    const isCurrentRun = () => mountedRef.current && streamGenerationRef.current === runId;
     const controller = new AbortController();
     streamAbortRef.current = controller;
     streamStopRequestedRef.current = false;
@@ -1702,16 +1940,21 @@ export default function ModelTester() {
     const decoder = new TextDecoder('utf-8');
     let buffer = '';
     const rawEvents: string[] = [];
-    const appendRawEvent = (raw: string) => {
-      rawEvents.push(raw);
-      if (rawEvents.length > 500) {
-        rawEvents.splice(0, rawEvents.length - 500);
-      }
-      setDebugResponse(rawEvents.join('\n'));
-    };
+    const batcher = createModelTesterStreamBatcher(
+      isCurrentRun,
+      rawEvents,
+      setMessages,
+      setDebugResponse,
+    );
+    streamBatcherRef.current = batcher;
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
 
     try {
       const response = await api.proxyTestStream(envelope, controller.signal);
+      if (!isCurrentRun()) {
+        cancelResponseBody(response.body);
+        return;
+      }
       if (!response.ok) {
         throw new Error(await parseStreamErrorText(response));
       }
@@ -1719,12 +1962,14 @@ export default function ModelTester() {
         throw new Error('流式响应体为空');
       }
 
-      const reader = response.body.getReader();
+      reader = response.body.getReader();
+      streamReaderRef.current = reader;
       let doneReceived = false;
       let hasAnyContent = false;
       let hasAnyReasoning = false;
 
       while (true) {
+        if (!isCurrentRun()) return;
         const { done, value } = await reader.read();
         if (done) break;
         if (!value) continue;
@@ -1734,9 +1979,10 @@ export default function ModelTester() {
         buffer = chunks.pop() || '';
 
         for (const chunk of chunks) {
+          if (!isCurrentRun()) return;
           const parsed = parseSseBlock(chunk);
           if (!parsed.data) continue;
-          appendRawEvent(parsed.data);
+          batcher.enqueueRawEvent(parsed.data);
 
           if (parsed.data === '[DONE]') {
             doneReceived = true;
@@ -1762,15 +2008,17 @@ export default function ModelTester() {
             hasAnyContent = true;
           }
           if (delta.reasoningDelta || delta.contentDelta) {
-            setMessages((prev) => applyAssistantDelta(prev, {
+            batcher.enqueueDelta({
               reasoningDelta: delta.reasoningDelta,
               contentDelta: delta.contentDelta,
-            }));
+            });
           }
           if (delta.done) doneReceived = true;
         }
       }
 
+      batcher.flush();
+      if (!isCurrentRun()) return;
       const emptyOutput = !hasAnyContent && !hasAnyReasoning;
 
       setMessages((prev) => {
@@ -1803,6 +2051,8 @@ export default function ModelTester() {
           : '代理流式传输未收到 [DONE] 信号，已在本地完成。');
       }
     } catch (streamError: any) {
+      batcher.flush();
+      if (!isCurrentRun()) return;
       const abortedByUser = controller.signal.aborted && streamStopRequestedRef.current;
       const abortedUnexpectedly = controller.signal.aborted
         || streamError?.name === 'AbortError'
@@ -1821,9 +2071,18 @@ export default function ModelTester() {
         setError(message);
       }
     } finally {
+      batcher.flush();
+      batcher.dispose();
+      if (streamBatcherRef.current === batcher) streamBatcherRef.current = null;
+      if (reader && streamReaderRef.current === reader) {
+        streamReaderRef.current = null;
+        cancelStreamReader(reader);
+      }
       if (streamAbortRef.current === controller) streamAbortRef.current = null;
-      streamStopRequestedRef.current = false;
-      setSending(false);
+      if (isCurrentRun()) {
+        streamStopRequestedRef.current = false;
+        setSending(false);
+      }
     }
   }, [pushDebug]);
 
@@ -2057,19 +2316,31 @@ export default function ModelTester() {
   const stopGenerating = useCallback(async () => {
     let hadWork = false;
 
-    if (streamAbortRef.current) {
+    if (streamAbortRef.current || streamBatcherRef.current || streamReaderRef.current) {
       hadWork = true;
       streamStopRequestedRef.current = true;
+      // Commit all queued deltas before the stopped marker replaces the
+      // loading assistant.  In-flight readers are cancelled as well so a
+      // slow upstream cannot keep the request alive after the user stops it.
+      streamBatcherRef.current?.flush();
+      streamBatcherRef.current?.dispose();
+      streamBatcherRef.current = null;
+      const reader = streamReaderRef.current;
+      streamReaderRef.current = null;
+      cancelStreamReader(reader);
       try {
-        streamAbortRef.current.abort();
+        streamAbortRef.current?.abort();
       } catch {
         // no-op
       }
       streamAbortRef.current = null;
+      streamGenerationRef.current += 1;
     }
 
     if (pendingJobId) {
       hadWork = true;
+      pendingPollAbortRef.current?.abort();
+      pendingPollAbortRef.current = null;
       const jobId = pendingJobId;
       setPendingJobId(null);
       try {
@@ -2088,18 +2359,33 @@ export default function ModelTester() {
 
   const clearChat = useCallback(() => {
     if (pendingJobId) {
+      pendingPollAbortRef.current?.abort();
+      pendingPollAbortRef.current = null;
       void api.deleteProxyTestJob(pendingJobId).catch(() => { });
     }
-    if (streamAbortRef.current) {
+    if (streamAbortRef.current || streamBatcherRef.current || streamReaderRef.current) {
       streamStopRequestedRef.current = true;
+      streamBatcherRef.current?.flush();
+      streamBatcherRef.current?.dispose();
+      streamBatcherRef.current = null;
+      const reader = streamReaderRef.current;
+      streamReaderRef.current = null;
+      cancelStreamReader(reader);
       try {
-        streamAbortRef.current.abort();
+        streamAbortRef.current?.abort();
       } catch {
         // no-op
       }
       streamAbortRef.current = null;
+      streamGenerationRef.current += 1;
     }
 
+    if (persistenceTimerRef.current !== null) {
+      clearTimeout(persistenceTimerRef.current);
+      persistenceTimerRef.current = null;
+    }
+
+    skipPersistenceRef.current = true;
     setMessages([]);
     setPendingPayload(null);
     setPendingJobId(null);
@@ -2125,7 +2411,9 @@ export default function ModelTester() {
     setImageSourceFile(null);
     setImageMaskFile(null);
     setConversationFiles([]);
-    localStorage.removeItem(MODEL_TESTER_STORAGE_KEY);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(MODEL_TESTER_STORAGE_KEY);
+    }
     pushDebug('info', '对话已清除。');
   }, [pendingJobId, pushDebug]);
 
@@ -2725,7 +3013,10 @@ export default function ModelTester() {
             </div>
           </div>
 
-          <div style={{ flex: 1, minHeight: 280, overflowY: 'auto', padding: 18, background: 'var(--color-bg)' }}>
+          <div
+            onScroll={handleChatScroll}
+            style={{ flex: 1, minHeight: 280, overflowY: 'auto', padding: 18, background: 'var(--color-bg)' }}
+          >
             {inputs.mode !== 'conversation' ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                 <div style={{

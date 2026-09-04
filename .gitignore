@@ -25,4 +25,5 @@ docker/.env
 # Local planning docs
 docs/plan/
 docs/plans/
+/.trellis/tasks/
 .ace-tool/

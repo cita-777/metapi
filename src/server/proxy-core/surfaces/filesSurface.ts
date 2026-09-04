@@ -7,7 +7,7 @@ import {
   saveProxyFile,
   softDeleteProxyFileByPublicIdForOwner,
 } from '../../services/proxyFileStore.js';
-import { ensureMultipartBufferParser, parseMultipartFormData } from '../../routes/proxy/multipart.js';
+import { ensureMultipartBufferParser, parseMultipartFormData } from '../../services/multipart.js';
 import {
   isSupportedConversationFileMimeType,
   resolveConversationFileMimeType,

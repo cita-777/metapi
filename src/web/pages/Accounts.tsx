@@ -10,6 +10,8 @@ import ModernSelect from "../components/ModernSelect.js";
 import { MobileCard, MobileField } from "../components/MobileCard.js";
 import { useIsMobile } from "../components/useIsMobile.js";
 import DeleteConfirmModal from "../components/DeleteConfirmModal.js";
+import { EmptyState } from "../components/ui/feedback.js";
+import { AsyncButton, Button } from "../components/ui/Button.js";
 import SiteBadgeLink from "../components/SiteBadgeLink.js";
 import AccountModelsModal from "./accounts/AccountModelsModal.js";
 import {
@@ -26,7 +28,7 @@ import {
   clearFocusParams,
   readFocusAccountIntent,
 } from "./helpers/navigationFocus.js";
-import { TokensPanel } from "./Tokens.js";
+import { TokensPanel } from "./tokens/TokensPanel.js";
 import { tr } from "../i18n.js";
 import {
   buildCustomReorderUpdates,
@@ -2586,29 +2588,17 @@ export default function Accounts() {
             bodyStyle={{ display: "flex", flexDirection: "column", gap: 12 }}
             footer={
               <>
-                <button onClick={closeEditPanel} className="btn btn-ghost">
+                <Button onClick={closeEditPanel} variant="ghost">
                   取消
-                </button>
-                <button
+                </Button>
+                <AsyncButton
                   onClick={saveEditPanel}
-                  disabled={savingEdit}
-                  className="btn btn-primary"
+                  loading={savingEdit}
+                  variant="primary"
+                  loadingLabel="保存中..."
                 >
-                  {savingEdit ? (
-                    <>
-                      <span
-                        className="spinner spinner-sm"
-                        style={{
-                          borderTopColor: "white",
-                          borderColor: "rgba(255,255,255,0.3)",
-                        }}
-                      />{" "}
-                      保存中...
-                    </>
-                  ) : (
-                    "保存修改"
-                  )}
-                </button>
+                  保存修改
+                </AsyncButton>
               </>
             }
           >
@@ -3425,35 +3415,30 @@ export default function Accounts() {
                 </table>
               )
             ) : (
-              <div className="empty-state">
-                <svg
-                  className="empty-state-icon"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={1}
-                    d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"
-                  />
-                </svg>
-                <div className="empty-state-title">
-                  {activeSegment === "apikey"
-                    ? "暂无 API Key 连接"
-                    : "暂无 Session 连接"}
-                </div>
-                <div className="empty-state-desc">
-                  {activeSegment === "apikey"
-                    ? sites.length > 0
-                      ? "请为现有站点补充 API Key 连接"
-                      : "请先添加站点，然后为站点补充 API Key 连接"
-                    : sites.length > 0
-                      ? "请为现有站点添加 Session 连接"
-                      : "请先添加站点，然后添加 Session 连接"}
-                </div>
-              </div>
+              <EmptyState
+                title={activeSegment === "apikey" ? "暂无 API Key 连接" : "暂无 Session 连接"}
+                description={activeSegment === "apikey"
+                  ? sites.length > 0
+                    ? "请为现有站点补充 API Key 连接"
+                    : "请先添加站点，然后为站点补充 API Key 连接"
+                  : sites.length > 0
+                    ? "请为现有站点添加 Session 连接"
+                    : "请先添加站点，然后添加 Session 连接"}
+                icon={(
+                  <svg
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={1}
+                      d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"
+                    />
+                  </svg>
+                )}
+              />
             )}
           </div>
         </>

@@ -4,7 +4,8 @@ import { api } from '../api.js';
 import { formatDateLocal, formatDateTimeMinuteLocal } from '../pages/helpers/checkinLogTime.js';
 import { buildAccountFocusPath, buildSiteFocusPath, buildTokenFocusPath } from '../pages/helpers/navigationFocus.js';
 import { useI18n } from '../i18n.js';
-import { useAnimatedVisibility } from './useAnimatedVisibility.js';
+import { useAsyncResource } from './useAsyncResource.js';
+import { Dialog } from './ui/Dialog.js';
 
 interface SiteResult {
   id: number;
@@ -65,68 +66,153 @@ interface SearchResult {
   models: ModelSearchResult[];
 }
 
+type TimerHandle = ReturnType<typeof globalThis.setTimeout>;
+
+function normalizeSearchResult(value: unknown): SearchResult {
+  const payload = (
+    typeof value === 'object' && value !== null
+      ? value
+      : {}
+  ) as Record<string, unknown>;
+
+  const readArray = <T,>(key: keyof SearchResult): T[] => {
+    const candidate = payload[key];
+    return Array.isArray(candidate) ? candidate as T[] : [];
+  };
+
+  return {
+    models: readArray<ModelSearchResult>('models'),
+    accounts: readArray<AccountResult>('accounts'),
+    accountTokens: readArray<AccountTokenResult>('accountTokens'),
+    sites: readArray<SiteResult>('sites'),
+    checkinLogs: readArray<CheckinLogResult>('checkinLogs'),
+    proxyLogs: readArray<ProxyLogResult>('proxyLogs'),
+  };
+}
+
 export default function SearchModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { t } = useI18n();
-  const presence = useAnimatedVisibility(open, 180);
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<SearchResult | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [submittedQuery, setSubmittedQuery] = useState('');
+  const [debouncing, setDebouncing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
-  const timerRef = useRef<number>();
+  const debounceTimerRef = useRef<TimerHandle | null>(null);
+  const focusTimerRef = useRef<TimerHandle | null>(null);
+  const queryRef = useRef('');
+  const requestQueryRef = useRef('');
+  const openRef = useRef(open);
+  const mountedRef = useRef(true);
+  openRef.current = open;
 
-  useEffect(() => {
-    if (open) {
-      setQuery('');
-      setResults(null);
-      setTimeout(() => inputRef.current?.focus(), 100);
-    }
-  }, [open]);
+  // The shared lifecycle hook owns the AbortController; this ref only carries
+  // the immutable query selected by the debounce callback into that loader.
+  const searchLoader = useCallback(
+    (signal: AbortSignal) => api.search(requestQueryRef.current, { signal })
+      .then(normalizeSearchResult),
+    [],
+  );
+  const searchResource = useAsyncResource<SearchResult>(searchLoader, {
+    autoLoad: false,
+  });
+  const activeQuery = open && submittedQuery !== '' && submittedQuery === query.trim();
+  const loading = activeQuery && searchResource.loading;
+  const error = activeQuery ? searchResource.error : null;
+  const results = activeQuery && !loading && !error ? searchResource.data : null;
 
-  const doSearch = useCallback(async (q: string) => {
-    if (!q.trim()) {
-      setResults(null);
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const res = await api.search(q);
-      setResults({
-        models: Array.isArray(res?.models) ? res.models : [],
-        accounts: Array.isArray(res?.accounts) ? res.accounts : [],
-        accountTokens: Array.isArray(res?.accountTokens) ? res.accountTokens : [],
-        sites: Array.isArray(res?.sites) ? res.sites : [],
-        checkinLogs: Array.isArray(res?.checkinLogs) ? res.checkinLogs : [],
-        proxyLogs: Array.isArray(res?.proxyLogs) ? res.proxyLogs : [],
-      });
-    } catch {
-      // ignore search errors in modal
-    } finally {
-      setLoading(false);
-    }
+  const clearDebounceTimer = useCallback(() => {
+    if (debounceTimerRef.current === null) return;
+    globalThis.clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = null;
   }, []);
 
-  const handleInput = (val: string) => {
-    setQuery(val);
-    clearTimeout(timerRef.current);
-    timerRef.current = window.setTimeout(() => doSearch(val), 300);
-  };
-
-  const goTo = (path: string) => {
-    onClose();
-    navigate(path);
-  };
+  const clearFocusTimer = useCallback(() => {
+    if (focusTimerRef.current === null) return;
+    globalThis.clearTimeout(focusTimerRef.current);
+    focusTimerRef.current = null;
+  }, []);
 
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && open) onClose();
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      clearDebounceTimer();
+      clearFocusTimer();
     };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [open, onClose]);
+  }, [clearDebounceTimer, clearFocusTimer]);
 
-  if (!presence.shouldRender) return null;
+  const handleInput = useCallback((val: string) => {
+    queryRef.current = val;
+    setQuery(val);
+    setSubmittedQuery('');
+    clearDebounceTimer();
+    searchResource.cancel();
+
+    if (!val.trim() || !openRef.current) {
+      setDebouncing(false);
+      return;
+    }
+    setDebouncing(true);
+    debounceTimerRef.current = globalThis.setTimeout(() => {
+      debounceTimerRef.current = null;
+      const normalizedQuery = val.trim();
+      if (
+        !mountedRef.current
+        || !openRef.current
+        || queryRef.current.trim() !== normalizedQuery
+      ) return;
+      // Preserve the original input for the API; the server owns trimming and
+      // normalization while the UI uses the trimmed value for stale matching.
+      requestQueryRef.current = val;
+      setSubmittedQuery(normalizedQuery);
+      setDebouncing(false);
+      void searchResource.reload();
+    }, 300);
+  }, [clearDebounceTimer, searchResource.cancel, searchResource.reload]);
+
+  const handleClose = useCallback(() => {
+    queryRef.current = '';
+    requestQueryRef.current = '';
+    clearDebounceTimer();
+    clearFocusTimer();
+    searchResource.cancel();
+    setQuery('');
+    setSubmittedQuery('');
+    setDebouncing(false);
+    onClose();
+  }, [clearDebounceTimer, clearFocusTimer, onClose, searchResource.cancel]);
+
+  useEffect(() => {
+    clearFocusTimer();
+    clearDebounceTimer();
+    if (!open) {
+      searchResource.cancel();
+      queryRef.current = '';
+      requestQueryRef.current = '';
+      setQuery('');
+      setSubmittedQuery('');
+      setDebouncing(false);
+      return undefined;
+    }
+
+    searchResource.cancel();
+    queryRef.current = '';
+    requestQueryRef.current = '';
+    setQuery('');
+    setSubmittedQuery('');
+    setDebouncing(false);
+    focusTimerRef.current = globalThis.setTimeout(() => {
+      focusTimerRef.current = null;
+      if (mountedRef.current && openRef.current) inputRef.current?.focus();
+    }, 100);
+
+    return clearFocusTimer;
+  }, [clearDebounceTimer, clearFocusTimer, open, searchResource.cancel]);
+
+  const goTo = (path: string) => {
+    handleClose();
+    navigate(path);
+  };
 
   const hasResults = results && (
     results.models.length
@@ -136,10 +222,22 @@ export default function SearchModal({ open, onClose }: { open: boolean; onClose:
     || results.checkinLogs.length
     || results.proxyLogs.length
   );
+  const hasQuery = query.trim().length > 0;
 
   return (
-    <div className={`modal-backdrop ${presence.isVisible ? '' : 'is-closing'}`.trim()} onClick={onClose}>
-      <div className={`modal-content ${presence.isVisible ? '' : 'is-closing'}`.trim()} style={{ maxWidth: 560, padding: 0 }} onClick={e => e.stopPropagation()}>
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      title={null}
+      ariaLabel={t('搜索')}
+      closeOnBackdrop
+      closeOnEscape
+      showCloseButton={false}
+      animationDuration={180}
+      contentStyle={{ maxWidth: 560, padding: 0 }}
+      bodyStyle={{ padding: 0 }}
+    >
+      <div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderBottom: '1px solid var(--color-border-light)' }}>
           <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="var(--color-text-muted)">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -151,12 +249,23 @@ export default function SearchModal({ open, onClose }: { open: boolean; onClose:
             placeholder={t('搜索站点、账号、模型、日志...')}
             style={{ flex: 1, border: 'none', outline: 'none', fontSize: 14, background: 'transparent', color: 'var(--color-text-primary)' }}
           />
-          {loading && <span className="spinner spinner-sm" />}
+          {(loading || debouncing) && <span className="spinner spinner-sm" />}
           <kbd style={{ fontSize: 11, padding: '2px 6px', background: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: 4, color: 'var(--color-text-muted)' }}>ESC</kbd>
         </div>
 
         <div style={{ maxHeight: 400, overflow: 'auto', padding: '8px 0' }}>
-          {query && !loading && !hasResults && (
+          {hasQuery && !loading && !debouncing && error && (
+            <div
+              role="alert"
+              className="alert alert-error"
+              style={{ margin: '8px 16px', textAlign: 'center' }}
+            >
+              <div className="alert-title">{t('请求失败')}</div>
+              <div>{error.message || t('请求失败')}</div>
+            </div>
+          )}
+
+          {hasQuery && !loading && !debouncing && !error && !hasResults && (
             <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: 13 }}>
               {t('没有找到匹配结果')}
             </div>
@@ -300,6 +409,6 @@ export default function SearchModal({ open, onClose }: { open: boolean; onClose:
           <span><kbd style={{ padding: '1px 4px', background: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: 3 }}>Esc</kbd> {t('关闭')}</span>
         </div>
       </div>
-    </div>
+    </Dialog>
   );
 }

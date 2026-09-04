@@ -11,7 +11,6 @@ const pages = [
   'src/web/pages/ProxyLogs.tsx',
   'src/web/pages/Sites.tsx',
   'src/web/pages/TokenRoutes.tsx',
-  'src/web/pages/Tokens.tsx',
 ];
 
 describe('ResponsiveFilterPanel adoption', () => {
@@ -23,5 +22,15 @@ describe('ResponsiveFilterPanel adoption', () => {
       expect(source, page).not.toContain("import MobileFilterSheet from '../components/MobileFilterSheet.js'");
       expect(source, page).not.toContain('<MobileFilterSheet');
     }
+
+    const tokenPanel = readFileSync(
+      resolve(process.cwd(), 'src/web/pages/tokens/TokensPanel.tsx'),
+      'utf8',
+    ).replace(/\r\n/g, '\n');
+    expect(tokenPanel, 'src/web/pages/tokens/TokensPanel.tsx').toMatch(
+      /import\s+ResponsiveFilterPanel\s+from\s+['"]\.\.\/\.\.\/components\/ResponsiveFilterPanel\.js['"]/,
+    );
+    expect(tokenPanel).not.toContain("import MobileFilterSheet from '../../components/MobileFilterSheet.js'");
+    expect(tokenPanel).not.toContain('<MobileFilterSheet');
   });
 });

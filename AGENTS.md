@@ -66,6 +66,10 @@ make small, consistent changes without re-learning the codebase each time.
 
 ## Guardrails
 
+- 开发文档和维护说明（包括 Trellis 的 `.trellis/tasks/**`、
+  `.trellis/spec/**`、`.trellis/workspace/**`、`.trellis/workflow.md` 及项目本地
+  Trellis 说明）除非另有明确要求，默认使用简体中文；命令、路径、代码符号、
+  配置字段、协议名和第三方名称保持规范原文。已有历史或上游模板无需批量翻译。
 - Run `npm run repo:drift-check` before finishing changes that touch shared
   architecture boundaries.
 - If you add a new boundary-heavy module, add or extend an architecture test in

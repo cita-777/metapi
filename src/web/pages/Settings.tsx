@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 import { useToast } from '../components/Toast.js';
+import { AsyncButton } from '../components/ui/Button.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import ChangeKeyModal from '../components/ChangeKeyModal.js';
 import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
@@ -1446,9 +1447,14 @@ export default function Settings() {
             </div>
           </div>
           <div style={{ marginTop: 12 }}>
-            <button onClick={saveSchedule} disabled={savingSchedule} className="btn btn-primary">
-              {savingSchedule ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存定时任务'}
-            </button>
+            <AsyncButton
+              onClick={saveSchedule}
+              loading={savingSchedule}
+              variant="primary"
+              loadingLabel="保存中..."
+            >
+              保存定时任务
+            </AsyncButton>
           </div>
         </div>
 

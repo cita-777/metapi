@@ -13,7 +13,6 @@ import {
   type ProxyDebugTraceDetail,
   type ProxyDebugTraceListItem,
   type ProxyLogBillingDetails,
-  type ProxyLogClientOption,
   type ProxyLogDetail,
   type ProxyLogListItem,
   type ProxyLogsSummary,
@@ -29,6 +28,11 @@ import SiteBadgeLink from "../components/SiteBadgeLink.js";
 import { MobileCard, MobileField } from "../components/MobileCard.js";
 import ResponsiveFilterPanel from "../components/ResponsiveFilterPanel.js";
 import { useIsMobile } from "../components/useIsMobile.js";
+import {
+  isAbortError,
+  useAsyncResource,
+} from "../components/useAsyncResource.js";
+import { EmptyState } from "../components/ui/feedback.js";
 import { formatDateTimeLocal } from "./helpers/checkinLogTime.js";
 import ModernSelect from "../components/ModernSelect.js";
 import { parseProxyLogPathMeta } from "./helpers/proxyLogPathMeta.js";
@@ -46,12 +50,6 @@ type ProxyLogDetailState = {
   loading: boolean;
   data?: ProxyLogDetail;
   error?: string;
-};
-
-type ProxyLogSiteFilterOption = {
-  id: number;
-  name: string;
-  status: string | null;
 };
 
 type ProxyDebugSettingsState = {
@@ -760,10 +758,6 @@ export default function ProxyLogs() {
     () => readProxyLogsRouteState(location.search),
     [location.search],
   );
-  const [logs, setLogs] = useState<ProxyLogListItem[]>([]);
-  const [summary, setSummary] = useState<ProxyLogsSummary>(EMPTY_SUMMARY);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<ProxyLogStatusFilter>(
     initialRouteState.status,
   );
@@ -782,15 +776,13 @@ export default function ProxyLogs() {
     Record<number, ProxyLogDetailState>
   >({});
   const [showFilters, setShowFilters] = useState(false);
-  const [sites, setSites] = useState<
-    Array<{ id: number; name: string; status?: string | null }>
-  >([]);
-  const [clientOptions, setClientOptions] = useState<ProxyLogClientOption[]>(
-    [],
-  );
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [showDebugSettingsModal, setShowDebugSettingsModal] = useState(false);
-  const [debugPanelLoading, setDebugPanelLoading] = useState(false);
+  // The settings snapshot and trace list have independent request owners.
+  // Keeping separate flags prevents one request finishing early from clearing
+  // the loading state owned by the other request.
+  const [debugStateLoading, setDebugStateLoading] = useState(false);
+  const [debugTraceLoading, setDebugTraceLoading] = useState(false);
   const [debugPanelSaving, setDebugPanelSaving] = useState(false);
   const [debugTracePanelExpanded, setDebugTracePanelExpanded] = useState(() =>
     readStoredDebugTracePanelExpanded(),
@@ -812,13 +804,30 @@ export default function ProxyLogs() {
   >({});
   const isMobile = useIsMobile(768);
   const toast = useToast();
-  const loadSeq = useRef(0);
-  const metaLoadSeq = useRef(0);
   const selectedDebugTraceIdRef = useRef<number | null>(null);
+  const showDebugTraceDetailModalRef = useRef(false);
+  const showDebugSettingsModalRef = useRef(false);
   const debugDetailByIdRef = useRef<Record<number, ProxyDebugTraceDetailState>>(
     {},
   );
   const debugDetailInFlightRef = useRef<Set<number>>(new Set());
+  const debugTraceLoadSeqRef = useRef(0);
+  const debugTraceControllerRef = useRef<AbortController | null>(null);
+  const debugStateSeqRef = useRef(0);
+  const debugStateControllerRef = useRef<AbortController | null>(null);
+  const debugDetailAbortByIdRef = useRef<Map<number, AbortController>>(new Map());
+  const logDetailAbortByIdRef = useRef<Map<number, AbortController>>(new Map());
+  const debugPanelLoading = debugStateLoading || debugTraceLoading;
+
+  const cancelDebugTraceList = useCallback(() => {
+    // A settings snapshot owns the next trace list when it is refreshed. Bump
+    // the sequence before aborting so a non-cooperative request cannot publish
+    // stale rows or clear a newer request's loading flag in its finally block.
+    debugTraceLoadSeqRef.current += 1;
+    debugTraceControllerRef.current?.abort();
+    debugTraceControllerRef.current = null;
+    setDebugTraceLoading(false);
+  }, []);
   const fromApiBoundary = toApiTimeBoundary(fromInput);
   const toApiBoundaryValue = toApiTimeBoundary(toInput);
   const hasInvalidTimeRange = Boolean(
@@ -826,6 +835,140 @@ export default function ProxyLogs() {
     toApiBoundaryValue &&
     new Date(fromApiBoundary).getTime() >=
       new Date(toApiBoundaryValue).getTime(),
+  );
+
+  const logsQuery = useMemo(
+    () => ({
+      limit: pageSize,
+      // The authoritative total is returned by this request, so derive the
+      // requested page offset without depending on a response that is not
+      // available until after the hook is created.
+      offset: (Math.max(1, page) - 1) * pageSize,
+      status: statusFilter,
+      search: deferredSearchInput,
+      ...(clientFilter ? { client: clientFilter } : {}),
+      ...(siteFilter ? { siteId: siteFilter } : {}),
+      ...(fromApiBoundary ? { from: fromApiBoundary } : {}),
+      ...(toApiBoundaryValue ? { to: toApiBoundaryValue } : {}),
+    }),
+    [
+      clientFilter,
+      deferredSearchInput,
+      fromApiBoundary,
+      page,
+      pageSize,
+      siteFilter,
+      statusFilter,
+      toApiBoundaryValue,
+    ],
+  );
+  const logsQueryRef = useRef(logsQuery);
+  logsQueryRef.current = logsQuery;
+  const logsResource = useAsyncResource(
+    useCallback(
+      (signal: AbortSignal) =>
+        api.getProxyLogsQuery(logsQueryRef.current, { signal }),
+      [],
+    ),
+    {
+      autoLoad: false,
+      onError: (error, context) => {
+        if (!context.silent) toast.error(error.message || "加载日志失败");
+      },
+    },
+  );
+
+  const metaQuery = useMemo(
+    () => ({
+      status: statusFilter,
+      search: deferredSearchInput,
+      ...(clientFilter ? { client: clientFilter } : {}),
+      ...(siteFilter ? { siteId: siteFilter } : {}),
+      ...(fromApiBoundary ? { from: fromApiBoundary } : {}),
+      ...(toApiBoundaryValue ? { to: toApiBoundaryValue } : {}),
+    }),
+    [
+      clientFilter,
+      deferredSearchInput,
+      fromApiBoundary,
+      siteFilter,
+      statusFilter,
+      toApiBoundaryValue,
+    ],
+  );
+  const metaQueryRef = useRef(metaQuery);
+  metaQueryRef.current = metaQuery;
+  const metaResource = useAsyncResource(
+    useCallback(
+      (signal: AbortSignal, context: { forceRefresh: boolean }) =>
+        api.getProxyLogsMeta(
+          context.forceRefresh
+            ? { ...metaQueryRef.current, refresh: 1 }
+            : metaQueryRef.current,
+          { signal },
+        ),
+      [],
+    ),
+    {
+      autoLoad: false,
+      onError: (error) => {
+        console.error("Failed to load proxy log meta:", error);
+      },
+    },
+  );
+
+  const logsPayload = logsResource.data;
+  const logs = hasInvalidTimeRange
+    ? []
+    : Array.isArray(logsPayload?.items)
+      ? logsPayload.items
+      : [];
+  const total = hasInvalidTimeRange ? 0 : Number(logsPayload?.total || 0);
+  const loading = !hasInvalidTimeRange && logsResource.loading && !logsPayload;
+  const metaPayload = metaResource.data;
+  const summary = hasInvalidTimeRange
+    ? EMPTY_SUMMARY
+    : metaPayload?.summary || EMPTY_SUMMARY;
+  const clientOptions = hasInvalidTimeRange
+    ? []
+    : Array.isArray(metaPayload?.clientOptions)
+      ? metaPayload.clientOptions
+      : [];
+  const sites = useMemo(() => {
+    if (hasInvalidTimeRange || !Array.isArray(metaPayload?.sites)) return [];
+    return metaPayload.sites
+      .map((site) => ({
+        id: Number(site?.id || 0),
+        name: String(site?.name || "").trim() || `站点 #${site?.id ?? ""}`,
+        status: typeof site?.status === "string" ? site.status : null,
+      }))
+      .filter((site) => site.id > 0)
+      .sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
+  }, [hasInvalidTimeRange, metaPayload?.sites]);
+
+  const load = useCallback(
+    (silent = false, dedupe = silent) => {
+      if (hasInvalidTimeRange) {
+        logsResource.cancel();
+        return Promise.resolve(undefined);
+      }
+      return logsResource.reload({ silent, dedupe });
+    },
+    [hasInvalidTimeRange, logsQuery, logsResource.cancel, logsResource.reload],
+  );
+  const loadMeta = useCallback(
+    (forceRefresh = false, dedupe = false) => {
+      if (hasInvalidTimeRange) {
+        metaResource.cancel();
+        return Promise.resolve(undefined);
+      }
+      return metaResource.reload({
+        silent: forceRefresh,
+        forceRefresh,
+        dedupe,
+      });
+    },
+    [hasInvalidTimeRange, metaQuery, metaResource.cancel, metaResource.reload],
   );
 
   useEffect(() => {
@@ -972,121 +1115,60 @@ export default function ProxyLogs() {
     return index;
   }, [sites]);
 
-  const load = useCallback(
-    async (silent = false) => {
-      const seq = ++loadSeq.current;
-      if (hasInvalidTimeRange) {
-        setLogs([]);
-        setTotal(0);
-        setSummary(EMPTY_SUMMARY);
-        if (seq === loadSeq.current) setLoading(false);
-        return;
-      }
-      if (!silent) setLoading(true);
-      try {
-        const params = {
-          limit: pageSize,
-          offset: currentOffset,
-          status: statusFilter,
-          search: deferredSearchInput,
-          ...(clientFilter ? { client: clientFilter } : {}),
-          ...(siteFilter ? { siteId: siteFilter } : {}),
-          ...(fromApiBoundary ? { from: fromApiBoundary } : {}),
-          ...(toApiBoundaryValue ? { to: toApiBoundaryValue } : {}),
-        };
-        const data = await api.getProxyLogsQuery(params);
-        if (seq !== loadSeq.current) return;
-        setLogs(Array.isArray(data.items) ? data.items : []);
-        setTotal(Number(data.total || 0));
-      } catch (e: any) {
-        if (seq !== loadSeq.current) return;
-        if (!silent) toast.error(e.message || "加载日志失败");
-      } finally {
-        if (seq === loadSeq.current) setLoading(false);
-      }
-    },
-    [
-      clientFilter,
-      currentOffset,
-      deferredSearchInput,
-      fromApiBoundary,
-      hasInvalidTimeRange,
-      pageSize,
-      siteFilter,
-      statusFilter,
-      toApiBoundaryValue,
-      toast,
-    ],
-  );
-
-  const loadMeta = useCallback(
-    async (forceRefresh = false) => {
-      const seq = ++metaLoadSeq.current;
-      if (hasInvalidTimeRange) {
-        setSummary(EMPTY_SUMMARY);
-        setClientOptions([]);
-        return;
-      }
-
-      try {
-        const data = await api.getProxyLogsMeta({
-          status: statusFilter,
-          search: deferredSearchInput,
-          ...(clientFilter ? { client: clientFilter } : {}),
-          ...(siteFilter ? { siteId: siteFilter } : {}),
-          ...(fromApiBoundary ? { from: fromApiBoundary } : {}),
-          ...(toApiBoundaryValue ? { to: toApiBoundaryValue } : {}),
-          ...(forceRefresh ? { refresh: 1 } : {}),
-        });
-        if (seq !== metaLoadSeq.current) return;
-        setSummary(data.summary || EMPTY_SUMMARY);
-        setClientOptions(
-          Array.isArray(data.clientOptions) ? data.clientOptions : [],
-        );
-        const normalized: ProxyLogSiteFilterOption[] = (
-          Array.isArray(data.sites) ? data.sites : []
-        )
-          .map((site: any) => ({
-            id: Number(site?.id || 0),
-            name: String(site?.name || "").trim() || `站点 #${site?.id ?? ""}`,
-            status: typeof site?.status === "string" ? site.status : null,
-          }))
-          .filter((site: ProxyLogSiteFilterOption) => site.id > 0)
-          .sort(
-            (left: ProxyLogSiteFilterOption, right: ProxyLogSiteFilterOption) =>
-              left.name.localeCompare(right.name, "zh-CN"),
-          );
-        setSites(normalized);
-      } catch (error) {
-        if (seq !== metaLoadSeq.current) return;
-        console.error("Failed to load proxy log meta:", error);
-      }
-    },
-    [
-      clientFilter,
-      deferredSearchInput,
-      fromApiBoundary,
-      hasInvalidTimeRange,
-      siteFilter,
-      statusFilter,
-      toApiBoundaryValue,
-    ],
-  );
-
   useEffect(() => {
+    if (hasInvalidTimeRange) {
+      logsResource.cancel();
+      metaResource.cancel();
+      return;
+    }
     void load();
-  }, [load]);
-
-  useEffect(() => {
     void loadMeta();
-  }, [loadMeta]);
+  }, [hasInvalidTimeRange, load, loadMeta, logsResource.cancel, metaResource.cancel]);
+
+  const logsBusyRef = useRef(false);
+  logsBusyRef.current = logsResource.loading || logsResource.refreshing;
 
   useEffect(() => {
     if (!autoRefresh) return;
-    const timer = setInterval(() => {
+    let timer: ReturnType<typeof setInterval> | null = null;
+    let wasVisible =
+      typeof document === "undefined" || document.visibilityState === "visible";
+    const isVisible = () =>
+      typeof document === "undefined" || document.visibilityState === "visible";
+    const stop = () => {
+      if (!timer) return;
+      clearInterval(timer);
+      timer = null;
+    };
+    const poll = () => {
+      if (!isVisible() || logsBusyRef.current) return;
       void load(true);
-    }, 2000);
-    return () => clearInterval(timer);
+    };
+    const start = () => {
+      if (!timer && isVisible()) {
+        timer = setInterval(poll, DEBUG_REFRESH_INTERVAL_MS);
+      }
+    };
+    const onVisibilityChange = () => {
+      if (!isVisible()) {
+        wasVisible = false;
+        stop();
+        return;
+      }
+      if (!wasVisible) poll();
+      wasVisible = true;
+      start();
+    };
+    onVisibilityChange();
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibilityChange);
+    }
+    return () => {
+      stop();
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibilityChange);
+      }
+    };
   }, [autoRefresh, load]);
 
   useEffect(() => {
@@ -1112,32 +1194,69 @@ export default function ProxyLogs() {
   }, [selectedDebugTraceId]);
 
   useEffect(() => {
+    showDebugTraceDetailModalRef.current = showDebugTraceDetailModal;
+  }, [showDebugTraceDetailModal]);
+
+  useEffect(() => {
+    showDebugSettingsModalRef.current = showDebugSettingsModal;
+  }, [showDebugSettingsModal]);
+
+  useEffect(() => {
     debugDetailByIdRef.current = debugDetailById;
   }, [debugDetailById]);
+
+  useEffect(
+    () => () => {
+      debugTraceLoadSeqRef.current += 1;
+      debugTraceControllerRef.current?.abort();
+      debugTraceControllerRef.current = null;
+      debugStateSeqRef.current += 1;
+      debugStateControllerRef.current?.abort();
+      debugStateControllerRef.current = null;
+      for (const controller of logDetailAbortByIdRef.current.values()) {
+        controller.abort();
+      }
+      logDetailAbortByIdRef.current.clear();
+      for (const controller of debugDetailAbortByIdRef.current.values()) {
+        controller.abort();
+      }
+      debugDetailAbortByIdRef.current.clear();
+      debugDetailInFlightRef.current.clear();
+    },
+    [],
+  );
 
   const loadDetail = useCallback(
     async (id: number) => {
       const existing = detailById[id];
-      if (existing?.loading || existing?.data) return;
+      if (existing?.loading || existing?.data || logDetailAbortByIdRef.current.has(id)) return;
 
       setDetailById((current) => ({
         ...current,
         [id]: { loading: true },
       }));
 
+      const controller = new AbortController();
+      logDetailAbortByIdRef.current.set(id, controller);
       try {
-        const data = await api.getProxyLogDetail(id);
+        const data = await api.getProxyLogDetail(id, { signal: controller.signal });
+        if (controller.signal.aborted) return;
         setDetailById((current) => ({
           ...current,
           [id]: { loading: false, data },
         }));
       } catch (e: any) {
+        if (isAbortError(e) || controller.signal.aborted) return;
         const message = e?.message || "加载日志详情失败";
         setDetailById((current) => ({
           ...current,
           [id]: { loading: false, error: message },
         }));
         toast.error(message);
+      } finally {
+        if (logDetailAbortByIdRef.current.get(id) === controller) {
+          logDetailAbortByIdRef.current.delete(id);
+        }
       }
     },
     [detailById, toast],
@@ -1149,11 +1268,11 @@ export default function ProxyLogs() {
       options?: { syncDraft?: boolean },
     ) => {
       setDebugSettings(nextSettings);
-      if (options?.syncDraft || !showDebugSettingsModal) {
+      if (options?.syncDraft || !showDebugSettingsModalRef.current) {
         setDebugDraftSettings(nextSettings);
       }
     },
-    [showDebugSettingsModal],
+    [],
   );
 
   const loadDebugTraceDetail = useCallback(
@@ -1170,6 +1289,8 @@ export default function ProxyLogs() {
       if (!options?.force && (existing?.loading || existing?.data)) return;
 
       debugDetailInFlightRef.current.add(id);
+      const controller = new AbortController();
+      debugDetailAbortByIdRef.current.set(id, controller);
 
       if (!options?.preserveVisibleData || !existing?.data) {
         setDebugDetailById((current) => ({
@@ -1179,22 +1300,33 @@ export default function ProxyLogs() {
       }
 
       try {
-        const data = await api.getProxyDebugTraceDetail(id);
+        const data = await api.getProxyDebugTraceDetail(id, {
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) return;
         setDebugDetailById((current) => ({
           ...current,
           [id]: { loading: false, data },
         }));
       } catch (error: any) {
+        if (isAbortError(error) || controller.signal.aborted) return;
         const message = error?.message || "加载调试追踪详情失败";
         setDebugDetailById((current) => ({
           ...current,
-          [id]: { loading: false, error: message },
+          [id]: {
+            loading: false,
+            data: current[id]?.data,
+            error: message,
+          },
         }));
         if (!options?.suppressToast) {
           toast.error(message);
         }
       } finally {
         debugDetailInFlightRef.current.delete(id);
+        if (debugDetailAbortByIdRef.current.get(id) === controller) {
+          debugDetailAbortByIdRef.current.delete(id);
+        }
       }
     },
     [toast],
@@ -1214,15 +1346,19 @@ export default function ProxyLogs() {
           : null;
       selectedDebugTraceIdRef.current = nextSelectedDebugTraceId;
       setSelectedDebugTraceId(nextSelectedDebugTraceId);
-      if (nextSelectedDebugTraceId && options?.refreshSelectedDetail) {
+      if (
+        nextSelectedDebugTraceId &&
+        options?.refreshSelectedDetail &&
+        showDebugTraceDetailModalRef.current
+      ) {
         await loadDebugTraceDetail(nextSelectedDebugTraceId, {
           force: true,
           suppressToast: true,
-          preserveVisibleData: showDebugTraceDetailModal,
+          preserveVisibleData: showDebugTraceDetailModalRef.current,
         });
       }
     },
-    [loadDebugTraceDetail, showDebugTraceDetailModal],
+    [loadDebugTraceDetail],
   );
 
   const loadDebugTraceList = useCallback(
@@ -1231,11 +1367,25 @@ export default function ProxyLogs() {
       refreshSelectedDetail?: boolean;
       suppressToast?: boolean;
     }) => {
-      if (!options?.silent) setDebugPanelLoading(true);
+      const silent = options?.silent === true;
+      // Polling is single-flight; an explicit/manual reload supersedes the
+      // previous request so a stale trace list cannot overwrite newer data.
+      if (silent && debugTraceControllerRef.current) return;
+      debugTraceControllerRef.current?.abort();
+      const controller = new AbortController();
+      debugTraceControllerRef.current = controller;
+      const seq = ++debugTraceLoadSeqRef.current;
+      if (!silent) setDebugTraceLoading(true);
       try {
         const traceResponse = await api.getProxyDebugTraces({
           limit: TRACE_TABLE_LIMIT,
-        });
+        }, { signal: controller.signal });
+        if (
+          controller.signal.aborted ||
+          seq !== debugTraceLoadSeqRef.current
+        ) {
+          return;
+        }
         const items = Array.isArray(traceResponse?.items)
           ? traceResponse.items
           : [];
@@ -1243,11 +1393,23 @@ export default function ProxyLogs() {
           refreshSelectedDetail: options?.refreshSelectedDetail,
         });
       } catch (error: any) {
+        if (
+          controller.signal.aborted ||
+          seq !== debugTraceLoadSeqRef.current ||
+          isAbortError(error)
+        ) {
+          return;
+        }
         if (!options?.suppressToast) {
           toast.error(error?.message || "加载代理调试追踪失败");
         }
       } finally {
-        if (!options?.silent) setDebugPanelLoading(false);
+        if (debugTraceControllerRef.current === controller) {
+          debugTraceControllerRef.current = null;
+        }
+        if (!silent && seq === debugTraceLoadSeqRef.current) {
+          setDebugTraceLoading(false);
+        }
       }
     },
     [syncDebugTraceItems, toast],
@@ -1255,12 +1417,26 @@ export default function ProxyLogs() {
 
   const loadDebugState = useCallback(
     async (silent = false) => {
-      if (!silent) setDebugPanelLoading(true);
+      cancelDebugTraceList();
+      debugStateControllerRef.current?.abort();
+      const controller = new AbortController();
+      debugStateControllerRef.current = controller;
+      const seq = ++debugStateSeqRef.current;
+      if (!silent) setDebugStateLoading(true);
       try {
         const [runtimeSettings, traceResponse] = await Promise.all([
-          api.getRuntimeSettings(),
-          api.getProxyDebugTraces({ limit: TRACE_TABLE_LIMIT }),
+          api.getRuntimeSettings({ signal: controller.signal }),
+          api.getProxyDebugTraces(
+            { limit: TRACE_TABLE_LIMIT },
+            { signal: controller.signal },
+          ),
         ]);
+        if (
+          controller.signal.aborted ||
+          seq !== debugStateSeqRef.current
+        ) {
+          return;
+        }
         applyLoadedDebugSettings(normalizeProxyDebugSettings(runtimeSettings), {
           syncDraft: true,
         });
@@ -1269,12 +1445,25 @@ export default function ProxyLogs() {
           : [];
         await syncDebugTraceItems(items, { refreshSelectedDetail: true });
       } catch (error: any) {
+        if (
+          controller.signal.aborted ||
+          seq !== debugStateSeqRef.current ||
+          isAbortError(error)
+        ) {
+          return;
+        }
         toast.error(error?.message || "加载代理调试面板失败");
       } finally {
-        if (!silent) setDebugPanelLoading(false);
+        const ownsPanelLoading = debugStateControllerRef.current === controller;
+        if (ownsPanelLoading) {
+          debugStateControllerRef.current = null;
+        }
+        if (!silent && ownsPanelLoading) {
+          setDebugStateLoading(false);
+        }
       }
     },
-    [applyLoadedDebugSettings, syncDebugTraceItems, toast],
+    [applyLoadedDebugSettings, cancelDebugTraceList, syncDebugTraceItems, toast],
   );
 
   useEffect(() => {
@@ -1288,15 +1477,50 @@ export default function ProxyLogs() {
 
   useEffect(() => {
     if (!debugSettings.proxyDebugTraceEnabled) return;
-    const timer = setInterval(() => {
+    let timer: ReturnType<typeof setInterval> | null = null;
+    let wasVisible =
+      typeof document === "undefined" || document.visibilityState === "visible";
+    const isVisible = () =>
+      typeof document === "undefined" || document.visibilityState === "visible";
+    const stop = () => {
+      if (!timer) return;
+      clearInterval(timer);
+      timer = null;
+    };
+    const poll = () => {
+      if (!isVisible() || debugTraceControllerRef.current) return;
       void loadDebugTraceList({
         silent: true,
-        refreshSelectedDetail: true,
+        refreshSelectedDetail: showDebugTraceDetailModal,
         suppressToast: true,
       });
-    }, DEBUG_REFRESH_INTERVAL_MS);
-    return () => clearInterval(timer);
-  }, [debugSettings.proxyDebugTraceEnabled, loadDebugTraceList]);
+    };
+    const start = () => {
+      if (!timer && isVisible()) {
+        timer = setInterval(poll, DEBUG_REFRESH_INTERVAL_MS);
+      }
+    };
+    const onVisibilityChange = () => {
+      if (!isVisible()) {
+        wasVisible = false;
+        stop();
+        return;
+      }
+      if (!wasVisible) poll();
+      wasVisible = true;
+      start();
+    };
+    onVisibilityChange();
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibilityChange);
+    }
+    return () => {
+      stop();
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibilityChange);
+      }
+    };
+  }, [debugSettings.proxyDebugTraceEnabled, loadDebugTraceList, showDebugTraceDetailModal]);
 
   useEffect(() => {
     persistDebugTracePanelExpanded(debugTracePanelExpanded);
@@ -1307,6 +1531,13 @@ export default function ProxyLogs() {
       nextSettings: ProxyDebugSettingsState,
       options?: { successMessage?: string; closeAfterSave?: boolean },
     ) => {
+      // A settings mutation supersedes the initial read; prevent a late GET
+      // from restoring the pre-save debug toggle.
+      debugStateSeqRef.current += 1;
+      debugStateControllerRef.current?.abort();
+      debugStateControllerRef.current = null;
+      cancelDebugTraceList();
+      setDebugStateLoading(false);
       setDebugPanelSaving(true);
       try {
         const updated = await api.updateRuntimeSettings(
@@ -1336,7 +1567,7 @@ export default function ProxyLogs() {
         setDebugPanelSaving(false);
       }
     },
-    [applyLoadedDebugSettings, loadDebugTraceList, toast],
+    [applyLoadedDebugSettings, cancelDebugTraceList, loadDebugTraceList, toast],
   );
 
   const handleSaveDebugSettings = useCallback(async () => {
@@ -1378,6 +1609,36 @@ export default function ProxyLogs() {
     : null;
   const closeDebugTraceDetailModal = useCallback(() => {
     setShowDebugTraceDetailModal(false);
+    selectedDebugTraceIdRef.current = null;
+    setSelectedDebugTraceId(null);
+    const cancelledIds = Array.from(debugDetailAbortByIdRef.current.keys());
+    for (const [id, controller] of debugDetailAbortByIdRef.current) {
+      controller.abort();
+      debugDetailAbortByIdRef.current.delete(id);
+      debugDetailInFlightRef.current.delete(id);
+    }
+    // Aborting a detail request must not leave its state stuck at `loading`.
+    // The modal can be reopened for the same trace, in which case the next
+    // request should be allowed to start. Preserve any cached data so a
+    // reopen/refresh can still render it immediately.
+    if (cancelledIds.length > 0) {
+      setDebugDetailById((current) => {
+        let changed = false;
+        const next = { ...current };
+        for (const id of cancelledIds) {
+          const state = next[id];
+          if (!state) continue;
+          if (state.data) {
+            if (!state.loading) continue;
+            next[id] = { ...state, loading: false };
+          } else {
+            delete next[id];
+          }
+          changed = true;
+        }
+        return changed ? next : current;
+      });
+    }
   }, []);
   const openDebugTraceDetailModal = useCallback((traceId: number) => {
     selectedDebugTraceIdRef.current = traceId;
@@ -1538,23 +1799,33 @@ export default function ProxyLogs() {
       );
     }
 
-    if (selectedDebugTraceDetail?.loading) {
+    const detailState = selectedDebugTraceDetail;
+    if (!detailState?.data && detailState?.loading) {
       return (
-        <div style={{ color: "var(--color-text-muted)", fontSize: 13 }}>
+        <div
+          role="status"
+          aria-live="polite"
+          style={{ color: "var(--color-text-muted)", fontSize: 13 }}
+        >
           加载追踪详情中...
         </div>
       );
     }
 
-    if (selectedDebugTraceDetail?.error) {
+    if (!detailState?.data && detailState?.error) {
       return (
-        <div style={{ color: "var(--color-danger)", fontSize: 13 }}>
-          {selectedDebugTraceDetail.error}
+        <div
+          className="alert alert-error"
+          role="alert"
+          aria-live="assertive"
+          style={{ fontSize: 13 }}
+        >
+          {detailState.error}
         </div>
       );
     }
 
-    if (!selectedDebugTraceDetail?.data) {
+    if (!detailState?.data) {
       return (
         <div style={{ color: "var(--color-text-muted)", fontSize: 13 }}>
           暂无追踪详情。
@@ -1562,10 +1833,29 @@ export default function ProxyLogs() {
       );
     }
 
-    const traceDetail = selectedDebugTraceDetail.data.trace;
+    const traceDetail = detailState.data.trace;
 
     return (
       <div style={{ display: "grid", gap: 12 }}>
+        {detailState.loading ? (
+          <div
+            role="status"
+            aria-live="polite"
+            style={{ color: "var(--color-text-muted)", fontSize: 12 }}
+          >
+            正在刷新追踪详情，当前内容仍可查看...
+          </div>
+        ) : null}
+        {detailState.error ? (
+          <div
+            className="alert alert-error"
+            role="alert"
+            aria-live="polite"
+            style={{ fontSize: 12 }}
+          >
+            刷新详情失败：{detailState.error}
+          </div>
+        ) : null}
         <div style={{ ...formSectionStyle, gap: 10 }}>
           <div style={detailSectionTitleStyle}>基础信息</div>
           <div style={detailInfoGridStyle}>
@@ -1628,15 +1918,15 @@ export default function ProxyLogs() {
         </div>
 
         <DetailDisclosureCard
-          title={`Attempt 记录 (${selectedDebugTraceDetail.data.attempts.length})`}
+          title={`Attempt 记录 (${detailState.data.attempts.length})`}
         >
           <div style={{ padding: 12, display: "grid", gap: 8 }}>
-            {selectedDebugTraceDetail.data.attempts.length === 0 ? (
+            {detailState.data.attempts.length === 0 ? (
               <div style={{ color: "var(--color-text-muted)", fontSize: 13 }}>
                 暂无 attempt 记录
               </div>
             ) : (
-              selectedDebugTraceDetail.data.attempts.map(renderAttemptDetail)
+              detailState.data.attempts.map(renderAttemptDetail)
             )}
           </div>
         </DetailDisclosureCard>
@@ -3493,25 +3783,24 @@ export default function ProxyLogs() {
           </table>
         )}
         {!loading && logs.length === 0 && (
-          <div className="empty-state">
-            <svg
-              className="empty-state-icon"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1}
-                d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
-              />
-            </svg>
-            <div className="empty-state-title">{tr("暂无使用日志")}</div>
-            <div className="empty-state-desc">
-              当请求通过代理时，日志将显示在这里
-            </div>
-          </div>
+          <EmptyState
+            title={tr("暂无使用日志")}
+            description="当请求通过代理时，日志将显示在这里"
+            icon={(
+              <svg
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1}
+                  d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+                />
+              </svg>
+            )}
+          />
         )}
       </div>
 

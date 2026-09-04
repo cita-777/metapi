@@ -1,0 +1,7 @@
+# Trellis：只追加的开发日志应在并行 session/worktree 之间干净合并——每个 session
+# 只追加新的区块，因此实际上不会产生冲突。
+#
+# 不要在此为 workspace/*/index.md 添加规则——它在每个 session 中都会完整重生成，
+# 因此真实冲突是预期情况，可以任选一侧解决（任务状态在 task.json，而不在
+# index.md）。项目布局参见 .trellis/spec/backend/directory-structure.md。
+.trellis/workspace/*/journal-*.md merge=union

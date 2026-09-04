@@ -5,9 +5,11 @@ import { BrandGlyph, getBrand, hashColor, BrandIcon, type BrandInfo } from '../c
 import SiteBadgeLink from '../components/SiteBadgeLink.js';
 import { useToast } from '../components/Toast.js';
 import ModernSelect from '../components/ModernSelect.js';
+import { EmptyState } from '../components/ui/feedback.js';
 import ResponsiveFilterPanel from '../components/ResponsiveFilterPanel.js';
 import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import { useIsMobile } from '../components/useIsMobile.js';
+import { useAsyncResource } from '../components/useAsyncResource.js';
 import { mergeMarketplaceMetadata, shouldHydrateMarketplaceMetadata } from './helpers/modelsMarketplaceMetadata.js';
 import { tr } from '../i18n.js';
 
@@ -126,6 +128,7 @@ function renderGroupPricingValue(pricing: ModelGroupPricing): string {
 }
 
 const PAGE_SIZES = [10, 20, 50];
+const EMPTY_MARKETPLACE_RESPONSE: ModelsMarketplaceResponse = { models: [] };
 
 function compareModels(a: ModelRow, b: ModelRow, sortBy: SortColumn, sortDir: 'asc' | 'desc'): number {
   if (sortBy === 'name') {
@@ -153,8 +156,6 @@ function compareModels(a: ModelRow, b: ModelRow, sortBy: SortColumn, sortDir: 'a
 /* ---- component ---- */
 export default function Models() {
   const toast = useToast();
-  const [data, setData] = useState<ModelsMarketplaceResponse>({ models: [] });
-  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState<SortColumn>('accountCount');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
@@ -167,12 +168,118 @@ export default function Models() {
   const [copied, setCopied] = useState<string | null>(null);
   const [filterCollapsed, setFilterCollapsed] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
-  const [metadataHydrating, setMetadataHydrating] = useState(false);
   const isMobile = useIsMobile();
   const filterPanelPresence = useAnimatedVisibility(!isMobile && !filterCollapsed, 220);
-  const latestPrimaryRequestRef = useRef(0);
-  const latestMetadataRequestRef = useRef(0);
+  const metadataTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const metadataGenerationRef = useRef(0);
+  const metadataBaseRef = useRef<ModelsMarketplaceResponse | null>(null);
+  const hasLoadedBaseRef = useRef(false);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [metadataSnapshot, setMetadataSnapshot] = useState<{
+    base: ModelsMarketplaceResponse;
+    detailed: ModelsMarketplaceResponse;
+  } | null>(null);
   const location = useLocation();
+
+  const marketplaceLoader = useCallback(
+    (signal: AbortSignal, context: { forceRefresh: boolean }) =>
+      api.getModelsMarketplace({
+        refresh: context.forceRefresh,
+        includePricing: false,
+        signal,
+      }) as Promise<ModelsMarketplaceResponse>,
+    [],
+  );
+  const marketplaceResource = useAsyncResource(marketplaceLoader, {
+    onError: (error, context) => {
+      if (context.forceRefresh) {
+        toast.error(error.message || tr('刷新模型广场失败'));
+      }
+    },
+  });
+
+  const metadataLoader = useCallback(
+    (signal: AbortSignal) =>
+      api.getModelsMarketplace({
+        includePricing: true,
+        signal,
+      }) as Promise<ModelsMarketplaceResponse>,
+    [],
+  );
+  const metadataResource = useAsyncResource(metadataLoader, {
+    autoLoad: false,
+  });
+
+  const baseData = marketplaceResource.data;
+  const data = useMemo(() => {
+    const base = baseData ?? EMPTY_MARKETPLACE_RESPONSE;
+    const detailed = metadataSnapshot;
+    if (!detailed || detailed.base !== baseData) return base;
+    return {
+      ...base,
+      models: mergeMarketplaceMetadata(base.models, detailed.detailed.models),
+      meta: detailed.detailed.meta ?? base.meta,
+    };
+  }, [baseData, metadataSnapshot]);
+  const loading = marketplaceResource.loading && baseData === null;
+  const metadataHydrating =
+    metadataResource.loading || metadataResource.refreshing;
+
+  const scheduleMetadataHydration = useCallback(
+    (base: ModelsMarketplaceResponse, delayMs: number) => {
+      const generation = ++metadataGenerationRef.current;
+      if (metadataTimerRef.current) {
+        clearTimeout(metadataTimerRef.current);
+        metadataTimerRef.current = null;
+      }
+      metadataResource.cancel();
+      setMetadataSnapshot(null);
+      metadataBaseRef.current = shouldHydrateMarketplaceMetadata(base.models)
+        ? base
+        : null;
+      if (!metadataBaseRef.current) return;
+
+      metadataTimerRef.current = setTimeout(() => {
+        metadataTimerRef.current = null;
+        if (generation !== metadataGenerationRef.current) return;
+        void metadataResource
+          .reload({ silent: true, dedupe: true })
+          .then((detailed) => {
+            if (
+              !detailed ||
+              generation !== metadataGenerationRef.current ||
+              metadataBaseRef.current !== base
+            ) {
+              return;
+            }
+            setMetadataSnapshot({ base, detailed });
+          });
+      }, delayMs);
+    },
+    [metadataResource.cancel, metadataResource.reload],
+  );
+
+  useEffect(() => {
+    if (!baseData) return;
+    const delayMs = hasLoadedBaseRef.current ? 600 : 1200;
+    hasLoadedBaseRef.current = true;
+    scheduleMetadataHydration(baseData, delayMs);
+  }, [baseData, scheduleMetadataHydration]);
+
+  useEffect(() => {
+    return () => {
+      metadataGenerationRef.current += 1;
+      if (metadataTimerRef.current) {
+        clearTimeout(metadataTimerRef.current);
+        metadataTimerRef.current = null;
+      }
+      if (copyTimerRef.current) {
+        clearTimeout(copyTimerRef.current);
+        copyTimerRef.current = null;
+      }
+    };
+  }, []);
+
   const siteIdByName = useMemo(() => {
     const index = new Map<string, number>();
     for (const model of data.models) {
@@ -186,66 +293,6 @@ export default function Models() {
     return index;
   }, [data.models]);
 
-  const loadBaseMarketplace = useCallback(async (refresh = false) => {
-    const requestId = ++latestPrimaryRequestRef.current;
-    latestMetadataRequestRef.current += 1;
-    setMetadataHydrating(false);
-    setLoading(true);
-    try {
-      const res = await api.getModelsMarketplace({
-        refresh,
-        includePricing: false,
-      });
-      if (requestId !== latestPrimaryRequestRef.current) return null;
-      const next = res as ModelsMarketplaceResponse;
-      setData(next);
-      if (refresh && next.meta?.refreshRequested) {
-        if (next.meta.refreshReused) {
-          toast.info(tr('模型广场刷新进行中'));
-        } else if (next.meta.refreshQueued) {
-          toast.info(tr('已开始刷新模型广场'));
-        }
-      }
-      return next;
-    } catch {
-      if (requestId !== latestPrimaryRequestRef.current) return null;
-      setData({ models: [] });
-      return null;
-    } finally {
-      if (requestId === latestPrimaryRequestRef.current) {
-        setLoading(false);
-      }
-    }
-  }, [toast]);
-
-  const hydrateMarketplaceMetadata = useCallback(async (baseModels: ModelRow[]) => {
-    if (!shouldHydrateMarketplaceMetadata(baseModels)) return;
-
-    const metadataRequestId = ++latestMetadataRequestRef.current;
-    const baseRequestId = latestPrimaryRequestRef.current;
-    setMetadataHydrating(true);
-    try {
-      const res = await api.getModelsMarketplace({
-        includePricing: true,
-      });
-      if (metadataRequestId !== latestMetadataRequestRef.current) return;
-      if (baseRequestId !== latestPrimaryRequestRef.current) return;
-
-      const detailed = res as ModelsMarketplaceResponse;
-      setData((current) => ({
-        ...current,
-        models: mergeMarketplaceMetadata(current.models, detailed.models),
-        meta: detailed.meta ?? current.meta,
-      }));
-    } catch {
-      // Keep the fast base list when metadata fetch fails.
-    } finally {
-      if (metadataRequestId === latestMetadataRequestRef.current) {
-        setMetadataHydrating(false);
-      }
-    }
-  }, []);
-
   useEffect(() => {
     if (!isMobile) return;
     if (viewMode !== 'card') {
@@ -256,35 +303,36 @@ export default function Models() {
     }
   }, [filterCollapsed, isMobile, viewMode]);
 
-  useEffect(() => {
-    let cancelled = false;
-    let metadataTimer: ReturnType<typeof setTimeout> | null = null;
-    const bootstrap = async () => {
-      const initial = await loadBaseMarketplace(false);
-      if (!initial || cancelled) return;
-      metadataTimer = setTimeout(() => {
-        if (!cancelled) {
-          void hydrateMarketplaceMetadata(initial.models);
-        }
-      }, 1200);
-    };
-    void bootstrap();
-    return () => {
-      cancelled = true;
-      if (metadataTimer) clearTimeout(metadataTimer);
-      latestMetadataRequestRef.current += 1;
-    };
-  }, [hydrateMarketplaceMetadata, loadBaseMarketplace]);
-
   const handleRefresh = useCallback(() => {
-    void (async () => {
-      const refreshed = await loadBaseMarketplace(true);
-      if (!refreshed) return;
-      setTimeout(() => {
-        void hydrateMarketplaceMetadata(refreshed.models);
-      }, 600);
-    })();
-  }, [hydrateMarketplaceMetadata, loadBaseMarketplace]);
+    if (marketplaceResource.loading || marketplaceResource.refreshing) return;
+    metadataGenerationRef.current += 1;
+    if (metadataTimerRef.current) {
+      clearTimeout(metadataTimerRef.current);
+      metadataTimerRef.current = null;
+    }
+    metadataResource.cancel();
+    metadataBaseRef.current = null;
+    setMetadataSnapshot(null);
+    void marketplaceResource.reload({
+      silent: true,
+      forceRefresh: true,
+      dedupe: false,
+    }).then((refreshed) => {
+      if (refreshed?.meta?.refreshRequested) {
+        if (refreshed.meta.refreshReused) {
+          toast.info(tr('模型广场刷新进行中'));
+        } else if (refreshed.meta.refreshQueued) {
+          toast.info(tr('已开始刷新模型广场'));
+        }
+      }
+    });
+  }, [
+    marketplaceResource.loading,
+    marketplaceResource.refreshing,
+    marketplaceResource.reload,
+    metadataResource.cancel,
+    toast,
+  ]);
 
   useEffect(() => {
     const q = new URLSearchParams(location.search).get('q') || '';
@@ -396,9 +444,28 @@ export default function Models() {
 
   /* ---- copy ---- */
   const copyName = (name: string) => {
-    navigator.clipboard.writeText(name).catch(() => { });
-    setCopied(name);
-    setTimeout(() => setCopied(null), 1500);
+    const write = globalThis.navigator?.clipboard?.writeText;
+    if (typeof write !== 'function') return;
+    let copyPromise: Promise<unknown>;
+    try {
+      copyPromise = Promise.resolve(
+        write.call(globalThis.navigator.clipboard, name),
+      );
+    } catch {
+      // Some embedded hosts expose a synchronous clipboard facade that can
+      // throw (for example while permissions are changing). Keep the page
+      // responsive and avoid leaving a stale copied indicator behind.
+      return;
+    }
+    void copyPromise.then(
+      () => setCopied(name),
+      () => {},
+    );
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => {
+      copyTimerRef.current = null;
+      setCopied(null);
+    }, 1500);
   };
 
   const filterControls = (
@@ -584,7 +651,13 @@ export default function Models() {
                 {tr('筛选')}
               </button>
             )}
-            <button onClick={handleRefresh} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)', padding: '6px 12px' }}>
+            <button
+              onClick={handleRefresh}
+              disabled={marketplaceResource.loading || marketplaceResource.refreshing}
+              className="btn btn-ghost"
+              style={{ border: '1px solid var(--color-border)', padding: '6px 12px' }}
+              aria-label={tr('刷新模型广场')}
+            >
               <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
@@ -639,15 +712,15 @@ export default function Models() {
 
         {/* Empty */}
         {detailModels.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-state-icon">
+          <EmptyState
+            title={tr('暂无模型结果')}
+            description={tr('请先检查站点与账号状态，然后点击刷新。')}
+            icon={(
               <svg width="40" height="40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
               </svg>
-            </div>
-            <div className="empty-state-title">{tr('暂无模型结果')}</div>
-            <div className="empty-state-desc">{tr('请先检查站点与账号状态，然后点击刷新。')}</div>
-          </div>
+            )}
+          />
         ) : viewMode === 'card' ? (
           /* ====== Card View ====== */
           <div>

@@ -11,6 +11,376 @@ type RequestOptions = RequestInit & {
   timeoutMs?: number;
 };
 
+type FetchResponseOptions = {
+  /** Wrap a returned stream when the caller owns the Response lifecycle. */
+  wrapBody?: boolean;
+  /** Stop the initial request deadline once response headers are available. */
+  releaseTimeoutAfterHeaders?: boolean;
+};
+
+type ResponseLifecycle = {
+  controller: AbortController;
+  timeoutMs: number;
+  externalSignal?: AbortSignal;
+  timedOut: boolean;
+  externallyAborted: boolean;
+  releaseTimeout: () => void;
+  cleanup: () => void;
+  normalizeError: (error: unknown) => unknown;
+};
+
+/**
+ * Keep the request controller alive until the response body has been
+ * consumed.  `fetch()` resolves as soon as headers arrive, but JSON, binary,
+ * and streaming responses can remain pending for considerably longer.
+ */
+const responseLifecycles = new WeakMap<Response, ResponseLifecycle>();
+
+function createAbortError(): Error {
+  if (typeof DOMException !== "undefined") {
+    return new DOMException("The operation was aborted.", "AbortError");
+  }
+  const error = new Error("The operation was aborted.");
+  error.name = "AbortError";
+  return error;
+}
+
+function isAbortError(error: unknown): boolean {
+  return (
+    !!error &&
+    typeof error === "object" &&
+    "name" in error &&
+    (error as { name?: unknown }).name === "AbortError"
+  );
+}
+
+function createResponseLifecycle(
+  timeoutMs: number,
+  externalSignal?: AbortSignal,
+): ResponseLifecycle {
+  const controller = new AbortController();
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  let externalAbortHandler: (() => void) | null = null;
+  let cleaned = false;
+  const releaseTimeout = () => {
+    if (timeoutHandle === null) return;
+    clearTimeout(timeoutHandle);
+    timeoutHandle = null;
+  };
+
+  const lifecycle: ResponseLifecycle = {
+    controller,
+    timeoutMs,
+    externalSignal,
+    timedOut: false,
+    externallyAborted: !!externalSignal?.aborted,
+    releaseTimeout,
+    cleanup: () => {
+      if (cleaned) return;
+      cleaned = true;
+      releaseTimeout();
+      if (externalSignal && externalAbortHandler) {
+        externalSignal.removeEventListener("abort", externalAbortHandler);
+        externalAbortHandler = null;
+      }
+    },
+    normalizeError: (_error: unknown) => _error,
+  };
+
+  lifecycle.normalizeError = (error: unknown) => {
+    // Preserve caller cancellation.  This check intentionally also reads the
+    // external signal directly: a caller may abort just after our listener
+    // has been removed during timeout/cleanup.
+    if (lifecycle.externallyAborted || externalSignal?.aborted) {
+      return isAbortError(error) ? error : createAbortError();
+    }
+    if (lifecycle.timedOut) {
+      return new Error(
+        `请求超时（${Math.max(1, Math.round(timeoutMs / 1000))}s）`,
+      );
+    }
+    if (!isAbortError(error)) return error;
+    return error;
+  };
+
+  timeoutHandle = setTimeout(() => {
+    lifecycle.timedOut = true;
+    try {
+      controller.abort();
+    } finally {
+      // Once the controller has been aborted no more external events need to
+      // be observed.  Keep the `timedOut` flag so a later body read can still
+      // report the stable timeout error.
+      lifecycle.cleanup();
+    }
+  }, timeoutMs);
+
+  if (externalSignal) {
+    externalAbortHandler = () => {
+      lifecycle.externallyAborted = true;
+      try {
+        controller.abort();
+      } finally {
+        lifecycle.cleanup();
+      }
+    };
+    if (externalSignal.aborted) {
+      externalAbortHandler();
+    } else {
+      externalSignal.addEventListener("abort", externalAbortHandler, {
+        once: true,
+      });
+      // Closing the small race between the state check and listener
+      // registration is important for callers that abort synchronously.
+      if (externalSignal.aborted) externalAbortHandler();
+    }
+  }
+
+  return lifecycle;
+}
+
+/**
+ * Race a response-body operation against the internal controller.  Native
+ * fetch bodies react to AbortController, but this also keeps tests, adapters,
+ * and older fetch implementations from leaving a pending `json()` or
+ * `arrayBuffer()` promise behind when the signal is aborted.
+ */
+function raceWithResponseLifecycle<T>(
+  operation: PromiseLike<T>,
+  lifecycle: ResponseLifecycle,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const signal = lifecycle.controller.signal;
+    const finish = () => {
+      signal.removeEventListener("abort", onAbort);
+    };
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      finish();
+      reject(createAbortError());
+    };
+
+    Promise.resolve(operation).then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        finish();
+        resolve(value);
+      },
+      (error) => {
+        if (settled) return;
+        settled = true;
+        finish();
+        reject(error);
+      },
+    );
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
+}
+
+function getResponseLifecycle(
+  response: Response,
+): ResponseLifecycle | undefined {
+  return responseLifecycles.get(response);
+}
+
+function cancelResponseBody(response: unknown): void {
+  if (!response || typeof response !== "object") return;
+  const body = (response as { body?: unknown }).body;
+  if (!body || typeof (body as { cancel?: unknown }).cancel !== "function") {
+    return;
+  }
+  try {
+    void Promise.resolve(
+      (body as { cancel: () => unknown }).cancel(),
+    ).catch(() => {});
+  } catch {
+    // Best effort only; the original request error remains authoritative.
+  }
+}
+
+async function consumeResponseBody<T>(
+  response: Response,
+  method: "arrayBuffer" | "json" | "text",
+): Promise<T> {
+  const lifecycle = getResponseLifecycle(response);
+  const operation = Promise.resolve().then(() => {
+    const read = response[method] as () => Promise<T>;
+    return read.call(response);
+  });
+
+  try {
+    return await (lifecycle
+      ? raceWithResponseLifecycle(operation, lifecycle)
+      : operation);
+  } catch (error) {
+    throw lifecycle ? lifecycle.normalizeError(error) : error;
+  } finally {
+    lifecycle?.cleanup();
+  }
+}
+
+function attachResponseLifecycle(
+  response: Response,
+  lifecycle: ResponseLifecycle,
+  releaseTimeoutAfterHeaders = false,
+): Response {
+  // A native Response with a null body has nothing left to wait for.  Keep a
+  // lifecycle for test/adaptor response doubles that omit `body` but expose a
+  // deferred json/text/arrayBuffer method; those consumers are raced in
+  // `consumeResponseBody()` below.
+  const body = response.body;
+  const isNativeResponse =
+    typeof Response !== "undefined" && response instanceof Response;
+  if (body === null && isNativeResponse) {
+    lifecycle.cleanup();
+    return response;
+  }
+
+  if (releaseTimeoutAfterHeaders) {
+    lifecycle.releaseTimeout();
+  }
+
+  if (body == null) {
+    responseLifecycles.set(response, lifecycle);
+    return response;
+  }
+
+  // Keep a map entry even when a non-browser/test Response cannot be wrapped;
+  // the known consumers still use `consumeResponseBody()` and will clean it
+  // up in a finally block.
+  responseLifecycles.set(response, lifecycle);
+
+  if (typeof ReadableStream === "undefined" || typeof Response === "undefined") {
+    return response;
+  }
+
+  let reader: ReadableStreamDefaultReader<Uint8Array>;
+  try {
+    reader = body.getReader();
+  } catch {
+    if (response.bodyUsed) lifecycle.cleanup();
+    return response;
+  }
+
+  let released = false;
+  const releaseReader = () => {
+    if (released) return;
+    try {
+      reader.releaseLock();
+      released = true;
+    } catch {
+      // A reader with an outstanding read cannot release its lock yet.
+    }
+  };
+
+  const managedBody = new ReadableStream<Uint8Array>({
+    async pull(streamController) {
+      try {
+        const result = await raceWithResponseLifecycle(
+          reader.read(),
+          lifecycle,
+        );
+        if (result.done) {
+          if (lifecycle.controller.signal.aborted) {
+            releaseReader();
+            lifecycle.cleanup();
+            streamController.error(
+              lifecycle.normalizeError(createAbortError()),
+            );
+            return;
+          }
+          releaseReader();
+          lifecycle.cleanup();
+          streamController.close();
+          return;
+        }
+        if (lifecycle.controller.signal.aborted) {
+          throw lifecycle.normalizeError(createAbortError());
+        }
+        streamController.enqueue(result.value as Uint8Array);
+      } catch (error) {
+        // Best-effort cancellation prevents a native fetch body from
+        // continuing to buffer after the consumer has gone away.  Do not
+        // await it: custom streams are allowed to have a non-cooperative
+        // cancel implementation.
+        try {
+          lifecycle.controller.abort(error);
+        } catch {
+          // AbortController.abort is idempotent; ignore polyfill failures.
+        }
+        try {
+          void Promise.resolve(reader.cancel(error)).then(
+            releaseReader,
+            releaseReader,
+          );
+        } catch {
+          // Ignore cancellation failures; the body is already terminal.
+        }
+        releaseReader();
+        lifecycle.cleanup();
+        streamController.error(lifecycle.normalizeError(error));
+      }
+    },
+    async cancel(reason) {
+      try {
+        // Cancellation is best effort.  A custom/older body stream may never
+        // settle its cancel promise, and waiting here would defeat caller
+        // cancellation itself.
+        try {
+          lifecycle.controller.abort(reason);
+        } catch {
+          // Ignore polyfill failures and continue best-effort source cancel.
+        }
+        void Promise.resolve(reader.cancel(reason)).then(
+          releaseReader,
+          releaseReader,
+        );
+      } catch {
+        // Ignore synchronous cancellation failures as well.
+      } finally {
+        releaseReader();
+        lifecycle.cleanup();
+      }
+    },
+  });
+
+  try {
+    const managedResponse = new Response(managedBody, {
+      headers: response.headers,
+      status: response.status,
+      statusText: response.statusText,
+    });
+
+    // Preserve metadata that callers may inspect while retaining the native
+    // Response body bookkeeping on the managed response.
+    for (const key of ["url", "redirected", "type"] as const) {
+      try {
+        Object.defineProperty(managedResponse, key, {
+          configurable: true,
+          value: response[key],
+        });
+      } catch {
+        // Metadata is best effort; status/headers/body are authoritative.
+      }
+    }
+
+    responseLifecycles.delete(response);
+    responseLifecycles.set(managedResponse, lifecycle);
+    return managedResponse;
+  } catch {
+    // Release the lock so a caller can still consume the original response if
+    // the platform rejects constructing a wrapped Response (for example for a
+    // custom status/body combination).
+    releaseReader();
+    return response;
+  }
+}
+
 function requireAuthToken(): string {
   const token = getAuthToken(localStorage);
   if (!token) {
@@ -30,8 +400,9 @@ function requireAuthToken(): string {
 
 async function extractResponseErrorMessage(res: Response): Promise<string> {
   let message = `HTTP ${res.status}`;
+  const lifecycle = getResponseLifecycle(res);
   try {
-    const text = await res.text();
+    const text = await consumeResponseBody<string>(res, "text");
     if (text) {
       try {
         const json = JSON.parse(text);
@@ -51,7 +422,17 @@ async function extractResponseErrorMessage(res: Response): Promise<string> {
         message = `${message}: ${text.slice(0, 120)}`;
       }
     }
-  } catch {}
+  } catch (error) {
+    // Preserve cancellation and timeout semantics.  Historically body read
+    // failures were ignored for ordinary network errors, so keep that
+    // fallback while allowing lifecycle-controlled aborts to reach callers.
+    if (
+      lifecycle &&
+      (lifecycle.timedOut || lifecycle.externallyAborted || isAbortError(error))
+    ) {
+      throw lifecycle.normalizeError(error);
+    }
+  }
   return message;
 }
 
@@ -90,42 +471,58 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
 async function fetchAuthenticatedResponse(
   url: string,
   options: RequestOptions = {},
+  responseOptions: FetchResponseOptions = {},
 ): Promise<Response> {
   const {
     timeoutMs = 30_000,
     signal: externalSignal,
     ...fetchOptions
   } = options;
-  const controller = new AbortController();
-  let timeoutHandle: ReturnType<typeof setTimeout> | null = setTimeout(() => {
-    controller.abort();
-  }, timeoutMs);
-  let cleanupExternalSignal = () => {};
-
-  if (externalSignal) {
-    if (externalSignal.aborted) {
-      controller.abort();
-    } else {
-      const abortHandler = () => controller.abort();
-      externalSignal.addEventListener("abort", abortHandler, { once: true });
-      cleanupExternalSignal = () =>
-        externalSignal.removeEventListener("abort", abortHandler);
-    }
-  }
-
-  const token = requireAuthToken();
-  const headers = new Headers(fetchOptions.headers ?? {});
-  headers.set("Authorization", `Bearer ${token}`);
-  if (fetchOptions.body && !headers.has("Content-Type")) {
-    headers.set("Content-Type", "application/json");
-  }
+  const lifecycle = createResponseLifecycle(
+    timeoutMs,
+    externalSignal ?? undefined,
+  );
+  const { controller } = lifecycle;
+  let fetchStarted = false;
 
   try {
-    const res = await fetch(url, {
-      ...fetchOptions,
-      signal: controller.signal,
-      headers,
-    });
+    const token = requireAuthToken();
+    const headers = new Headers(fetchOptions.headers ?? {});
+    headers.set("Authorization", `Bearer ${token}`);
+    if (fetchOptions.body && !headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
+
+    fetchStarted = true;
+    const fetchPromise = Promise.resolve().then(() =>
+      fetch(url, {
+        ...fetchOptions,
+        signal: controller.signal,
+        headers,
+      }),
+    );
+    let res: Response;
+    try {
+      res = await raceWithResponseLifecycle(fetchPromise, lifecycle);
+    } catch (error) {
+      // A non-cooperative adapter may resolve long after our timeout/abort
+      // race has already rejected.  Cancel that late body to avoid buffering
+      // an otherwise abandoned response.
+      void fetchPromise.then(
+        (lateResponse) => {
+          if (controller.signal.aborted) cancelResponseBody(lateResponse);
+        },
+        () => {},
+      );
+      throw error;
+    }
+    // A standards-compliant fetch rejects when its signal is already
+    // aborted.  Keep the same contract for adapters/mocks that resolve a
+    // response anyway (including responses with a null body).
+    if (controller.signal.aborted) {
+      cancelResponseBody(res);
+      throw lifecycle.normalizeError(createAbortError());
+    }
     if (res.status === 401 || res.status === 403) {
       const hadToken = !!getAuthToken(localStorage);
       clearAuthSession(localStorage);
@@ -136,23 +533,31 @@ async function fetchAuthenticatedResponse(
       ) {
         window.location.reload();
       }
+      // The body will not be consumed after an auth failure.  Cancel it
+      // best-effort before releasing the lifecycle resources.
+      cancelResponseBody(res);
+      lifecycle.cleanup();
       throw new Error("Session expired");
+    }
+    if (responseOptions.wrapBody) {
+      return attachResponseLifecycle(
+        res,
+        lifecycle,
+        responseOptions.releaseTimeoutAfterHeaders,
+      );
+    }
+    const body = res.body;
+    const isNativeResponse =
+      typeof Response !== "undefined" && res instanceof Response;
+    if (body === null && isNativeResponse) {
+      lifecycle.cleanup();
+    } else {
+      responseLifecycles.set(res, lifecycle);
     }
     return res;
   } catch (error: any) {
-    if (error?.name === "AbortError") {
-      if (externalSignal?.aborted) throw error;
-      throw new Error(
-        `请求超时（${Math.max(1, Math.round(timeoutMs / 1000))}s）`,
-      );
-    }
-    throw error;
-  } finally {
-    if (timeoutHandle) {
-      clearTimeout(timeoutHandle);
-      timeoutHandle = null;
-    }
-    cleanupExternalSignal();
+    lifecycle.cleanup();
+    throw fetchStarted ? lifecycle.normalizeError(error) : error;
   }
 }
 
@@ -164,7 +569,7 @@ async function request<T = any>(
   if (!res.ok) {
     throw new Error(await extractResponseErrorMessage(res));
   }
-  return res.json() as Promise<T>;
+  return consumeResponseBody<T>(res, "json");
 }
 
 async function streamSse(
@@ -188,11 +593,19 @@ async function streamSse(
     throw new Error(await extractResponseErrorMessage(response));
   }
   if (!response.body) {
+    getResponseLifecycle(response)?.cleanup();
     throw new Error("响应未返回流式内容");
   }
 
   const decoder = new TextDecoder();
-  const reader = response.body.getReader();
+  const lifecycle = getResponseLifecycle(response);
+  let reader: ReadableStreamDefaultReader<Uint8Array>;
+  try {
+    reader = response.body.getReader();
+  } catch (error) {
+    lifecycle?.cleanup();
+    throw lifecycle ? lifecycle.normalizeError(error) : error;
+  }
   let buffer = "";
 
   const flushBuffer = (final = false) => {
@@ -229,15 +642,41 @@ async function streamSse(
     }
   };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    flushBuffer(false);
-  }
+  try {
+    while (true) {
+      const read = reader.read();
+      const { done, value } = await (lifecycle
+        ? raceWithResponseLifecycle(read, lifecycle)
+        : read);
+      if (done) {
+        if (lifecycle?.controller.signal.aborted) {
+          throw lifecycle.normalizeError(createAbortError());
+        }
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      flushBuffer(false);
+    }
 
-  if (buffer.trim()) {
-    flushBuffer(true);
+    if (buffer.trim()) {
+      flushBuffer(true);
+    }
+  } catch (error) {
+    throw lifecycle ? lifecycle.normalizeError(error) : error;
+  } finally {
+    // Ensure an aborted/failed stream releases the body lock.  Native readers
+    // may reject cancellation after an error, which is safe to ignore here.
+    try {
+      void Promise.resolve(reader.cancel()).catch(() => {});
+    } catch {
+      // Ignore cancellation failures while preserving the original result.
+    }
+    try {
+      reader.releaseLock();
+    } catch {
+      // A pending native read may still hold the lock briefly.
+    }
+    lifecycle?.cleanup();
   }
 }
 
@@ -318,12 +757,16 @@ async function proxyTestStreamRequest(
   data: ProxyTestRequestEnvelope,
   signal?: AbortSignal,
 ) {
-  return fetchAuthenticatedResponse("/api/test/proxy/stream", {
-    method: "POST",
-    signal,
-    body: JSON.stringify(data),
-    timeoutMs: resolveProxyTestTimeoutMs(data),
-  });
+  return fetchAuthenticatedResponse(
+    "/api/test/proxy/stream",
+    {
+      method: "POST",
+      signal,
+      body: JSON.stringify(data),
+      timeoutMs: resolveProxyTestTimeoutMs(data),
+    },
+    { wrapBody: true, releaseTimeoutAfterHeaders: true },
+  );
 }
 
 export type ProxyTestJobResponse = {
@@ -508,6 +951,12 @@ export type ProxyLogsQuery = {
   siteId?: number;
   from?: string;
   to?: string;
+};
+
+/** Optional lifecycle controls for read-only page requests. */
+export type ReadRequestOptions = {
+  signal?: AbortSignal;
+  timeoutMs?: number;
 };
 
 export type ProxyLogClientOption = {
@@ -1028,30 +1477,43 @@ export const api = {
 
   // Stats
   getDashboard: () => request("/api/stats/dashboard"),
-  getDashboardSnapshot: (options?: { refresh?: boolean }) =>
+  getDashboardSnapshot: (options?: {
+    refresh?: boolean;
+    signal?: AbortSignal;
+  }) =>
     request(
       `/api/stats/dashboard${buildQueryString({
         view: "summary",
         ...(options?.refresh ? { refresh: 1 } : {}),
       })}`,
+      { signal: options?.signal },
     ),
-  getDashboardInsights: (options?: { refresh?: boolean }) =>
+  getDashboardInsights: (options?: {
+    refresh?: boolean;
+    signal?: AbortSignal;
+  }) =>
     request(
       `/api/stats/dashboard${buildQueryString({
         view: "insights",
         ...(options?.refresh ? { refresh: 1 } : {}),
       })}`,
+      { signal: options?.signal },
     ),
-  getProxyLogs: (params?: ProxyLogsQuery) =>
+  getProxyLogs: (params?: ProxyLogsQuery, requestOptions?: ReadRequestOptions) =>
     request(
       `/api/stats/proxy-logs${buildQueryString(params)}`,
+      requestOptions,
     ) as Promise<ProxyLogsResponse>,
-  getProxyLogsQuery: (params?: ProxyLogsQuery) =>
+  getProxyLogsQuery: (
+    params?: ProxyLogsQuery,
+    requestOptions?: ReadRequestOptions,
+  ) =>
     request(
       `/api/stats/proxy-logs${buildQueryString({
         ...params,
         view: "query",
       })}`,
+      requestOptions,
     ) as Promise<{
       items: ProxyLogsResponse["items"];
       total: number;
@@ -1062,6 +1524,7 @@ export const api = {
     params?: Omit<ProxyLogsQuery, "limit" | "offset"> & {
       refresh?: number | boolean;
     },
+    requestOptions?: ReadRequestOptions,
   ) => {
     const refresh =
       params?.refresh === true
@@ -1077,35 +1540,50 @@ export const api = {
     if (refresh === undefined) delete queryParams.refresh;
     return request(
       `/api/stats/proxy-logs${buildQueryString(queryParams)}`,
+      requestOptions,
     ) as Promise<{
       clientOptions: ProxyLogsResponse["clientOptions"];
       summary: ProxyLogsResponse["summary"];
       sites: Array<{ id: number; name: string; status?: string | null }>;
     }>;
   },
-  getProxyLogDetail: (id: number) =>
-    request(`/api/stats/proxy-logs/${id}`) as Promise<ProxyLogDetail>,
-  getProxyDebugTraces: (params?: { limit?: number }) =>
+  getProxyLogDetail: (id: number, requestOptions?: ReadRequestOptions) =>
+    request(`/api/stats/proxy-logs/${id}`, requestOptions) as Promise<ProxyLogDetail>,
+  getProxyDebugTraces: (
+    params?: { limit?: number },
+    requestOptions?: ReadRequestOptions,
+  ) =>
     request(
       `/api/stats/proxy-debug/traces${buildQueryString(params)}`,
+      requestOptions,
     ) as Promise<ProxyDebugTracesResponse>,
-  getProxyDebugTraceDetail: (id: number) =>
+  getProxyDebugTraceDetail: (id: number, requestOptions?: ReadRequestOptions) =>
     request(
       `/api/stats/proxy-debug/traces/${id}`,
+      requestOptions,
     ) as Promise<ProxyDebugTraceDetail>,
   checkModels: (accountId: number) =>
     request(`/api/models/check/${accountId}`, { method: "POST" }),
   getSiteDistribution: () => request("/api/stats/site-distribution"),
   getSiteTrend: (days = 7) => request(`/api/stats/site-trend?days=${days}`),
-  getSiteSnapshot: async (days = 7, options?: { refresh?: boolean }) => {
+  getSiteSnapshot: async (
+    days = 7,
+    options?: { refresh?: boolean; signal?: AbortSignal },
+  ) => {
     const query = buildQueryString({
       days,
       ...(options?.refresh ? { refresh: 1 } : {}),
     });
     const [distribution, trend, sites] = await Promise.all([
-      request<{ distribution: any[] }>(`/api/stats/site-distribution${query}`),
-      request<{ trend: any[] }>(`/api/stats/site-trend${query}`),
-      request<any[]>("/api/sites"),
+      request<{ distribution: any[] }>(
+        `/api/stats/site-distribution${query}`,
+        { signal: options?.signal },
+      ),
+      request<{ trend: any[] }>(
+        `/api/stats/site-trend${query}`,
+        { signal: options?.signal },
+      ),
+      request<any[]>("/api/sites", { signal: options?.signal }),
     ]);
     return {
       generatedAt: new Date().toISOString(),
@@ -1122,10 +1600,11 @@ export const api = {
     ),
 
   // Search
-  search: (query: string) =>
+  search: (query: string, requestOptions?: ReadRequestOptions) =>
     request("/api/search", {
       method: "POST",
       body: JSON.stringify({ query, limit: 20 }),
+      ...requestOptions,
     }),
 
   // OAuth
@@ -1243,7 +1722,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ oldToken, newToken }),
     }),
-  getRuntimeSettings: () => request("/api/settings/runtime"),
+  getRuntimeSettings: (requestOptions?: ReadRequestOptions) =>
+    request("/api/settings/runtime", requestOptions),
   getBrandList: () => request("/api/settings/brand-list"),
   updateRuntimeSettings: (data: RuntimeSettingsPayload) =>
     request("/api/settings/runtime", {
@@ -1424,6 +1904,7 @@ export const api = {
   getModelsMarketplace: (options?: {
     refresh?: boolean;
     includePricing?: boolean;
+    signal?: AbortSignal;
   }) => {
     const params = new URLSearchParams();
     if (options?.refresh) params.set("refresh", "1");
@@ -1431,6 +1912,7 @@ export const api = {
     const query = params.toString();
     return request(`/api/models/marketplace${query ? `?${query}` : ""}`, {
       timeoutMs: options?.refresh ? 45_000 : 15_000,
+      signal: options?.signal,
     });
   },
   getModelTokenCandidates: () => request("/api/models/token-candidates"),
@@ -1453,8 +1935,11 @@ export const api = {
       body: JSON.stringify(data),
       timeoutMs: resolveProxyTestTimeoutMs(data),
     }),
-  getProxyTestJob: (jobId: string) =>
-    request(`/api/test/proxy/jobs/${encodeURIComponent(jobId)}`),
+  getProxyTestJob: (jobId: string, requestOptions?: ReadRequestOptions) =>
+    request(
+      `/api/test/proxy/jobs/${encodeURIComponent(jobId)}`,
+      requestOptions,
+    ),
   deleteProxyTestJob: (jobId: string) =>
     request(`/api/test/proxy/jobs/${encodeURIComponent(jobId)}`, {
       method: "DELETE",
@@ -1481,7 +1966,9 @@ export const api = {
     const filename = parseContentDispositionFilename(
       response.headers.get("content-disposition"),
     );
-    const base64 = arrayBufferToBase64(await response.arrayBuffer());
+    const base64 = arrayBufferToBase64(
+      await consumeResponseBody<ArrayBuffer>(response, "arrayBuffer"),
+    );
     return {
       filename,
       mimeType,
