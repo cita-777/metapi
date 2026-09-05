@@ -277,6 +277,21 @@ npx vitest run --pool=threads --poolOptions.threads.singleThread=true <test-file
 - **交付物**：代码、回归测试、客户端接入文档和本变更日志。
 - **状态**：已完成
 
+### 16. 修复 PR #620 的 CodeRabbit 审查意见
+
+- **类型**：代码分层与文档修正
+- **需求来源**：CodeRabbit 对 [PR #620](https://github.com/cita-777/metapi/pull/620) 的审查
+- **目标**：使图像生成响应契约与实际校验逻辑一致，并遵守路由层不持有协议转换逻辑的架构约束。
+- **实现范围**：将图像生成请求规范化和上游响应解析移至 `proxy-core/images/imageGenerationProtocol.ts`；路由改为导入并委托；文档明确 `data` 数组只要求至少一项包含可用图像字段。
+- **主要文件**：
+  - `src/server/proxy-core/images/imageGenerationProtocol.ts`
+  - `src/server/routes/proxy/images.ts`
+  - `docs/client-integration.md`
+  - `docs/change-log.md`
+- **验证**：图像路由聚焦测试、服务端类型检查和仓库漂移检查通过。
+- **交付物**：代码、回归测试、文档和本变更日志。
+- **状态**：已完成
+
 ## 后续记录模板
 
 复制下面模板追加到对应日期下，先记录需求来源，再补充实际实现和验证结果：
