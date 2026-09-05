@@ -44,6 +44,7 @@ describe('/api/models/token-candidates', () => {
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
+    await db.delete(schema.siteDisabledModels).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
@@ -515,5 +516,125 @@ describe('/api/models/token-candidates', () => {
 
     expect(fetchModelPricingCatalogMock).not.toHaveBeenCalled();
     expect(body.modelsMissingTokenGroups['claude-opus-4-6']).toBeUndefined();
+  });
+
+  it('filters out site-disabled models across models, modelsWithoutToken, and modelsMissingTokenGroups', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'site-disabled-test',
+      url: 'https://site-disabled.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'test-user',
+      accessToken: 'acc-token-test',
+      status: 'active',
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'sk-default-test',
+      tokenGroup: 'default',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values([
+      { accountId: account.id, modelName: 'model-a', available: true },
+      { accountId: account.id, modelName: 'model-b', available: true },
+      { accountId: account.id, modelName: 'model-c', available: true },
+      { accountId: account.id, modelName: 'model-active-covered', available: true },
+      { accountId: account.id, modelName: 'model-active-uncovered', available: true },
+      { accountId: account.id, modelName: 'model-active-missing-group', available: true },
+    ]).run();
+
+    await db.insert(schema.tokenModelAvailability).values([
+      { tokenId: token.id, modelName: 'model-a', available: true },
+      { tokenId: token.id, modelName: 'model-c', available: true },
+      { tokenId: token.id, modelName: 'model-active-covered', available: true },
+      { tokenId: token.id, modelName: 'model-active-missing-group', available: true },
+    ]).run();
+
+    await db.insert(schema.siteDisabledModels).values([
+      { siteId: site.id, modelName: 'model-a' },
+      { siteId: site.id, modelName: 'model-b' },
+      { siteId: site.id, modelName: 'model-c' },
+    ]).run();
+
+    fetchModelPricingCatalogMock.mockResolvedValue({
+      models: [
+        {
+          modelName: 'model-c',
+          quotaType: 0,
+          modelDescription: null,
+          tags: [],
+          supportedEndpointTypes: [],
+          ownerBy: null,
+          enableGroups: ['default', 'vip'],
+          groupPricing: {},
+        },
+        {
+          modelName: 'model-active-missing-group',
+          quotaType: 0,
+          modelDescription: null,
+          tags: [],
+          supportedEndpointTypes: [],
+          ownerBy: null,
+          enableGroups: ['default', 'vip'],
+          groupPricing: {},
+        },
+      ],
+      groupRatio: { default: 1, vip: 2 },
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/models/token-candidates',
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      models: Record<string, Array<{ tokenId: number }>>;
+      modelsWithoutToken: Record<string, Array<{ accountId: number; username: string | null; siteId: number; siteName: string }>>;
+      modelsMissingTokenGroups: Record<string, Array<{
+        accountId: number;
+        username: string | null;
+        siteId: number;
+        siteName: string;
+        missingGroups: string[];
+        requiredGroups: string[];
+        availableGroups: string[];
+      }>>;
+    };
+
+    // Disabled models must not appear in any candidate collections
+    expect(body.models['model-a']).toBeUndefined();
+    expect(body.modelsWithoutToken['model-b']).toBeUndefined();
+    expect(body.modelsMissingTokenGroups['model-c']).toBeUndefined();
+
+    // Active models on the same account/site must be normally included
+    expect(body.models['model-active-covered']?.map((item) => item.tokenId)).toEqual([token.id]);
+    expect(body.modelsWithoutToken['model-active-uncovered']).toEqual([
+      {
+        accountId: account.id,
+        username: 'test-user',
+        siteId: site.id,
+        siteName: 'site-disabled-test',
+      },
+    ]);
+    expect(body.modelsMissingTokenGroups['model-active-missing-group']).toEqual([
+      {
+        accountId: account.id,
+        username: 'test-user',
+        siteId: site.id,
+        siteName: 'site-disabled-test',
+        missingGroups: ['vip'],
+        requiredGroups: ['default', 'vip'],
+        availableGroups: ['default'],
+      },
+    ]);
   });
 });

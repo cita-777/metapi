@@ -1468,6 +1468,27 @@ export async function statsRoutes(app: FastifyInstance) {
         return name;
       };
 
+      // Load site-level disabled models
+      const disabledModelRows = await db
+        .select()
+        .from(schema.siteDisabledModels)
+        .all();
+      const disabledModelsBySite = new Map<number, Set<string>>();
+      for (const row of disabledModelRows) {
+        if (!disabledModelsBySite.has(row.siteId)) {
+          disabledModelsBySite.set(row.siteId, new Set());
+        }
+        disabledModelsBySite.get(row.siteId)!.add(row.modelName.toLowerCase());
+      }
+
+      function isModelDisabledForSite(
+        siteId: number,
+        modelName: string,
+      ): boolean {
+        const disabled = disabledModelsBySite.get(siteId);
+        return !!disabled && disabled.has(modelName.toLowerCase());
+      }
+
       // Load global allowed models whitelist
       const globalAllowedModels = new Set(
         config.globalAllowedModels
@@ -1571,6 +1592,7 @@ export async function statsRoutes(app: FastifyInstance) {
       for (const row of rows) {
         const modelName = (row.token_model_availability.modelName || "").trim();
         if (!modelName) continue;
+        if (isModelDisabledForSite(row.sites.id, modelName)) continue;
         const accountModelKey = `${row.accounts.id}::${modelName.toLowerCase()}`;
         coveredAccountModelSet.add(accountModelKey);
 
@@ -1620,6 +1642,7 @@ export async function statsRoutes(app: FastifyInstance) {
         if (!requiresManagedAccountTokens(row)) continue;
         const modelName = (row.modelName || "").trim();
         if (!modelName) continue;
+        if (isModelDisabledForSite(row.siteId, modelName)) continue;
         const coverageKey = `${row.accountId}::${modelName.toLowerCase()}`;
         if (coveredAccountModelSet.has(coverageKey)) continue;
         if (!modelsWithoutToken[modelName]) modelsWithoutToken[modelName] = [];
@@ -1639,7 +1662,14 @@ export async function statsRoutes(app: FastifyInstance) {
 
       const accountIdsForGroupHints = new Set(
         availableModelRows
-          .filter((row) => requiresManagedAccountTokens(row))
+          .filter(
+            (row) =>
+              requiresManagedAccountTokens(row) &&
+              !isModelDisabledForSite(
+                row.siteId,
+                (row.modelName || "").trim(),
+              ),
+          )
           .map((row) => row.accountId),
       );
       const requiredGroupsByAccountModel = new Map<
@@ -1718,6 +1748,7 @@ export async function statsRoutes(app: FastifyInstance) {
         if (!requiresManagedAccountTokens(row)) continue;
         const modelName = (row.modelName || "").trim();
         if (!modelName) continue;
+        if (isModelDisabledForSite(row.siteId, modelName)) continue;
         const accountModelKey = `${row.accountId}::${modelName.toLowerCase()}`;
 
         const requiredGroups =
