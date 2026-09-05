@@ -36,7 +36,7 @@ export function normalizeImageGenerationRequest(body: unknown): ImageGenerationR
     return { ok: false, message: 'prompt is required' };
   }
 
-  const requestedModel = (rawModel || 'gpt-image-1').trim();
+  const requestedModel = (rawModel === undefined ? 'gpt-image-1' : rawModel).trim();
   if (!requestedModel) {
     return { ok: false, message: 'model must not be empty' };
   }

@@ -225,6 +225,30 @@ describe('/v1/images/edits route', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('rejects an explicitly empty image model before selecting a channel', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/images/generations',
+      headers: {
+        authorization: 'Bearer sk-demo',
+      },
+      payload: {
+        model: '   ',
+        prompt: 'draw a cat',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      error: {
+        message: 'model must not be empty',
+        type: 'invalid_request_error',
+      },
+    });
+    expect(selectChannelMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('retries the next channel when image generation JSON is malformed', async () => {
     selectNextChannelMock.mockReturnValueOnce({
       channel: { id: 12, routeId: 23 },

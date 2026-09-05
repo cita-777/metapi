@@ -292,6 +292,20 @@ npx vitest run --pool=threads --poolOptions.threads.singleThread=true <test-file
 - **交付物**：代码、回归测试、文档和本变更日志。
 - **状态**：已完成
 
+### 17. 修复图像生成空模型校验
+
+- **类型**：缺陷修复
+- **需求来源**：CodeRabbit 对 [PR #620](https://github.com/cita-777/metapi/pull/620) 的审查
+- **目标**：区分未提供 `model` 和显式传入空字符串，避免空模型请求错误地回退到 `gpt-image-1`。
+- **实现范围**：仅在 `model` 未提供时使用默认模型；空白模型返回 `model must not be empty`，并在授权和代理前结束请求；补充回归测试。
+- **主要文件**：
+  - `src/server/proxy-core/images/imageGenerationProtocol.ts`
+  - `src/server/routes/proxy/images.edits.test.ts`
+  - `docs/change-log.md`
+- **验证**：图像路由聚焦测试、服务端类型检查和仓库漂移检查通过。
+- **交付物**：代码、回归测试和本变更日志。
+- **状态**：已完成
+
 ## 后续记录模板
 
 复制下面模板追加到对应日期下，先记录需求来源，再补充实际实现和验证结果：
