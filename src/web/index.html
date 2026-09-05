@@ -9,16 +9,29 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    html { color-scheme: light; }
+    html[data-theme="dark"] { color-scheme: dark; }
+  </style>
 </head>
 <body class="min-h-screen">
   <script>
     (function(){
-      var t = localStorage.getItem('theme');
-      if (t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-        document.documentElement.setAttribute('data-theme', 'dark');
-      } else {
-        document.documentElement.setAttribute('data-theme', 'light');
-      }
+      var mode = null;
+      try {
+        mode = localStorage.getItem('theme_mode');
+        if (mode !== 'dark' && mode !== 'light' && mode !== 'system') {
+          mode = localStorage.getItem('theme');
+        }
+      } catch (_) {}
+
+      var prefersDark = false;
+      try {
+        prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      } catch (_) {}
+
+      var dark = mode === 'dark' || (mode !== 'light' && mode !== 'dark' && prefersDark);
+      document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
     })();
   </script>
   <div id="root"></div>
