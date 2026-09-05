@@ -260,6 +260,23 @@ npx vitest run --pool=threads --poolOptions.threads.singleThread=true <test-file
 - **交付物**：代码、回归测试和本变更日志。
 - **状态**：已完成
 
+## 2026-09-05
+
+### 15. 完善 Issue #605：图像生成模型接口
+
+- **类型**：功能完善与缺陷修复
+- **需求来源**：[Issue #605](https://github.com/cita-777/metapi/issues/605)
+- **目标**：提供可直接接入 OpenAI Images 客户端的图像生成接口，并避免无效请求或空图像响应被静默转发。
+- **实现范围**：校验 `/v1/images/generations` 的 JSON 请求体和必填 `prompt`；规范化默认及映射前的模型名和提示词；校验上游 2xx 响应包含 `data` 图像结果，不符合协议时复用现有渠道重试、失败记录和告警链路；补充客户端接入示例。
+- **主要文件**：
+  - `src/server/routes/proxy/images.ts`
+  - `src/server/routes/proxy/images.edits.test.ts`
+  - `docs/client-integration.md`
+  - `docs/change-log.md`
+- **验证**：图像路由聚焦测试通过；随后运行服务端类型检查和仓库漂移检查。
+- **交付物**：代码、回归测试、客户端接入文档和本变更日志。
+- **状态**：已完成
+
 ## 后续记录模板
 
 复制下面模板追加到对应日期下，先记录需求来源，再补充实际实现和验证结果：
