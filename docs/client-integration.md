@@ -35,6 +35,19 @@ Metapi 暴露标准 OpenAI / Claude 兼容接口，下游客户端通常只需�
 | `/v1/images/generations` | POST | 图像生成 |
 | `/v1/models` | GET | 模型列表 |
 
+### 图像生成
+
+`POST /v1/images/generations` 遵循 OpenAI Images API 的 JSON 请求格式。`prompt` 为必填字段，`model` 未填写时使用 `gpt-image-1`；其余图像参数（例如 `size`、`quality`、`background` 和 `output_format`）会随请求透传到实际选中的上游模型。
+
+```bash
+curl https://your-domain.com/v1/images/generations \
+  -H "Authorization: Bearer $PROXY_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-image-1","prompt":"一只戴着太空头盔的橘猫","size":"1024x1024"}'
+```
+
+响应保持标准 `{ "created": ..., "data": [...] }` 结构，其中 `data` 数组至少有一项包含非空的 `url` 或 `b64_json`。如果上游返回成功状态但没有图像数据，网关会将其视为异常并按渠道策略重试，避免客户端收到无法使用的空结果。
+
 ## 已验证兼容的客户端
 
 ### ChatGPT-Next-Web

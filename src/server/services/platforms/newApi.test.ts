@@ -30,6 +30,9 @@ const SHIELD_LOGIN_COOKIE = 'challenge-seed';
 const COOKIE_ONLY_LOGIN_USERNAME = 'cookie-only-user';
 const COOKIE_ONLY_LOGIN_PASSWORD = 'cookie-only-pass';
 const COOKIE_ONLY_LOGIN_SESSION = 'cookie-only-session';
+const ESA_LOGIN_USERNAME = 'esa-browser-user';
+const ESA_LOGIN_PASSWORD = 'esa-browser-pass';
+const ESA_VERIFY_TOKEN = 'esa-browser-token';
 const OPENAI_MODELS_SHIELDED_TOKEN = 'openai-models-shielded-token';
 const COOKIE_SHIELDED_TOKEN = Buffer.from(
   `1771864970|${Buffer.from('username=linuxdo_131936').toString('base64')}|sig`,
@@ -124,6 +127,14 @@ describe('NewApiAdapter', () => {
           const isCookieOnlyLogin =
             payload.username === COOKIE_ONLY_LOGIN_USERNAME &&
             payload.password === COOKIE_ONLY_LOGIN_PASSWORD;
+          const isEsaLogin =
+            payload.username === ESA_LOGIN_USERNAME &&
+            payload.password === ESA_LOGIN_PASSWORD;
+          if (isEsaLogin) {
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end('<meta name="aliyun_waf_aa" content="aa"><meta name="aliyun_waf_bb" content="bb">');
+            return;
+          }
           if (!isShieldLogin && !isCookieOnlyLogin) {
             res.writeHead(401, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: false, message: 'invalid credentials' }));
@@ -285,6 +296,11 @@ describe('NewApiAdapter', () => {
       }
 
       if (req.url === '/api/user/self') {
+        if (req.headers.authorization === `Bearer ${ESA_VERIFY_TOKEN}`) {
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          res.end('<meta name="aliyun_waf_aa" content="aa"><meta name="aliyun_waf_bb" content="bb">');
+          return;
+        }
         if (typeof req.headers.authorization === 'string' && req.headers.authorization === `Bearer ${BALANCE_SHIELD_FAILURE_TOKEN}`) {
           res.writeHead(200, {
             'Content-Type': 'text/html; charset=utf-8',
@@ -664,6 +680,25 @@ describe('NewApiAdapter', () => {
           r.headers.cookie.includes(`cdn_sec_tc=${SHIELD_LOGIN_COOKIE}`),
       ),
     ).toBe(true);
+  });
+
+  it('returns a stable browser-verification message for the new ESA challenge', async () => {
+    const adapter = new NewApiAdapter();
+    const result = await adapter.login(baseUrl, ESA_LOGIN_USERNAME, ESA_LOGIN_PASSWORD);
+
+    expect(result.success).toBe(false);
+    expect(result.message).toContain('阿里云 ESA');
+    expect(result.message).toContain('真实浏览器');
+    expect(result.message).not.toContain("Unexpected token '<'");
+  });
+
+  it('preserves the ESA browser-verification message during token verification', async () => {
+    const adapter = new NewApiAdapter();
+    const result = await adapter.verifyToken(baseUrl, ESA_VERIFY_TOKEN);
+
+    expect(result.tokenType).toBe('unknown');
+    expect(result.message).toContain('阿里云 ESA');
+    expect(result.message).toContain('真实浏览器');
   });
 
   it('uses session cookie as access credential when login success has no token payload', async () => {

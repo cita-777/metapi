@@ -17,6 +17,7 @@ import { buildUpstreamUrl } from './upstreamUrl.js';
 import { detectDownstreamClientContext, type DownstreamClientContext } from '../../proxy-core/downstreamClientContext.js';
 import { insertProxyLog } from '../../services/proxyLogStore.js';
 import { fetchWithObservedFirstByte, getObservedResponseMeta } from '../../proxy-core/firstByteTimeout.js';
+import { readRuntimeResponseText } from '../../proxy-core/executors/types.js';
 import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
 import {
@@ -25,13 +26,23 @@ import {
   getTesterForcedChannelId,
   selectProxyChannelForAttempt,
 } from '../../proxy-core/channelSelection.js';
+import {
+  normalizeImageGenerationRequest,
+  parseUpstreamImageResponse,
+} from '../../proxy-core/images/imageGenerationProtocol.js';
 
 export async function imagesProxyRoute(app: FastifyInstance) {
   ensureMultipartBufferParser(app);
 
   app.post('/v1/images/generations', async (request: FastifyRequest, reply: FastifyReply) => {
-    const body = request.body as any;
-    const requestedModel = body?.model || 'gpt-image-1';
+    const input = normalizeImageGenerationRequest(request.body);
+    if (!input.ok) {
+      return reply.code(400).send({
+        error: { message: input.message, type: 'invalid_request_error' },
+      });
+    }
+
+    const { body, requestedModel } = input.value;
     if (!await ensureModelAllowedForDownstreamKey(request, reply, requestedModel)) return;
     const downstreamPolicy = getDownstreamRoutingPolicy(request);
     const forcedChannelId = getTesterForcedChannelId({
@@ -94,7 +105,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             },
           );
           const observedFirstByteLatencyMs = getObservedResponseMeta(response)?.firstByteLatencyMs ?? null;
-          const responseText = await response.text();
+          const responseText = await readRuntimeResponseText(response);
           if (!response.ok) {
             throw new SiteApiEndpointRequestError(responseText || 'unknown error', {
               status: response.status,
@@ -314,7 +325,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             },
           );
           const observedFirstByteLatencyMs = getObservedResponseMeta(response)?.firstByteLatencyMs ?? null;
-          const responseText = await response.text();
+          const responseText = await readRuntimeResponseText(response);
           if (!response.ok) {
             throw new SiteApiEndpointRequestError(responseText || 'unknown error', {
               status: response.status,
@@ -521,13 +532,5 @@ async function recordTokenRouterEventBestEffort(
     await operation();
   } catch (error) {
     console.warn(`[proxy/images] failed to ${label}`, error);
-  }
-}
-
-function parseUpstreamImageResponse(text: string): { ok: true; value: any } | { ok: false; message: string } {
-  try {
-    return { ok: true, value: JSON.parse(text) };
-  } catch {
-    return { ok: false, message: text || 'Upstream returned malformed JSON' };
   }
 }

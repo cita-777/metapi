@@ -242,6 +242,70 @@ npx vitest run --pool=threads --poolOptions.threads.singleThread=true <test-file
 - **交付物**：代码与持续变更日志；无新增 PDF 或截图。
 - **状态**：已完成，已推送到 PR 分支；本次日志修正随当前文档提交同步。
 
+## 2026-09-04
+
+### 14. 修复 Issue #611：ESA 挑战诊断与签到可靠性
+
+- **类型**：缺陷修复
+- **需求来源**：[Issue #611](https://github.com/cita-777/metapi/issues/611)
+- **目标**：避免新版阿里云 ESA 挑战退化为 HTML JSON 解析错误，并修复批量签到不可观测及过期余额缓存导致的假奖励。
+- **实现范围**：识别 `aliyun_waf_aa/bb` 新版挑战并返回需要真实浏览器的稳定提示；保留旧版 `acw_sc__v2` 计算流程；批量签到结束写入汇总事件；仅在 5 分钟内刷新过余额时推导奖励。
+- **主要文件**：
+  - `src/server/services/platforms/newApiShield.ts`
+  - `src/server/services/platforms/newApi.ts`
+  - `src/server/services/platforms/newApi.test.ts`
+  - `src/server/services/checkinService.ts`
+  - `src/server/services/checkinService.autoRelogin.test.ts`
+- **验证**：聚焦 Vitest 通过（51 个测试）；`npm run typecheck:server` 通过；`npm run repo:drift-check` 通过（新增违规 0）。
+- **交付物**：代码、回归测试和本变更日志。
+- **状态**：已完成
+
+## 2026-09-05
+
+### 15. 完善 Issue #605：图像生成模型接口
+
+- **类型**：功能完善与缺陷修复
+- **需求来源**：[Issue #605](https://github.com/cita-777/metapi/issues/605)
+- **目标**：提供可直接接入 OpenAI Images 客户端的图像生成接口，并避免无效请求或空图像响应被静默转发。
+- **实现范围**：校验 `/v1/images/generations` 的 JSON 请求体和必填 `prompt`；规范化默认及映射前的模型名和提示词；校验上游 2xx 响应包含 `data` 图像结果，不符合协议时复用现有渠道重试、失败记录和告警链路；补充客户端接入示例。
+- **主要文件**：
+  - `src/server/routes/proxy/images.ts`
+  - `src/server/routes/proxy/images.edits.test.ts`
+  - `docs/client-integration.md`
+  - `docs/change-log.md`
+- **验证**：图像路由聚焦测试通过；随后运行服务端类型检查和仓库漂移检查。
+- **交付物**：代码、回归测试、客户端接入文档和本变更日志。
+- **状态**：已完成
+
+### 16. 修复 PR #620 的 CodeRabbit 审查意见
+
+- **类型**：代码分层与文档修正
+- **需求来源**：CodeRabbit 对 [PR #620](https://github.com/cita-777/metapi/pull/620) 的审查
+- **目标**：使图像生成响应契约与实际校验逻辑一致，并遵守路由层不持有协议转换逻辑的架构约束。
+- **实现范围**：将图像生成请求规范化和上游响应解析移至 `proxy-core/images/imageGenerationProtocol.ts`；路由改为导入并委托；文档明确 `data` 数组只要求至少一项包含可用图像字段。
+- **主要文件**：
+  - `src/server/proxy-core/images/imageGenerationProtocol.ts`
+  - `src/server/routes/proxy/images.ts`
+  - `docs/client-integration.md`
+  - `docs/change-log.md`
+- **验证**：图像路由聚焦测试、服务端类型检查和仓库漂移检查通过。
+- **交付物**：代码、回归测试、文档和本变更日志。
+- **状态**：已完成
+
+### 17. 修复图像生成空模型校验
+
+- **类型**：缺陷修复
+- **需求来源**：CodeRabbit 对 [PR #620](https://github.com/cita-777/metapi/pull/620) 的审查
+- **目标**：区分未提供 `model` 和显式传入空字符串，避免空模型请求错误地回退到 `gpt-image-1`。
+- **实现范围**：仅在 `model` 未提供时使用默认模型；空白模型返回 `model must not be empty`，并在授权和代理前结束请求；补充回归测试。
+- **主要文件**：
+  - `src/server/proxy-core/images/imageGenerationProtocol.ts`
+  - `src/server/routes/proxy/images.edits.test.ts`
+  - `docs/change-log.md`
+- **验证**：图像路由聚焦测试、服务端类型检查和仓库漂移检查通过。
+- **交付物**：代码、回归测试和本变更日志。
+- **状态**：已完成
+
 ## 后续记录模板
 
 复制下面模板追加到对应日期下，先记录需求来源，再补充实际实现和验证结果：
