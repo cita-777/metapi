@@ -1,7 +1,5 @@
 import { z } from 'zod';
 
-const updateCenterVersionSourceSchema = z.enum(['docker-hub-tag', 'github-release']);
-
 const authChangePayloadSchema = z.object({
   oldToken: z.string().optional(),
   newToken: z.string().optional(),
@@ -61,26 +59,26 @@ const oauthRouteUnitUpdatePayloadSchema = z.object({
 
 const updateCenterConfigPayloadSchema = z.object({
   enabled: z.boolean().optional(),
-  helperBaseUrl: z.string().optional(),
-  namespace: z.string().optional(),
-  releaseName: z.string().optional(),
-  chartRef: z.string().optional(),
-  imageRepository: z.string().optional(),
-  githubReleasesEnabled: z.boolean().optional(),
-  dockerHubTagsEnabled: z.boolean().optional(),
-  defaultDeploySource: updateCenterVersionSourceSchema.optional(),
-}).passthrough();
+  channel: z.literal('stable').optional(),
+  autoCheck: z.boolean().optional(),
+}).strict();
+
+const updateCenterCheckPayloadSchema = z.object({}).strict();
 
 const updateCenterDeployPayloadSchema = z.object({
-  source: updateCenterVersionSourceSchema.optional(),
   targetVersion: z.string().optional(),
+  // `targetTag` was the name used by the old API.  Accept it only as a
+  // transport compatibility alias; the route always normalizes it to a
+  // release version before invoking the local updater.
   targetTag: z.string().optional(),
-  targetDigest: z.string().optional(),
-}).passthrough();
+}).strict();
 
 const updateCenterRollbackPayloadSchema = z.object({
+  targetVersion: z.string().optional(),
+  // `targetRevision` remains a read-only compatibility alias for clients
+  // that have not yet renamed their request field.
   targetRevision: z.string().optional(),
-}).passthrough();
+}).strict();
 
 export type AuthChangePayload = z.output<typeof authChangePayloadSchema>;
 export type MonitorConfigPayload = z.output<typeof monitorConfigPayloadSchema>;
@@ -93,6 +91,7 @@ export type OauthRouteUnitCreatePayload = z.output<typeof oauthRouteUnitCreatePa
 export type OauthRouteUnitUpdatePayload = z.output<typeof oauthRouteUnitUpdatePayloadSchema>;
 export type OauthStartPayload = z.output<typeof oauthStartPayloadSchema>;
 export type UpdateCenterConfigPayload = z.output<typeof updateCenterConfigPayloadSchema>;
+export type UpdateCenterCheckPayload = z.output<typeof updateCenterCheckPayloadSchema>;
 export type UpdateCenterDeployPayload = z.output<typeof updateCenterDeployPayloadSchema>;
 export type UpdateCenterRollbackPayload = z.output<typeof updateCenterRollbackPayloadSchema>;
 
@@ -102,6 +101,21 @@ function normalizeSupportRoutePayloadInput(input: unknown): unknown {
 
 function formatSupportRoutePayloadError(error: z.ZodError): string {
   const firstIssue = error.issues[0];
+  if (firstIssue?.code === 'unrecognized_keys') {
+    const keys = firstIssue.keys;
+    const removedKey = keys.find((key) => [
+      'source',
+      'targetDigest',
+      'helperBaseUrl',
+      'namespace',
+      'releaseName',
+      'chartRef',
+      'imageRepository',
+    ].includes(key));
+    if (removedKey) return `字段 ${removedKey} 已移除，请使用官方 Release 版本。`;
+    const firstUnknownKey = keys[0];
+    if (firstUnknownKey) return `字段 ${firstUnknownKey} 不受支持。`;
+  }
   const [firstPath] = firstIssue?.path ?? [];
   if (!firstPath) {
     return '请求体必须是对象';
@@ -148,42 +162,19 @@ function formatSupportRoutePayloadError(error: z.ZodError): string {
   if (firstPath === 'enabled') {
     return 'Invalid enabled. Expected boolean.';
   }
-  if (firstPath === 'helperBaseUrl') {
-    return 'Invalid helperBaseUrl. Expected string.';
+  if (firstPath === 'channel') {
+    return 'Invalid channel. Expected stable.';
   }
-  if (firstPath === 'namespace') {
-    return 'Invalid namespace. Expected string.';
+  if (firstPath === 'autoCheck') {
+    return 'Invalid autoCheck. Expected boolean.';
   }
-  if (firstPath === 'releaseName') {
-    return 'Invalid releaseName. Expected string.';
-  }
-  if (firstPath === 'chartRef') {
-    return 'Invalid chartRef. Expected string.';
-  }
-  if (firstPath === 'imageRepository') {
-    return 'Invalid imageRepository. Expected string.';
-  }
-  if (firstPath === 'githubReleasesEnabled') {
-    return 'Invalid githubReleasesEnabled. Expected boolean.';
-  }
-  if (firstPath === 'dockerHubTagsEnabled') {
-    return 'Invalid dockerHubTagsEnabled. Expected boolean.';
-  }
-  if (firstPath === 'defaultDeploySource') {
-    return 'Invalid defaultDeploySource. Expected docker-hub-tag/github-release.';
-  }
-  if (firstPath === 'source') {
-    return 'Invalid source. Expected docker-hub-tag/github-release.';
+  if (firstPath === 'source' || firstPath === 'targetDigest') {
+    return `字段 ${String(firstPath)} 已移除，请使用官方 Release 版本。`;
   }
   if (firstPath === 'targetVersion') {
     return 'Invalid targetVersion. Expected string.';
   }
-  if (firstPath === 'targetTag') {
-    return 'Invalid targetTag. Expected string.';
-  }
-  if (firstPath === 'targetDigest') {
-    return 'Invalid targetDigest. Expected string.';
-  }
+  if (firstPath === 'targetTag') return 'Invalid targetTag. Expected string.';
   if (firstPath === 'targetRevision') {
     return 'Invalid targetRevision. Expected string.';
   }
@@ -260,6 +251,11 @@ export function parseOauthRouteUnitUpdatePayload(input: unknown):
 export function parseUpdateCenterConfigPayload(input: unknown):
 { success: true; data: UpdateCenterConfigPayload } | { success: false; error: string } {
   return parseSupportRoutePayload(updateCenterConfigPayloadSchema, input);
+}
+
+export function parseUpdateCenterCheckPayload(input: unknown):
+{ success: true; data: UpdateCenterCheckPayload } | { success: false; error: string } {
+  return parseSupportRoutePayload(updateCenterCheckPayloadSchema, input);
 }
 
 export function parseUpdateCenterDeployPayload(input: unknown):

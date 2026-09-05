@@ -1,104 +1,49 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  buildUpdateReminder,
-  describeDockerDeployState,
-} from './updateCenterPresentation.js';
+import { buildUpdateReminder, describeUpdateState } from './updateCenterPresentation.js';
 
 describe('updateCenterPresentation', () => {
-  it('returns an unknown reminder when no candidate source data is available', () => {
-    expect(buildUpdateReminder({
-      currentVersion: '1.2.3',
-      helper: null,
-      githubRelease: null,
-      dockerHubTag: null,
-    })).toEqual({
-      label: '无法检查更新',
-      badgeClassName: 'badge badge-muted',
-      detail: '暂未获取到可比较的版本信息。',
+  it('waits for a release when no check has completed', () => {
+    expect(buildUpdateReminder({ currentVersion: '1.2.3', latestRelease: null })).toMatchObject({
+      label: '等待检查',
       highlight: false,
     });
   });
 
-  it('treats a same-version Docker target with a different digest as a real new-digest deploy', () => {
-    const state = describeDockerDeployState({
+  it('enables one-click update for a newer stable release', () => {
+    const state = describeUpdateState({
       enabled: true,
-      helperHealthy: true,
+      supported: true,
       currentVersion: '1.2.3',
-      helper: {
-        imageTag: '1.2.3',
-        imageDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-      },
       candidate: {
-        normalizedVersion: '1.2.3',
-        tagName: '1.2.3',
-        digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-      },
-    });
-
-    expect(state.kind).toBe('new-digest');
-    expect(state.canDeploy).toBe(true);
-    expect(state.badgeLabel).toBe('发现新 digest');
-  });
-
-  it('treats semver tags with and without a v prefix as the same Docker digest target', () => {
-    const state = describeDockerDeployState({
-      enabled: true,
-      helperHealthy: true,
-      currentVersion: '1.2.3',
-      helper: {
-        imageTag: 'v1.2.3',
-        imageDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-      },
-      candidate: {
-        normalizedVersion: '1.2.3',
-        tagName: '1.2.3',
-        digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-      },
-    });
-
-    expect(state.kind).toBe('new-digest');
-    expect(state.canDeploy).toBe(true);
-  });
-
-  it('treats alias tags like latest as a new digest deploy target when the digest changes', () => {
-    const state = describeDockerDeployState({
-      enabled: true,
-      helperHealthy: true,
-      currentVersion: '1.2.3',
-      helper: {
-        imageTag: 'latest',
-        imageDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-      },
-      candidate: {
-        normalizedVersion: 'latest',
-        tagName: 'latest',
-        digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-      },
-    });
-
-    expect(state.kind).toBe('new-digest');
-    expect(state.canDeploy).toBe(true);
-    expect(state.badgeLabel).toBe('发现新 digest');
-  });
-
-  it('does not advertise an older GitHub reminder when the helper is already ahead', () => {
-    expect(buildUpdateReminder({
-      currentVersion: '1.2.3',
-      helper: {
-        imageTag: '1.4.0',
-      },
-      githubRelease: {
         normalizedVersion: '1.3.0',
         displayVersion: '1.3.0',
         tagName: 'v1.3.0',
       },
-      dockerHubTag: null,
-    })).toEqual({
-      label: '已是最新',
-      badgeClassName: 'badge badge-muted',
-      detail: '当前运行版本与已发现的部署目标没有明显差异。',
-      highlight: false,
     });
+    expect(state.kind).toBe('new-version');
+    expect(state.canDeploy).toBe(true);
+  });
+
+  it('disables actions when the runtime is not supported', () => {
+    const state = describeUpdateState({
+      enabled: true,
+      supported: false,
+      reason: 'runtime volume is not persistent',
+      currentVersion: '1.2.3',
+      candidate: { normalizedVersion: '1.3.0' },
+    });
+    expect(state.kind).toBe('unsupported');
+    expect(state.canDeploy).toBe(false);
+    expect(state.reason).toContain('persistent');
+  });
+
+  it('reports current version when the release matches', () => {
+    expect(describeUpdateState({
+      enabled: true,
+      supported: true,
+      currentVersion: '1.3.0',
+      candidate: { normalizedVersion: '1.3.0' },
+    }).kind).toBe('same-version');
   });
 });

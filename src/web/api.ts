@@ -861,6 +861,54 @@ export type RuntimeSettingsPayload = {
   globalAllowedModels?: string[];
 };
 
+export type UpdateCenterConfig = {
+  enabled: boolean;
+  channel: 'stable';
+  autoCheck: boolean;
+};
+
+export type UpdateCenterReleaseAsset = {
+  name: string;
+  downloadUrl: string;
+  size: number | null;
+  contentType: string | null;
+};
+
+export type UpdateCenterRelease = {
+  source: 'github-release';
+  rawVersion: string;
+  normalizedVersion: string;
+  tagName: string;
+  displayVersion: string;
+  url: string | null;
+  publishedAt: string | null;
+  assets: UpdateCenterReleaseAsset[];
+};
+
+export type UpdateCenterInstalledVersion = {
+  version: string;
+  current: boolean;
+  previous: boolean;
+};
+
+export type UpdateCenterStatus = {
+  supported: boolean;
+  mode: string;
+  reason: string | null;
+  currentVersion: string;
+  latestRelease: UpdateCenterRelease | null;
+  installedVersions: UpdateCenterInstalledVersion[];
+  updateState: 'idle' | 'checking' | 'downloading' | 'staging' | 'switching' | 'restarting' | 'healthy' | 'failed' | 'rolled_back' | 'unsupported';
+  restartPending: boolean;
+  canUpdate: boolean;
+  canRollback: boolean;
+  lastError: string | null;
+  config: UpdateCenterConfig;
+  runningTask?: { id: string; status: string; logs?: Array<{ message: string }> } | null;
+  lastFinishedTask?: { id: string; status: string; finishedAt?: string | null; error?: string | null } | null;
+  runtime?: Record<string, unknown> | null;
+};
+
 export type ProxyLogStatusFilter = "all" | "success" | "failed";
 export type ProxyLogClientConfidence = "exact" | "heuristic" | "unknown" | null;
 export type ProxyLogUsageSource = "upstream" | "self-log" | "unknown" | null;
@@ -1730,8 +1778,8 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(data),
     }),
-  getUpdateCenterStatus: () => request("/api/update-center/status"),
-  saveUpdateCenterConfig: (data: any) =>
+  getUpdateCenterStatus: () => request<UpdateCenterStatus>("/api/update-center/status"),
+  saveUpdateCenterConfig: (data: Partial<UpdateCenterConfig>) =>
     request("/api/update-center/config", {
       method: "PUT",
       body: JSON.stringify(data),
@@ -1741,16 +1789,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify({}),
     }),
-  deployUpdateCenter: (data: {
-    source: "github-release" | "docker-hub-tag";
-    targetTag: string;
-    targetDigest?: string | null;
-  }) =>
+  deployUpdateCenter: (data: { targetVersion?: string; targetTag?: string }) =>
     request("/api/update-center/deploy", {
       method: "POST",
       body: JSON.stringify(data),
     }),
-  rollbackUpdateCenter: (data: { targetRevision: string }) =>
+  rollbackUpdateCenter: (data: { targetVersion?: string; targetRevision?: string }) =>
     request("/api/update-center/rollback", {
       method: "POST",
       body: JSON.stringify(data),
@@ -1758,8 +1802,8 @@ export const api = {
   streamUpdateCenterTaskLogs: (
     taskId: string,
     handlers: {
-      onLog?: (entry: any) => void;
-      onDone?: (payload: any) => void;
+      onLog?: (entry: { message?: string; seq?: number; createdAt?: string }) => void;
+      onDone?: (payload: { status?: string }) => void;
       signal?: AbortSignal;
     },
   ) =>

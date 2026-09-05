@@ -1,61 +1,90 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const {
-  refreshUpdateCenterStatusCacheMock,
-  sendNotificationMock,
-} = vi.hoisted(() => ({
-  refreshUpdateCenterStatusCacheMock: vi.fn(),
-  sendNotificationMock: vi.fn(),
+const mocks = vi.hoisted(() => {
+  const runtime = {
+    schemaVersion: 1,
+    updateState: 'healthy' as const,
+    currentVersion: '1.2.3',
+    previousVersion: '1.1.0',
+    installedVersions: ['1.2.3', '1.1.0'],
+    restartPending: false,
+    taskId: null,
+    lastError: null,
+    updatedAt: null,
+    lastCheckedAt: null,
+    lastCheckError: null,
+    lastResolvedSource: null,
+    lastResolvedDisplayVersion: null,
+    lastResolvedCandidateKey: null,
+    lastNotifiedCandidateKey: null,
+    lastNotifiedAt: null,
+    statusSnapshot: null,
+  };
+  return {
+    runtime,
+    loadConfig: vi.fn(),
+    refreshStatus: vi.fn(),
+    sendNotification: vi.fn(),
+    patchRuntime: vi.fn(),
+    db: {
+      insert: vi.fn(() => ({
+        values: vi.fn(() => ({
+          run: vi.fn(async () => undefined),
+        })),
+      })),
+    },
+    schema: { events: {} },
+  };
+});
+
+vi.mock('../db/index.js', () => ({ db: mocks.db, schema: mocks.schema }));
+vi.mock('./updateCenterConfigService.js', () => ({
+  loadUpdateCenterConfig: (...args: unknown[]) => mocks.loadConfig(...args),
 }));
-
 vi.mock('./updateCenterStatusService.js', () => ({
-  refreshUpdateCenterStatusCache: (...args: unknown[]) => refreshUpdateCenterStatusCacheMock(...args),
+  refreshUpdateCenterStatusCache: (...args: unknown[]) => mocks.refreshStatus(...args),
 }));
-
 vi.mock('./notifyService.js', () => ({
-  sendNotification: (...args: unknown[]) => sendNotificationMock(...args),
+  sendNotification: (...args: unknown[]) => mocks.sendNotification(...args),
+}));
+vi.mock('./updateCenterRuntimeStateService.js', () => ({
+  patchUpdateCenterRuntimeState: (...args: unknown[]) => mocks.patchRuntime(...args),
 }));
 
-type DbModule = typeof import('../db/index.js');
-type PollingModule = typeof import('./updateCenterPollingService.js');
-type RuntimeStateModule = typeof import('./updateCenterRuntimeStateService.js');
+import {
+  __runUpdateCenterSyncForTests,
+  startUpdateCenterPolling,
+  stopUpdateCenterPolling,
+} from './updateCenterPollingService.js';
+
+const candidate = {
+  source: 'github-release' as const,
+  kind: 'new-version' as const,
+  candidateKey: 'github-release:v1.3.0',
+  displayVersion: '1.3.0',
+  tagName: 'v1.3.0',
+  digest: null,
+};
+
+function statusResult(previousRuntime = mocks.runtime) {
+  return {
+    candidate,
+    previousRuntime,
+    runtime: {
+      ...mocks.runtime,
+      lastResolvedCandidateKey: candidate.candidateKey,
+    },
+  };
+}
 
 describe('updateCenterPollingService', () => {
-  let dataDir = '';
-  let db: DbModule['db'];
-  let schema: DbModule['schema'];
-  let closeDbConnections: DbModule['closeDbConnections'];
-  let startUpdateCenterPolling: PollingModule['startUpdateCenterPolling'];
-  let stopUpdateCenterPolling: PollingModule['stopUpdateCenterPolling'];
-  let loadUpdateCenterRuntimeState: RuntimeStateModule['loadUpdateCenterRuntimeState'];
-
-  beforeAll(async () => {
-    dataDir = mkdtempSync(join(tmpdir(), 'metapi-update-center-polling-'));
-    process.env.DATA_DIR = dataDir;
-
-    await import('../db/migrate.js');
-    const dbModule = await import('../db/index.js');
-    const pollingModule = await import('./updateCenterPollingService.js');
-    const runtimeStateModule = await import('./updateCenterRuntimeStateService.js');
-
-    db = dbModule.db;
-    schema = dbModule.schema;
-    closeDbConnections = dbModule.closeDbConnections;
-    startUpdateCenterPolling = pollingModule.startUpdateCenterPolling;
-    stopUpdateCenterPolling = pollingModule.stopUpdateCenterPolling;
-    loadUpdateCenterRuntimeState = runtimeStateModule.loadUpdateCenterRuntimeState;
-  });
-
-  beforeEach(async () => {
-    vi.useFakeTimers();
-    refreshUpdateCenterStatusCacheMock.mockReset();
-    sendNotificationMock.mockReset();
-
-    await db.delete(schema.events).run();
-    await db.delete(schema.settings).run();
+  beforeEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+    mocks.loadConfig.mockResolvedValue({ enabled: false, channel: 'stable', autoCheck: false });
+    mocks.patchRuntime.mockImplementation(async (patch: Record<string, unknown>) => ({ ...mocks.runtime, ...patch }));
+    mocks.refreshStatus.mockResolvedValue(statusResult());
+    mocks.sendNotification.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -63,209 +92,92 @@ describe('updateCenterPollingService', () => {
     vi.useRealTimers();
   });
 
-  afterAll(async () => {
-    if (typeof closeDbConnections === 'function') {
-      await closeDbConnections();
-    }
-    if (dataDir) {
-      try {
-        rmSync(dataDir, { recursive: true, force: true });
-      } catch {}
-    }
-    delete process.env.DATA_DIR;
+  it('does not perform external checks while disabled', async () => {
+    await __runUpdateCenterSyncForTests();
+    expect(mocks.refreshStatus).not.toHaveBeenCalled();
+    expect(mocks.sendNotification).not.toHaveBeenCalled();
   });
 
-  it('runs immediately, writes one event, and only notifies once for the same candidate', async () => {
-    refreshUpdateCenterStatusCacheMock.mockImplementation(async () => {
-      const previousRuntime = await loadUpdateCenterRuntimeState();
-      const runtime = {
-        ...previousRuntime,
-        lastCheckedAt: '2026-03-31 12:00:00',
-        lastCheckError: null,
-        lastResolvedSource: 'github-release' as const,
-        lastResolvedDisplayVersion: '1.3.0',
-        lastResolvedCandidateKey: 'github-release:v1.3.0',
-        statusSnapshot: {
-          githubRelease: {
-            source: 'github-release' as const,
-            rawVersion: 'v1.3.0',
-            normalizedVersion: '1.3.0',
-            url: 'https://github.com/cita-777/metapi/releases/tag/v1.3.0',
-            tagName: 'v1.3.0',
-            digest: null,
-            displayVersion: '1.3.0',
-            publishedAt: '2026-03-31T12:00:00Z',
-          },
-          dockerHubTag: null,
-          dockerHubRecentTags: [],
-          helper: {
-            ok: true,
-            releaseName: 'metapi',
-            namespace: 'ai',
-            revision: '12',
-            imageRepository: '1467078763/metapi',
-            imageTag: '1.2.3',
-            imageDigest: null,
-            healthy: true,
-            history: [],
-          },
-        },
-      };
-      return {
-        status: {
-          currentVersion: '1.2.3',
-          githubRelease: runtime.statusSnapshot.githubRelease,
-          dockerHubTag: null,
-          dockerHubRecentTags: [],
-          helper: runtime.statusSnapshot.helper,
-          runtime,
-        },
-        candidate: {
-          source: 'github-release',
-          kind: 'new-version',
-          candidateKey: 'github-release:v1.3.0',
-          displayVersion: '1.3.0',
-          tagName: 'v1.3.0',
-          digest: null,
-        },
-        previousRuntime,
-        runtime,
-      };
-    });
+  it('runs an enabled automatic check and records a new-release reminder', async () => {
+    mocks.loadConfig.mockResolvedValue({ enabled: true, channel: 'stable', autoCheck: true });
+    await __runUpdateCenterSyncForTests();
 
-    startUpdateCenterPolling(60_000);
-    await vi.advanceTimersByTimeAsync(0);
-
-    expect(sendNotificationMock).toHaveBeenCalledTimes(1);
-    expect(sendNotificationMock.mock.calls[0]?.[0]).toContain('更新中心');
-    expect(sendNotificationMock.mock.calls[0]?.[1]).toContain('1.3.0');
-
-    let events = await db.select().from(schema.events).all();
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({
-      type: 'status',
-      relatedType: 'update_center',
-      level: 'info',
-    });
-
-    expect(await loadUpdateCenterRuntimeState()).toEqual(expect.objectContaining({
-      lastCheckError: null,
-      lastResolvedSource: 'github-release',
-      lastResolvedCandidateKey: 'github-release:v1.3.0',
-      lastNotifiedCandidateKey: 'github-release:v1.3.0',
-      statusSnapshot: expect.objectContaining({
-        githubRelease: expect.objectContaining({
-          normalizedVersion: '1.3.0',
-        }),
-        dockerHubTag: null,
-        dockerHubRecentTags: [],
-        helper: expect.objectContaining({
-          imageTag: '1.2.3',
-        }),
-      }),
-    }));
-
-    await vi.advanceTimersByTimeAsync(60_000);
-
-    expect(sendNotificationMock).toHaveBeenCalledTimes(1);
-    events = await db.select().from(schema.events).all();
-    expect(events).toHaveLength(1);
-  });
-
-  it('stores the latest check error without creating events or notifications when the background check fails', async () => {
-    refreshUpdateCenterStatusCacheMock.mockRejectedValue(new Error('GitHub releases lookup timed out'));
-
-    startUpdateCenterPolling(60_000);
-    await vi.advanceTimersByTimeAsync(0);
-
-    expect(sendNotificationMock).not.toHaveBeenCalled();
-    expect(await db.select().from(schema.events).all()).toEqual([]);
-    expect(await loadUpdateCenterRuntimeState()).toEqual(expect.objectContaining({
-      lastCheckError: 'GitHub releases lookup timed out',
-      lastNotifiedCandidateKey: null,
-    }));
-  });
-
-  it('persists the notified candidate even when the downstream notification send fails', async () => {
-    refreshUpdateCenterStatusCacheMock.mockImplementation(async () => {
-      const previousRuntime = await loadUpdateCenterRuntimeState();
-      const runtime = {
-        ...previousRuntime,
-        lastCheckedAt: '2026-03-31 12:01:00',
-        lastCheckError: null,
-        lastResolvedSource: 'github-release' as const,
-        lastResolvedDisplayVersion: '1.3.0',
-        lastResolvedCandidateKey: 'github-release:v1.3.0',
-        statusSnapshot: {
-          githubRelease: {
-            source: 'github-release' as const,
-            rawVersion: 'v1.3.0',
-            normalizedVersion: '1.3.0',
-            url: 'https://github.com/cita-777/metapi/releases/tag/v1.3.0',
-            tagName: 'v1.3.0',
-            digest: null,
-            displayVersion: '1.3.0',
-            publishedAt: '2026-03-31T12:01:00Z',
-          },
-          dockerHubTag: null,
-          dockerHubRecentTags: [],
-          helper: {
-            ok: true,
-            releaseName: 'metapi',
-            namespace: 'ai',
-            revision: '12',
-            imageRepository: '1467078763/metapi',
-            imageTag: '1.2.3',
-            imageDigest: null,
-            healthy: true,
-            history: [],
-          },
-        },
-      };
-      return {
-        status: {
-          currentVersion: '1.2.3',
-          githubRelease: runtime.statusSnapshot.githubRelease,
-          dockerHubTag: null,
-          dockerHubRecentTags: [],
-          helper: runtime.statusSnapshot.helper,
-          runtime,
-        },
-        candidate: {
-          source: 'github-release',
-          kind: 'new-version',
-          candidateKey: 'github-release:v1.3.0',
-          displayVersion: '1.3.0',
-          tagName: 'v1.3.0',
-          digest: null,
-        },
-        previousRuntime,
-        runtime,
-      };
-    });
-    sendNotificationMock.mockRejectedValue(new Error('notification downstream failed'));
-
-    startUpdateCenterPolling(60_000);
-    await vi.advanceTimersByTimeAsync(0);
-    await vi.advanceTimersByTimeAsync(60_000);
-
-    expect(sendNotificationMock).toHaveBeenCalledTimes(1);
-    expect(await db.select().from(schema.events).all()).toHaveLength(1);
-    expect(await loadUpdateCenterRuntimeState()).toEqual(expect.objectContaining({
-      lastCheckError: 'notification downstream failed',
-      lastResolvedCandidateKey: 'github-release:v1.3.0',
-      lastNotifiedCandidateKey: 'github-release:v1.3.0',
+    expect(mocks.refreshStatus).toHaveBeenCalledTimes(1);
+    expect(mocks.db.insert).toHaveBeenCalledTimes(1);
+    expect(mocks.sendNotification).toHaveBeenCalledWith(
+      '发现 Metapi 新版本',
+      expect.stringContaining('1.3.0'),
+      'info',
+      { bypassThrottle: true },
+    );
+    expect(mocks.patchRuntime).toHaveBeenCalledWith(expect.objectContaining({
+      lastNotifiedCandidateKey: candidate.candidateKey,
       lastNotifiedAt: expect.any(String),
-      statusSnapshot: expect.objectContaining({
-        githubRelease: expect.objectContaining({
-          normalizedVersion: '1.3.0',
-        }),
-        dockerHubTag: null,
-        dockerHubRecentTags: [],
-        helper: expect.objectContaining({
-          imageTag: '1.2.3',
-        }),
-      }),
     }));
+    const notificationPatch = mocks.patchRuntime.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(notificationPatch).not.toHaveProperty('updateState');
+    expect(notificationPatch).not.toHaveProperty('currentVersion');
+    expect(notificationPatch).not.toHaveProperty('restartPending');
+  });
+
+  it('notifies only once for the same candidate across repeated checks', async () => {
+    mocks.loadConfig.mockResolvedValue({ enabled: true, channel: 'stable', autoCheck: true });
+    let callCount = 0;
+    mocks.refreshStatus.mockImplementation(async () => {
+      callCount += 1;
+      return statusResult(callCount === 1
+        ? mocks.runtime
+        : { ...mocks.runtime, lastNotifiedCandidateKey: candidate.candidateKey });
+    });
+
+    await __runUpdateCenterSyncForTests();
+    await __runUpdateCenterSyncForTests();
+
+    expect(mocks.sendNotification).toHaveBeenCalledTimes(1);
+    expect(mocks.db.insert).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists a check error without creating a reminder', async () => {
+    mocks.loadConfig.mockResolvedValue({ enabled: true, channel: 'stable', autoCheck: true });
+    mocks.refreshStatus.mockRejectedValue(new Error('GitHub releases lookup timed out'));
+
+    await __runUpdateCenterSyncForTests();
+
+    expect(mocks.sendNotification).not.toHaveBeenCalled();
+    expect(mocks.db.insert).not.toHaveBeenCalled();
+    expect(mocks.patchRuntime).toHaveBeenCalledWith(expect.objectContaining({
+      lastCheckError: 'GitHub releases lookup timed out',
+      lastCheckedAt: expect.any(String),
+    }));
+  });
+
+  it('keeps scheduler failures contained when runtime diagnostics cannot be written', async () => {
+    mocks.loadConfig.mockResolvedValue({ enabled: true, channel: 'stable', autoCheck: true });
+    mocks.refreshStatus.mockRejectedValue(new Error('GitHub unavailable'));
+    mocks.patchRuntime.mockRejectedValue(new Error('runtime read-only'));
+
+    await expect(__runUpdateCenterSyncForTests()).resolves.toBeUndefined();
+    expect(mocks.patchRuntime).toHaveBeenCalledTimes(1);
+  });
+
+  it('coalesces concurrent checks before the first await', async () => {
+    mocks.loadConfig.mockResolvedValue({ enabled: true, channel: 'stable', autoCheck: true });
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
+    mocks.refreshStatus.mockImplementation(async () => {
+      await gate;
+      return statusResult();
+    });
+
+    const first = __runUpdateCenterSyncForTests();
+    const second = __runUpdateCenterSyncForTests();
+    await Promise.resolve();
+    expect(mocks.refreshStatus).toHaveBeenCalledTimes(1);
+    releaseGate();
+    await Promise.all([first, second]);
+  });
+
+  it('clamps very short polling intervals to a safe minimum', () => {
+    expect(startUpdateCenterPolling(1).intervalMs).toBe(10_000);
   });
 });

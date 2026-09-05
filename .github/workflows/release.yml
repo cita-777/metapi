@@ -259,9 +259,157 @@ jobs:
             release/builder-debug.yml
           if-no-files-found: error
 
+  build-server-bundle:
+    name: Build Server Bundle (${{ matrix.arch }})
+    needs: verify
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 25
+          cache: npm
+
+      - name: Install dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: npm ci --no-audit --no-fund
+
+      - name: Rebuild native modules for target architecture
+        run: npm rebuild better-sqlite3 --no-audit --no-fund
+
+      - name: Build web and server
+        run: npm run build:web && npm run build:server
+
+      - name: Build server release bundle
+        run: node scripts/release/build-server-bundle.mjs --version "$(node -p \"require('./package.json').version\")" --arch "${{ matrix.arch }}" --out-dir release-server
+
+      - name: Smoke-test server bundle and stable runner
+        shell: bash
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          archive="$(find release-server -maxdepth 1 -type f -name "metapi-server-v*-linux-${EXPECTED_ARCH}.tar.gz" -print -quit)"
+          if [ -z "$archive" ]; then
+            echo "Server bundle for ${EXPECTED_ARCH} was not created" >&2
+            exit 1
+          fi
+
+          archive_name="$(basename "$archive")"
+          (cd release-server && sha256sum -c "${archive_name}.sha256")
+
+          smoke_root="$(mktemp -d)"
+          runner_pid=""
+          cleanup() {
+            if [ -n "$runner_pid" ] && kill -0 "$runner_pid" 2>/dev/null; then
+              kill -TERM "$runner_pid" 2>/dev/null || true
+              wait "$runner_pid" 2>/dev/null || true
+            fi
+            rm -rf "$smoke_root"
+          }
+          trap cleanup EXIT
+
+          mkdir -p "$smoke_root/bundle" "$smoke_root/data" "$smoke_root/runtime"
+          tar -xzf "$archive" -C "$smoke_root/bundle"
+          BUNDLE_DIR="$smoke_root/bundle" EXPECTED_ARCH="$EXPECTED_ARCH" ARCHIVE_NAME="$archive_name" node --input-type=module <<'NODE'
+          import { createRequire } from 'node:module';
+          import { existsSync, readFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          import { hashPayload } from './scripts/release/build-server-bundle.mjs';
+
+          const bundle = process.env.BUNDLE_DIR;
+          const manifest = JSON.parse(readFileSync(join(bundle, 'release.json'), 'utf8'));
+          const nodeMajor = Number.parseInt(process.versions.node.split('.')[0] || '0', 10);
+          if (manifest.schemaVersion !== 1 || manifest.platform !== 'linux') throw new Error('invalid server bundle manifest');
+          if (manifest.arch !== process.env.EXPECTED_ARCH) throw new Error(`expected ${process.env.EXPECTED_ARCH}, got ${manifest.arch}`);
+          if (manifest.nodeMajor !== nodeMajor || nodeMajor !== 25) throw new Error(`server bundle requires Node ${manifest.nodeMajor}, running ${nodeMajor}`);
+          if (manifest.artifactName !== process.env.ARCHIVE_NAME) throw new Error('server bundle artifact name mismatch');
+          if (manifest.artifactSha256 !== hashPayload(bundle)) throw new Error('server bundle payload checksum mismatch');
+          for (const path of [manifest.entrypoint, manifest.migrationEntrypoint]) {
+            if (!path || !existsSync(join(bundle, path))) throw new Error(`server bundle entrypoint is missing: ${path}`);
+          }
+
+          const require = createRequire(join(bundle, 'package.json'));
+          const Database = require('better-sqlite3');
+          const database = new Database(':memory:');
+          database.prepare('select 1').get();
+          database.close();
+          NODE
+
+          port="$(node -e "import('get-port').then(async ({default: getPort}) => console.log(await getPort()))")"
+          version="$(node -p "require('./package.json').version")"
+          UPDATE_CENTER_RUNTIME_DIR="$smoke_root/runtime" \
+          UPDATE_CENTER_RUNTIME_PERSISTENT=true \
+          METAPI_BOOTSTRAP_DIR="$smoke_root/bundle" \
+          DATA_DIR="$smoke_root/data" \
+          DB_TYPE=sqlite \
+          AUTH_TOKEN=release-smoke-admin \
+          PROXY_TOKEN=release-smoke-proxy \
+          HOST=127.0.0.1 \
+          PORT="$port" \
+          node scripts/runtime/docker-runner.mjs >"$smoke_root/runner.log" 2>&1 &
+          runner_pid=$!
+
+          PORT="$port" EXPECTED_VERSION="$version" node --input-type=module <<'NODE'
+          const deadline = Date.now() + 65_000;
+          let lastError = new Error('health check did not run');
+          while (Date.now() < deadline) {
+            try {
+              const response = await fetch(`http://127.0.0.1:${process.env.PORT}/healthz`, {
+                signal: AbortSignal.timeout(2_000),
+              });
+              const payload = await response.json();
+              if (response.ok && payload.ready === true && payload.version === process.env.EXPECTED_VERSION) process.exit(0);
+              lastError = new Error(`unexpected health payload: ${JSON.stringify(payload)}`);
+            } catch (error) {
+              lastError = error;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+          throw lastError;
+          NODE
+
+          RUNTIME_DIR="$smoke_root/runtime" EXPECTED_VERSION="$version" node --input-type=module <<'NODE'
+          import { readFileSync, readlinkSync } from 'node:fs';
+          import { join } from 'node:path';
+          const runtime = process.env.RUNTIME_DIR;
+          const state = JSON.parse(readFileSync(join(runtime, 'state.json'), 'utf8'));
+          if (state.schemaVersion !== 1 || state.currentVersion !== process.env.EXPECTED_VERSION || state.updateState !== 'healthy') {
+            throw new Error(`unexpected runner state: ${JSON.stringify(state)}`);
+          }
+          if (readlinkSync(join(runtime, 'current')) !== `releases/${process.env.EXPECTED_VERSION}`) {
+            throw new Error('runner current pointer mismatch');
+          }
+          NODE
+
+          kill -TERM "$runner_pid"
+          wait "$runner_pid"
+          runner_pid=""
+
+      - name: Upload server bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: metapi-server-${{ matrix.arch }}
+          path: release-server/*.tar.gz
+          if-no-files-found: error
+
   publish-release:
     name: Publish GitHub Release
-    needs: build-packages
+    needs: [build-packages, build-server-bundle]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     if: startsWith(github.ref, 'refs/tags/')
@@ -273,15 +421,36 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      - name: Download server bundle artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: metapi-server-*
+          path: server-assets
+          merge-multiple: true
+
+      - name: Build combined server checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          (
+            cd server-assets
+            sha256sum -- *.tar.gz | sort
+          ) > server-assets/checksums.txt
+
       - name: Show release files
-        run: ls -la release-assets
+        run: |
+          ls -la release-assets
+          ls -la server-assets
 
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
-          files: release-assets/*
+          files: |
+            release-assets/*
+            server-assets/*.tar.gz
+            server-assets/checksums.txt
 
   publish-docker-arch:
     name: Publish Docker Image (${{ matrix.arch }})
@@ -301,9 +470,6 @@ jobs:
           - arch: arm64
             platform: linux/arm64
             runner: ubuntu-24.04-arm
-          - arch: armv7
-            platform: linux/arm/v7
-            runner: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -318,10 +484,6 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
-
-      - name: Set up QEMU
-        if: matrix.arch == 'armv7'
-        uses: docker/setup-qemu-action@v4
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v4
@@ -431,6 +593,5 @@ jobs:
             docker buildx imagetools create \
               --tag "$tag" \
               "${tag}-amd64" \
-              "${tag}-arm64" \
-              "${tag}-armv7"
+              "${tag}-arm64"
           done <<< "${{ steps.meta.outputs.tags }}"

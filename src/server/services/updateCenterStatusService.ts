@@ -2,223 +2,218 @@ import { config as runtimeConfig } from '../config.js';
 import { formatUtcSqlDateTime } from './localTimeService.js';
 import { listBackgroundTasks } from './backgroundTaskService.js';
 import {
-  fetchDockerHubTagCandidates,
   fetchLatestStableGitHubRelease,
   getCurrentRuntimeVersion,
   type UpdateCenterVersionCandidate,
 } from './updateCenterVersionService.js';
 import {
-  type UpdateCenterConfig,
   loadUpdateCenterConfig,
+  type UpdateCenterConfig,
 } from './updateCenterConfigService.js';
 import {
-  getUpdateCenterHelperStatus,
-  type UpdateCenterHelperStatus,
-} from './updateCenterHelperClient.js';
+  getUpdateCenterLocalStatus,
+  type UpdateCenterInstalledVersion,
+  type UpdateCenterRuntimeCapability,
+} from './updateCenterLocalUpdateService.js';
 import {
   loadUpdateCenterRuntimeState,
-  saveUpdateCenterRuntimeState,
+  patchUpdateCenterRuntimeState,
   type UpdateCenterRuntimeState,
-  type UpdateCenterStatusSnapshot,
 } from './updateCenterRuntimeStateService.js';
-import { UPDATE_CENTER_DEPLOY_TASK_TYPE } from './updateCenterTaskConstants.js';
+import {
+  UPDATE_CENTER_ROLLBACK_TASK_TYPE,
+  UPDATE_CENTER_UPDATE_TASK_TYPE,
+} from './updateCenterTaskConstants.js';
 import { resolveUpdateReminderCandidate, type UpdateReminderCandidate } from './updateCenterReminderService.js';
 
-function getUpdateCenterHelperToken(): string {
-  return String(
-    runtimeConfig.deployHelperToken
-    || process.env.DEPLOY_HELPER_TOKEN
-    || process.env.UPDATE_CENTER_HELPER_TOKEN
-    || '',
-  ).trim();
-}
+type UpdateCenterTask = ReturnType<typeof listBackgroundTasks>[number];
 
-function summarizeHelperError(error: unknown) {
-  if (error instanceof Error && error.message) return error.message;
-  return String(error || 'unknown helper error');
-}
-
-async function settleOptional<T>(enabled: boolean, loader: () => Promise<T>): Promise<{
-  value: T | null;
-  error: string | null;
-}> {
-  if (!enabled) {
-    return {
-      value: null,
-      error: null,
-    };
-  }
-
-  try {
-    return {
-      value: await loader(),
-      error: null,
-    };
-  } catch (error) {
-    return {
-      value: null,
-      error: summarizeHelperError(error),
-    };
-  }
-}
-
-function getDeployTasks() {
-  return listBackgroundTasks(50).filter((task) => task.type === UPDATE_CENTER_DEPLOY_TASK_TYPE);
-}
+export type UpdateCenterInstalledVersionSummary = {
+  version: string;
+  current: boolean;
+  previous: boolean;
+  installedAt?: string | null;
+};
 
 export type UpdateCenterStatusResult = {
+  supported: boolean;
+  mode: string;
+  reason: string | null;
   currentVersion: string;
+  latestRelease: UpdateCenterVersionCandidate | null;
+  installedVersions: UpdateCenterInstalledVersionSummary[];
+  updateState: UpdateCenterRuntimeState['updateState'];
+  restartPending: boolean;
+  canUpdate: boolean;
+  canRollback: boolean;
+  lastError: string | null;
   config: UpdateCenterConfig;
-  githubRelease: UpdateCenterVersionCandidate | null;
-  dockerHubTag: UpdateCenterVersionCandidate | null;
-  dockerHubRecentTags: UpdateCenterVersionCandidate[];
-  helper: UpdateCenterHelperStatus;
-  runningTask: ReturnType<typeof getDeployTasks>[number] | null;
-  lastFinishedTask: ReturnType<typeof getDeployTasks>[number] | null;
+  runningTask: UpdateCenterTask | null;
+  lastFinishedTask: UpdateCenterTask | null;
   runtime: UpdateCenterRuntimeState;
 };
 
-function buildUnavailableHelperStatus(error: string | null = null): UpdateCenterHelperStatus {
+function summarizeError(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  return String(error || 'unknown update error');
+}
+
+function getUpdateTasks(): UpdateCenterTask[] {
+  return listBackgroundTasks(50).filter((task) => (
+    task.type === UPDATE_CENTER_UPDATE_TASK_TYPE || task.type === UPDATE_CENTER_ROLLBACK_TASK_TYPE
+  ));
+}
+
+function taskSnapshot(): { runningTask: UpdateCenterTask | null; lastFinishedTask: UpdateCenterTask | null } {
+  const tasks = getUpdateTasks();
   return {
-    ok: false,
-    releaseName: null,
-    namespace: null,
-    revision: null,
-    imageRepository: null,
-    imageTag: null,
-    imageDigest: null,
-    healthy: false,
-    error: error || undefined,
-    history: [],
+    runningTask: tasks.find((task) => task.status === 'pending' || task.status === 'running') || null,
+    lastFinishedTask: tasks.find((task) => task.status === 'succeeded' || task.status === 'failed') || null,
   };
 }
 
-function buildStatusSnapshot(status: Pick<UpdateCenterStatusResult, 'githubRelease' | 'dockerHubTag' | 'dockerHubRecentTags' | 'helper'>): UpdateCenterStatusSnapshot {
+function mapInstalledVersions(entries: UpdateCenterInstalledVersion[]): UpdateCenterInstalledVersionSummary[] {
+  return entries.map((entry) => ({
+    version: entry.version,
+    current: entry.current,
+    previous: entry.previous,
+  }));
+}
+
+function fallbackCapability(runtimeDir?: string): UpdateCenterRuntimeCapability {
   return {
-    githubRelease: status.githubRelease || null,
-    dockerHubTag: status.dockerHubTag || null,
-    dockerHubRecentTags: status.dockerHubRecentTags || [],
-    helper: status.helper || null,
+    supported: false,
+    mode: 'unsupported',
+    reason: '本地运行时目录不可用',
+    runtimeDir: runtimeDir || runtimeConfig.updateCenterRuntimeDir || '',
+    architecture: null,
+    platform: process.platform,
+    nodeMajor: Number.parseInt(process.versions.node.split('.')[0] || '0', 10),
+    persistent: false,
+    writable: false,
+    currentVersion: null,
   };
 }
 
-function buildNextRuntimeState(
-  status: Pick<UpdateCenterStatusResult, 'currentVersion' | 'githubRelease' | 'dockerHubTag' | 'dockerHubRecentTags' | 'helper'>,
-  previousRuntime: UpdateCenterRuntimeState,
-  checkedAt: string,
-): { candidate: UpdateReminderCandidate | null; nextRuntime: UpdateCenterRuntimeState } {
-  const candidate = resolveUpdateReminderCandidate({
-    currentVersion: status.currentVersion,
-    helper: status.helper,
-    githubRelease: status.githubRelease,
-    dockerHubTag: status.dockerHubTag,
-  });
-
-  return {
-    candidate,
-    nextRuntime: {
-      ...previousRuntime,
-      lastCheckedAt: checkedAt,
-      lastCheckError: null,
-      lastResolvedSource: candidate?.source || null,
-      lastResolvedDisplayVersion: candidate?.displayVersion || null,
-      lastResolvedCandidateKey: candidate?.candidateKey || null,
-      statusSnapshot: buildStatusSnapshot(status),
-    },
-  };
+async function inspectLocalState() {
+  try {
+    return await getUpdateCenterLocalStatus();
+  } catch {
+    return {
+      capability: fallbackCapability(),
+      state: await loadUpdateCenterRuntimeState(),
+      pending: null,
+      installedVersions: [],
+    };
+  }
 }
 
-function buildResponseFromState(config: UpdateCenterConfig, runtime: UpdateCenterRuntimeState): UpdateCenterStatusResult {
-  const snapshot = runtime.statusSnapshot;
-  const tasks = getDeployTasks();
-  const runningTask = tasks.find((task) => task.status === 'pending' || task.status === 'running') || null;
-  const lastFinishedTask = tasks.find((task) => task.status === 'succeeded' || task.status === 'failed') || null;
-
+function buildStatusResponse(
+  config: UpdateCenterConfig,
+  latestRelease: UpdateCenterVersionCandidate | null,
+  local: Awaited<ReturnType<typeof inspectLocalState>>,
+): UpdateCenterStatusResult {
+  const currentVersion = local.capability.currentVersion
+    || local.state.currentVersion
+    || getCurrentRuntimeVersion();
+  const installedVersions = mapInstalledVersions(local.installedVersions);
+  const tasks = taskSnapshot();
+  const hasNewRelease = !!latestRelease
+    && resolveUpdateReminderCandidate({ currentVersion, latestRelease }) !== null;
+  const busy = !!tasks.runningTask || local.state.restartPending || !!local.pending;
+  const canUpdate = config.enabled && local.capability.supported && hasNewRelease && !busy;
+  const canRollback = config.enabled
+    && local.capability.supported
+    && installedVersions.length > 1
+    && !busy;
+  const runtime = local.state;
+  const lastError = runtime.lastError || runtime.lastCheckError || local.capability.reason;
   return {
-    currentVersion: getCurrentRuntimeVersion(),
+    supported: local.capability.supported,
+    mode: local.capability.mode,
+    reason: local.capability.reason,
+    currentVersion,
+    latestRelease,
+    installedVersions,
+    updateState: runtime.updateState,
+    restartPending: runtime.restartPending || !!local.pending,
+    canUpdate,
+    canRollback,
+    lastError: lastError || null,
     config,
-    githubRelease: snapshot?.githubRelease || null,
-    dockerHubTag: snapshot?.dockerHubTag || null,
-    dockerHubRecentTags: snapshot?.dockerHubRecentTags || [],
-    helper: snapshot?.helper || buildUnavailableHelperStatus(runtime.lastCheckError),
-    runningTask,
-    lastFinishedTask,
+    runningTask: tasks.runningTask,
+    lastFinishedTask: tasks.lastFinishedTask,
     runtime,
   };
 }
 
 export async function buildUpdateCenterStatus(): Promise<UpdateCenterStatusResult> {
-  const config = await loadUpdateCenterConfig();
-  const helperToken = getUpdateCenterHelperToken();
-
-  const [githubLookup, dockerLookup, helperLookup, runtime] = await Promise.all([
-    settleOptional(config.githubReleasesEnabled, async () => await fetchLatestStableGitHubRelease()),
-    settleOptional(config.dockerHubTagsEnabled, async () => await fetchDockerHubTagCandidates()),
-    settleOptional(!!config.helperBaseUrl, async () => {
-      if (!helperToken) {
-        throw new Error('DEPLOY_HELPER_TOKEN is required');
-      }
-      return await getUpdateCenterHelperStatus(config, helperToken);
-    }),
-    loadUpdateCenterRuntimeState(),
+  const [config, local] = await Promise.all([
+    loadUpdateCenterConfig(),
+    inspectLocalState(),
   ]);
-
-  const githubRelease = githubLookup.value;
-  const dockerHubCandidates = dockerLookup.value;
-  const dockerHubTag = dockerHubCandidates?.primary || null;
-  const dockerHubRecentTags = dockerHubCandidates?.recentNonStable || [];
-  const helper = (helperLookup.value as UpdateCenterHelperStatus | null) || buildUnavailableHelperStatus(helperLookup.error);
-
-  const tasks = getDeployTasks();
-  const runningTask = tasks.find((task) => task.status === 'pending' || task.status === 'running') || null;
-  const lastFinishedTask = tasks.find((task) => task.status === 'succeeded' || task.status === 'failed') || null;
-
-  return {
-    currentVersion: getCurrentRuntimeVersion(),
-    config,
-    githubRelease,
-    dockerHubTag,
-    dockerHubRecentTags,
-    helper,
-    runningTask,
-    lastFinishedTask,
-    runtime,
-  };
+  const latestRelease = local.state.statusSnapshot?.githubRelease || null;
+  return buildStatusResponse(config, latestRelease, local);
 }
 
 export async function buildCachedUpdateCenterStatus(): Promise<UpdateCenterStatusResult> {
-  const [config, runtime] = await Promise.all([
-    loadUpdateCenterConfig(),
-    loadUpdateCenterRuntimeState(),
-  ]);
-  return buildResponseFromState(config, runtime);
+  return buildUpdateCenterStatus();
 }
 
-export async function refreshUpdateCenterStatusCache(checkedAt = formatUtcSqlDateTime(new Date())): Promise<{
+export async function refreshUpdateCenterStatusCache(
+  checkedAt = formatUtcSqlDateTime(new Date()),
+): Promise<{
   status: UpdateCenterStatusResult;
   candidate: UpdateReminderCandidate | null;
   previousRuntime: UpdateCenterRuntimeState;
   runtime: UpdateCenterRuntimeState;
 }> {
-  const status = await buildUpdateCenterStatus();
-  const previousRuntime = status.runtime || await loadUpdateCenterRuntimeState();
-  const { candidate, nextRuntime } = buildNextRuntimeState(status, previousRuntime, checkedAt);
-  const runtime = await saveUpdateCenterRuntimeState(nextRuntime);
-  return {
-    status: {
-      ...status,
-      runtime,
+  const config = await loadUpdateCenterConfig();
+  const previousRuntime = await loadUpdateCenterRuntimeState();
+  const cachedRelease = previousRuntime.statusSnapshot?.githubRelease || null;
+  let latestRelease: UpdateCenterVersionCandidate | null = null;
+  let checkError: string | null = null;
+  if (config.enabled) {
+    try {
+      latestRelease = await fetchLatestStableGitHubRelease();
+    } catch (error) {
+      checkError = summarizeError(error);
+      latestRelease = cachedRelease;
+    }
+  } else {
+    latestRelease = cachedRelease;
+  }
+
+  const local = await inspectLocalState();
+  const currentVersion = local.capability.currentVersion
+    || local.state.currentVersion
+    || getCurrentRuntimeVersion();
+  const candidate = resolveUpdateReminderCandidate({ currentVersion, latestRelease });
+  const runtime = await patchUpdateCenterRuntimeState({
+    lastCheckedAt: checkedAt,
+    lastCheckError: checkError,
+    lastResolvedSource: candidate?.source || null,
+    lastResolvedDisplayVersion: candidate?.displayVersion || null,
+    lastResolvedCandidateKey: candidate?.candidateKey || null,
+    statusSnapshot: {
+      githubRelease: latestRelease,
+      installedVersions: local.installedVersions.map((entry) => entry.version),
+      capability: {
+        supported: local.capability.supported,
+        mode: local.capability.mode,
+        reason: local.capability.reason,
+      },
     },
-    candidate,
-    previousRuntime,
-    runtime,
-  };
+  });
+  const status = buildStatusResponse(config, latestRelease, {
+    ...local,
+    state: runtime,
+  });
+  return { status, candidate, previousRuntime, runtime };
 }
 
 export async function getUpdateCenterStatus(): Promise<UpdateCenterStatusResult> {
   const cached = await buildCachedUpdateCenterStatus();
-  if (cached.runtime.statusSnapshot) {
-    return cached;
-  }
+  if (cached.latestRelease || cached.runtime.lastCheckedAt) return cached;
   return (await refreshUpdateCenterStatusCache()).status;
 }

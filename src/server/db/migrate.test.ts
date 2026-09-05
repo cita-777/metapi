@@ -56,7 +56,25 @@ describe('sqlite migrate bootstrap', () => {
   afterEach(() => {
     delete process.env.DATA_DIR;
     delete process.env.DB_URL;
+    delete process.env.DB_TYPE;
     vi.resetModules();
+  });
+
+  it('skips the SQLite entrypoint for external database dialects', async () => {
+    process.env.DB_TYPE = 'mysql';
+    process.env.DB_URL = 'mysql://user:password@example.invalid/metapi';
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    vi.resetModules();
+
+    const migrateModule = await import('./migrate.js');
+    expect(migrateModule).toMatchObject({
+      runSqliteMigrations: expect.any(Function),
+    });
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Skipping SQLite migrations for mysql'));
+    expect(migrateModule.__migrateTestUtils.resolveMigrationsFolder({
+      METAPI_RELEASE_ROOT: '/app/runtime/releases/1.2.3',
+    })).toBe('/app/runtime/releases/1.2.3/drizzle');
+    logSpy.mockRestore();
   });
 
   it('accepts an already-synced sqlite schema with an empty drizzle journal', async () => {

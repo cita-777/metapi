@@ -89,7 +89,7 @@ export default withMermaid(
             { text: '上游接入', link: '/upstream-integration' },
             { text: 'OAuth 管理', link: '/oauth' },
             { text: '配置说明', link: '/configuration' },
-            { text: 'K3s 更新中心（高级）', link: '/k3s-update-center' },
+            { text: '更新中心', link: '/deployment#应用内一键升级' },
             { text: '客户端接入', link: '/client-integration' },
             { text: '管理 API', link: '/management-api' },
             { text: '运维手册', link: '/operations' },

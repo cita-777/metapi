@@ -18,7 +18,7 @@ src/server/
 ├── services/                # 业务工作流、平台适配器、持久化
 ├── transformers/            # 协议纯净的请求/响应转换
 ├── db/                      # Drizzle schema、连接、迁移、兼容处理
-└── update-helper/           # 可选的部署辅助进程
+└── shared/                 # 服务端内部共享的纯逻辑与兼容 facade
 ```
 
 长期目录契约也记录在 `docs/project-structure.md` 中。

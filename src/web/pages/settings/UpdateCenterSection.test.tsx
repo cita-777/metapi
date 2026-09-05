@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
-import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../../components/Toast.js';
 
 import UpdateCenterSection from './UpdateCenterSection.js';
@@ -13,766 +12,255 @@ const { apiMock } = vi.hoisted(() => ({
     deployUpdateCenter: vi.fn(),
     rollbackUpdateCenter: vi.fn(),
     streamUpdateCenterTaskLogs: vi.fn(),
+    getTask: vi.fn(),
   },
 }));
 
-vi.mock('../../api.js', () => ({
-  api: apiMock,
-}));
+vi.mock('../../api.js', () => ({ api: apiMock }));
 
 function collectText(node: ReactTestInstance): string {
-  return (node.children || []).map((child) => {
-    if (typeof child === 'string') return child;
-    return collectText(child);
-  }).join('');
+  return (node.children || []).map((child) => typeof child === 'string' ? child : collectText(child)).join('');
 }
 
-async function flushMicrotasks() {
-  await act(async () => {
-    await Promise.resolve();
-    await Promise.resolve();
-  });
-}
+const baseStatus = {
+  supported: true,
+  mode: 'local-bundle',
+  reason: null,
+  currentVersion: '1.2.3',
+  latestRelease: {
+    source: 'github-release',
+    rawVersion: 'v1.3.0',
+    normalizedVersion: '1.3.0',
+    tagName: 'v1.3.0',
+    displayVersion: '1.3.0',
+    url: null,
+    publishedAt: null,
+    assets: [],
+  },
+  installedVersions: [
+    { version: '1.2.3', current: true, previous: false },
+    { version: '1.1.0', current: false, previous: true },
+  ],
+  updateState: 'healthy',
+  restartPending: false,
+  canUpdate: true,
+  canRollback: true,
+  lastError: null,
+  config: { enabled: true, channel: 'stable', autoCheck: false },
+};
 
 describe('UpdateCenterSection', () => {
-  const originalDocument = globalThis.document;
-
   beforeEach(() => {
     vi.clearAllMocks();
-    globalThis.document = {
-      body: {
-        nodeType: 1,
-        style: {
-          overflow: '',
-        },
-      },
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-    } as unknown as Document;
-    apiMock.getUpdateCenterStatus.mockResolvedValue({
-      currentVersion: '1.2.3',
-      config: {
-        enabled: true,
-        helperBaseUrl: 'http://metapi-deploy-helper.ai.svc.cluster.local:9850',
-        namespace: 'ai',
-        releaseName: 'metapi',
-        chartRef: 'oci://ghcr.io/cita-777/charts/metapi',
-        imageRepository: '1467078763/metapi',
-        githubReleasesEnabled: true,
-        dockerHubTagsEnabled: true,
-        defaultDeploySource: 'github-release',
-      },
-      githubRelease: {
-        normalizedVersion: '1.3.0',
-        displayVersion: '1.3.0',
-      },
-      dockerHubTag: {
-        normalizedVersion: 'latest',
-        tagName: 'latest',
-        digest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
-        displayVersion: 'latest @ sha256:efb2ee655386',
-        publishedAt: '2026-03-29T11:54:35.591877Z',
-      },
-      dockerHubRecentTags: [
-        {
-          normalizedVersion: 'dev',
-          tagName: 'dev',
-          digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-          displayVersion: 'dev @ sha256:aaaaaaaaaaaa',
-          publishedAt: '2026-03-30T11:54:35.591877Z',
-        },
-        {
-          normalizedVersion: 'dev-20260417-f67ade2',
-          tagName: 'dev-20260417-f67ade2',
-          digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-          displayVersion: 'dev-20260417-f67ade2 @ sha256:bbbbbbbbbbbb',
-          publishedAt: '2026-03-30T10:54:35.591877Z',
-        },
-        {
-          normalizedVersion: 'feature-without-raw-tag',
-          digest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
-          displayVersion: 'feature-without-raw-tag @ sha256:cccccccccccc',
-          publishedAt: '2026-03-30T09:54:35.591877Z',
-        },
-      ],
-      helper: {
-        ok: true,
-        healthy: true,
-        revision: '17',
-        imageTag: 'latest',
-        imageDigest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
-        history: [
-          {
-            revision: '17',
-            updatedAt: '2026-03-29T12:00:00Z',
-            status: 'deployed',
-            description: 'Upgrade complete',
-            imageRepository: '1467078763/metapi',
-            imageTag: 'latest',
-            imageDigest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
-          },
-          {
-            revision: '16',
-            updatedAt: '2026-03-28T12:00:00Z',
-            status: 'superseded',
-            description: 'Rollback to stable digest',
-            imageRepository: '1467078763/metapi',
-            imageTag: 'main',
-            imageDigest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-          },
-          {
-            revision: '15',
-            updatedAt: '2026-03-27T12:00:00Z',
-            status: 'superseded',
-            description: 'Earlier stable release',
-            imageRepository: '1467078763/metapi',
-            imageTag: '1.2.2',
-            imageDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-          },
-        ],
-      },
-      runtime: {
-        lastCheckedAt: '2026-03-30 20:30:00',
-        lastCheckError: null,
-        lastResolvedSource: 'github-release',
-        lastResolvedDisplayVersion: '1.3.0',
-        lastResolvedCandidateKey: 'github-release:v1.3.0',
-        lastNotifiedCandidateKey: 'github-release:v1.3.0',
-        lastNotifiedAt: '2026-03-30 20:31:00',
-      },
-      runningTask: null,
-      lastFinishedTask: null,
-    });
-    apiMock.saveUpdateCenterConfig.mockResolvedValue({
-      success: true,
-      config: {
-        enabled: true,
-        helperBaseUrl: 'http://updated-helper.ai.svc.cluster.local:9850',
-        namespace: 'ai',
-        releaseName: 'metapi',
-        chartRef: 'oci://ghcr.io/cita-777/charts/metapi',
-        imageRepository: '1467078763/metapi',
-        githubReleasesEnabled: true,
-        dockerHubTagsEnabled: true,
-        defaultDeploySource: 'github-release',
-      },
-    });
-    apiMock.checkUpdateCenter.mockResolvedValue({
-      currentVersion: '1.2.3',
-      config: {
-        enabled: true,
-        helperBaseUrl: 'http://metapi-deploy-helper.ai.svc.cluster.local:9850',
-        namespace: 'ai',
-        releaseName: 'metapi',
-        chartRef: 'oci://ghcr.io/cita-777/charts/metapi',
-        imageRepository: '1467078763/metapi',
-        githubReleasesEnabled: true,
-        dockerHubTagsEnabled: true,
-        defaultDeploySource: 'github-release',
-      },
-      githubRelease: {
-        normalizedVersion: '1.3.0',
-        displayVersion: '1.3.0',
-      },
-      dockerHubTag: {
-        normalizedVersion: 'latest',
-        tagName: 'latest',
-        digest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
-        displayVersion: 'latest @ sha256:efb2ee655386',
-        publishedAt: '2026-03-29T11:54:35.591877Z',
-      },
-      dockerHubRecentTags: [
-        {
-          normalizedVersion: 'dev',
-          tagName: 'dev',
-          digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-          displayVersion: 'dev @ sha256:aaaaaaaaaaaa',
-          publishedAt: '2026-03-30T11:54:35.591877Z',
-        },
-      ],
-      helper: {
-        ok: true,
-        healthy: true,
-        revision: '18',
-        imageTag: 'latest',
-        imageDigest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
-        history: [],
-      },
-      runtime: {
-        lastCheckedAt: '2026-03-30 20:35:00',
-        lastCheckError: null,
-        lastResolvedSource: 'github-release',
-        lastResolvedDisplayVersion: '1.3.0',
-        lastResolvedCandidateKey: 'github-release:v1.3.0',
-        lastNotifiedCandidateKey: 'github-release:v1.3.0',
-        lastNotifiedAt: '2026-03-30 20:31:00',
-      },
-      runningTask: null,
-      lastFinishedTask: null,
-    });
-    apiMock.deployUpdateCenter.mockResolvedValue({
-      success: true,
-      reused: false,
-      task: {
-        id: 'task-1',
-      },
-    });
-    apiMock.rollbackUpdateCenter.mockResolvedValue({
-      success: true,
-      reused: false,
-      task: {
-        id: 'task-2',
-      },
-    });
-    apiMock.streamUpdateCenterTaskLogs.mockImplementation(async (_taskId: string, handlers: { onLog?: (entry: { message: string }) => void; onDone?: (payload: { status: string }) => void }) => {
-      handlers.onLog?.({ message: 'Running helm upgrade' });
-      handlers.onLog?.({ message: 'Waiting for rollout' });
-      handlers.onDone?.({ status: 'succeeded' });
-    });
+    apiMock.getUpdateCenterStatus.mockResolvedValue(baseStatus);
+    apiMock.checkUpdateCenter.mockResolvedValue(baseStatus);
+    apiMock.saveUpdateCenterConfig.mockResolvedValue({ config: baseStatus.config });
+    apiMock.deployUpdateCenter.mockResolvedValue({ task: { id: 'task-1' } });
+    apiMock.rollbackUpdateCenter.mockResolvedValue({ task: { id: 'task-2' } });
+    apiMock.streamUpdateCenterTaskLogs.mockResolvedValue(undefined);
   });
 
-  afterEach(() => {
-    vi.clearAllMocks();
-    globalThis.document = originalDocument;
-  });
+  afterEach(() => vi.clearAllMocks());
 
-  it('loads status, saves config updates, and renders streamed deploy logs', async () => {
+  it('renders capability, release and local version history', async () => {
     let root!: ReactTestRenderer;
     try {
       await act(async () => {
-        root = create(
-          <MemoryRouter>
-            <ToastProvider>
-              <UpdateCenterSection />
-            </ToastProvider>
-          </MemoryRouter>,
-        );
+        root = create(<ToastProvider><UpdateCenterSection /></ToastProvider>);
       });
-      await flushMicrotasks();
-
-      const helperInput = root.root.find((node) => (
-        node.type === 'input'
-        && node.props.value === 'http://metapi-deploy-helper.ai.svc.cluster.local:9850'
-      ));
-
-      await act(async () => {
-        helperInput.props.onChange({ target: { value: 'http://updated-helper.ai.svc.cluster.local:9850' } });
-      });
-      const checkboxInputs = root.root.findAll((node) => node.type === 'input' && node.props.type === 'checkbox');
-
-      await act(async () => {
-        checkboxInputs[1].props.onChange({ target: { checked: false } });
-        checkboxInputs[2].props.onChange({ target: { checked: false } });
-      });
-
-      const defaultSourceTrigger = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('modern-select-trigger')
-      ));
-
-      await act(async () => {
-        defaultSourceTrigger.props.onClick();
-      });
-
-      const dockerHubOption = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('modern-select-option')
-        && collectText(node).includes('Docker Hub Tags')
-      ));
-
-      await act(async () => {
-        dockerHubOption.props.onClick();
-      });
-
-      const saveButton = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.onClick === 'function'
-        && collectText(node).includes('保存更新中心配置')
-      ));
-
-      await act(async () => {
-        await saveButton.props.onClick();
-      });
-      await flushMicrotasks();
-
-      expect(apiMock.saveUpdateCenterConfig).toHaveBeenCalledWith(expect.objectContaining({
-        helperBaseUrl: 'http://updated-helper.ai.svc.cluster.local:9850',
-        githubReleasesEnabled: false,
-        dockerHubTagsEnabled: false,
-        defaultDeploySource: 'docker-hub-tag',
-      }));
-
-      const deployButton = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.onClick === 'function'
-        && collectText(node).includes('部署 GitHub 稳定版')
-      ));
-
-      await act(async () => {
-        await deployButton.props.onClick();
-      });
-      await flushMicrotasks();
-
-      expect(apiMock.deployUpdateCenter).toHaveBeenCalledWith({
-        source: 'github-release',
-        targetTag: '1.3.0',
-        targetDigest: null,
-      });
-      expect(apiMock.streamUpdateCenterTaskLogs).toHaveBeenCalledWith('task-1', expect.any(Object));
-      expect(apiMock.checkUpdateCenter).toHaveBeenCalledTimes(1);
-
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
       const text = collectText(root.root);
-      expect(text).toContain('latest @ sha256:efb2ee655386');
-      expect(text).toContain('发现新版本');
-      expect(text).toContain('后台检查');
+      expect(text).toContain('支持一键升级');
       expect(text).toContain('1.3.0');
-      expect(text).toContain('Running helm upgrade');
-      expect(text).toContain('Waiting for rollout');
-      expect(text).toContain('任务状态 · 已完成');
+      expect(text).toContain('已安装版本');
+      expect(text).toContain('1.1.0');
+      expect(text).not.toContain('Helm');
     } finally {
       root?.unmount();
     }
   });
 
-  it('disables deploy actions when the helper is unhealthy', async () => {
-    apiMock.getUpdateCenterStatus.mockResolvedValueOnce({
-      currentVersion: '1.2.3',
-      config: {
-        enabled: true,
-        helperBaseUrl: 'http://metapi-deploy-helper.ai.svc.cluster.local:9850',
-        namespace: 'ai',
-        releaseName: 'metapi',
-        chartRef: 'oci://ghcr.io/cita-777/charts/metapi',
-        imageRepository: '1467078763/metapi',
-        githubReleasesEnabled: true,
-        dockerHubTagsEnabled: true,
-        defaultDeploySource: 'github-release',
-      },
-      githubRelease: {
-        normalizedVersion: '1.3.0',
-      },
-      dockerHubTag: {
-        normalizedVersion: 'latest',
-        displayVersion: 'latest @ sha256:efb2ee655386',
-      },
-      helper: {
-        ok: false,
-        healthy: false,
-        error: 'helper unavailable',
-      },
-      runningTask: null,
-      lastFinishedTask: null,
+  it('disables update and rollback actions when the runtime is unsupported', async () => {
+    apiMock.getUpdateCenterStatus.mockResolvedValue({
+      ...baseStatus,
+      supported: false,
+      reason: 'runtime directory is not marked as a persistent volume',
+      canUpdate: false,
+      canRollback: false,
     });
-
     let root!: ReactTestRenderer;
     try {
       await act(async () => {
-        root = create(
-          <MemoryRouter>
-            <ToastProvider>
-              <UpdateCenterSection />
-            </ToastProvider>
-          </MemoryRouter>,
-        );
+        root = create(<ToastProvider><UpdateCenterSection /></ToastProvider>);
       });
-      await flushMicrotasks();
-
-      const githubDeployButton = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('btn')
-        && collectText(node).includes('部署 GitHub 稳定版')
-      ));
-      const dockerDeployButton = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('btn')
-        && collectText(node).includes('部署 Docker Hub 标签')
-      ));
-
-      expect(githubDeployButton.props.disabled).toBe(true);
-      expect(dockerDeployButton.props.disabled).toBe(true);
-
-      await act(async () => {
-        githubDeployButton.props.onClick?.();
-        dockerDeployButton.props.onClick?.();
-      });
-
-      expect(apiMock.deployUpdateCenter).not.toHaveBeenCalled();
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      const buttons = root.root.findAllByType('button');
+      const updateButton = buttons.find((button) => collectText(button) === '一键升级');
+      const rollbackButton = buttons.find((button) => collectText(button) === '回滚');
+      expect(updateButton?.props.disabled).toBe(true);
+      expect(rollbackButton?.props.disabled).toBe(true);
     } finally {
       root?.unmount();
     }
   });
 
-  it('deploys manual Docker Hub tags so dev and branch images are reachable from the UI', async () => {
-    let root!: ReactTestRenderer;
-    try {
-      await act(async () => {
-        root = create(
-          <MemoryRouter>
-            <ToastProvider>
-              <UpdateCenterSection />
-            </ToastProvider>
-          </MemoryRouter>,
-        );
+  it('keeps the task stream abortable when the section unmounts', async () => {
+    let streamSignal: AbortSignal | undefined;
+    apiMock.streamUpdateCenterTaskLogs.mockImplementation(async (_taskId: string, handlers: { signal?: AbortSignal; onLog?: (entry: { message?: string }) => void }) => {
+      streamSignal = handlers.signal;
+      handlers.onLog?.({ message: '下载中' });
+      await new Promise<void>((resolve) => {
+        handlers.signal?.addEventListener('abort', () => resolve(), { once: true });
       });
-      await flushMicrotasks();
-
-      const manualTagInput = root.root.find((node) => (
-        node.type === 'input'
-        && node.props.placeholder === 'dev / dev-20260417-f67ade2 / sha-f67ade2'
-      ));
-      const manualDigestInput = root.root.find((node) => (
-        node.type === 'input'
-        && node.props.placeholder === '可选 digest：sha256:...'
-      ));
-
-      await act(async () => {
-        manualTagInput.props.onChange({ target: { value: 'dev-20260417-f67ade2' } });
-        manualDigestInput.props.onChange({
-          target: {
-            value: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-          },
-        });
-      });
-
-      const customDeployButton = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.onClick === 'function'
-        && collectText(node).includes('部署自定义 Docker 标签')
-      ));
-
-      expect(customDeployButton.props.disabled).toBe(false);
-
-      await act(async () => {
-        await customDeployButton.props.onClick();
-      });
-      await flushMicrotasks();
-
-      expect(apiMock.deployUpdateCenter).toHaveBeenCalledWith({
-        source: 'docker-hub-tag',
-        targetTag: 'dev-20260417-f67ade2',
-        targetDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-      });
-      expect(apiMock.streamUpdateCenterTaskLogs).toHaveBeenCalledWith('task-1', expect.any(Object));
-    } finally {
-      root?.unmount();
-    }
-  });
-
-  it('deploys auto-discovered recent non-stable Docker Hub tags without manual input', async () => {
-    let root!: ReactTestRenderer;
-    try {
-      await act(async () => {
-        root = create(
-          <MemoryRouter>
-            <ToastProvider>
-              <UpdateCenterSection />
-            </ToastProvider>
-          </MemoryRouter>,
-        );
-      });
-      await flushMicrotasks();
-
-      expect(collectText(root.root)).toContain('Digest：sha256:bbbbbbbbbbbb');
-      expect(collectText(root.root)).not.toContain('feature-without-raw-tag');
-      expect(collectText(root.root)).toContain('dev-20260417-f67ade2 @ sha256:bbbbbbbbbbbb');
-
-      const deployRecentButton = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.onClick === 'function'
-        && collectText(node).includes('部署 dev-20260417-f67ade2')
-      ));
-
-      expect(deployRecentButton.props.disabled).toBe(false);
-
-      await act(async () => {
-        await deployRecentButton.props.onClick();
-      });
-      await flushMicrotasks();
-
-      expect(apiMock.deployUpdateCenter).toHaveBeenCalledWith({
-        source: 'docker-hub-tag',
-        targetTag: 'dev-20260417-f67ade2',
-        targetDigest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-      });
-      expect(apiMock.streamUpdateCenterTaskLogs).toHaveBeenCalledWith('task-1', expect.any(Object));
-    } finally {
-      root?.unmount();
-    }
-  });
-
-  it('disables only the recent Docker candidate that already matches the running helper image', async () => {
-    apiMock.getUpdateCenterStatus.mockResolvedValueOnce({
-      currentVersion: '1.2.3',
-      config: {
-        enabled: true,
-        helperBaseUrl: 'http://metapi-deploy-helper.ai.svc.cluster.local:9850',
-        namespace: 'ai',
-        releaseName: 'metapi',
-        chartRef: 'oci://ghcr.io/cita-777/charts/metapi',
-        imageRepository: '1467078763/metapi',
-        githubReleasesEnabled: true,
-        dockerHubTagsEnabled: true,
-        defaultDeploySource: 'docker-hub-tag',
-      },
-      githubRelease: {
-        normalizedVersion: '1.3.0',
-        displayVersion: '1.3.0',
-      },
-      dockerHubTag: {
-        normalizedVersion: 'latest',
-        tagName: 'latest',
-        digest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
-        displayVersion: 'latest @ sha256:efb2ee655386',
-      },
-      dockerHubRecentTags: [
-        {
-          normalizedVersion: 'dev',
-          tagName: 'dev',
-          digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-          displayVersion: 'dev @ sha256:aaaaaaaaaaaa',
-          publishedAt: '2026-03-30T11:54:35.591877Z',
-        },
-        {
-          normalizedVersion: 'dev-20260417-next',
-          tagName: 'dev-20260417-next',
-          digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-          displayVersion: 'dev-20260417-next @ sha256:bbbbbbbbbbbb',
-          publishedAt: '2026-03-30T10:54:35.591877Z',
-        },
-      ],
-      helper: {
-        ok: true,
-        healthy: true,
-        revision: '17',
-        imageTag: 'dev',
-        imageDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-        history: [],
-      },
-      runtime: {
-        lastCheckedAt: '2026-03-30 20:30:00',
-        lastCheckError: null,
-        lastResolvedSource: 'docker-hub-tag',
-        lastResolvedDisplayVersion: 'dev',
-        lastResolvedCandidateKey: 'docker-hub-tag:dev@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-        lastNotifiedCandidateKey: null,
-        lastNotifiedAt: null,
-      },
-      runningTask: null,
-      lastFinishedTask: null,
     });
-
     let root!: ReactTestRenderer;
-    try {
-      await act(async () => {
-        root = create(
-          <MemoryRouter>
-            <ToastProvider>
-              <UpdateCenterSection />
-            </ToastProvider>
-          </MemoryRouter>,
-        );
-      });
-      await flushMicrotasks();
-
-      const runningCandidateButton = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.onClick === 'function'
-        && collectText(node) === '部署 dev'
-      ));
-      const nextCandidateButton = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.onClick === 'function'
-        && collectText(node) === '部署 dev-20260417-next'
-      ));
-
-      expect(runningCandidateButton.props.disabled).toBe(true);
-      expect(runningCandidateButton.props.title).toContain('当前已运行该镜像');
-      expect(nextCandidateButton.props.disabled).toBe(false);
-
-      await act(async () => {
-        await nextCandidateButton.props.onClick();
-      });
-      await flushMicrotasks();
-
-      expect(apiMock.deployUpdateCenter).toHaveBeenCalledWith({
-        source: 'docker-hub-tag',
-        targetTag: 'dev-20260417-next',
-        targetDigest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-      });
-      expect(apiMock.streamUpdateCenterTaskLogs).toHaveBeenCalledWith('task-1', expect.any(Object));
-    } finally {
-      root?.unmount();
-    }
-  });
-
-  it('keeps rollback history compact and opens the full revision list in a centered modal', async () => {
-    let root!: ReactTestRenderer;
-    try {
-      await act(async () => {
-        root = create(
-          <MemoryRouter>
-            <ToastProvider>
-              <UpdateCenterSection />
-            </ToastProvider>
-          </MemoryRouter>,
-        );
-      });
-      await flushMicrotasks();
-
-      const compactText = collectText(root.root);
-      expect(compactText).toContain('展开全部 3 条');
-      expect(compactText).not.toContain('Earlier stable release');
-      expect(compactText).not.toContain('回退到 revision 15');
-
-      const openHistoryButton = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.onClick === 'function'
-        && collectText(node).includes('展开全部 3 条')
-      ));
-
-      await act(async () => {
-        await openHistoryButton.props.onClick();
-      });
-      await flushMicrotasks();
-
-      const modal = root.root.find((node) => (
-        typeof node.props.className === 'string'
-        && node.props.className.includes('modal-content')
-        && collectText(node).includes('全部 revision')
-      ));
-
-      expect(collectText(modal)).toContain('Earlier stable release');
-      expect(collectText(modal)).toContain('回退到 revision 15');
-    } finally {
-      root?.unmount();
-    }
-  });
-
-  it('blocks Docker Hub deploys when the current helper image already matches the target digest', async () => {
-    apiMock.getUpdateCenterStatus.mockResolvedValueOnce({
-      currentVersion: '1.2.3',
-      config: {
-        enabled: true,
-        helperBaseUrl: 'http://metapi-deploy-helper.ai.svc.cluster.local:9850',
-        namespace: 'ai',
-        releaseName: 'metapi',
-        chartRef: 'oci://ghcr.io/cita-777/charts/metapi',
-        imageRepository: '1467078763/metapi',
-        githubReleasesEnabled: true,
-        dockerHubTagsEnabled: true,
-        defaultDeploySource: 'docker-hub-tag',
-      },
-      githubRelease: {
-        normalizedVersion: '1.3.0',
-        displayVersion: '1.3.0',
-      },
-      dockerHubTag: {
-        normalizedVersion: 'latest',
-        tagName: 'latest',
-        digest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
-        displayVersion: 'latest @ sha256:efb2ee655386',
-      },
-      helper: {
-        ok: true,
-        healthy: true,
-        revision: '17',
-        imageTag: 'latest',
-        imageDigest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
-      },
-      runningTask: null,
-      lastFinishedTask: null,
+    await act(async () => {
+      root = create(<ToastProvider><UpdateCenterSection /></ToastProvider>);
     });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    const updateButton = root.root.findAllByType('button').find((button) => collectText(button) === '一键升级');
+    await act(async () => {
+      updateButton?.props.onClick();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(streamSignal).toBeDefined();
+    await act(async () => { root.unmount(); });
+    expect(streamSignal?.aborted).toBe(true);
+  });
 
+  it('coalesces repeated manual checks while the first request is pending', async () => {
+    let resolveCheck!: (value: typeof baseStatus) => void;
+    apiMock.checkUpdateCenter.mockImplementation(() => new Promise((resolve) => { resolveCheck = resolve; }));
     let root!: ReactTestRenderer;
     try {
       await act(async () => {
-        root = create(
-          <MemoryRouter>
-            <ToastProvider>
-              <UpdateCenterSection />
-            </ToastProvider>
-          </MemoryRouter>,
-        );
+        root = create(<ToastProvider><UpdateCenterSection /></ToastProvider>);
       });
-      await flushMicrotasks();
-
-      const dockerDeployButton = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('btn')
-        && collectText(node).includes('部署 Docker Hub 标签')
-      ));
-
-      expect(dockerDeployButton.props.disabled).toBe(true);
-      expect(collectText(root.root)).toContain('当前已运行该镜像');
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      const checkButton = root.root.findAllByType('button').find((button) => collectText(button) === '检查更新');
+      await act(async () => {
+        checkButton?.props.onClick();
+        checkButton?.props.onClick();
+        await Promise.resolve();
+      });
+      expect(apiMock.checkUpdateCenter).toHaveBeenCalledTimes(1);
+      resolveCheck(baseStatus);
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     } finally {
       root?.unmount();
     }
   });
 
-  it('parses timezone-less SQL runtime timestamps as UTC before formatting', async () => {
-    const parseSpy = vi.spyOn(Date, 'parse');
+  it('does not let settlement polling supersede a manual check', async () => {
+    vi.useFakeTimers();
+    let resolveCheck!: (value: typeof baseStatus) => void;
+    apiMock.checkUpdateCenter.mockImplementation(() => new Promise((resolve) => { resolveCheck = resolve; }));
+    apiMock.streamUpdateCenterTaskLogs.mockRejectedValue(new Error('stream disconnected'));
+    apiMock.getTask.mockResolvedValue({ task: { status: 'running', logs: [] } });
     let root!: ReactTestRenderer;
     try {
       await act(async () => {
-        root = create(
-          <MemoryRouter>
-            <ToastProvider>
-              <UpdateCenterSection />
-            </ToastProvider>
-          </MemoryRouter>,
-        );
+        root = create(<ToastProvider><UpdateCenterSection /></ToastProvider>);
       });
-      await flushMicrotasks();
-
-      const parseInputs = parseSpy.mock.calls.map(([value]) => String(value));
-      expect(parseInputs).toContain('2026-03-30T20:30:00Z');
-      expect(parseInputs).not.toContain('2026-03-30 20:30:00');
-    } finally {
-      parseSpy.mockRestore();
-      root?.unmount();
-    }
-  });
-
-  it('renders rollback history and triggers rollback tasks for previous revisions', async () => {
-    let root!: ReactTestRenderer;
-    try {
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      const updateButton = root.root.findAllByType('button').find((button) => collectText(button) === '一键升级');
       await act(async () => {
-        root = create(
-          <MemoryRouter>
-            <ToastProvider>
-              <UpdateCenterSection />
-            </ToastProvider>
-          </MemoryRouter>,
-        );
+        updateButton?.props.onClick();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
       });
-      await flushMicrotasks();
-
-      const rollbackButton = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.onClick === 'function'
-        && collectText(node).includes('回退到 revision 16')
-      ));
-
+      const statusCallsBeforeCheck = apiMock.getUpdateCenterStatus.mock.calls.length;
+      const checkButton = root.root.findAllByType('button').find((button) => collectText(button) === '检查更新');
       await act(async () => {
-        await rollbackButton.props.onClick();
+        checkButton?.props.onClick();
+        await Promise.resolve();
+        await Promise.resolve();
       });
-      await flushMicrotasks();
-
-      expect(apiMock.rollbackUpdateCenter).toHaveBeenCalledWith({
-        targetRevision: '16',
-      });
-      expect(apiMock.streamUpdateCenterTaskLogs).toHaveBeenCalledWith('task-2', expect.any(Object));
       expect(apiMock.checkUpdateCenter).toHaveBeenCalledTimes(1);
 
-      const text = collectText(root.root);
-      expect(text).toContain('最近状态：succeeded');
+      await act(async () => {
+        vi.advanceTimersByTime(2_000);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(apiMock.getUpdateCenterStatus.mock.calls.length).toBe(statusCallsBeforeCheck);
+
+      resolveCheck(baseStatus);
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     } finally {
       root?.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it('handles a synchronous status adapter failure without an unhandled rejection', async () => {
+    apiMock.getUpdateCenterStatus.mockImplementation(() => {
+      throw new Error('status adapter unavailable');
+    });
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        root = create(<ToastProvider><UpdateCenterSection /></ToastProvider>);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(collectText(root.root)).toContain('更新中心');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('handles a synchronous manual-check adapter failure', async () => {
+    apiMock.checkUpdateCenter.mockImplementation(() => {
+      throw new Error('check adapter unavailable');
+    });
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        root = create(<ToastProvider><UpdateCenterSection /></ToastProvider>);
+      });
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      const checkButton = root.root.findAllByType('button').find((button) => collectText(button) === '检查更新');
+      await act(async () => {
+        checkButton?.props.onClick();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(apiMock.checkUpdateCenter).toHaveBeenCalledTimes(1);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('keeps polling after the task stream disconnects once a task id is known', async () => {
+    vi.useFakeTimers();
+    apiMock.streamUpdateCenterTaskLogs.mockRejectedValue(new Error('stream disconnected'));
+    apiMock.getTask.mockResolvedValue({ task: { status: 'running', logs: [] } });
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        root = create(<ToastProvider><UpdateCenterSection /></ToastProvider>);
+      });
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      const initialStatusCalls = apiMock.getUpdateCenterStatus.mock.calls.length;
+      const updateButton = root.root.findAllByType('button').find((button) => collectText(button) === '一键升级');
+      await act(async () => {
+        updateButton?.props.onClick();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(2_000);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(apiMock.getUpdateCenterStatus.mock.calls.length).toBeGreaterThan(initialStatusCalls);
+    } finally {
+      root?.unmount();
+      vi.useRealTimers();
     }
   });
 });

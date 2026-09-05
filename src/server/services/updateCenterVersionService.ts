@@ -1,26 +1,36 @@
 import { fetch, type RequestInit as UndiciRequestInit } from 'undici';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { compareStableSemVer, parseStableSemVer, type StableSemVer } from '../shared/stableVersion.js';
 
-export type StableSemVer = {
-  raw: string;
-  normalized: string;
-  major: number;
-  minor: number;
-  patch: number;
+export { compareStableSemVer, parseStableSemVer, type StableSemVer } from '../shared/stableVersion.js';
+
+export type UpdateCenterVersionSource = 'github-release';
+
+export type UpdateCenterReleaseAsset = {
+  name: string;
+  downloadUrl: string;
+  size: number | null;
+  contentType: string | null;
 };
-
-export type UpdateCenterVersionSource = 'github-release' | 'docker-hub-tag';
 
 export type UpdateCenterVersionCandidate = {
   source: UpdateCenterVersionSource;
   rawVersion: string;
   normalizedVersion: string;
   url: string | null;
-  tagName?: string | null;
-  digest?: string | null;
-  displayVersion?: string | null;
-  publishedAt?: string | null;
+  tagName: string;
+  digest: null;
+  displayVersion: string;
+  publishedAt: string | null;
+  assets: UpdateCenterReleaseAsset[];
+};
+
+export type GitHubReleaseAssetRecord = {
+  name?: string | null;
+  browser_download_url?: string | null;
+  size?: number | null;
+  content_type?: string | null;
 };
 
 export type GitHubReleaseRecord = {
@@ -30,77 +40,67 @@ export type GitHubReleaseRecord = {
   prerelease?: boolean;
   published_at?: string | null;
   name?: string | null;
+  assets?: GitHubReleaseAssetRecord[];
 };
 
-export type DockerHubTagRecord = {
-  name?: string | null;
-  tag_last_pushed?: string | null;
-  last_updated?: string | null;
-  digest?: string | null;
-};
+export const UPDATE_CENTER_RELEASE_REPOSITORY = 'cita-777/metapi';
+export const UPDATE_CENTER_GITHUB_RELEASES_URL = `https://api.github.com/repos/${UPDATE_CENTER_RELEASE_REPOSITORY}/releases`;
+export const UPDATE_CENTER_GITHUB_RELEASE_BY_TAG_URL = (tag: string) =>
+  `https://api.github.com/repos/${UPDATE_CENTER_RELEASE_REPOSITORY}/releases/tags/${encodeURIComponent(tag)}`;
+export const UPDATE_CENTER_RELEASE_FETCH_TIMEOUT_MS = 5_000;
+export const UPDATE_CENTER_SERVER_ARCHIVE_PREFIX = 'metapi-server-v';
 
-export type DockerHubTagCandidates = {
-  primary: UpdateCenterVersionCandidate | null;
-  recentNonStable: UpdateCenterVersionCandidate[];
-};
-
-const STABLE_SEMVER_PATTERN = /^v?(\d+)\.(\d+)\.(\d+)(?:\+[\w.-]+)?$/i;
-const GITHUB_RELEASES_URL = 'https://api.github.com/repos/cita-777/metapi/releases';
-const DOCKER_HUB_TAGS_URL = 'https://hub.docker.com/v2/repositories/1467078763/metapi/tags?page_size=100';
-const UPDATE_CENTER_VERSION_FETCH_TIMEOUT_MS = 5_000;
-const PREFERRED_DOCKER_HUB_TAG_ALIASES = ['latest', 'main'] as const;
-const MAX_RECENT_NON_STABLE_DOCKER_HUB_TAGS = 5;
-
-async function fetchJsonWithTimeout(url: string, init: UndiciRequestInit, timeoutLabel: string): Promise<unknown> {
-  const controller = new AbortController();
-  let timeoutHandle: ReturnType<typeof setTimeout> | null = setTimeout(() => {
-    controller.abort();
-  }, UPDATE_CENTER_VERSION_FETCH_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(url, {
-      ...init,
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`${timeoutLabel} failed with HTTP ${response.status}`);
-    }
-    return await response.json();
-  } catch (error: any) {
-    if (error?.name === 'AbortError') {
-      throw new Error(`${timeoutLabel} timeout (${Math.round(UPDATE_CENTER_VERSION_FETCH_TIMEOUT_MS / 1000)}s)`);
-    }
-    throw error;
-  } finally {
-    if (timeoutHandle) {
-      clearTimeout(timeoutHandle);
-      timeoutHandle = null;
-    }
-  }
+function normalizeString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
 }
 
-export function parseStableSemVer(input: string | null | undefined): StableSemVer | null {
-  const raw = String(input || '').trim();
-  if (!raw) return null;
-  const match = raw.match(STABLE_SEMVER_PATTERN);
-  if (!match) return null;
-  const major = Number.parseInt(match[1], 10);
-  const minor = Number.parseInt(match[2], 10);
-  const patch = Number.parseInt(match[3], 10);
-  if (![major, minor, patch].every(Number.isFinite)) return null;
+function normalizeReleaseAsset(input: GitHubReleaseAssetRecord): UpdateCenterReleaseAsset | null {
+  const name = normalizeString(input.name);
+  const downloadUrl = normalizeString(input.browser_download_url);
+  if (!name || !downloadUrl) return null;
   return {
-    raw,
-    normalized: `${major}.${minor}.${patch}`,
-    major,
-    minor,
-    patch,
+    name,
+    downloadUrl,
+    size: typeof input.size === 'number' && Number.isFinite(input.size) && input.size >= 0
+      ? Math.trunc(input.size)
+      : null,
+    contentType: normalizeString(input.content_type) || null,
   };
 }
 
-export function compareStableSemVer(a: StableSemVer, b: StableSemVer): number {
-  if (a.major !== b.major) return a.major - b.major;
-  if (a.minor !== b.minor) return a.minor - b.minor;
-  return a.patch - b.patch;
+function toCandidate(release: GitHubReleaseRecord, semver: StableSemVer): UpdateCenterVersionCandidate {
+  return {
+    source: 'github-release',
+    rawVersion: normalizeString(release.tag_name) || semver.raw,
+    normalizedVersion: semver.normalized,
+    url: normalizeString(release.html_url) || null,
+    tagName: normalizeString(release.tag_name) || `v${semver.normalized}`,
+    digest: null,
+    displayVersion: semver.normalized,
+    publishedAt: normalizeString(release.published_at) || null,
+    assets: Array.isArray(release.assets)
+      ? release.assets
+        .map((asset) => normalizeReleaseAsset(asset))
+        .filter((asset): asset is UpdateCenterReleaseAsset => !!asset)
+      : [],
+  };
+}
+
+export function normalizeUpdateCenterArchitecture(value: string | null | undefined): 'amd64' | 'arm64' | null {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'x64' || normalized === 'x86_64' || normalized === 'amd64') return 'amd64';
+  if (normalized === 'arm64' || normalized === 'aarch64') return 'arm64';
+  return null;
+}
+
+export function getCurrentUpdateCenterArchitecture(value: string = process.arch): 'amd64' | 'arm64' | null {
+  return normalizeUpdateCenterArchitecture(value);
+}
+
+export function buildServerReleaseAssetName(version: string, architecture: 'amd64' | 'arm64'): string {
+  const semver = parseStableSemVer(version);
+  if (!semver) throw new Error(`invalid release version: ${version}`);
+  return `${UPDATE_CENTER_SERVER_ARCHIVE_PREFIX}${semver.normalized}-linux-${architecture}.tar.gz`;
 }
 
 export function selectLatestStableGitHubRelease(
@@ -117,198 +117,103 @@ export function selectLatestStableGitHubRelease(
     }
   }
 
-  if (!selected) return null;
-
-  return {
-    source: 'github-release',
-    rawVersion: selected.release.tag_name || selected.semver.raw,
-    normalizedVersion: selected.semver.normalized,
-    url: selected.release.html_url || null,
-    tagName: selected.release.tag_name || selected.semver.raw,
-    displayVersion: selected.semver.normalized,
-    publishedAt: selected.release.published_at || null,
-  };
+  return selected ? toCandidate(selected.release, selected.semver) : null;
 }
 
-function normalizeDockerHubTagRecord(input: string | DockerHubTagRecord): DockerHubTagRecord {
-  if (typeof input === 'string') {
-    return {
-      name: input,
-    };
+function normalizeFetchError(error: unknown, label: string): Error {
+  if (error instanceof Error && error.name === 'AbortError') {
+    return new Error(`${label} timeout (${Math.round(UPDATE_CENTER_RELEASE_FETCH_TIMEOUT_MS / 1000)}s)`);
   }
-  return input;
+  if (error instanceof Error && error.message) return error;
+  return new Error(`${label} failed`);
 }
 
-function normalizeDockerHubTagName(input: string | null | undefined): string {
-  return String(input || '').trim();
-}
+async function fetchJsonWithTimeout(url: string, init: UndiciRequestInit, label: string): Promise<unknown> {
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), UPDATE_CENTER_RELEASE_FETCH_TIMEOUT_MS);
+  timeoutHandle.unref?.();
 
-function isPreferredDockerHubAlias(input: string | null | undefined): boolean {
-  const tag = normalizeDockerHubTagName(input);
-  return PREFERRED_DOCKER_HUB_TAG_ALIASES.includes(tag as typeof PREFERRED_DOCKER_HUB_TAG_ALIASES[number]);
-}
-
-function isStableDockerHubTag(input: string | null | undefined): boolean {
-  const tag = normalizeDockerHubTagName(input);
-  if (!tag) return false;
-  return isPreferredDockerHubAlias(tag) || !!parseStableSemVer(tag);
-}
-
-function normalizeDockerDigest(input: string | null | undefined): string | null {
-  const digest = String(input || '').trim();
-  return /^sha256:[a-f0-9]{64}$/i.test(digest) ? digest.toLowerCase() : null;
-}
-
-function getDockerHubTagPublishedAt(record: DockerHubTagRecord): string | null {
-  const value = String(record.tag_last_pushed || record.last_updated || '').trim();
-  return value || null;
-}
-
-function getDockerHubTagPublishedTimestamp(record: DockerHubTagRecord): number {
-  const publishedAt = getDockerHubTagPublishedAt(record);
-  if (!publishedAt) return Number.NEGATIVE_INFINITY;
-  const timestamp = Date.parse(publishedAt);
-  return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
-}
-
-function getRecentNonStableDockerHubPriority(input: string | null | undefined): number {
-  const tag = normalizeDockerHubTagName(input).toLowerCase();
-  if (!tag) return 99;
-  if (tag === 'dev') return 0;
-  if (tag.startsWith('dev-')) return 1;
-  if (tag.startsWith('sha-')) return 2;
-  return 3;
-}
-
-function toShortDigest(digest: string | null | undefined): string | null {
-  if (!digest) return null;
-  return digest.slice(0, 'sha256:'.length + 12);
-}
-
-function buildDockerHubVersionCandidate(
-  record: DockerHubTagRecord,
-  normalizedVersion: string,
-): UpdateCenterVersionCandidate | null {
-  const rawVersion = String(record.name || '').trim();
-  if (!rawVersion) return null;
-  const digest = normalizeDockerDigest(record.digest);
-  return {
-    source: 'docker-hub-tag',
-    rawVersion,
-    normalizedVersion,
-    url: null,
-    tagName: rawVersion,
-    digest,
-    displayVersion: digest ? `${rawVersion} @ ${toShortDigest(digest)}` : rawVersion,
-    publishedAt: getDockerHubTagPublishedAt(record),
-  };
-}
-
-export function selectLatestDockerHubTag(tags: Array<string | DockerHubTagRecord>): UpdateCenterVersionCandidate | null {
-  const records = tags
-    .map((tag) => normalizeDockerHubTagRecord(tag))
-    .filter((record) => String(record.name || '').trim());
-
-  for (const alias of PREFERRED_DOCKER_HUB_TAG_ALIASES) {
-    const record = records.find((entry) => String(entry.name || '').trim() === alias);
-    if (!record) continue;
-    const candidate = buildDockerHubVersionCandidate(record, alias);
-    if (candidate) return candidate;
-  }
-
-  let selected: { record: DockerHubTagRecord; semver: StableSemVer } | null = null;
-
-  for (const record of records) {
-    const semver = parseStableSemVer(record.name);
-    if (!semver) continue;
-    if (!selected || compareStableSemVer(semver, selected.semver) > 0) {
-      selected = { record, semver };
+  try {
+    const response = await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`${label} failed with HTTP ${response.status}`);
     }
+    return await response.json();
+  } catch (error) {
+    throw normalizeFetchError(error, label);
+  } finally {
+    clearTimeout(timeoutHandle);
   }
-
-  if (!selected) return null;
-
-  return buildDockerHubVersionCandidate(selected.record, selected.semver.normalized);
 }
 
-export function selectRecentNonStableDockerHubTags(
-  tags: Array<string | DockerHubTagRecord>,
-  limit = MAX_RECENT_NON_STABLE_DOCKER_HUB_TAGS,
-): UpdateCenterVersionCandidate[] {
-  const records = tags
-    .map((tag) => normalizeDockerHubTagRecord(tag))
-    .filter((record) => normalizeDockerHubTagName(record.name))
-    .filter((record) => !isStableDockerHubTag(record.name));
-
-  const deduped = new Map<string, DockerHubTagRecord>();
-  for (const record of records) {
-    const tagName = normalizeDockerHubTagName(record.name);
-    const previous = deduped.get(tagName);
-    if (!previous || getDockerHubTagPublishedTimestamp(record) > getDockerHubTagPublishedTimestamp(previous)) {
-      deduped.set(tagName, record);
-    }
-  }
-
-  return Array.from(deduped.values())
-    .sort((a, b) => {
-      const priorityDelta = getRecentNonStableDockerHubPriority(a.name) - getRecentNonStableDockerHubPriority(b.name);
-      if (priorityDelta !== 0) return priorityDelta;
-      const publishedDelta = getDockerHubTagPublishedTimestamp(b) - getDockerHubTagPublishedTimestamp(a);
-      if (publishedDelta !== 0) return publishedDelta;
-      return normalizeDockerHubTagName(a.name).localeCompare(normalizeDockerHubTagName(b.name));
-    })
-    .slice(0, Math.max(0, limit))
-    .map((record) => buildDockerHubVersionCandidate(record, normalizeDockerHubTagName(record.name)))
-    .filter((candidate): candidate is UpdateCenterVersionCandidate => !!candidate);
-}
-
-export function selectDockerHubTagCandidates(tags: Array<string | DockerHubTagRecord>): DockerHubTagCandidates {
+function githubHeaders() {
   return {
-    primary: selectLatestDockerHubTag(tags),
-    recentNonStable: selectRecentNonStableDockerHubTags(tags),
+    accept: 'application/vnd.github+json',
+    'user-agent': 'metapi-update-center/2.0',
   };
-}
-
-export function resolvePreferredDeploySource(input: {
-  defaultSource: UpdateCenterVersionSource;
-  githubRelease: UpdateCenterVersionCandidate | null;
-  dockerHubTag: UpdateCenterVersionCandidate | null;
-}): UpdateCenterVersionCandidate | null {
-  if (input.defaultSource === 'github-release') {
-    return input.githubRelease || input.dockerHubTag;
-  }
-  return input.dockerHubTag || input.githubRelease;
 }
 
 export async function fetchLatestStableGitHubRelease(): Promise<UpdateCenterVersionCandidate | null> {
-  const releases = await fetchJsonWithTimeout(GITHUB_RELEASES_URL, {
-    headers: {
-      accept: 'application/vnd.github+json',
-      'user-agent': 'metapi-update-center/1.0',
-    },
-  }, 'GitHub releases lookup') as GitHubReleaseRecord[];
-  return selectLatestStableGitHubRelease(Array.isArray(releases) ? releases : []);
+  const payload = await fetchJsonWithTimeout(
+    UPDATE_CENTER_GITHUB_RELEASES_URL,
+    { headers: githubHeaders() },
+    'GitHub releases lookup',
+  );
+  return selectLatestStableGitHubRelease(Array.isArray(payload) ? payload as GitHubReleaseRecord[] : []);
 }
 
-export async function fetchLatestDockerHubTag(): Promise<UpdateCenterVersionCandidate | null> {
-  return (await fetchDockerHubTagCandidates()).primary;
+export async function fetchStableGitHubRelease(version: string): Promise<UpdateCenterVersionCandidate | null> {
+  const semver = parseStableSemVer(version);
+  if (!semver) return null;
+  const payload = await fetchJsonWithTimeout(
+    UPDATE_CENTER_GITHUB_RELEASE_BY_TAG_URL(`v${semver.normalized}`),
+    { headers: githubHeaders() },
+    `GitHub release ${semver.normalized} lookup`,
+  ) as GitHubReleaseRecord;
+  if (payload?.draft || payload?.prerelease) return null;
+  const parsed = parseStableSemVer(payload?.tag_name);
+  if (!parsed || parsed.normalized !== semver.normalized) return null;
+  return toCandidate(payload, parsed);
 }
 
-export async function fetchDockerHubTagCandidates(): Promise<DockerHubTagCandidates> {
-  const payload = await fetchJsonWithTimeout(DOCKER_HUB_TAGS_URL, {
-    headers: {
-      accept: 'application/json',
-      'user-agent': 'metapi-update-center/1.0',
-    },
-  }, 'Docker Hub tag lookup') as { results?: DockerHubTagRecord[] };
-  return selectDockerHubTagCandidates(Array.isArray(payload?.results) ? payload.results : []);
+export function findServerReleaseAsset(
+  candidate: UpdateCenterVersionCandidate,
+  architecture = getCurrentUpdateCenterArchitecture(),
+): UpdateCenterReleaseAsset | null {
+  if (!architecture) return null;
+  const expected = buildServerReleaseAssetName(candidate.normalizedVersion, architecture);
+  return candidate.assets.find((asset) => asset.name === expected) || null;
+}
+
+export function findChecksumsAsset(candidate: UpdateCenterVersionCandidate): UpdateCenterReleaseAsset | null {
+  return candidate.assets.find((asset) => asset.name === 'checksums.txt') || null;
 }
 
 export function getCurrentRuntimeVersion(): string {
+  const explicit = normalizeString(process.env.METAPI_RELEASE_VERSION);
+  if (explicit) return parseStableSemVer(explicit)?.normalized || explicit;
+
+  const releaseRoot = normalizeString(process.env.METAPI_RELEASE_ROOT);
+  const manifestCandidates = [
+    releaseRoot ? join(releaseRoot, 'release.json') : '',
+    resolve(process.cwd(), 'release.json'),
+  ].filter(Boolean);
+  for (const manifestPath of manifestCandidates) {
+    if (!existsSync(manifestPath)) continue;
+    try {
+      const payload = JSON.parse(readFileSync(manifestPath, 'utf8')) as { version?: unknown };
+      const version = normalizeString(payload.version);
+      if (version) return parseStableSemVer(version)?.normalized || version;
+    } catch {}
+  }
+
   try {
     const packageJsonPath = resolve(process.cwd(), 'package.json');
-    const payload = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as { version?: string };
-    const version = String(payload?.version || '').trim();
+    const payload = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as { version?: unknown };
+    const version = normalizeString(payload.version);
     return version || '0.0.0';
   } catch {
     return '0.0.0';

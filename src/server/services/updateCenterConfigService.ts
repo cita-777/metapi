@@ -2,76 +2,87 @@ import { eq } from 'drizzle-orm';
 
 import { db, schema } from '../db/index.js';
 import { upsertSetting } from '../db/upsertSetting.js';
-import type { UpdateCenterVersionSource } from './updateCenterVersionService.js';
+
+/**
+ * The update center deliberately has a very small persisted configuration.
+ * Release discovery is always performed against the Metapi GitHub repository;
+ * callers cannot configure an arbitrary URL or deployment backend.
+ */
+export type UpdateCenterChannel = 'stable';
 
 export type UpdateCenterConfig = {
   enabled: boolean;
-  helperBaseUrl: string;
-  namespace: string;
-  releaseName: string;
-  chartRef: string;
-  imageRepository: string;
-  githubReleasesEnabled: boolean;
-  dockerHubTagsEnabled: boolean;
-  defaultDeploySource: UpdateCenterVersionSource;
+  channel: UpdateCenterChannel;
+  autoCheck: boolean;
 };
 
-export const UPDATE_CENTER_CONFIG_SETTING_KEY = 'update_center_k3s_config_v1';
+/** Current configuration key. The legacy deployment key is read-only compatibility data. */
+export const UPDATE_CENTER_CONFIG_SETTING_KEY = 'update_center_config_v2';
+export const UPDATE_CENTER_CONFIG_V2_SETTING_KEY = UPDATE_CENTER_CONFIG_SETTING_KEY;
+export const LEGACY_UPDATE_CENTER_CONFIG_SETTING_KEY = 'update_center_k3s_config_v1';
 
 export function getDefaultUpdateCenterConfig(): UpdateCenterConfig {
   return {
     enabled: false,
-    helperBaseUrl: '',
-    namespace: 'default',
-    releaseName: '',
-    chartRef: '',
-    imageRepository: '1467078763/metapi',
-    githubReleasesEnabled: true,
-    dockerHubTagsEnabled: true,
-    defaultDeploySource: 'github-release',
+    channel: 'stable',
+    autoCheck: false,
   };
 }
 
-function normalizeString(value: unknown, fallback = ''): string {
-  if (typeof value !== 'string') return fallback;
-  return value.trim();
+function asRecord(input: unknown): Record<string, unknown> {
+  return input && typeof input === 'object' && !Array.isArray(input)
+    ? input as Record<string, unknown>
+    : {};
 }
 
 function normalizeBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
 }
 
+/**
+ * Normalize only the public v2 shape.  Unknown legacy deployment fields are
+ * intentionally ignored so they cannot accidentally re-enable removed deployment behavior.
+ */
 export function normalizeUpdateCenterConfig(input: unknown): UpdateCenterConfig {
   const defaults = getDefaultUpdateCenterConfig();
-  const record = input && typeof input === 'object' ? input as Record<string, unknown> : {};
-  const defaultDeploySource = record.defaultDeploySource === 'docker-hub-tag'
-    ? 'docker-hub-tag'
-    : 'github-release';
-
+  const record = asRecord(input);
   return {
     enabled: normalizeBoolean(record.enabled, defaults.enabled),
-    helperBaseUrl: normalizeString(record.helperBaseUrl, defaults.helperBaseUrl),
-    namespace: normalizeString(record.namespace, defaults.namespace) || defaults.namespace,
-    releaseName: normalizeString(record.releaseName, defaults.releaseName),
-    chartRef: normalizeString(record.chartRef, defaults.chartRef),
-    imageRepository: normalizeString(record.imageRepository, defaults.imageRepository) || defaults.imageRepository,
-    githubReleasesEnabled: normalizeBoolean(record.githubReleasesEnabled, defaults.githubReleasesEnabled),
-    dockerHubTagsEnabled: normalizeBoolean(record.dockerHubTagsEnabled, defaults.dockerHubTagsEnabled),
-    defaultDeploySource,
+    channel: record.channel === 'stable' ? 'stable' : defaults.channel,
+    autoCheck: normalizeBoolean(record.autoCheck, defaults.autoCheck),
   };
 }
 
-export async function loadUpdateCenterConfig(): Promise<UpdateCenterConfig> {
-  const row = await db.select().from(schema.settings).where(eq(schema.settings.key, UPDATE_CENTER_CONFIG_SETTING_KEY)).get();
-  if (!row?.value) {
-    return getDefaultUpdateCenterConfig();
-  }
+function migrateLegacyConfig(input: unknown): UpdateCenterConfig {
+  const defaults = getDefaultUpdateCenterConfig();
+  const record = asRecord(input);
+  // Keep the user's release-check preference, but never inherit enabled=true
+  // from the removed external deployment path.
+  return {
+    enabled: false,
+    channel: 'stable',
+    autoCheck: normalizeBoolean(record.githubReleasesEnabled, defaults.autoCheck),
+  };
+}
 
+async function readSetting(key: string): Promise<unknown | null> {
+  const row = await db.select().from(schema.settings).where(eq(schema.settings.key, key)).get();
+  if (!row?.value) return null;
   try {
-    return normalizeUpdateCenterConfig(JSON.parse(row.value));
+    return JSON.parse(row.value);
   } catch {
-    return getDefaultUpdateCenterConfig();
+    return null;
   }
+}
+
+export async function loadUpdateCenterConfig(): Promise<UpdateCenterConfig> {
+  const current = await readSetting(UPDATE_CENTER_CONFIG_SETTING_KEY);
+  if (current !== null) return normalizeUpdateCenterConfig(current);
+
+  const legacy = await readSetting(LEGACY_UPDATE_CENTER_CONFIG_SETTING_KEY);
+  if (legacy !== null) return migrateLegacyConfig(legacy);
+
+  return getDefaultUpdateCenterConfig();
 }
 
 export async function saveUpdateCenterConfig(input: unknown): Promise<UpdateCenterConfig> {

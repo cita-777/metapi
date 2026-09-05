@@ -298,7 +298,7 @@ Alert scenarios: low balance warning, site/account anomalies, check-in failures,
 ### Lightweight Deployment
 
 - **Single Docker container** with a default local data directory, plus optional external MySQL / PostgreSQL runtime DB
-- Docker images support `amd64`, `arm64`, and `armv7l` (`linux/arm/v7`) server deployments
+- Docker images and server Release Bundles support `amd64` and `arm64` deployments
 - Full data import/export for worry-free migration
 
 ---
@@ -318,6 +318,7 @@ services:
       - "4000:4000"
     volumes:
       - ./data:/app/data
+      - ./runtime:/app/runtime
     environment:
       AUTH_TOKEN: ${AUTH_TOKEN:?AUTH_TOKEN is required}
       PROXY_TOKEN: ${PROXY_TOKEN:?PROXY_TOKEN is required}
@@ -325,6 +326,8 @@ services:
       BALANCE_REFRESH_CRON: "0 * * * *"
       PORT: ${PORT:-4000}
       DATA_DIR: /app/data
+      UPDATE_CENTER_RUNTIME_DIR: /app/runtime
+      UPDATE_CENTER_RUNTIME_PERSISTENT: "true"
       TZ: ${TZ:-Asia/Shanghai}
     restart: unless-stopped
 EOF
@@ -346,7 +349,9 @@ docker run -d --name metapi \
   -e AUTH_TOKEN=your-admin-token \
   -e PROXY_TOKEN=your-proxy-sk-token \
   -e TZ=Asia/Shanghai \
+  -e UPDATE_CENTER_RUNTIME_PERSISTENT=true \
   -v ./data:/app/data \
+  -v ./runtime:/app/runtime \
   --restart unless-stopped \
   1467078763/metapi:latest
 ```
@@ -356,8 +361,8 @@ docker run -d --name metapi \
 After starting, visit `http://localhost:4000` and log in with your `AUTH_TOKEN`!
 
 > [!NOTE]
-> Docker images support `amd64`, `arm64`, and `armv7l` (`linux/arm/v7`) server deployments.
-> Current `armv7l` support is limited to server / Docker usage and does not include Electron desktop packaging support.
+> Docker images and server Release Bundles support `amd64` and `arm64` server deployments.
+> The in-app updater requires a persistent `/app/runtime` volume for atomic switching and rollback.
 
 <!-- markdownlint-disable-next-line MD028 -->
 > [!IMPORTANT]
@@ -415,6 +420,8 @@ For Docker Compose, desktop installers, reverse proxy, upgrades, and database op
 | `PROXY_TOKEN` | Proxy API Bearer Token (**must change**) | `change-me-proxy-sk-token` |
 | `PORT` | Service listening port | `4000` |
 | `DATA_DIR` | Data directory for local runtime data | `./data` |
+| `UPDATE_CENTER_RUNTIME_DIR` | Runtime directory for in-app upgrades | `./runtime` |
+| `UPDATE_CENTER_RUNTIME_PERSISTENT` | Mark the runtime volume persistent and enable upgrade capability | `false` |
 | `TZ` | Timezone | `Asia/Shanghai` |
 | `ACCOUNT_CREDENTIAL_SECRET` | Account credential encryption key | Defaults to `AUTH_TOKEN` |
 

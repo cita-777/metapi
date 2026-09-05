@@ -15,7 +15,7 @@
 | 云服务器 / NAS / 家用主机长期运行 | Docker / Docker Compose | Docker 与 Docker Compose |
 | 免费云部署（24h 在线） | Render + TiDB + UptimeRobot | 注册 Render / TiDB Cloud / UptimeRobot 免费账号，详见 [Render 部署指南](./deployment.md#render-一键部署免费-24h-运行) |
 | 个人电脑本地使用 | 桌面版安装包 | 从 [Releases](https://github.com/cita-777/metapi/releases) 下载对应系统的桌面安装包 |
-| 二次开发 / 调试 | 本地开发 | Node.js 20+ 与 npm |
+| 二次开发 / 调试 | 本地开发 | Node.js 25+ 与 npm |
 
 > [!NOTE]
 > - 当前不再把 `Release` 压缩包 + Node.js 运行时作为独立部署路径。
@@ -39,6 +39,7 @@ services:
       - "4000:4000"
     volumes:
       - ./data:/app/data
+      - ./runtime:/app/runtime
     environment:
       AUTH_TOKEN: ${AUTH_TOKEN:?AUTH_TOKEN is required}
       PROXY_TOKEN: ${PROXY_TOKEN:?PROXY_TOKEN is required}
@@ -46,6 +47,8 @@ services:
       BALANCE_REFRESH_CRON: "0 * * * *"
       PORT: ${PORT:-4000}
       DATA_DIR: /app/data
+      UPDATE_CENTER_RUNTIME_DIR: /app/runtime
+      UPDATE_CENTER_RUNTIME_PERSISTENT: "true"
       TZ: ${TZ:-Asia/Shanghai}
     restart: unless-stopped
 ```

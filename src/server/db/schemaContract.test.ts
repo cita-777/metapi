@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildSchemaContractFromSqliteMigrations } from './schemaContract.js';
+import {
+  buildSchemaContractFromSqliteMigrations,
+  resolveGeneratedSchemaContractPath,
+  resolveMigrationsFolder,
+} from './schemaContract.js';
 
 describe('schema contract generation', () => {
   it('captures the current schema shape from sqlite migrations', () => {
@@ -76,6 +80,15 @@ describe('schema contract generation', () => {
         referencedTable: 'account_tokens',
         referencedColumns: ['id'],
       }),
+    );
+  });
+
+  it('resolves generated assets from the Bundle root when the runner supplies one', () => {
+    const env = { METAPI_RELEASE_ROOT: '/app/runtime/releases/1.2.3' };
+
+    expect(resolveMigrationsFolder(env)).toBe('/app/runtime/releases/1.2.3/drizzle');
+    expect(resolveGeneratedSchemaContractPath(env)).toBe(
+      '/app/runtime/releases/1.2.3/dist/server/db/generated/schemaContract.json',
     );
   });
 });

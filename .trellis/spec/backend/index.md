@@ -11,6 +11,7 @@
 | [错误处理](./error-handling.md) | 校验、领域错误、代理失败和 HTTP 响应 | `src/server/contracts/`、`src/server/proxy-core/orchestration/`、`src/server/routes/api/` |
 | [日志规范](./logging-guidelines.md) | 请求日志、后台日志、代理可观测性和脱敏 | `src/server/config.ts`、`src/server/services/proxyLogStore.ts` |
 | [质量规范](./quality-guidelines.md) | 类型检查、测试、架构检查和评审门禁 | `package.json`、`src/server/**/*.architecture.test.ts` |
+| [更新中心本地升级](./update-center-local-upgrade.md) | Release Bundle、runtime 指针、Runner、API/SSE 与回滚契约 | `src/server/services/updateCenterLocalUpdateService.ts`、`scripts/runtime/docker-runner.mjs` |
 
 平台 adapter 的继承关系和差异以 `src/server/services/platforms/base.ts`、`standardApiProvider.ts`、`oneApi.ts`、`veloera.ts`、`oneHub.ts`、`doneHub.ts` 为准。`OneApiAdapter` 与 `VeloeraAdapter` 都直接继承 `BasePlatformAdapter`，不能在任务设计中把它们写成 `StandardApiProviderAdapterBase` 的子类。
 

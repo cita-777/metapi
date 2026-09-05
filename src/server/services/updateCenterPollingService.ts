@@ -1,8 +1,9 @@
 import { db, schema } from '../db/index.js';
 import { formatUtcSqlDateTime } from './localTimeService.js';
 import { sendNotification } from './notifyService.js';
+import { loadUpdateCenterConfig } from './updateCenterConfigService.js';
 import { refreshUpdateCenterStatusCache } from './updateCenterStatusService.js';
-import { loadUpdateCenterRuntimeState, saveUpdateCenterRuntimeState } from './updateCenterRuntimeStateService.js';
+import { patchUpdateCenterRuntimeState } from './updateCenterRuntimeStateService.js';
 import type { UpdateReminderCandidate } from './updateCenterReminderService.js';
 
 const DEFAULT_UPDATE_CENTER_INTERVAL_MS = 15 * 60 * 1000;
@@ -10,65 +11,57 @@ const DEFAULT_UPDATE_CENTER_INTERVAL_MS = 15 * 60 * 1000;
 let pollingTimer: ReturnType<typeof setInterval> | null = null;
 let syncRunning = false;
 
-function summarizeError(error: unknown) {
+function summarizeError(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
-  return String(error || 'unknown error');
+  return String(error || 'unknown update error');
 }
 
 function buildReminderEvent(candidate: UpdateReminderCandidate | null) {
   if (!candidate) return null;
-  const title = candidate.kind === 'new-digest'
-    ? '更新中心发现新 digest'
-    : '更新中心发现新版本';
-  const message = candidate.kind === 'new-digest'
-    ? `检测到 ${candidate.displayVersion} 指向了新的镜像 digest，可前往更新中心查看并手动部署。`
-    : `检测到 ${candidate.displayVersion} 已可部署，可前往更新中心查看并手动部署。`;
   return {
-    title,
-    message,
+    title: '发现 Metapi 新版本',
+    message: `官方稳定版 ${candidate.displayVersion} 已发布，可前往更新中心一键升级。`,
   };
 }
 
-async function runSyncOnce() {
+async function runSyncOnce(): Promise<void> {
   if (syncRunning) return;
   syncRunning = true;
   const checkedAt = formatUtcSqlDateTime(new Date());
-
   try {
-    const {
-      candidate,
-      previousRuntime,
-      runtime,
-    } = await refreshUpdateCenterStatusCache(checkedAt);
-
+    const config = await loadUpdateCenterConfig();
+    if (!config.enabled || !config.autoCheck) return;
+    const { candidate, previousRuntime } = await refreshUpdateCenterStatusCache(checkedAt);
     if (candidate && candidate.candidateKey !== previousRuntime.lastNotifiedCandidateKey) {
-      const reminderEvent = buildReminderEvent(candidate);
-      if (reminderEvent) {
+      const event = buildReminderEvent(candidate);
+      if (event) {
         await db.insert(schema.events).values({
           type: 'status',
-          title: reminderEvent.title,
-          message: reminderEvent.message,
+          title: event.title,
+          message: event.message,
           level: 'info',
           relatedType: 'update_center',
           createdAt: checkedAt,
         }).run();
-        await saveUpdateCenterRuntimeState({
-          ...runtime,
+        await patchUpdateCenterRuntimeState({
           lastNotifiedCandidateKey: candidate.candidateKey,
           lastNotifiedAt: checkedAt,
         });
-        await sendNotification(reminderEvent.title, reminderEvent.message, 'info', {
-          bypassThrottle: true,
-        });
+        await sendNotification(event.title, event.message, 'info', { bypassThrottle: true });
       }
     }
   } catch (error) {
-    const previousRuntime = await loadUpdateCenterRuntimeState();
-    await saveUpdateCenterRuntimeState({
-      ...previousRuntime,
-      lastCheckedAt: checkedAt,
-      lastCheckError: summarizeError(error),
-    });
+    // Polling is fire-and-forget from the scheduler.  Persisting diagnostics
+    // is best-effort so a read-only/corrupt runtime cannot create an unhandled
+    // rejection on the timer callback itself.
+    try {
+      await patchUpdateCenterRuntimeState({
+        lastCheckedAt: checkedAt,
+        lastCheckError: summarizeError(error),
+      });
+    } catch {
+      // The original check failure remains the observable outcome.
+    }
   } finally {
     syncRunning = false;
   }
@@ -76,17 +69,19 @@ async function runSyncOnce() {
 
 export function startUpdateCenterPolling(intervalMs = DEFAULT_UPDATE_CENTER_INTERVAL_MS) {
   stopUpdateCenterPolling();
+  const safeIntervalMs = Math.max(10_000, Math.trunc(intervalMs));
   pollingTimer = setInterval(() => {
     void runSyncOnce();
-  }, Math.max(10_000, intervalMs));
+  }, safeIntervalMs);
   pollingTimer.unref?.();
   void runSyncOnce();
-  return { intervalMs: Math.max(10_000, intervalMs) };
+  return { intervalMs: safeIntervalMs };
 }
 
 export function stopUpdateCenterPolling() {
-  if (pollingTimer) {
-    clearInterval(pollingTimer);
-    pollingTimer = null;
-  }
+  if (!pollingTimer) return;
+  clearInterval(pollingTimer);
+  pollingTimer = null;
 }
+
+export const __runUpdateCenterSyncForTests = runSyncOnce;
