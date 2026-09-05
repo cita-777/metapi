@@ -17,6 +17,8 @@ services:
         value: "4000"
       - key: DATA_DIR
         value: /app/data
+      - key: UPDATE_CENTER_RUNTIME_PERSISTENT
+        value: "false"
       - key: NODE_ENV
         value: production
       - key: DB_TYPE

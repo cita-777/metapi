@@ -69,7 +69,6 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
   return {
     authToken: env.AUTH_TOKEN || 'change-me-admin-token',
     proxyToken: env.PROXY_TOKEN || 'change-me-proxy-sk-token',
-    deployHelperToken: parseOptionalSecret(env.DEPLOY_HELPER_TOKEN || env.UPDATE_CENTER_HELPER_TOKEN),
     codexClientId: parseOptionalSecret(env.CODEX_CLIENT_ID) || DEFAULT_CODEX_CLIENT_ID,
     claudeClientId: parseOptionalSecret(env.CLAUDE_CLIENT_ID) || DEFAULT_CLAUDE_CLIENT_ID,
     claudeClientSecret: parseOptionalSecret(env.CLAUDE_CLIENT_SECRET),
@@ -114,6 +113,8 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
     port: Math.trunc(parseNumber(env.PORT, 4000)),
     listenHost: parseListenHost(env),
     dataDir,
+    updateCenterRuntimeDir: (env.UPDATE_CENTER_RUNTIME_DIR || '').trim(),
+    updateCenterRuntimePersistent: parseBoolean(env.UPDATE_CENTER_RUNTIME_PERSISTENT, false),
     dbType: parseDbType(env.DB_TYPE),
     dbUrl: (env.DB_URL || '').trim(),
     dbSsl: parseBoolean(env.DB_SSL, false),

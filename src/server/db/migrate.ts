@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveRuntimeAssetPath } from './runtimeAssetPaths.js';
 
 type MigrationJournalEntry = {
   tag: string;
@@ -100,8 +101,12 @@ function resolveSqliteDbPath(): string {
   return resolve(raw);
 }
 
-function resolveMigrationsFolder(): string {
-  return resolve(dirname(fileURLToPath(import.meta.url)), '../../../drizzle');
+function resolveMigrationsFolder(env: NodeJS.ProcessEnv = process.env): string {
+  return resolveRuntimeAssetPath(
+    'drizzle',
+    resolve(dirname(fileURLToPath(import.meta.url)), '../../../drizzle'),
+    env,
+  );
 }
 
 function tableExists(sqlite: Database.Database, table: string): boolean {
@@ -635,6 +640,7 @@ function deduplicateLegacySitesForUniqueIndex(sqlite: Database.Database): boolea
 }
 
 export const __migrateTestUtils = {
+  resolveMigrationsFolder,
   splitMigrationStatements,
   normalizeSqlForMatch,
   extractFailedSqlFromError,
@@ -705,4 +711,8 @@ export function runSqliteMigrations(): void {
   console.log('Migration complete.');
 }
 
-runSqliteMigrations();
+if (config.dbType === 'sqlite') {
+  runSqliteMigrations();
+} else {
+  console.log(`[db] Skipping SQLite migrations for ${config.dbType}; external schema bootstrap runs during server startup.`);
+}

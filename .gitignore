@@ -1,6 +1,9 @@
 node_modules/
 dist/
 release/
+release-server/
+!/scripts/release/
+!/scripts/release/**
 data/*
 !data/.gitkeep
 .env

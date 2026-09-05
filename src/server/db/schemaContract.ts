@@ -8,6 +8,7 @@ import {
   normalizeSchemaMetadataDefaultValue,
   type LogicalColumnType,
 } from './schemaMetadata.js';
+import { resolveRuntimeAssetPath } from './runtimeAssetPaths.js';
 
 export type { LogicalColumnType } from './schemaMetadata.js';
 
@@ -86,12 +87,20 @@ function resolveDbDir(): string {
   return dirname(fileURLToPath(import.meta.url));
 }
 
-export function resolveMigrationsFolder(): string {
-  return resolve(resolveDbDir(), '../../../drizzle');
+export function resolveMigrationsFolder(env: NodeJS.ProcessEnv = process.env): string {
+  return resolveRuntimeAssetPath(
+    'drizzle',
+    resolve(resolveDbDir(), '../../../drizzle'),
+    env,
+  );
 }
 
-export function resolveGeneratedSchemaContractPath(): string {
-  return resolve(resolveDbDir(), 'generated/schemaContract.json');
+export function resolveGeneratedSchemaContractPath(env: NodeJS.ProcessEnv = process.env): string {
+  return resolveRuntimeAssetPath(
+    'dist/server/db/generated/schemaContract.json',
+    resolve(resolveDbDir(), 'generated/schemaContract.json'),
+    env,
+  );
 }
 
 function resolveMigrationFiles(migrationsFolder: string): string[] {

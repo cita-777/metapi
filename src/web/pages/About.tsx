@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
-import { api } from '../api.js';
+import { api, type UpdateCenterStatus } from '../api.js';
 import { tr } from '../i18n.js';
 import { SITE_DOCS_URL } from '../docsLink.js';
 import { buildUpdateReminder } from './helpers/updateCenterPresentation.js';
@@ -30,19 +30,15 @@ const TECH_STACK = [
 
 const LINKS = [
   { label: 'GitHub', href: 'https://github.com/cita-777/metapi', icon: '📂' },
-  { label: 'Docker Hub', href: 'https://hub.docker.com/r/1467078763/metapi', icon: '🐳' },
   { label: '站点文档', href: SITE_DOCS_URL, icon: '📚' },
 ];
 
 export default function About() {
   const [currentVersion, setCurrentVersion] = useState(`v${VERSION}`);
-  const [latestGitHubVersion, setLatestGitHubVersion] = useState('');
-  const [latestDockerHubVersion, setLatestDockerHubVersion] = useState('');
+  const [latestReleaseVersion, setLatestReleaseVersion] = useState('');
   const [updateReminder, setUpdateReminder] = useState(() => buildUpdateReminder({
     currentVersion: VERSION,
-    helper: null,
-    githubRelease: null,
-    dockerHubTag: null,
+    latestRelease: null,
   }));
 
   useEffect(() => {
@@ -50,22 +46,14 @@ export default function About() {
 
     const loadStatus = async () => {
       try {
-        const status = await api.getUpdateCenterStatus() as {
-          currentVersion?: string;
-          githubRelease?: { normalizedVersion?: string; displayVersion?: string; tagName?: string | null; digest?: string | null } | null;
-          dockerHubTag?: { normalizedVersion?: string; displayVersion?: string; tagName?: string | null; digest?: string | null } | null;
-          helper?: { imageTag?: string | null; imageDigest?: string | null } | null;
-        };
+        const status = await api.getUpdateCenterStatus() as UpdateCenterStatus;
         const resolvedCurrentVersion = String(status.currentVersion || VERSION);
         if (cancelled) return;
         setCurrentVersion(`v${resolvedCurrentVersion}`);
-        setLatestGitHubVersion(String(status.githubRelease?.displayVersion || status.githubRelease?.normalizedVersion || ''));
-        setLatestDockerHubVersion(String(status.dockerHubTag?.displayVersion || status.dockerHubTag?.normalizedVersion || ''));
+        setLatestReleaseVersion(String(status.latestRelease?.displayVersion || status.latestRelease?.normalizedVersion || ''));
         setUpdateReminder(buildUpdateReminder({
           currentVersion: resolvedCurrentVersion,
-          helper: status.helper,
-          githubRelease: status.githubRelease,
-          dockerHubTag: status.dockerHubTag,
+          latestRelease: status.latestRelease,
         }));
       } catch {
         // ignore update-center lookup failures on about page
@@ -114,8 +102,7 @@ export default function About() {
           </span>
         </div>
         <div style={{ display: 'grid', gap: 8, fontSize: 13 }}>
-          <div>GitHub 稳定版：{latestGitHubVersion || '暂无数据'}</div>
-          <div>Docker Hub：{latestDockerHubVersion || '暂无数据'}</div>
+          <div>官方稳定版：{latestReleaseVersion || '暂无数据'}</div>
           <div>
             <Link to="/settings" style={{ color: 'var(--color-primary)', textDecoration: 'none', fontWeight: 600 }}>
               前往更新中心

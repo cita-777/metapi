@@ -2,7 +2,12 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { generateDialectArtifacts, generateUpgradeSql, type GeneratedDialectArtifacts } from './schemaArtifactGenerator.js';
+import {
+  generateDialectArtifacts,
+  generateUpgradeSql,
+  resolveGeneratedArtifactPath,
+  type GeneratedDialectArtifacts,
+} from './schemaArtifactGenerator.js';
 import type { SchemaContract, SchemaContractColumn } from './schemaContract.js';
 
 const dbDir = dirname(fileURLToPath(import.meta.url));
@@ -23,6 +28,12 @@ function makeColumn(overrides: Partial<SchemaContractColumn> = {}): SchemaContra
 }
 
 describe('schema artifact generator', () => {
+  it('resolves generated dialect artifacts from the Bundle root', () => {
+    expect(resolveGeneratedArtifactPath('mysql.bootstrap.sql', {
+      METAPI_RELEASE_ROOT: '/app/runtime/releases/1.2.3',
+    })).toBe('/app/runtime/releases/1.2.3/dist/server/db/generated/mysql.bootstrap.sql');
+  });
+
   it('generates bootstrap sql for mysql and postgres from the contract', () => {
     const artifacts = generateDialectArtifacts(readSchemaContract());
 

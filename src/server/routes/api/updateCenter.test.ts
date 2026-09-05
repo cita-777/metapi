@@ -1,919 +1,479 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { eq } from 'drizzle-orm';
-import { resolveUpdateReminderCandidate } from '../../shared/updateCenterReminder.js';
+
 import { waitForBackgroundTaskToReachTerminalState } from '../../test-fixtures/backgroundTaskTestUtils.js';
 
-const {
-  fetchLatestStableGitHubReleaseMock,
-  fetchDockerHubTagCandidatesMock,
-  getUpdateCenterHelperStatusMock,
-  streamUpdateCenterDeployMock,
-  streamUpdateCenterRollbackMock,
-} = vi.hoisted(() => ({
-  fetchLatestStableGitHubReleaseMock: vi.fn(),
-  fetchDockerHubTagCandidatesMock: vi.fn(),
-  getUpdateCenterHelperStatusMock: vi.fn(),
-  streamUpdateCenterDeployMock: vi.fn(),
-  streamUpdateCenterRollbackMock: vi.fn(),
-}));
-
-vi.mock('../../services/updateCenterVersionService.js', async () => {
-  const actual = await vi.importActual<typeof import('../../services/updateCenterVersionService.js')>('../../services/updateCenterVersionService.js');
+const mocks = vi.hoisted(() => {
+  const defaultConfig = {
+    enabled: false,
+    channel: 'stable' as const,
+    autoCheck: false,
+  };
   return {
-    ...actual,
-    fetchLatestStableGitHubRelease: (...args: unknown[]) => fetchLatestStableGitHubReleaseMock(...args),
-    fetchDockerHubTagCandidates: (...args: unknown[]) => fetchDockerHubTagCandidatesMock(...args),
+    config: { ...defaultConfig },
+    defaultConfig,
+    loadConfig: vi.fn(),
+    normalizeConfig: vi.fn((input: unknown) => {
+      const value = input && typeof input === 'object' && !Array.isArray(input)
+        ? input as Record<string, unknown>
+        : {};
+      return {
+        enabled: typeof value.enabled === 'boolean' ? value.enabled : false,
+        channel: 'stable' as const,
+        autoCheck: typeof value.autoCheck === 'boolean' ? value.autoCheck : false,
+      };
+    }),
+    saveConfig: vi.fn(),
+    getLocalStatus: vi.fn(),
+    installRelease: vi.fn(),
+    rollbackRelease: vi.fn(),
+    getStatus: vi.fn(),
+    refreshStatus: vi.fn(),
   };
 });
 
-vi.mock('../../services/updateCenterHelperClient.js', () => ({
-  getUpdateCenterHelperStatus: (...args: unknown[]) => getUpdateCenterHelperStatusMock(...args),
-  streamUpdateCenterDeploy: (...args: unknown[]) => streamUpdateCenterDeployMock(...args),
-  streamUpdateCenterRollback: (...args: unknown[]) => streamUpdateCenterRollbackMock(...args),
+vi.mock('../../services/updateCenterConfigService.js', () => ({
+  loadUpdateCenterConfig: (...args: unknown[]) => mocks.loadConfig(...args),
+  normalizeUpdateCenterConfig: (...args: unknown[]) => mocks.normalizeConfig(...args),
+  saveUpdateCenterConfig: (...args: unknown[]) => mocks.saveConfig(...args),
 }));
 
-type DbModule = typeof import('../../db/index.js');
-type ConfigModule = typeof import('../../config.js');
-type RuntimeStateModule = typeof import('../../services/updateCenterRuntimeStateService.js');
+vi.mock('../../services/updateCenterLocalUpdateService.js', () => ({
+  getUpdateCenterLocalStatus: (...args: unknown[]) => mocks.getLocalStatus(...args),
+  installUpdateCenterRelease: (...args: unknown[]) => mocks.installRelease(...args),
+  rollbackUpdateCenter: (...args: unknown[]) => mocks.rollbackRelease(...args),
+}));
 
-function getNextPatchVersion(version: string) {
-  const match = String(version).trim().match(/^(\d+)\.(\d+)\.(\d+)$/);
-  if (!match) return '999.0.0';
-  return `${match[1]}.${match[2]}.${Number.parseInt(match[3], 10) + 1}`;
+vi.mock('../../services/updateCenterStatusService.js', () => ({
+  getUpdateCenterStatus: (...args: unknown[]) => mocks.getStatus(...args),
+  refreshUpdateCenterStatusCache: (...args: unknown[]) => mocks.refreshStatus(...args),
+}));
+
+type BackgroundTaskModule = typeof import('../../services/backgroundTaskService.js');
+
+const defaultRuntimeState = {
+  schemaVersion: 1,
+  updateState: 'healthy' as const,
+  currentVersion: '1.2.3',
+  previousVersion: '1.1.0',
+  installedVersions: ['1.2.3', '1.1.0'],
+  restartPending: false,
+  taskId: null,
+  lastError: null,
+  updatedAt: null,
+  lastCheckedAt: null,
+  lastCheckError: null,
+  lastResolvedSource: null,
+  lastResolvedDisplayVersion: null,
+  lastResolvedCandidateKey: null,
+  lastNotifiedCandidateKey: null,
+  lastNotifiedAt: null,
+  statusSnapshot: null,
+};
+
+function supportedLocalStatus(overrides: Record<string, unknown> = {}) {
+  return {
+    capability: {
+      supported: true,
+      mode: 'local-bundle',
+      reason: null,
+      runtimeDir: '/tmp/metapi-runtime',
+      architecture: 'amd64',
+      platform: 'linux',
+      nodeMajor: 25,
+      persistent: true,
+      writable: true,
+      currentVersion: '1.2.3',
+    },
+    state: { ...defaultRuntimeState },
+    pending: null,
+    installedVersions: [
+      { version: '1.2.3', path: '/tmp/metapi-runtime/releases/1.2.3', manifest: {}, current: true, previous: false },
+      { version: '1.1.0', path: '/tmp/metapi-runtime/releases/1.1.0', manifest: {}, current: false, previous: true },
+    ],
+    ...overrides,
+  };
+}
+
+function successfulInstall() {
+  return {
+    success: true,
+    taskId: 'task-placeholder',
+    targetVersion: '1.3.0',
+    previousVersion: '1.2.3',
+    releasePath: '/tmp/metapi-runtime/releases/1.3.0',
+    archiveSha256: 'a'.repeat(64),
+    restartRequired: true,
+    state: {
+      ...defaultRuntimeState,
+      updateState: 'restarting' as const,
+      currentVersion: '1.3.0',
+      previousVersion: '1.2.3',
+      restartPending: true,
+    },
+  };
+}
+
+function successfulRollback() {
+  return {
+    success: true,
+    taskId: 'task-placeholder',
+    targetVersion: '1.1.0',
+    previousVersion: '1.2.3',
+    restartRequired: true,
+    state: {
+      ...defaultRuntimeState,
+      updateState: 'restarting' as const,
+      currentVersion: '1.1.0',
+      previousVersion: '1.2.3',
+      restartPending: true,
+    },
+  };
 }
 
 describe('update center routes', () => {
   let app: FastifyInstance;
-  let db: DbModule['db'];
-  let schema: DbModule['schema'];
-  let appConfig: ConfigModule['config'];
-  let saveUpdateCenterRuntimeState: RuntimeStateModule['saveUpdateCenterRuntimeState'];
-  let loadUpdateCenterRuntimeState: RuntimeStateModule['loadUpdateCenterRuntimeState'];
-  let dataDir = '';
-  let resetBackgroundTasks: (() => void) | null = null;
-  let getBackgroundTask: ((taskId: string) => { status: string; logs?: Array<{ message: string }> } | null) | null = null;
-
-  async function saveValidConfig() {
-    const response = await app.inject({
-      method: 'PUT',
-      url: '/api/update-center/config',
-      payload: {
-        enabled: true,
-        helperBaseUrl: 'http://metapi-deploy-helper.ai.svc.cluster.local:9850',
-        namespace: 'ai',
-        releaseName: 'metapi',
-        chartRef: 'oci://ghcr.io/cita-777/charts/metapi',
-        imageRepository: '1467078763/metapi',
-        githubReleasesEnabled: true,
-        dockerHubTagsEnabled: true,
-        defaultDeploySource: 'github-release',
-      },
-    });
-
-    expect(response.statusCode).toBe(200);
-  }
+  let resetBackgroundTasks: BackgroundTaskModule['__resetBackgroundTasksForTests'];
+  let getBackgroundTask: BackgroundTaskModule['getBackgroundTask'];
+  let routesModule: typeof import('./updateCenter.js');
+  const restartHandler = vi.fn();
 
   beforeAll(async () => {
-    dataDir = mkdtempSync(join(tmpdir(), 'metapi-update-center-'));
-    process.env.DATA_DIR = dataDir;
-    process.env.DEPLOY_HELPER_TOKEN = 'helper-token';
-
-    await import('../../db/migrate.js');
-    const configModule = await import('../../config.js');
-    const dbModule = await import('../../db/index.js');
-    const routesModule = await import('./updateCenter.js');
+    process.env.NODE_ENV = 'test';
     const backgroundTaskModule = await import('../../services/backgroundTaskService.js');
-    const runtimeStateModule = await import('../../services/updateCenterRuntimeStateService.js');
-
-    appConfig = configModule.config;
-    db = dbModule.db;
-    schema = dbModule.schema;
+    routesModule = await import('./updateCenter.js');
     resetBackgroundTasks = backgroundTaskModule.__resetBackgroundTasksForTests;
     getBackgroundTask = backgroundTaskModule.getBackgroundTask;
-    saveUpdateCenterRuntimeState = runtimeStateModule.saveUpdateCenterRuntimeState;
-    loadUpdateCenterRuntimeState = runtimeStateModule.loadUpdateCenterRuntimeState;
-
+    routesModule.setUpdateCenterRestartHandlerForTests(restartHandler);
     app = Fastify();
     await app.register(routesModule.updateCenterRoutes);
   });
 
-  beforeEach(async () => {
-    fetchLatestStableGitHubReleaseMock.mockReset();
-    fetchDockerHubTagCandidatesMock.mockReset();
-    getUpdateCenterHelperStatusMock.mockReset();
-    streamUpdateCenterDeployMock.mockReset();
-    streamUpdateCenterRollbackMock.mockReset();
-    resetBackgroundTasks?.();
-
-    await db.delete(schema.events).run();
-    await db.delete(schema.settings).run();
+  beforeEach(() => {
+    mocks.config.enabled = mocks.defaultConfig.enabled;
+    mocks.config.channel = mocks.defaultConfig.channel;
+    mocks.config.autoCheck = mocks.defaultConfig.autoCheck;
+    mocks.loadConfig.mockReset().mockImplementation(async () => ({ ...mocks.config }));
+    mocks.normalizeConfig.mockClear();
+    mocks.saveConfig.mockReset().mockImplementation(async (input: unknown) => {
+      const value = mocks.normalizeConfig(input);
+      mocks.config.enabled = value.enabled;
+      mocks.config.channel = value.channel;
+      mocks.config.autoCheck = value.autoCheck;
+      return { ...value };
+    });
+    mocks.getLocalStatus.mockReset().mockResolvedValue(supportedLocalStatus());
+    mocks.installRelease.mockReset().mockResolvedValue(successfulInstall());
+    mocks.rollbackRelease.mockReset().mockResolvedValue(successfulRollback());
+    mocks.getStatus.mockReset().mockResolvedValue({ status: 'cached' });
+    mocks.refreshStatus.mockReset().mockResolvedValue({ status: 'refreshed' });
+    restartHandler.mockReset();
+    resetBackgroundTasks();
   });
 
   afterAll(async () => {
-    if (app) {
-      await app.close();
-    }
-    delete process.env.DATA_DIR;
-    delete process.env.DEPLOY_HELPER_TOKEN;
+    routesModule.setUpdateCenterRestartHandlerForTests(null);
+    await app.close();
   });
 
-  it('persists config and returns status with both version channels and helper summary', async () => {
-    const currentVersion = (await import('../../services/updateCenterVersionService.js')).getCurrentRuntimeVersion();
-    const githubRelease = {
-      source: 'github-release',
-      rawVersion: 'v1.3.0',
-      normalizedVersion: '1.3.0',
-      url: 'https://github.com/cita-777/metapi/releases/tag/v1.3.0',
-    } as const;
-    const dockerHubTag = {
-      source: 'docker-hub-tag',
-      rawVersion: 'latest',
-      normalizedVersion: 'latest',
-      tagName: 'latest',
-      digest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
-      displayVersion: 'latest @ sha256:efb2ee655386',
-      publishedAt: '2026-03-29T11:54:35.591877Z',
-      url: null,
-    } as const;
-    const dockerHubRecentTags = [
-      {
-        source: 'docker-hub-tag',
-        rawVersion: 'dev',
-        normalizedVersion: 'dev',
-        tagName: 'dev',
-        digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-        displayVersion: 'dev @ sha256:aaaaaaaaaaaa',
-        publishedAt: '2026-03-29T12:54:35.591877Z',
-        url: null,
-      },
-    ] as const;
-    const helperStatus = {
-      ok: true,
-      releaseName: 'metapi',
-      namespace: 'ai',
-      revision: '12',
-      imageRepository: '1467078763/metapi',
-      imageTag: 'latest',
-      imageDigest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
-      healthy: true,
-      history: [
-        {
-          revision: '11',
-          updatedAt: '2026-03-28T12:00:00Z',
-          status: 'superseded',
-          description: 'Rollback to stable digest',
-          imageRepository: '1467078763/metapi',
-          imageTag: 'main',
-          imageDigest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-        },
-      ],
-    } as const;
-    fetchLatestStableGitHubReleaseMock.mockResolvedValue(githubRelease);
-    fetchDockerHubTagCandidatesMock.mockResolvedValue({
-      primary: dockerHubTag,
-      recentNonStable: dockerHubRecentTags,
-    });
-    getUpdateCenterHelperStatusMock.mockResolvedValue(helperStatus);
+  it('exposes a public health probe with the running release version', async () => {
+    const response = await app.inject({ method: 'GET', url: '/healthz' });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ status: 'ok', ready: true, version: expect.any(String) });
+  });
 
-    const saveResponse = await app.inject({
+  it('persists the small v2 config and rejects removed deployment fields', async () => {
+    const response = await app.inject({
       method: 'PUT',
       url: '/api/update-center/config',
-      payload: {
-        enabled: true,
-        helperBaseUrl: 'http://metapi-deploy-helper.ai.svc.cluster.local:9850',
-        namespace: 'ai',
-        releaseName: 'metapi',
-        chartRef: 'oci://ghcr.io/cita-777/charts/metapi',
-        imageRepository: '1467078763/metapi',
-        githubReleasesEnabled: true,
-        dockerHubTagsEnabled: true,
-        defaultDeploySource: 'github-release',
-      },
+      payload: { enabled: true, channel: 'stable', autoCheck: true },
     });
-
-    expect(saveResponse.statusCode).toBe(200);
-    const savedRow = await db.select().from(schema.settings).where(eq(schema.settings.key, 'update_center_k3s_config_v1')).get();
-    expect(savedRow?.value).toContain('metapi-deploy-helper.ai.svc.cluster.local');
-
-    const statusResponse = await app.inject({
-      method: 'GET',
-      url: '/api/update-center/status',
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      success: true,
+      config: { enabled: true, channel: 'stable', autoCheck: true },
     });
+    expect(mocks.saveConfig).toHaveBeenCalledWith({ enabled: true, channel: 'stable', autoCheck: true });
 
-    expect(statusResponse.statusCode).toBe(200);
-    const expectedReminder = resolveUpdateReminderCandidate({
-      currentVersion,
-      helper: {
-        imageTag: helperStatus.imageTag,
-        imageDigest: helperStatus.imageDigest,
-      },
-      githubRelease,
-      dockerHubTag,
-    });
-    expect(expectedReminder).toBeTruthy();
-    expect(statusResponse.json()).toMatchObject({
-      currentVersion,
-      config: {
-        enabled: true,
-        namespace: 'ai',
-        releaseName: 'metapi',
-        defaultDeploySource: 'github-release',
-      },
-      githubRelease: {
-        normalizedVersion: '1.3.0',
-      },
-      dockerHubTag: {
-        normalizedVersion: 'latest',
-        displayVersion: 'latest @ sha256:efb2ee655386',
-        digest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
-      },
-      dockerHubRecentTags: [
-        {
-          normalizedVersion: 'dev',
-          displayVersion: 'dev @ sha256:aaaaaaaaaaaa',
-          digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-        },
-      ],
-      helper: {
-        ok: true,
-        healthy: true,
-        releaseName: 'metapi',
-        imageDigest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
-        history: [
-          {
-            revision: '11',
-            imageTag: 'main',
-          },
-        ],
-      },
-      runtime: {
-        lastCheckedAt: expect.any(String),
-        lastCheckError: null,
-        lastResolvedSource: expectedReminder?.source,
-        lastResolvedDisplayVersion: expectedReminder?.displayVersion,
-        lastResolvedCandidateKey: expectedReminder?.candidateKey,
-        lastNotifiedCandidateKey: null,
-        lastNotifiedAt: null,
-      },
-    });
-  });
-
-  it('returns partial status when a single version source lookup fails', async () => {
-    fetchLatestStableGitHubReleaseMock.mockRejectedValue(new Error('GitHub releases lookup timed out'));
-    fetchDockerHubTagCandidatesMock.mockResolvedValue({
-      primary: {
-        source: 'docker-hub-tag',
-        rawVersion: '1.3.1',
-        normalizedVersion: '1.3.1',
-        url: null,
-      },
-      recentNonStable: [],
-    });
-    getUpdateCenterHelperStatusMock.mockResolvedValue({
-      ok: true,
-      releaseName: 'metapi',
-      namespace: 'ai',
-      revision: '12',
-      imageRepository: '1467078763/metapi',
-      imageTag: '1.2.3',
-      healthy: true,
-    });
-
-    await saveValidConfig();
-
-    const statusResponse = await app.inject({
-      method: 'GET',
-      url: '/api/update-center/status',
-    });
-
-    expect(statusResponse.statusCode).toBe(200);
-    expect(statusResponse.json()).toMatchObject({
-      githubRelease: null,
-      dockerHubTag: {
-        normalizedVersion: '1.3.1',
-      },
-      helper: {
-        ok: true,
-        healthy: true,
-      },
-    });
-  });
-
-  it('rejects malformed config, deploy, and rollback payloads at the route boundary', async () => {
-    const invalidConfigResponse = await app.inject({
+    const invalid = await app.inject({
       method: 'PUT',
       url: '/api/update-center/config',
-      payload: {
-        enabled: 'false',
-      },
+      payload: { enabled: true, helperBaseUrl: 'http://old-helper.invalid' },
     });
-    expect(invalidConfigResponse.statusCode).toBe(400);
-    expect(invalidConfigResponse.json()).toMatchObject({
-      success: false,
-      message: 'Invalid enabled. Expected boolean.',
-    });
-
-    const invalidDeployResponse = await app.inject({
-      method: 'POST',
-      url: '/api/update-center/deploy',
-      payload: {
-        targetTag: 123,
-      },
-    });
-    expect(invalidDeployResponse.statusCode).toBe(400);
-    expect(invalidDeployResponse.json()).toMatchObject({
-      success: false,
-      message: 'Invalid targetTag. Expected string.',
-    });
-
-    const invalidRollbackResponse = await app.inject({
-      method: 'POST',
-      url: '/api/update-center/rollback',
-      payload: {
-        targetRevision: 123,
-      },
-    });
-    expect(invalidRollbackResponse.statusCode).toBe(400);
-    expect(invalidRollbackResponse.json()).toMatchObject({
-      success: false,
-      message: 'Invalid targetRevision. Expected string.',
-    });
+    expect(invalid.statusCode).toBe(400);
+    expect(mocks.saveConfig).toHaveBeenCalledTimes(1);
   });
 
-  it('rejects invalid update-center source enums at the route boundary', async () => {
-    const invalidConfigResponse = await app.inject({
-      method: 'PUT',
-      url: '/api/update-center/config',
-      payload: {
-        defaultDeploySource: 'nightly',
-      },
-    });
-    expect(invalidConfigResponse.statusCode).toBe(400);
-    expect(invalidConfigResponse.json()).toMatchObject({
-      success: false,
-      message: 'Invalid defaultDeploySource. Expected docker-hub-tag/github-release.',
-    });
+  it('delegates cached status and explicit checks without owning discovery', async () => {
+    const cached = { supported: true, currentVersion: '1.2.3', latestRelease: null };
+    const refreshed = { supported: true, currentVersion: '1.3.0', latestRelease: null };
+    mocks.getStatus.mockResolvedValue(cached);
+    mocks.refreshStatus.mockResolvedValue({ status: refreshed });
 
-    const invalidDeployResponse = await app.inject({
-      method: 'POST',
-      url: '/api/update-center/deploy',
-      payload: {
-        source: 'nightly',
-      },
-    });
-    expect(invalidDeployResponse.statusCode).toBe(400);
-    expect(invalidDeployResponse.json()).toMatchObject({
-      success: false,
-      message: 'Invalid source. Expected docker-hub-tag/github-release.',
-    });
-  });
+    const status = await app.inject({ method: 'GET', url: '/api/update-center/status' });
+    const check = await app.inject({ method: 'POST', url: '/api/update-center/check', payload: {} });
+    expect(status.statusCode).toBe(200);
+    expect(status.json()).toEqual(cached);
+    expect(check.statusCode).toBe(200);
+    expect(check.json()).toEqual(refreshed);
+    expect(mocks.getStatus).toHaveBeenCalledTimes(1);
+    expect(mocks.refreshStatus).toHaveBeenCalledTimes(1);
 
-  it('uses the shared config helper token when request-time env lookup is unavailable', async () => {
-    fetchLatestStableGitHubReleaseMock.mockResolvedValue({
-      source: 'github-release',
-      rawVersion: 'v1.3.0',
-      normalizedVersion: '1.3.0',
-      url: 'https://github.com/cita-777/metapi/releases/tag/v1.3.0',
-    });
-    getUpdateCenterHelperStatusMock.mockResolvedValue({
-      ok: true,
-      releaseName: 'metapi',
-      namespace: 'ai',
-      revision: '12',
-      imageRepository: '1467078763/metapi',
-      imageTag: '1.2.3',
-      healthy: true,
-    });
-
-    await saveValidConfig();
-
-    const originalEnvToken = process.env.DEPLOY_HELPER_TOKEN;
-    delete process.env.DEPLOY_HELPER_TOKEN;
-    (appConfig as typeof appConfig & { deployHelperToken?: string }).deployHelperToken = 'helper-token';
-
-    try {
-      const statusResponse = await app.inject({
-        method: 'GET',
-        url: '/api/update-center/status',
-      });
-
-      expect(statusResponse.statusCode).toBe(200);
-      expect(getUpdateCenterHelperStatusMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          helperBaseUrl: 'http://metapi-deploy-helper.ai.svc.cluster.local:9850',
-        }),
-        'helper-token',
-      );
-      expect(statusResponse.json()).toMatchObject({
-        helper: {
-          ok: true,
-          healthy: true,
-        },
-      });
-    } finally {
-      process.env.DEPLOY_HELPER_TOKEN = originalEnvToken;
-      delete (appConfig as typeof appConfig & { deployHelperToken?: string }).deployHelperToken;
-    }
-  });
-
-  it('reuses the persisted snapshot for status requests instead of re-querying external sources', async () => {
-    await saveValidConfig();
-    await saveUpdateCenterRuntimeState({
-      lastCheckedAt: '2026-03-31 09:00:00',
-      lastCheckError: null,
-      lastResolvedSource: 'docker-hub-tag',
-      lastResolvedDisplayVersion: 'latest @ sha256:efb2ee655386',
-      lastResolvedCandidateKey: 'docker-hub-tag:latest@sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
-      lastNotifiedCandidateKey: null,
-      lastNotifiedAt: null,
-      statusSnapshot: {
-        githubRelease: {
-          source: 'github-release',
-          rawVersion: 'v1.3.0',
-          normalizedVersion: '1.3.0',
-          url: 'https://github.com/cita-777/metapi/releases/tag/v1.3.0',
-          tagName: 'v1.3.0',
-          digest: null,
-          displayVersion: '1.3.0',
-          publishedAt: '2026-03-31T09:00:00Z',
-        },
-        dockerHubTag: {
-          source: 'docker-hub-tag',
-          rawVersion: 'latest',
-          normalizedVersion: 'latest',
-          tagName: 'latest',
-          digest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
-          displayVersion: 'latest @ sha256:efb2ee655386',
-          publishedAt: '2026-03-31T09:00:00Z',
-          url: null,
-        },
-        dockerHubRecentTags: [
-          {
-            source: 'docker-hub-tag',
-            rawVersion: 'dev',
-            normalizedVersion: 'dev',
-            tagName: 'dev',
-            digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-            displayVersion: 'dev @ sha256:aaaaaaaaaaaa',
-            publishedAt: '2026-03-31T09:05:00Z',
-            url: null,
-          },
-        ],
-        helper: {
-          ok: true,
-          releaseName: 'metapi',
-          namespace: 'ai',
-          revision: '12',
-          imageRepository: '1467078763/metapi',
-          imageTag: 'latest',
-          imageDigest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
-          healthy: true,
-          error: null,
-          history: [],
-        },
-      },
-    });
-
-    const statusResponse = await app.inject({
-      method: 'GET',
-      url: '/api/update-center/status',
-    });
-
-    expect(statusResponse.statusCode).toBe(200);
-    expect(statusResponse.json()).toMatchObject({
-      githubRelease: {
-        normalizedVersion: '1.3.0',
-      },
-      dockerHubTag: {
-        displayVersion: 'latest @ sha256:efb2ee655386',
-      },
-      dockerHubRecentTags: [
-        {
-          normalizedVersion: 'dev',
-          displayVersion: 'dev @ sha256:aaaaaaaaaaaa',
-        },
-      ],
-      helper: {
-        imageDigest: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
-      },
-      runtime: {
-        lastCheckedAt: '2026-03-31 09:00:00',
-      },
-    });
-    expect(fetchLatestStableGitHubReleaseMock).not.toHaveBeenCalled();
-    expect(fetchDockerHubTagCandidatesMock).not.toHaveBeenCalled();
-    expect(getUpdateCenterHelperStatusMock).not.toHaveBeenCalled();
-  });
-
-  it('forces a live refresh on manual check and persists the refreshed snapshot', async () => {
-    await saveValidConfig();
-    fetchLatestStableGitHubReleaseMock.mockResolvedValue({
-      source: 'github-release',
-      rawVersion: 'v1.3.1',
-      normalizedVersion: '1.3.1',
-      tagName: 'v1.3.1',
-      displayVersion: '1.3.1',
-      publishedAt: '2026-03-31T10:00:00Z',
-      url: 'https://github.com/cita-777/metapi/releases/tag/v1.3.1',
-    });
-    fetchDockerHubTagCandidatesMock.mockResolvedValue({
-      primary: {
-        source: 'docker-hub-tag',
-        rawVersion: 'latest',
-        normalizedVersion: 'latest',
-        tagName: 'latest',
-        digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
-        displayVersion: 'latest @ sha256:dddddddddddd',
-        publishedAt: '2026-03-31T10:00:00Z',
-        url: null,
-      },
-      recentNonStable: [
-        {
-          source: 'docker-hub-tag',
-          rawVersion: 'dev-20260417-f67ade2',
-          normalizedVersion: 'dev-20260417-f67ade2',
-          tagName: 'dev-20260417-f67ade2',
-          digest: 'sha256:abababababababababababababababababababababababababababababababab',
-          displayVersion: 'dev-20260417-f67ade2 @ sha256:abababababab',
-          publishedAt: '2026-03-31T10:05:00Z',
-          url: null,
-        },
-      ],
-    });
-    getUpdateCenterHelperStatusMock.mockResolvedValue({
-      ok: true,
-      releaseName: 'metapi',
-      namespace: 'ai',
-      revision: '13',
-      imageRepository: '1467078763/metapi',
-      imageTag: 'latest',
-      imageDigest: 'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
-      healthy: true,
-      history: [],
-    });
-
-    const checkResponse = await app.inject({
+    const invalid = await app.inject({
       method: 'POST',
       url: '/api/update-center/check',
+      payload: { unexpected: true },
+    });
+    expect(invalid.statusCode).toBe(400);
+    expect(invalid.json()).toMatchObject({ success: false, message: expect.stringContaining('unexpected') });
+    expect(mocks.refreshStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects updates while disabled or when local runtime capability is unsupported', async () => {
+    const disabled = await app.inject({
+      method: 'POST',
+      url: '/api/update-center/deploy',
+      payload: { targetVersion: '1.3.0' },
+    });
+    expect(disabled.statusCode).toBe(400);
+    expect(disabled.json()).toMatchObject({ success: false, message: 'update center is disabled' });
+    expect(mocks.getLocalStatus).not.toHaveBeenCalled();
+
+    mocks.config.enabled = true;
+    const unsupported = supportedLocalStatus();
+    unsupported.capability = {
+      ...unsupported.capability,
+      supported: false,
+      mode: 'unsupported',
+      reason: 'runtime directory is not marked as a persistent volume',
+    };
+    mocks.getLocalStatus.mockResolvedValue(unsupported);
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/update-center/deploy',
+      payload: { targetVersion: '1.3.0' },
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ success: false, message: expect.stringContaining('persistent') });
+    expect(mocks.installRelease).not.toHaveBeenCalled();
+  });
+
+  it('normalizes a target version, starts a background install task, and keeps SSE logs', async () => {
+    mocks.config.enabled = true;
+    mocks.installRelease.mockImplementation(async (input: { taskId?: string; targetVersion?: string; onProgress?: (value: unknown) => void }) => {
+      input.onProgress?.({ downloadedBytes: 12, totalBytes: 24 });
+      return successfulInstall();
     });
 
-    expect(checkResponse.statusCode).toBe(200);
-    expect(checkResponse.json()).toMatchObject({
-      githubRelease: {
-        normalizedVersion: '1.3.1',
-      },
-      dockerHubTag: {
-        digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
-      },
-      dockerHubRecentTags: [
-        {
-          normalizedVersion: 'dev-20260417-f67ade2',
-          digest: 'sha256:abababababababababababababababababababababababababababababababab',
-        },
-      ],
-      helper: {
-        revision: '13',
-      },
-      runtime: {
-        lastCheckedAt: expect.any(String),
-      },
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/update-center/deploy',
+      payload: { targetVersion: 'v1.3.0' },
     });
-    expect(fetchLatestStableGitHubReleaseMock).toHaveBeenCalledTimes(1);
-    expect(fetchDockerHubTagCandidatesMock).toHaveBeenCalledTimes(1);
-    expect(getUpdateCenterHelperStatusMock).toHaveBeenCalledTimes(1);
-    expect(await loadUpdateCenterRuntimeState()).toEqual(expect.objectContaining({
-      lastResolvedSource: 'github-release',
-      lastResolvedDisplayVersion: '1.3.1',
-      statusSnapshot: {
-        githubRelease: expect.objectContaining({
-          normalizedVersion: '1.3.1',
-        }),
-        dockerHubTag: expect.objectContaining({
-          digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
-        }),
-        dockerHubRecentTags: [
-          expect.objectContaining({
-            normalizedVersion: 'dev-20260417-f67ade2',
-          }),
-        ],
-        helper: expect.objectContaining({
-          revision: '13',
-        }),
-      },
+    expect(response.statusCode).toBe(202);
+    const body = response.json() as { task: { id: string }; reused: boolean };
+    expect(body.task.id).toBeTruthy();
+    expect(body.reused).toBe(false);
+
+    const task = await waitForBackgroundTaskToReachTerminalState(
+      (taskId) => getBackgroundTask(taskId),
+      body.task.id,
+    );
+    expect(task).toMatchObject({ status: 'succeeded' });
+    expect(task?.logs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ message: '准备安装官方 Release 1.3.0' }),
+      expect.objectContaining({ message: '下载进度 12/24 bytes' }),
+      expect.objectContaining({ message: '已切换到 1.3.0，等待应用进程重启并确认健康状态' }),
+    ]));
+    expect(mocks.installRelease).toHaveBeenCalledWith(expect.objectContaining({
+      targetVersion: '1.3.0',
+      taskId: body.task.id,
     }));
+    expect(restartHandler).toHaveBeenCalledTimes(1);
+
+    const stream = await app.inject({
+      method: 'GET',
+      url: `/api/update-center/tasks/${encodeURIComponent(body.task.id)}/stream`,
+    });
+    expect(stream.statusCode).toBe(200);
+    expect(stream.headers['content-type']).toContain('text/event-stream');
+    expect(stream.body).toContain('event: log');
+    expect(stream.body).toContain('准备安装官方 Release 1.3.0');
+    expect(stream.body).toContain('event: done');
   });
 
-  it('dedupes deploy requests while a task is already running', async () => {
-    const currentVersion = (await import('../../services/updateCenterVersionService.js')).getCurrentRuntimeVersion();
-    const targetVersion = getNextPatchVersion(currentVersion);
-    await saveValidConfig();
-
-    let releaseDeploy: (() => void) | null = null;
-    const deployGate = new Promise<void>((resolve) => {
-      releaseDeploy = resolve;
+  it('accepts the legacy targetTag alias and reuses a running update task', async () => {
+    mocks.config.enabled = true;
+    let releaseInstall: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => { releaseInstall = resolve; });
+    mocks.installRelease.mockImplementation(async () => {
+      await gate;
+      return successfulInstall();
     });
 
-    streamUpdateCenterDeployMock.mockImplementation(async (_input: unknown, onLog?: (message: string) => void) => {
-      onLog?.('Running helm upgrade');
-      await deployGate;
-      onLog?.('Deployment complete');
-      return {
-        success: true,
-        targetSource: 'github-release',
-        targetTag: targetVersion,
-        targetDigest: null,
-        previousRevision: '12',
-        finalRevision: '13',
-        rolledBack: false,
-        logLines: ['Running helm upgrade', 'Deployment complete'],
-      };
-    });
-
-    const firstResponse = await app.inject({
+    const first = await app.inject({
       method: 'POST',
       url: '/api/update-center/deploy',
-      payload: {
-        source: 'github-release',
-        targetVersion,
-      },
+      payload: { targetTag: '1.3.0' },
     });
-
-    const secondResponse = await app.inject({
+    const second = await app.inject({
       method: 'POST',
       url: '/api/update-center/deploy',
-      payload: {
-        source: 'github-release',
-        targetVersion,
-      },
+      payload: { targetVersion: 'v1.3.0' },
     });
-
-    expect(firstResponse.statusCode).toBe(202);
-    expect(secondResponse.statusCode).toBe(202);
-
-    const firstBody = firstResponse.json() as { task?: { id: string }; reused?: boolean };
-    const secondBody = secondResponse.json() as { task?: { id: string }; reused?: boolean };
-    expect(firstBody.task?.id).toBeTruthy();
-    expect(secondBody.task?.id).toBe(firstBody.task?.id);
-    expect(secondBody.reused).toBe(true);
-
-    releaseDeploy?.();
+    expect(first.statusCode).toBe(202);
+    expect(second.statusCode).toBe(202);
+    const firstBody = first.json() as { task: { id: string }; reused: boolean };
+    const secondBody = second.json() as { task: { id: string }; reused: boolean };
+    expect(secondBody).toMatchObject({ reused: true, task: { id: firstBody.task.id } });
+    releaseInstall?.();
+    await waitForBackgroundTaskToReachTerminalState((taskId) => getBackgroundTask(taskId), firstBody.task.id);
   });
 
-  it('rejects deploy requests when the update center is disabled', async () => {
-    const saveResponse = await app.inject({
-      method: 'PUT',
-      url: '/api/update-center/config',
-      payload: {
-        enabled: false,
-        helperBaseUrl: 'http://metapi-deploy-helper.ai.svc.cluster.local:9850',
-        namespace: 'ai',
-        releaseName: 'metapi',
-        chartRef: 'oci://ghcr.io/cita-777/charts/metapi',
-        imageRepository: '1467078763/metapi',
-        githubReleasesEnabled: true,
-        dockerHubTagsEnabled: true,
-        defaultDeploySource: 'github-release',
-      },
+  it('does not reuse an update task for a concurrent rollback request', async () => {
+    mocks.config.enabled = true;
+    let releaseInstall: (() => void) | null = null;
+    let releaseRollback: (() => void) | null = null;
+    const installGate = new Promise<void>((resolve) => { releaseInstall = resolve; });
+    const rollbackGate = new Promise<void>((resolve) => { releaseRollback = resolve; });
+    mocks.installRelease.mockImplementation(async () => {
+      await installGate;
+      return successfulInstall();
     });
-    expect(saveResponse.statusCode).toBe(200);
+    mocks.rollbackRelease.mockImplementation(async () => {
+      await rollbackGate;
+      return successfulRollback();
+    });
 
-    const deployResponse = await app.inject({
+    const updateResponse = await app.inject({
       method: 'POST',
       url: '/api/update-center/deploy',
-      payload: {
-        source: 'github-release',
-        targetVersion: '1.3.0',
-      },
+      payload: { targetVersion: '1.3.0' },
     });
-
-    expect(deployResponse.statusCode).toBe(400);
-    expect(deployResponse.json()).toMatchObject({
-      success: false,
-      message: 'update center is disabled',
-    });
-  });
-
-  it('forwards digest-aware deploy requests to the helper client', async () => {
-    await saveValidConfig();
-
-    streamUpdateCenterDeployMock.mockResolvedValue({
-      success: true,
-      targetSource: 'docker-hub-tag',
-      targetTag: 'latest',
-      targetDigest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
-      previousRevision: '13',
-      finalRevision: '14',
-      rolledBack: false,
-      logLines: ['Running helm upgrade'],
-    });
-
-    const deployResponse = await app.inject({
-      method: 'POST',
-      url: '/api/update-center/deploy',
-      payload: {
-        source: 'docker-hub-tag',
-        targetTag: 'latest',
-        targetDigest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
-      },
-    });
-
-    expect(deployResponse.statusCode).toBe(202);
-    expect(streamUpdateCenterDeployMock).toHaveBeenCalledWith(expect.objectContaining({
-      source: 'docker-hub-tag',
-      targetTag: 'latest',
-      targetDigest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
-    }), expect.any(Function));
-  });
-
-  it('rejects deploy requests when the target image is already running', async () => {
-    await saveValidConfig();
-
-    getUpdateCenterHelperStatusMock.mockResolvedValue({
-      ok: true,
-      releaseName: 'metapi',
-      namespace: 'ai',
-      revision: '17',
-      imageRepository: '1467078763/metapi',
-      imageTag: 'latest',
-      imageDigest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
-      healthy: true,
-    });
-
-    const deployResponse = await app.inject({
-      method: 'POST',
-      url: '/api/update-center/deploy',
-      payload: {
-        source: 'docker-hub-tag',
-        targetTag: 'latest',
-        targetDigest: 'sha256:efb2ee6553866bd3268dcc54c02fa5f9789728c51ed4af63328aaba6da67df35',
-      },
-    });
-
-    expect(deployResponse.statusCode).toBe(409);
-    expect(deployResponse.json()).toMatchObject({
-      success: false,
-      message: 'target image is already running',
-    });
-    expect(streamUpdateCenterDeployMock).not.toHaveBeenCalled();
-  });
-
-  it('does not reject a same-version deploy when the requested digest differs from the running image', async () => {
-    await saveValidConfig();
-
-    getUpdateCenterHelperStatusMock.mockResolvedValue({
-      ok: true,
-      releaseName: 'metapi',
-      namespace: 'ai',
-      revision: '17',
-      imageRepository: '1467078763/metapi',
-      imageTag: '1.2.3',
-      imageDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-      healthy: true,
-    });
-    streamUpdateCenterDeployMock.mockResolvedValue({
-      success: true,
-      targetSource: 'docker-hub-tag',
-      targetTag: '1.2.3',
-      targetDigest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-      previousRevision: '17',
-      finalRevision: '18',
-      rolledBack: false,
-      logLines: ['Running helm upgrade'],
-    });
-
-    const deployResponse = await app.inject({
-      method: 'POST',
-      url: '/api/update-center/deploy',
-      payload: {
-        source: 'docker-hub-tag',
-        targetTag: '1.2.3',
-        targetDigest: 'sha256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
-      },
-    });
-
-    expect(deployResponse.statusCode).toBe(202);
-    expect(streamUpdateCenterDeployMock).toHaveBeenCalledWith(expect.objectContaining({
-      targetTag: '1.2.3',
-      targetDigest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-    }), expect.any(Function));
-  });
-
-  it('normalizes invalid target digests to null before forwarding the deploy request', async () => {
-    await saveValidConfig();
-
-    streamUpdateCenterDeployMock.mockResolvedValue({
-      success: true,
-      targetSource: 'docker-hub-tag',
-      targetTag: 'latest',
-      targetDigest: null,
-      previousRevision: '13',
-      finalRevision: '14',
-      rolledBack: false,
-      logLines: ['Running helm upgrade'],
-    });
-
-    const deployResponse = await app.inject({
-      method: 'POST',
-      url: '/api/update-center/deploy',
-      payload: {
-        source: 'docker-hub-tag',
-        targetTag: 'latest',
-        targetDigest: 'not-a-real-digest',
-      },
-    });
-
-    expect(deployResponse.statusCode).toBe(202);
-    expect(streamUpdateCenterDeployMock).toHaveBeenCalledWith(expect.objectContaining({
-      targetTag: 'latest',
-      targetDigest: null,
-    }), expect.any(Function));
-  });
-
-  it('starts rollback tasks for explicit revision requests', async () => {
-    await saveValidConfig();
-
-    streamUpdateCenterRollbackMock.mockResolvedValue({
-      success: true,
-      targetRevision: '11',
-      finalRevision: '15',
-      logLines: ['Running helm rollback'],
-    });
-
     const rollbackResponse = await app.inject({
       method: 'POST',
       url: '/api/update-center/rollback',
-      payload: {
-        targetRevision: '11',
-      },
+      payload: { targetVersion: '1.1.0' },
     });
-
+    const updateBody = updateResponse.json() as { task: { id: string }; reused: boolean };
+    const rollbackBody = rollbackResponse.json() as { task: { id: string }; reused: boolean };
+    expect(updateResponse.statusCode).toBe(202);
     expect(rollbackResponse.statusCode).toBe(202);
-    expect(streamUpdateCenterRollbackMock).toHaveBeenCalledWith(expect.objectContaining({
-      targetRevision: '11',
-    }), expect.any(Function));
+    expect(updateBody.reused).toBe(false);
+    expect(rollbackBody.reused).toBe(false);
+    expect(rollbackBody.task.id).not.toBe(updateBody.task.id);
+
+    releaseInstall?.();
+    releaseRollback?.();
+    await waitForBackgroundTaskToReachTerminalState((taskId) => getBackgroundTask(taskId), updateBody.task.id);
+    await waitForBackgroundTaskToReachTerminalState((taskId) => getBackgroundTask(taskId), rollbackBody.task.id);
   });
 
-  it('streams deployment logs for known tasks and rejects unknown task ids', async () => {
-    await saveValidConfig();
-
-    const missingResponse = await app.inject({
-      method: 'GET',
-      url: '/api/update-center/tasks/missing-task/stream',
-    });
-
-    expect(missingResponse.statusCode).toBe(404);
-
-    streamUpdateCenterDeployMock.mockImplementation(async (_input: unknown, onLog?: (message: string) => void) => {
-      onLog?.('Resolving target version');
-      onLog?.('Waiting for rollout');
-      return {
-        success: true,
-        targetSource: 'docker-hub-tag',
-        targetTag: '1.3.1',
-        targetDigest: null,
-        previousRevision: '13',
-        finalRevision: '14',
-        rolledBack: false,
-        logLines: ['Resolving target version', 'Waiting for rollout'],
-      };
-    });
-
-    const deployResponse = await app.inject({
+  it('rejects an update while a previous restart is pending', async () => {
+    mocks.config.enabled = true;
+    mocks.getLocalStatus.mockResolvedValue(supportedLocalStatus({
+      state: { ...defaultRuntimeState, restartPending: true, updateState: 'restarting' },
+    }));
+    const response = await app.inject({
       method: 'POST',
       url: '/api/update-center/deploy',
-      payload: {
-        source: 'docker-hub-tag',
-        targetVersion: '1.3.1',
-      },
+      payload: { targetVersion: '1.3.0' },
     });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ success: false, message: 'an update restart is already pending' });
+  });
 
-    const deployBody = deployResponse.json() as { task: { id: string } };
-
+  it('starts a local rollback task through targetVersion and targetRevision aliases', async () => {
+    mocks.config.enabled = true;
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/update-center/rollback',
+      payload: { targetRevision: 'v1.1.0' },
+    });
+    expect(response.statusCode).toBe(202);
+    const body = response.json() as { task: { id: string } };
     const task = await waitForBackgroundTaskToReachTerminalState(
-      (taskId) => getBackgroundTask?.(taskId) ?? null,
-      deployBody.task.id,
+      (taskId) => getBackgroundTask(taskId),
+      body.task.id,
     );
     expect(task).toMatchObject({ status: 'succeeded' });
+    expect(mocks.rollbackRelease).toHaveBeenCalledWith(expect.objectContaining({
+      targetVersion: '1.1.0',
+      taskId: body.task.id,
+    }));
+  });
 
-    expect(getBackgroundTask?.(deployBody.task.id)?.logs).toEqual(expect.arrayContaining([
-      expect.objectContaining({ message: 'Resolving target version' }),
-      expect.objectContaining({ message: 'Waiting for rollout' }),
-    ]));
-
-    const streamResponse = await app.inject({
-      method: 'GET',
-      url: `/api/update-center/tasks/${deployBody.task.id}/stream`,
+  it('allows omitted versions to select the latest release or previous local version', async () => {
+    mocks.config.enabled = true;
+    const updateResponse = await app.inject({
+      method: 'POST',
+      url: '/api/update-center/deploy',
+      payload: {},
     });
+    expect(updateResponse.statusCode).toBe(202);
+    const updateBody = updateResponse.json() as { task: { id: string } };
+    await waitForBackgroundTaskToReachTerminalState((taskId) => getBackgroundTask(taskId), updateBody.task.id);
+    expect(mocks.installRelease).toHaveBeenCalledWith(expect.objectContaining({ taskId: updateBody.task.id }));
+    expect(mocks.installRelease.mock.calls.at(-1)?.[0]).not.toHaveProperty('targetVersion');
 
-    expect(streamResponse.statusCode).toBe(200);
-    expect(streamResponse.headers['content-type']).toContain('text/event-stream');
-    expect(streamResponse.body).toContain('event: log');
-    expect(streamResponse.body).toContain('Resolving target version');
-    expect(streamResponse.body).toContain('Waiting for rollout');
-    expect(streamResponse.body).toContain('event: done');
+    resetBackgroundTasks();
+    const rollbackResponse = await app.inject({
+      method: 'POST',
+      url: '/api/update-center/rollback',
+      payload: {},
+    });
+    expect(rollbackResponse.statusCode).toBe(202);
+    const rollbackBody = rollbackResponse.json() as { task: { id: string } };
+    await waitForBackgroundTaskToReachTerminalState((taskId) => getBackgroundTask(taskId), rollbackBody.task.id);
+    expect(mocks.rollbackRelease.mock.calls.at(-1)?.[0]).not.toHaveProperty('targetVersion');
+  });
+
+  it('rejects removed fields and invalid stable versions at the boundary', async () => {
+    mocks.config.enabled = true;
+    const removed = await app.inject({
+      method: 'POST',
+      url: '/api/update-center/deploy',
+      payload: { source: 'github-release', targetVersion: '1.3.0' },
+    });
+    expect(removed.statusCode).toBe(400);
+    expect(removed.json()).toMatchObject({ success: false, message: expect.stringContaining('source') });
+
+    const invalidVersion = await app.inject({
+      method: 'POST',
+      url: '/api/update-center/deploy',
+      payload: { targetVersion: '1.3.0-rc.1' },
+    });
+    expect(invalidVersion.statusCode).toBe(400);
+    expect(invalidVersion.json()).toMatchObject({ success: false, message: 'targetVersion must be a stable SemVer.' });
+
+    const invalidType = await app.inject({
+      method: 'POST',
+      url: '/api/update-center/rollback',
+      payload: { targetRevision: 11 },
+    });
+    expect(invalidType.statusCode).toBe(400);
+    expect(invalidType.json()).toMatchObject({ success: false, message: 'Invalid targetRevision. Expected string.' });
+  });
+
+  it('returns 404 for unknown task streams', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/update-center/tasks/missing/stream',
+    });
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({ success: false, message: 'task not found' });
+  });
+
+  it('does not write an SSE event after the response has closed', () => {
+    const write = vi.fn();
+    const raw = {
+      writableEnded: true,
+      destroyed: false,
+      closed: false,
+      write,
+      end: vi.fn(),
+    } as never;
+    expect(routesModule.writeSseEvent({ raw }, 'log', { message: 'late' })).toBe(false);
+    expect(write).not.toHaveBeenCalled();
   });
 });

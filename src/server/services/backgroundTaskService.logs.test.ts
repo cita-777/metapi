@@ -21,7 +21,7 @@ describe('background task log streaming', () => {
 
     const { task } = startBackgroundTask(
       {
-        type: 'update-center.deploy',
+        type: 'update-center.update',
         title: '更新部署',
       },
       async () => {
@@ -31,12 +31,12 @@ describe('background task log streaming', () => {
     );
 
     appendBackgroundTaskLog(task.id, 'Resolving target version');
-    appendBackgroundTaskLog(task.id, 'Running helm upgrade');
+    appendBackgroundTaskLog(task.id, 'Switching local release');
 
     const currentTask = getBackgroundTask(task.id);
     expect(currentTask?.logs).toEqual([
       expect.objectContaining({ seq: 1, message: 'Resolving target version' }),
-      expect.objectContaining({ seq: 2, message: 'Running helm upgrade' }),
+      expect.objectContaining({ seq: 2, message: 'Switching local release' }),
     ]);
 
     releaseRunner?.();
@@ -50,7 +50,7 @@ describe('background task log streaming', () => {
 
     const { task } = startBackgroundTask(
       {
-        type: 'update-center.deploy',
+        type: 'update-center.update',
         title: '更新部署',
       },
       async () => {
@@ -84,7 +84,7 @@ describe('background task log streaming', () => {
 
     const { task } = startBackgroundTask(
       {
-        type: 'update-center.deploy',
+        type: 'update-center.update',
         title: '更新部署',
       },
       async () => {

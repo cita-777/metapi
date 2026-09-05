@@ -17,33 +17,33 @@
 > - 当前不再提供 `Release` 压缩包 + Node.js 运行时的独立部署路径。
 > - 生产/长期运行请用 Docker 系列方案；桌面版面向单机本地使用；源码运行请走本地开发流程。
 
-## K3s / Helm 更新中心
+## 应用内一键升级
 
-如果你现在只是一个最普通的 Docker / Docker Compose 部署，请先跳过这节。
+Docker Compose 部署现在可以直接在 **设置 → 更新中心** 完成升级和回滚，
+不需要额外的集群组件或宿主机权限。
 
-这套能力只适用于：
+首次部署时请把两个目录都挂载出来：
 
-- 你已经在 K3s / Kubernetes 中部署了 Metapi
-- 而且当前 Metapi 是通过 Helm release 管理的
+```yaml
+services:
+  metapi:
+    volumes:
+      - ./data:/app/data
+      - ./runtime:/app/runtime
+```
 
-它不适用于：
+`/app/runtime` 保存版本目录、当前/上一版本指针和跨重启事务状态；
+容器重建不会覆盖已经安装的版本。应用只从 Metapi 官方 GitHub Release
+下载与当前 Linux `amd64`/`arm64` 匹配的服务器制品，并在切换前完成
+HTTPS、域名、大小、SHA-256、归档、架构和 Node 主版本校验。
 
-- 只有一个裸 Docker Compose 容器
-- 想直接从管理后台更新外部 Docker 主机上的容器
+启用更新中心后，点击“检查更新”获取稳定 Release，点击“一键升级”开始
+后台任务。候选版本会先写入新目录并原子切换，稳定 Runner 在 60 秒内检查
+`/healthz`；启动或迁移失败会自动恢复上一版本（最多一次）。数据库文件不会
+随应用代码回滚，升级前仍建议备份 `DATA_DIR`。
 
-但如果你是老用户，**正在计划从 Docker Compose 迁到 K3s / Helm，以获得滚动更新能力**，那么这一节和对应专题页是值得提前看的。它写的不是“怎么原地升级 Compose”，而是“迁移完成后你会如何使用更新中心”。
-
-如果你已经通过 Helm 在 K3s / Kubernetes 中部署 Metapi，并希望在管理后台中：
-
-- 查看当前运行版本
-- 检查 GitHub Releases / Docker Hub 的稳定版
-- 通过集群内 helper 手动触发一次升级
-
-请直接阅读：
-
-- [K3s 更新中心](./k3s-update-center.md)
-
-这页会单独说明 helper 部署、主服务 token 对齐、设置页字段含义、实际升级顺序和已知限制。
+如果 runtime 目录没有持久化标记、不可写、平台不是 Linux，或架构不在支持
+范围内，页面会明确显示“不支持”，不会执行下载和切换。
 
 ## Zeabur 一键部署
 
@@ -57,7 +57,7 @@
 
 - 拉取 `1467078763/metapi:latest` 镜像
 - 配置 HTTP 端口（4000）
-- 挂载持久化存储（`/app/data`）
+- 挂载持久化存储（`/app/data` 与 `/app/runtime`）
 - 分配域名
 
 部署时需要填写以下变量：
@@ -198,13 +198,16 @@ docker run -d --name metapi \
   -e AUTH_TOKEN=your-admin-token \
   -e PROXY_TOKEN=your-proxy-sk-token \
   -e TZ=Asia/Shanghai \
+  -e UPDATE_CENTER_RUNTIME_PERSISTENT=true \
   -v ./data:/app/data \
+  -v ./runtime:/app/runtime \
   --restart unless-stopped \
   1467078763/metapi:latest
 ```
 
 > **路径说明：**
 > - `./data:/app/data` — 相对路径，数据存到当前目录下的 `data` 文件夹
+> - `./runtime:/app/runtime` — 持久化应用内升级版本与回滚状态
 > - 也可以使用绝对路径：`/your/custom/path:/app/data`
 
 ## 桌面版部署（Windows / macOS / Linux）

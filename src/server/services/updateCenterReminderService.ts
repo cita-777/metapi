@@ -1,6 +1,10 @@
+export {
+  resolveUpdateReminderCandidate,
+  buildUpdateReminderCandidateKey,
+  compareStableVersions,
+  normalizeStableVersion,
+} from '../shared/updateCenterReminder.js';
 export type {
-  UpdateHelperRuntimeLike,
   UpdateReminderCandidate,
   UpdateVersionCandidateLike,
 } from '../shared/updateCenterReminder.js';
-export { resolveUpdateReminderCandidate } from '../shared/updateCenterReminder.js';

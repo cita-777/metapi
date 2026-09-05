@@ -9,6 +9,7 @@ import type {
   SchemaContractIndex,
   SchemaContractUnique,
 } from './schemaContract.js';
+import { resolveRuntimeAssetPath } from './runtimeAssetPaths.js';
 
 export interface GeneratedDialectArtifacts {
   mysqlBootstrap: string;
@@ -29,8 +30,15 @@ function resolveDbDir(): string {
   return dirname(fileURLToPath(import.meta.url));
 }
 
-export function resolveGeneratedArtifactPath(filename: string): string {
-  return resolve(resolveDbDir(), 'generated', filename);
+export function resolveGeneratedArtifactPath(
+  filename: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return resolveRuntimeAssetPath(
+    `dist/server/db/generated/${filename}`,
+    resolve(resolveDbDir(), 'generated', filename),
+    env,
+  );
 }
 
 function quoteIdentifier(dialect: SqlDialect, identifier: string): string {

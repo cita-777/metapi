@@ -42,6 +42,7 @@ src/server/
 │   ├── api/              # 管理端 API（sites / accounts / tokens / settings ...）
 │   └── proxy/            # OpenAI / Claude / Gemini 兼容代理入口
 ├── services/             # 业务服务、平台适配器、日志 / 文件 / 路由 / 迁移能力
+├── shared/               # 服务端内部共享的纯逻辑与兼容 facade
 └── transformers/         # 协议转换与共享归一化层
 ```
 
@@ -83,6 +84,8 @@ src/desktop/
 scripts/
 ├── dev/                  # 本地开发脚本（run-server.ts / restart.bat / db-smoke.ts）
 ├── desktop/              # Electron 打包钩子（afterPack / afterSign）
+├── release/               # Linux 服务器 Release Bundle 构建
+├── runtime/               # Docker 稳定 Runner 与其测试
 └── codemods/             # 一次性仓库级重构脚本
 ```
 

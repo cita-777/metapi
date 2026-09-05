@@ -274,7 +274,7 @@
 ### 📦 轻量部署
 
 - **单 Docker 容器**，默认本地数据目录部署，支持外接 MySQL / PostgreSQL 运行时数据库
-- Docker 镜像支持 `amd64`、`arm64` 和 `armv7l`（`linux/arm/v7`）服务端部署
+- Docker 镜像与服务器 Release Bundle 支持 `amd64`、`arm64` 两种架构
 - 数据完整导入导出，迁移无忧
 
 ---
@@ -301,6 +301,7 @@ services:
       - "4000:4000"
     volumes:
       - ./data:/app/data
+      - ./runtime:/app/runtime
     environment:
       AUTH_TOKEN: ${AUTH_TOKEN:?AUTH_TOKEN is required}
       PROXY_TOKEN: ${PROXY_TOKEN:?PROXY_TOKEN is required}
@@ -308,6 +309,8 @@ services:
       BALANCE_REFRESH_CRON: "0 * * * *"
       PORT: ${PORT:-4000}
       DATA_DIR: /app/data
+      UPDATE_CENTER_RUNTIME_DIR: /app/runtime
+      UPDATE_CENTER_RUNTIME_PERSISTENT: "true"
       TZ: ${TZ:-Asia/Shanghai}
     restart: unless-stopped
 EOF
@@ -329,7 +332,9 @@ docker run -d --name metapi \
   -e AUTH_TOKEN=your-admin-token \
   -e PROXY_TOKEN=your-proxy-sk-token \
   -e TZ=Asia/Shanghai \
+  -e UPDATE_CENTER_RUNTIME_PERSISTENT=true \
   -v ./data:/app/data \
+  -v ./runtime:/app/runtime \
   --restart unless-stopped \
   1467078763/metapi:latest
 ```
@@ -339,8 +344,8 @@ docker run -d --name metapi \
 启动后访问 `http://localhost:4000`，用 `AUTH_TOKEN` 登录即可。
 
 > [!NOTE]
-> Docker 镜像支持 `amd64`、`arm64` 和 `armv7l`（`linux/arm/v7`）服务端部署。
-> 当前 `armv7l` 支持范围仅限服务端 / Docker 运行，不包含桌面安装包。
+> Docker 镜像与服务器 Release Bundle 支持 `amd64`、`arm64` 服务端部署。
+> 设置页的更新中心依赖持久化 `/app/runtime` 卷，支持下载、原子切换和失败回滚。
 
 <!-- markdownlint-disable-next-line MD028 -->
 > [!IMPORTANT]

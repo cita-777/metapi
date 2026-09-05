@@ -22,7 +22,8 @@ spec:
 
     ## Data Persistence
 
-    Runtime data is stored in `/app/data` and persisted with a Zeabur volume.
+    Runtime data is stored in `/app/data`; the optional `/app/runtime` volume
+    keeps in-app Release upgrades across container recreation.
   variables:
     - key: AUTH_TOKEN
       type: STRING
@@ -54,6 +55,8 @@ spec:
         volumes:
           - id: data
             dir: /app/data
+          - id: runtime
+            dir: /app/runtime
         env:
           AUTH_TOKEN:
             default: ${AUTH_TOKEN}
@@ -72,6 +75,10 @@ spec:
             default: ${PORT}
           DATA_DIR:
             default: /app/data
+          UPDATE_CENTER_RUNTIME_DIR:
+            default: /app/runtime
+          UPDATE_CENTER_RUNTIME_PERSISTENT:
+            default: "true"
           TZ:
             default: ${TZ}
           NODE_ENV:
@@ -104,4 +111,4 @@ localization:
 
       ## 数据持久化
 
-      运行数据写入 `/app/data`，模板已配置 Zeabur Volume 挂载持久化。
+      运行数据写入 `/app/data`；如需应用内升级，请同时保留 `/app/runtime` Volume。
