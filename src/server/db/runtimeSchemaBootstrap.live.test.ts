@@ -9,6 +9,7 @@ import { bootstrapRuntimeDatabaseSchema } from './runtimeSchemaBootstrap.js';
 
 const mysqlRuntime = process.env.DB_PARITY_MYSQL_URL ? it : it.skip;
 const postgresRuntime = process.env.DB_PARITY_POSTGRES_URL ? it : it.skip;
+const LIVE_SCHEMA_TEST_TIMEOUT_MS = 30_000;
 
 async function resetMySqlSchema(connectionString: string): Promise<void> {
   const connection = await mysql.createConnection({ uri: connectionString });
@@ -89,7 +90,7 @@ describe('runtime schema bootstrap live upgrade path', () => {
 
     const live = await introspectLiveSchema({ dialect: 'mysql', connectionString });
     expect(live).toEqual(currentContract);
-  });
+  }, LIVE_SCHEMA_TEST_TIMEOUT_MS);
 
   postgresRuntime('upgrades postgres runtime schemas from an older live contract', async () => {
     const connectionString = process.env.DB_PARITY_POSTGRES_URL!;
@@ -107,5 +108,5 @@ describe('runtime schema bootstrap live upgrade path', () => {
 
     const live = await introspectLiveSchema({ dialect: 'postgres', connectionString });
     expect(live).toEqual(currentContract);
-  });
+  }, LIVE_SCHEMA_TEST_TIMEOUT_MS);
 });

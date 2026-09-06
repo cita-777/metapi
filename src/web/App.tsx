@@ -134,14 +134,17 @@ export function Login({ onLogin, t }: { onLogin: (token: string) => void; t: (te
   const [error, setError] = useState('');
   const capabilityRows = [
     {
+      index: '01',
       title: t('统一代理网关'),
-      description: t('一个 Key、一个入口，兼容 OpenAI / Claude 下游格式'),
+      description: t('一个 Key，一个入口，兼容 OpenAI / Claude 下游格式'),
     },
     {
+      index: '02',
       title: t('自动模型发现'),
       description: t('上游新增模型自动出现在模型列表，零配置路由生成'),
     },
     {
+      index: '03',
       title: t('智能路由引擎'),
       description: t('按成本、延迟、成功率自动选择最优通道，故障自动转移'),
     },
@@ -182,101 +185,89 @@ export function Login({ onLogin, t }: { onLogin: (token: string) => void; t: (te
   };
 
   return (
-    <div className="login-shell">
-      <div className="login-surface animate-scale-in">
-        <section className="login-brand-panel login-brand-panel-light">
-          <div className="login-brand-header">
-            <div className="brand-mark-frame brand-mark-frame-hero">
-              <div className="brand-mark-canvas">
-                <img src="/logo.png" alt="Metapi" className="login-brand-logo" />
-              </div>
-            </div>
-            <div className="login-brand-summary">
-              <div className="login-brand-name">Metapi</div>
-              <div className="login-brand-kicker">{t('中转站的中转站')}</div>
-            </div>
-          </div>
-          <div className="login-brand-copy-block">
-            <p className="login-brand-copy">
-              {t('把分散的 New API / One API / OneHub 等站点聚合成统一网关，自动发现模型、智能路由、成本更优。')}
+    <div className="landing-shell">
+      <header className="landing-nav">
+        <a className="landing-brand" href="/" aria-label="Metapi">
+          <span className="landing-brand-mark"><img src="/logo-transparent.png" alt="" /></span>
+          <span className="landing-brand-wordmark">METAPI</span>
+        </a>
+        <nav className="landing-nav-links" aria-label={t('页面导航')}>
+          <a href="#capabilities">{t('能力')}</a>
+          <a href={SITE_DOCS_URL} target="_blank" rel="noopener noreferrer">{t('部署文档')}</a>
+          <a href={SITE_GITHUB_URL} target="_blank" rel="noopener noreferrer" aria-label="GitHub">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2C6.48 2 2 6.59 2 12.25c0 4.53 2.87 8.38 6.84 9.73.5.1.68-.22.68-.49 0-.24-.01-1.04-.01-1.88-2.78.62-3.37-1.22-3.37-1.22-.45-1.2-1.11-1.52-1.11-1.52-.91-.64.07-.63.07-.63 1 .07 1.53 1.06 1.53 1.06.9 1.57 2.35 1.12 2.92.85.09-.67.35-1.12.64-1.38-2.22-.26-4.55-1.15-4.55-5.13 0-1.13.39-2.05 1.03-2.77-.1-.26-.45-1.31.1-2.73 0 0 .84-.28 2.75 1.06A9.3 9.3 0 0 1 12 6.91c.85 0 1.71.12 2.51.35 1.91-1.34 2.75-1.06 2.75-1.06.55 1.42.2 2.47.1 2.73.64.72 1.03 1.64 1.03 2.77 0 3.99-2.34 4.86-4.57 5.12.36.33.68.97.68 1.96 0 1.42-.01 2.56-.01 2.91 0 .27.18.59.69.49A10.27 10.27 0 0 0 22 12.25C22 6.59 17.52 2 12 2Z" /></svg>
+          </a>
+        </nav>
+      </header>
+
+      <main>
+        <section className="landing-hero">
+          <div className="landing-hero-copy">
+            <div className="landing-eyebrow"><span className="landing-status-dot" />{t('中转站的中转站')}</div>
+            <h1>{t('把分散的 AI 站点，')}<span>{t('接成一个入口。')}</span></h1>
+            <p className="landing-hero-description">
+              {t('聚合 New API、One API、OneHub 等上游站点，自动发现模型，按成本与稳定性智能路由。')}
             </p>
+            <form className="landing-login-form" onSubmit={(event) => { event.preventDefault(); void handleLogin(); }}>
+              <label className="sr-only" htmlFor="admin-token-input">{t('管理员令牌')}</label>
+              <input
+                id="admin-token-input"
+                type="password"
+                placeholder={t('输入管理员令牌')}
+                value={token}
+                onChange={(event) => { setToken(event.target.value); setError(''); }}
+                className="landing-token-input"
+                autoComplete="current-password"
+              />
+              <button type="submit" disabled={loading || !token} className="landing-login-submit">
+                {loading ? t('验证中...') : t('进入控制台')}
+                {!loading && <span aria-hidden="true">↗</span>}
+              </button>
+            </form>
+            {error && <div className="alert alert-error landing-login-error" role="alert">{error}</div>}
+            <div className="landing-meta-line">
+              <span>{t('本地部署')}</span><i />
+              <span>{t('多上游兼容')}</span><i />
+              <span>{t('智能路由')}</span>
+            </div>
           </div>
-          <div className="login-compat-line">{t('兼容 New API / One API / OneHub / DoneHub / Veloera / AnyRouter / Sub2API')}</div>
-          <div className="login-capability-list">
-            {capabilityRows.map((feature, index) => (
-              <div key={feature.title} className="login-capability-row">
-                <div className="login-capability-index">{String(index + 1).padStart(2, '0')}</div>
-                <div className="login-capability-content">
-                  <div className="login-capability-title">{feature.title}</div>
-                  <p className="login-capability-desc">{feature.description}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="login-brand-footer">
-            <a
-              href={SITE_GITHUB_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="login-icon-link"
-              aria-label="GitHub"
-              title="GitHub"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true" className="login-icon-link-svg">
-                <path
-                  fill="currentColor"
-                  d="M12 2C6.48 2 2 6.59 2 12.25c0 4.53 2.87 8.38 6.84 9.73.5.1.68-.22.68-.49 0-.24-.01-1.04-.01-1.88-2.78.62-3.37-1.22-3.37-1.22-.45-1.2-1.11-1.52-1.11-1.52-.91-.64.07-.63.07-.63 1 .07 1.53 1.06 1.53 1.06.9 1.57 2.35 1.12 2.92.85.09-.67.35-1.12.64-1.38-2.22-.26-4.55-1.15-4.55-5.13 0-1.13.39-2.05 1.03-2.77-.1-.26-.45-1.31.1-2.73 0 0 .84-.28 2.75 1.06A9.3 9.3 0 0 1 12 6.91c.85 0 1.71.12 2.51.35 1.91-1.34 2.75-1.06 2.75-1.06.55 1.42.2 2.47.1 2.73.64.72 1.03 1.64 1.03 2.77 0 3.99-2.34 4.86-4.57 5.12.36.33.68.97.68 1.96 0 1.42-.01 2.56-.01 2.91 0 .27.18.59.69.49A10.27 10.27 0 0 0 22 12.25C22 6.59 17.52 2 12 2Z"
-                />
-              </svg>
-            </a>
-            <a
-              href={SITE_DOCS_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="login-doc-link"
-            >
-              {t('部署文档')}
-            </a>
+
+          <div className="landing-hero-art" aria-hidden="true">
+            <div className="landing-art-grid" />
+            <div className="landing-art-orbit landing-art-orbit-one" />
+            <div className="landing-art-orbit landing-art-orbit-two" />
+            <div className="landing-art-core">
+              <img src="/logo-transparent.png" alt="" />
+            </div>
+            <div className="landing-art-label landing-art-label-top"><span />OPENAI</div>
+            <div className="landing-art-label landing-art-label-right">CLAUDE<span /></div>
+            <div className="landing-art-label landing-art-label-bottom"><span />MODEL ROUTER</div>
           </div>
         </section>
 
-        <section className="login-auth-stage">
-          <div className="login-auth-panel">
-            <div className="login-auth-eyebrow">{t('管理员入口')}</div>
-            <h2 className="login-auth-title">{t('登录')}</h2>
-            <p className="login-auth-copy">{t('请输入管理员令牌后继续。')}</p>
-            <label className="login-auth-label" htmlFor="admin-token-input">{t('管理员令牌')}</label>
-            <input
-              id="admin-token-input"
-              type="password"
-              placeholder={t('管理员令牌')}
-              value={token}
-              onChange={(e) => {
-                setToken(e.target.value);
-                setError('');
-              }}
-              onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-              className="login-auth-input"
-            />
-            {error && (
-              <div className="alert alert-error animate-shake" style={{ marginBottom: 12 }}>
-                {error}
-              </div>
-            )}
-            <button
-              onClick={handleLogin}
-              disabled={loading || !token}
-              className="btn btn-primary login-auth-submit"
-            >
-              {loading ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} />{t('验证中...')}</> : t('登录')}
-            </button>
-            <div className="login-auth-note">{t('仅校验本地服务访问权限，不会把令牌发送到第三方。')}</div>
-            <div className="login-auth-footer">
-              <span>{t('管理员登录后继续。')}</span>
-            </div>
+        <section className="landing-capabilities" id="capabilities" aria-labelledby="capabilities-title">
+          <div className="landing-section-heading">
+            <span className="landing-section-index">/ 01</span>
+            <h2 id="capabilities-title">{t('一个入口，完整掌控')}</h2>
+            <p>{t('把复杂的上游连接收拢到一处，让每次请求都走更合适的路径。')}</p>
+          </div>
+          <div className="landing-capability-list">
+            {capabilityRows.map((feature) => (
+              <article className="landing-capability-row" key={feature.title}>
+                <span className="landing-capability-index">{feature.index}</span>
+                <h3>{feature.title}</h3>
+                <p>{feature.description}</p>
+                <span className="landing-capability-arrow" aria-hidden="true">↗</span>
+              </article>
+            ))}
           </div>
         </section>
-      </div>
+      </main>
+
+      <footer className="landing-footer">
+        <span>METAPI / {t('统一 AI 网关')}</span>
+        <span>{t('兼容 New API / One API / OneHub / DoneHub / Veloera / AnyRouter / Sub2API')}</span>
+      </footer>
     </div>
   );
 }
