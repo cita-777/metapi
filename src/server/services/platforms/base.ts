@@ -60,6 +60,8 @@ export interface UserInfo {
 
 export interface TokenVerifyResult {
   tokenType: 'session' | 'apikey' | 'unknown';
+  /** 可诊断的验证失败原因，例如新版 ESA 需要真实浏览器。 */
+  message?: string;
   userInfo?: UserInfo | null;
   balance?: BalanceInfo | null;
   apiToken?: string | null;
