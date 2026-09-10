@@ -2,7 +2,11 @@ import { ApiTokenInfo, BasePlatformAdapter, CheckinResult, BalanceInfo, UserInfo
 import type { RequestInit as UndiciRequestInit } from 'undici';
 import { createContext, runInContext } from 'node:vm';
 import { withSiteProxyRequestInit } from '../siteProxy.js';
-import { fetchJsonWithShieldCookieRetry } from './newApiShield.js';
+import {
+  detectNewApiShieldChallenge,
+  fetchJsonWithShieldCookieRetry,
+  NEW_API_ESA_BROWSER_CHALLENGE_MESSAGE,
+} from './newApiShield.js';
 import {
   buildEndpointModelContextLengthScope,
   extractContextLengthsFromPayload,
@@ -567,11 +571,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
   }
 
   private isShieldChallenge(contentType: string, text: string): boolean {
-    const ct = (contentType || '').toLowerCase();
-    if (ct.includes('text/html') && /var\s+arg1\s*=|acw_sc__v2|cdn_sec_tc|<script/i.test(text)) {
-      return true;
-    }
-    return /var\s+arg1\s*=/.test(text);
+    return detectNewApiShieldChallenge(contentType, text) !== null;
   }
 
   private normalizeHeaders(headers?: UndiciRequestInit['headers']): Record<string, string> {
@@ -737,7 +737,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
   private async fetchJsonRawWithCookie<T>(
     url: string,
     options?: UndiciRequestInit,
-  ): Promise<{ data: T | null; cookieHeader: string }> {
+  ): Promise<{ data: T | null; cookieHeader: string; error?: string }> {
     const { fetch } = await import('undici');
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -767,8 +767,12 @@ export class NewApiAdapter extends BasePlatformAdapter {
       const parsed = this.parseJsonSafe<T>(text);
       if (parsed) return { data: parsed, cookieHeader };
 
-      if (!this.isShieldChallenge(res.headers.get('content-type') || '', text)) {
+      const challenge = detectNewApiShieldChallenge(res.headers.get('content-type') || '', text);
+      if (!challenge) {
         return { data: null, cookieHeader };
+      }
+      if (challenge === 'aliyun-esa-browser') {
+        return { data: null, cookieHeader, error: NEW_API_ESA_BROWSER_CHALLENGE_MESSAGE };
       }
       if (!cookieHeader) {
         return { data: null, cookieHeader };
@@ -787,6 +791,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
 
   private async fetchJsonRaw<T>(url: string, options?: UndiciRequestInit): Promise<T | null> {
     const result = await this.fetchJsonRawWithCookie<T>(url, options);
+    if (result.error) throw new Error(result.error);
     return result.data;
   }
 
@@ -881,12 +886,13 @@ export class NewApiAdapter extends BasePlatformAdapter {
   ): Promise<string[]> {
     for (const cookie of this.buildCookieCandidates(token)) {
       try {
-        const { data } = await fetchJsonWithShieldCookieRetry<any>(`${baseUrl}/v1/models`, {
+        const { data, error } = await fetchJsonWithShieldCookieRetry<any>(`${baseUrl}/v1/models`, {
           headers: {
             Authorization: `Bearer ${token}`,
             Cookie: cookie,
           },
         });
+        if (!data && error) throw new Error(error);
         const models = this.extractOpenAiModels(data, sourceScope);
         if (models.length > 0) return models;
       } catch {}
@@ -977,7 +983,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
     password: string,
   ): Promise<LoginResult> {
     try {
-      const { data: res, cookieHeader } = await this.fetchJsonRawWithCookie<any>(`${baseUrl}/api/user/login`, {
+      const { data: res, cookieHeader, error } = await this.fetchJsonRawWithCookie<any>(`${baseUrl}/api/user/login`, {
         method: 'POST',
         body: JSON.stringify({ username, password }),
         headers: {
@@ -985,7 +991,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
         },
       });
       if (!res) {
-        return { success: false, message: 'shield challenge blocked login' };
+        return { success: false, message: error || 'shield challenge blocked login' };
       }
 
       const accessToken = this.extractLoginAccessToken(res);
@@ -1020,7 +1026,13 @@ export class NewApiAdapter extends BasePlatformAdapter {
   }
 
   override async verifyToken(baseUrl: string, token: string, platformUserId?: number): Promise<TokenVerifyResult> {
-    const openAiModels = await this.getOpenAiModels(baseUrl, token);
+    let verificationFailureMessage: string | undefined;
+    let openAiModels: string[] = [];
+    try {
+      openAiModels = await this.getOpenAiModels(baseUrl, token);
+    } catch (err: any) {
+      verificationFailureMessage = err?.message || undefined;
+    }
     if (openAiModels.length > 0) {
       return { tokenType: 'apikey', models: openAiModels };
     }
@@ -1060,7 +1072,9 @@ export class NewApiAdapter extends BasePlatformAdapter {
           }
         }
       }
-    } catch {}
+    } catch (err: any) {
+      verificationFailureMessage ||= err?.message || undefined;
+    }
 
     const cookieRes = await this.fetchUserSelfByCookie(baseUrl, token, platformUserId);
     if (cookieRes?.success && cookieRes?.data) {
@@ -1084,7 +1098,10 @@ export class NewApiAdapter extends BasePlatformAdapter {
       }
     }
 
-    return { tokenType: 'unknown' };
+    return {
+      tokenType: 'unknown',
+      ...(verificationFailureMessage ? { message: verificationFailureMessage } : {}),
+    };
   }
 
   private async probeUserId(baseUrl: string, accessToken: string): Promise<number | null> {
@@ -1129,10 +1146,14 @@ export class NewApiAdapter extends BasePlatformAdapter {
       try {
         const headers = this.authHeaders(accessToken, resolvedUserId || undefined);
 
-        const res = await this.fetchJson<any>(`${baseUrl}/api/user/checkin`, {
+        const shieldResult = await fetchJsonWithShieldCookieRetry<any>(`${baseUrl}/api/user/checkin`, {
           method: 'POST',
           headers,
         });
+        const res = shieldResult.data;
+        if (!res && shieldResult.error) {
+          rememberFailure(this.formatRequestErrorMessage(new Error(shieldResult.error)) || shieldResult.error);
+        }
         if (res?.success) {
           return { success: true, message: res.message || 'checkin success', reward: res.data?.reward?.toString() };
         }
@@ -1156,11 +1177,15 @@ export class NewApiAdapter extends BasePlatformAdapter {
             'X-Requested-With': 'XMLHttpRequest',
           };
           this.appendUserIdCompatibilityHeaders(headers, cookieUserId);
-          const signInRes = await this.fetchJsonRaw<any>(`${baseUrl}/api/user/sign_in`, {
+          const signInShieldResult = await fetchJsonWithShieldCookieRetry<any>(`${baseUrl}/api/user/sign_in`, {
             method: 'POST',
             body: '{}',
             headers,
           });
+          const signInRes = signInShieldResult.data;
+          if (!signInRes && signInShieldResult.error) {
+            rememberFailure(this.formatRequestErrorMessage(new Error(signInShieldResult.error)) || signInShieldResult.error);
+          }
           if (signInRes?.success) {
             return {
               success: true,
@@ -1178,10 +1203,14 @@ export class NewApiAdapter extends BasePlatformAdapter {
         try {
           const headers: Record<string, string> = { Cookie: cookie };
           this.appendUserIdCompatibilityHeaders(headers, cookieUserId);
-          const res = await this.fetchJsonRaw<any>(`${baseUrl}/api/user/checkin`, {
+          const shieldResult = await fetchJsonWithShieldCookieRetry<any>(`${baseUrl}/api/user/checkin`, {
             method: 'POST',
             headers,
           });
+          const res = shieldResult.data;
+          if (!res && shieldResult.error) {
+            rememberFailure(this.formatRequestErrorMessage(new Error(shieldResult.error)) || shieldResult.error);
+          }
           if (res?.success) {
             return { success: true, message: res.message || 'checkin success', reward: res.data?.reward?.toString() };
           }
@@ -1235,9 +1264,13 @@ export class NewApiAdapter extends BasePlatformAdapter {
     };
 
     try {
-      const res = await this.fetchJson<any>(`${baseUrl}/api/user/self`, {
+      const shieldResult = await fetchJsonWithShieldCookieRetry<any>(`${baseUrl}/api/user/self`, {
         headers: this.authHeaders(accessToken, resolvedUserId || undefined),
       });
+      const res = shieldResult.data;
+      if (!res && shieldResult.error) {
+        rememberFailure(this.formatRequestErrorMessage(new Error(shieldResult.error)) || shieldResult.error);
+      }
       if (res?.success && res?.data) {
         return this.parseBalance(res.data);
       }

@@ -963,6 +963,15 @@ export async function accountsRoutes(app: FastifyInstance) {
         };
       }
 
+      // 适配器已经识别出的挑战/网络原因优先直接返回，避免被通用的
+      // “Session Token 验证失败” 覆盖，尤其是新版 ESA 浏览器验证提示。
+      if (typeof result.message === "string" && result.message.trim()) {
+        return {
+          success: false,
+          message: appendSessionTokenRebindHint(result.message),
+        };
+      }
+
       // Try to explain unknown failures: missing user id vs anti-bot challenge page.
       const detectVerifyFailureReason =
         async (): Promise<VerifyFailureReason> => {

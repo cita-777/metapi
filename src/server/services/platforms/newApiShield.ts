@@ -4,6 +4,58 @@ import { withSiteProxyRequestInit } from '../siteProxy.js';
 
 const SHIELD_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36';
 
+/**
+ * New API 站点可能返回的防护挑战类型。
+ * `aliyun-esa-browser` 依赖真实浏览器环境，不能在 node:vm 中伪造完成。
+ */
+export type NewApiShieldChallengeKind = 'legacy-acw-sc-v2' | 'aliyun-esa-browser';
+
+/** 新版 ESA 挑战的稳定提示，供登录、签到和余额刷新共用。 */
+export const NEW_API_ESA_BROWSER_CHALLENGE_MESSAGE =
+  '站点返回了阿里云 ESA 浏览器验证页面，需要真实浏览器执行 JavaScript，当前 HTTP 客户端无法完成验证';
+
+/**
+ * 让上层可以按错误类型处理挑战，而不是依赖 undici 的 HTML JSON 解析文案。
+ */
+export class NewApiShieldChallengeError extends Error {
+  readonly code = 'new_api_shield_challenge';
+  readonly challenge: NewApiShieldChallengeKind;
+
+  constructor(challenge: NewApiShieldChallengeKind) {
+    super(
+      challenge === 'aliyun-esa-browser'
+        ? NEW_API_ESA_BROWSER_CHALLENGE_MESSAGE
+        : '站点返回了防护验证页面，当前请求无法完成验证',
+    );
+    this.name = 'NewApiShieldChallengeError';
+    this.challenge = challenge;
+  }
+}
+
+/** 识别阿里云 ESA 新版 meta 挑战页；该挑战需要 DOM、时序和浏览器指纹。 */
+export function isAliyunEsaBrowserChallenge(text: string): boolean {
+  return /<meta\b[^>]*\bname\s*=\s*["']aliyun_waf_(?:aa|bb)["'][^>]*>/i.test(text || '');
+}
+
+/** 统一识别旧版 acw_sc__v2 与新版 ESA 挑战。 */
+export function detectNewApiShieldChallenge(
+  contentType: string,
+  text: string,
+): NewApiShieldChallengeKind | null {
+  if (isAliyunEsaBrowserChallenge(text)) return 'aliyun-esa-browser';
+
+  const normalizedType = (contentType || '').toLowerCase();
+  if (
+    (normalizedType.includes('text/html')
+      && /var\s+arg1\s*=|acw_sc__v2|cdn_sec_tc|<script/i.test(text))
+    || /var\s+arg1\s*=/.test(text)
+  ) {
+    return 'legacy-acw-sc-v2';
+  }
+
+  return null;
+}
+
 export function buildNewApiCookieCandidates(token: string): string[] {
   const trimmed = (token || '').trim();
   if (!trimmed) return [];
@@ -122,14 +174,6 @@ export function solveNewApiAcwScV2(html: string): string | null {
   return out || null;
 }
 
-function isShieldChallenge(contentType: string, text: string): boolean {
-  const normalizedType = (contentType || '').toLowerCase();
-  if (normalizedType.includes('text/html') && /var\s+arg1\s*=|acw_sc__v2|cdn_sec_tc|<script/i.test(text)) {
-    return true;
-  }
-  return /var\s+arg1\s*=/.test(text);
-}
-
 function normalizeHeaders(headers?: UndiciRequestInit['headers']): Record<string, string> {
   const output: Record<string, string> = {};
   if (!headers) return output;
@@ -204,10 +248,19 @@ function collectSetCookieHeaders(headers: Headers): string[] {
   return single ? [single] : [];
 }
 
+export interface ShieldCookieFetchResult<T> {
+  data: T | null;
+  cookieHeader: string;
+  /** 本次响应如果是挑战页，返回其类型而不是丢失上下文。 */
+  challenge?: NewApiShieldChallengeKind;
+  /** 面向日志/UI 的稳定错误提示。 */
+  error?: string;
+}
+
 export async function fetchJsonWithShieldCookieRetry<T>(
   url: string,
   options?: UndiciRequestInit,
-): Promise<{ data: T | null; cookieHeader: string }> {
+): Promise<ShieldCookieFetchResult<T>> {
   const { fetch } = await import('undici');
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -235,16 +288,45 @@ export async function fetchJsonWithShieldCookieRetry<T>(
     const parsed = parseJsonSafe<T>(text);
     if (parsed) return { data: parsed, cookieHeader };
 
-    if (!isShieldChallenge(response.headers.get('content-type') || '', text)) {
+    const challenge = detectNewApiShieldChallenge(response.headers.get('content-type') || '', text);
+    if (!challenge) {
+      if (!response.ok) {
+        return {
+          data: null,
+          cookieHeader,
+          error: `HTTP ${response.status}: ${text}`,
+        };
+      }
       return { data: null, cookieHeader };
     }
+
+    // 新版 ESA 不是旧版 acw_sc__v2 的换算题，返回稳定上下文供调用方停止重试。
+    if (challenge === 'aliyun-esa-browser') {
+      return {
+        data: null,
+        cookieHeader,
+        challenge,
+        error: NEW_API_ESA_BROWSER_CHALLENGE_MESSAGE,
+      };
+    }
+
     if (!cookieHeader) {
-      return { data: null, cookieHeader };
+      return {
+        data: null,
+        cookieHeader,
+        challenge,
+        error: '站点返回了防护验证页面，当前请求无法完成验证',
+      };
     }
 
     const acwScV2 = solveNewApiAcwScV2(text);
     if (!acwScV2) {
-      return { data: null, cookieHeader };
+      return {
+        data: null,
+        cookieHeader,
+        challenge,
+        error: '站点返回了防护验证页面，当前请求无法完成验证',
+      };
     }
 
     cookieHeader = upsertCookie(cookieHeader, 'acw_sc__v2', acwScV2);

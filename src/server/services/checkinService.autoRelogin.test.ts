@@ -323,6 +323,7 @@ describe('checkinService auto relogin', () => {
           accessToken: 'token',
           status: 'active',
           balance: 10,
+          lastBalanceRefresh: new Date().toISOString(),
           extraConfig: null,
         },
         sites: {
@@ -342,6 +343,93 @@ describe('checkinService auto relogin', () => {
 
     const firstInsertPayload = insertValuesMock.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(Number(firstInsertPayload?.reward)).toBeCloseTo(2.5, 6);
+  });
+
+  it('does not infer a reward from a stale balance snapshot', async () => {
+    selectAllMock.mockReturnValue([
+      {
+        accounts: {
+          id: 131,
+          username: 'stale-balance',
+          accessToken: 'token',
+          status: 'active',
+          balance: 10,
+          lastBalanceRefresh: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+          extraConfig: null,
+        },
+        sites: {
+          id: 131,
+          name: 'demo',
+          url: 'https://example.com',
+          platform: 'new-api',
+        },
+      },
+    ]);
+
+    adapterMock.checkin.mockResolvedValue({ success: true, message: 'checkin success' });
+    refreshBalanceMock.mockResolvedValue({ balance: 12.5, used: 0, quota: 12.5 });
+
+    const { checkinAccount } = await import('./checkinService.js');
+    await checkinAccount(131);
+
+    const firstInsertPayload = insertValuesMock.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(firstInsertPayload?.reward).toBeUndefined();
+  });
+
+  it('writes one summary event after a batch check-in', async () => {
+    const rows = [
+      {
+        accounts: {
+          id: 201,
+          username: 'batch-success',
+          accessToken: 'token-201',
+          status: 'active',
+          extraConfig: null,
+        },
+        sites: {
+          id: 201,
+          name: 'batch-site',
+          url: 'https://example.com',
+          platform: 'new-api',
+        },
+      },
+      {
+        accounts: {
+          id: 202,
+          username: 'batch-failed',
+          accessToken: 'token-202',
+          status: 'active',
+          extraConfig: null,
+        },
+        sites: {
+          id: 201,
+          name: 'batch-site',
+          url: 'https://example.com',
+          platform: 'new-api',
+        },
+      },
+    ];
+    selectAllMock
+      .mockReturnValueOnce(rows)
+      .mockReturnValueOnce([rows[0]])
+      .mockReturnValueOnce([rows[1]]);
+    adapterMock.checkin
+      .mockResolvedValueOnce({ success: true, message: 'checkin success' })
+      .mockResolvedValueOnce({ success: false, message: 'upstream unavailable' });
+
+    const { checkinAll } = await import('./checkinService.js');
+    const results = await checkinAll({ scheduleMode: 'cron' });
+
+    expect(results).toHaveLength(2);
+    const eventPayloads = insertValuesMock.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .filter((payload) => payload.type === 'checkin');
+    expect(eventPayloads).toHaveLength(1);
+    expect(eventPayloads[0]).toMatchObject({
+      title: 'checkin summary',
+      message: '签到批次完成：总计 2，成功 1，跳过 0，失败 1',
+      level: 'warning',
+    });
   });
 
   it('treats already checked in responses as successful checkins', async () => {
