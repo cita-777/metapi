@@ -31,6 +31,9 @@
 </a><a href="https://render.com/deploy?repo=https://github.com/cita-777/metapi">
   <img alt="Deploy to Render" src="https://render.com/images/deploy-to-render-button.svg" height="28">
 </a>
+<a href="https://zop.dev/zopday/app/deploy?image=1467078763/metapi:latest&port=4000">
+  <img alt="Deploy on ZopDay" src="https://zop.dev/deploytozopday-inkhard.svg" height="28">
+</a>
 </p>
 
 <p align="center">
@@ -318,6 +321,9 @@
 </a>
 <a href="https://render.com/deploy?repo=https://github.com/cita-777/metapi">
   <img alt="Deploy to Render" src="https://render.com/images/deploy-to-render-button.svg" height="28">
+</a>
+<a href="https://zop.dev/zopday/app/deploy?image=1467078763/metapi:latest&port=4000">
+  <img alt="Deploy on ZopDay" src="https://zop.dev/deploytozopday-inkhard.svg" height="28">
 </a>
 
 ### Docker Compose（推荐）
