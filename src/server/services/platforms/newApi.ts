@@ -1,8 +1,7 @@
 import { ApiTokenInfo, BasePlatformAdapter, CheckinResult, BalanceInfo, UserInfo, TokenVerifyResult, CreateApiTokenOptions, type SiteAnnouncement, type LoginResult } from './base.js';
 import type { RequestInit as UndiciRequestInit } from 'undici';
-import { createContext, runInContext } from 'node:vm';
 import { withSiteProxyRequestInit } from '../siteProxy.js';
-import { fetchJsonWithShieldCookieRetry } from './newApiShield.js';
+import { fetchJsonWithShieldCookieRetry, solveNewApiAcwScV2 } from './newApiShield.js';
 import {
   buildEndpointModelContextLengthScope,
   extractContextLengthsFromPayload,
@@ -394,78 +393,9 @@ export class NewApiAdapter extends BasePlatformAdapter {
     };
   }
 
-  private parseChallengeArg1(html: string): string | null {
-    const match = html.match(/var\s+arg1\s*=\s*['"]([0-9a-fA-F]+)['"]/);
-    return match?.[1]?.toUpperCase() || null;
-  }
-
-  private parseChallengeMapping(html: string): number[] | null {
-    const match = html.match(/for\(var m=\[([^\]]+)\],p=L\(0x115\)/);
-    if (!match?.[1]) return null;
-
-    const values = match[1].split(',').map((raw) => {
-      const v = raw.trim().toLowerCase();
-      if (!v) return Number.NaN;
-      if (v.startsWith('0x')) return Number.parseInt(v.slice(2), 16);
-      return Number.parseInt(v, 10);
-    });
-    if (values.some((v) => Number.isNaN(v))) return null;
-    return values;
-  }
-
-  private parseChallengeXorSeed(html: string): string | null {
-    const fnStart = html.indexOf('function a0i()');
-    const bStart = html.indexOf('function b(');
-    const rotateStart = html.indexOf('(function(a,c){');
-    const rotateEnd = html.indexOf('),!(function', rotateStart);
-    if (fnStart < 0 || bStart < 0 || bStart <= fnStart || rotateStart < 0 || rotateEnd < 0) {
-      return null;
-    }
-
-    const helperCode = html.slice(fnStart, bStart);
-    const rotateCode = `${html.slice(rotateStart, rotateEnd + 1)})`;
-
-    try {
-      const sandbox: Record<string, unknown> = { decodeURIComponent };
-      createContext(sandbox);
-      runInContext(helperCode, sandbox, { timeout: 100 });
-      runInContext(rotateCode, sandbox, { timeout: 100 });
-      const decoder = sandbox['a0j'];
-      if (typeof decoder !== 'function') return null;
-      const seed = (decoder as (idx: number) => unknown)(0x115);
-      if (typeof seed !== 'string' || !/^[0-9a-f]+$/i.test(seed)) return null;
-      return seed;
-    } catch {
-      return null;
-    }
-  }
-
   private solveAcwScV2(html: string): string | null {
-    const arg1 = this.parseChallengeArg1(html);
-    const mapping = this.parseChallengeMapping(html);
-    const xorSeed = this.parseChallengeXorSeed(html);
-    if (!arg1 || !mapping || !xorSeed) return null;
-
-    const q: string[] = [];
-    for (let i = 0; i < arg1.length; i += 1) {
-      const ch = arg1[i];
-      for (let j = 0; j < mapping.length; j += 1) {
-        if (mapping[j] === i + 1) {
-          q[j] = ch;
-        }
-      }
-    }
-
-    const reordered = q.join('');
-    let out = '';
-    for (let i = 0; i < reordered.length && i < xorSeed.length; i += 2) {
-      const left = Number.parseInt(reordered.slice(i, i + 2), 16);
-      const right = Number.parseInt(xorSeed.slice(i, i + 2), 16);
-      if (Number.isNaN(left) || Number.isNaN(right)) return null;
-      out += (left ^ right).toString(16).padStart(2, '0');
-    }
-
-    return out || null;
+    // Shared pure parser: never executes upstream-supplied script.
+    return solveNewApiAcwScV2(html);
   }
 
   private upsertCookie(cookieHeader: string, name: string, value: string): string {
