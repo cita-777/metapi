@@ -255,7 +255,7 @@ npx vitest run --pool=threads --poolOptions.threads.singleThread=true <test-file
   - 只有来自 `TRUSTED_PROXIES` 的请求才信任 `X-Forwarded-For`（Fastify `trustProxy` 为该列表，空时为 `false`）；管理员 IP 白名单、限流和设置页显示的当前 IP 都使用可信客户端 IP。
   - main 新增的 OAuth 起始/重绑路由不再直接读取 `X-Forwarded-Proto` / `X-Forwarded-Host`，改用同样受 `TRUSTED_PROXIES` 约束的 `request.protocol` / `request.host`。
   - 依赖升级：`fastify ^5.12.8`、`@fastify/static ^10.1.10`。
-  - **不兼容变更**：反向代理部署需要把代理地址配置到 `TRUSTED_PROXIES`。
+  - **不兼容变更**：反向代理部署需要把代理地址配置到 `TRUSTED_PROXIES`，并且不要把代理地址放进 `ADMIN_IP_ALLOWLIST`（否则所有请求都会被放行）。
 - **主要文件**：
   - `src/server/middleware/apiPath.ts`
   - `src/server/middleware/auth.ts`
