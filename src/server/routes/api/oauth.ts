@@ -157,16 +157,12 @@ function parseOptionalProjectId(value: unknown): string | undefined | null {
   return trimmed || undefined;
 }
 
+// X-Forwarded-Proto / X-Forwarded-Host are honored only when the peer is a
+// configured TRUSTED_PROXIES entry: Fastify's request.protocol / request.host
+// apply that trust decision (see buildFastifyOptions).
 function resolveRequestOrigin(request: FastifyRequest): string | undefined {
-  const forwardedProto = typeof request.headers['x-forwarded-proto'] === 'string'
-    ? request.headers['x-forwarded-proto'].split(',')[0]?.trim()
-    : '';
-  const protocol = forwardedProto || request.protocol || 'http';
-  const forwardedHost = typeof request.headers['x-forwarded-host'] === 'string'
-    ? request.headers['x-forwarded-host'].split(',')[0]?.trim()
-    : '';
-  const host = forwardedHost
-    || (typeof request.headers.host === 'string' ? request.headers.host.trim() : '');
+  const protocol = request.protocol || 'http';
+  const host = typeof request.host === 'string' ? request.host.trim() : '';
   if (!host) return undefined;
   return `${protocol}://${host}`;
 }

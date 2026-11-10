@@ -425,6 +425,21 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     expect(String(fetchMock.mock.calls[4]?.[0] || '')).toContain('/v1internal:onboardUser');
   });
 
+  it('ignores X-Forwarded-Host from untrusted peers when building ssh tunnel hints', async () => {
+    const startResponse = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/providers/codex/start',
+      headers: {
+        host: 'metapi.example',
+        'x-forwarded-host': 'attacker.invalid',
+      },
+    });
+
+    expect(startResponse.statusCode).toBe(200);
+    const startBody = startResponse.json() as { instructions?: { sshTunnelCommand?: string } };
+    expect(startBody.instructions?.sshTunnelCommand).toBe('ssh -L 1455:127.0.0.1:1455 root@metapi.example -p 22');
+  });
+
   it('starts a codex oauth session and exposes pending status', async () => {
     const startResponse = await app.inject({
       method: 'POST',
