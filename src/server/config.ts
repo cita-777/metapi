@@ -111,6 +111,8 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
     smtpTo: env.SMTP_TO || '',
     notifyCooldownSec: Math.max(0, Math.trunc(parseNumber(env.NOTIFY_COOLDOWN_SEC, 300))),
     adminIpAllowlist: parseCsvList(env.ADMIN_IP_ALLOWLIST),
+    // Socket peers (IPs/CIDRs) allowed to supply X-Forwarded-For. Empty = trust no proxy.
+    trustedProxies: parseCsvList(env.TRUSTED_PROXIES),
     port: Math.trunc(parseNumber(env.PORT, 4000)),
     listenHost: parseListenHost(env),
     dataDir,
@@ -179,7 +181,8 @@ export function buildFastifyOptions(
 ): FastifyServerOptions {
   return {
     logger: true,
-    trustProxy: true,
+    // Only honor forwarded headers from explicitly configured proxies.
+    trustProxy: appConfig.trustedProxies.length > 0 ? appConfig.trustedProxies : false,
     bodyLimit: appConfig.requestBodyLimit,
   };
 }

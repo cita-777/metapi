@@ -323,7 +323,8 @@ describe('settings and auth events', () => {
     expect(saved).toBeFalsy();
   });
 
-  it('returns current recognized admin IP in runtime settings response', async () => {
+  it('ignores forwarded headers from untrusted peers when reporting admin IP', async () => {
+    (config as any).trustedProxies = [];
     const response = await app.inject({
       method: 'GET',
       url: '/api/settings/runtime',
@@ -335,9 +336,29 @@ describe('settings and auth events', () => {
 
     expect(response.statusCode).toBe(200);
     const body = response.json() as { currentAdminIp?: string; serverTimeZone?: string };
-    expect(body.currentAdminIp).toBe('203.0.113.5');
+    expect(body.currentAdminIp).toBe('10.0.0.8');
     expect(typeof body.serverTimeZone).toBe('string');
     expect((body.serverTimeZone || '').length).toBeGreaterThan(0);
+  });
+
+  it('returns forwarded admin IP when the peer is a configured trusted proxy', async () => {
+    (config as any).trustedProxies = ['10.0.0.0/8'];
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/settings/runtime',
+        remoteAddress: '10.0.0.8',
+        headers: {
+          'x-forwarded-for': '203.0.113.5, 10.0.0.8',
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json() as { currentAdminIp?: string };
+      expect(body.currentAdminIp).toBe('203.0.113.5');
+    } finally {
+      (config as any).trustedProxies = [];
+    }
   });
 
   it('rejects proxy token that does not start with sk-', async () => {

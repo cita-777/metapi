@@ -133,6 +133,7 @@ Metapi 当前有三类主要配置入口：
 | `DATA_DIR` | 数据目录（SQLite 数据库存储位置） | `./data` |
 | `TZ` | 时区 | `Asia/Shanghai` |
 | `ACCOUNT_CREDENTIAL_SECRET` | 账号凭证加密密钥（用于加密存储的上游账号密码） | 默认使用 `AUTH_TOKEN` |
+| `TRUSTED_PROXIES` | 可信反向代理地址（逗号分隔的 IP / CIDR）。只有来自这些地址的连接才会采用 `X-Forwarded-For`；放在反向代理后面且依赖 `ADMIN_IP_ALLOWLIST` 或按 IP 限流时必须设置 | 空（不信任任何转发头） |
 
 ### 2. OAuth 与 Provider 登录
 

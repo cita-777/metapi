@@ -6,6 +6,12 @@ import {
   config,
 } from './config.js';
 import { authMiddleware } from './middleware/auth.js';
+import {
+  createAdminAuthHook,
+  isApiPath,
+  isProxyApiPath,
+  normalizeRequestPath,
+} from './middleware/apiPath.js';
 import { sitesRoutes } from './routes/api/sites.js';
 import { accountsRoutes } from './routes/api/accounts.js';
 import { checkinRoutes } from './routes/api/checkin.js';
@@ -203,12 +209,9 @@ const app = Fastify(buildFastifyOptions(config));
 
 await app.register(cors);
 
-// Auth middleware for /api routes
-app.addHook('onRequest', async (request, reply) => {
-  if (request.url.startsWith('/api/') && !isPublicApiRoute(request.url)) {
-    await authMiddleware(request, reply);
-  }
-});
+// Auth middleware for /api routes. The decision uses the matched route and the
+// router-equivalent normalized path, never the raw request-target prefix.
+app.addHook('onRequest', createAdminAuthHook(authMiddleware, isPublicApiRoute));
 
 // Register API routes
 await app.register(registerDesktopRoutes);
@@ -243,17 +246,18 @@ if (existsSync(webDir)) {
     setHeaders: (res, filePath) => {
       const normalizedPath = normalize(filePath);
       if (normalizedPath.includes(`${sep}assets${sep}`)) {
-        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        res.header('Cache-Control', 'public, max-age=31536000, immutable');
         return;
       }
       if (normalizedPath.endsWith(`${sep}index.html`)) {
-        res.setHeader('Cache-Control', 'no-cache');
+        res.header('Cache-Control', 'no-cache');
       }
     },
   });
   // SPA fallback
   app.setNotFoundHandler(async (request, reply) => {
-    if (!request.url.startsWith('/api/') && !request.url.startsWith('/v1/')) {
+    const normalizedPath = normalizeRequestPath(request.url);
+    if (!isApiPath(normalizedPath) && !isProxyApiPath(normalizedPath)) {
       return reply.sendFile('index.html');
     }
     reply.code(404).send({ error: 'Not found' });
