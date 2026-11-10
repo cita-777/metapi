@@ -242,6 +242,32 @@ npx vitest run --pool=threads --poolOptions.threads.singleThread=true <test-file
 - **交付物**：代码与持续变更日志；无新增 PDF 或截图。
 - **状态**：已完成，已推送到 PR 分支；本次日志修正随当前文档提交同步。
 
+## 2026-11-10
+
+### 14. v1.3.1 安全修复合回 main
+
+- **类型**：缺陷修复（安全）
+- **需求来源**：[GitHub Issue #629](https://github.com/cita-777/metapi/issues/629)、[GitHub Issue #631](https://github.com/cita-777/metapi/issues/631)；v1.3.1 已从 `release/1.3.x` 发布（[PR #634](https://github.com/cita-777/metapi/pull/634)）
+- **目标**：把 v1.3.1 的安全修复和依赖升级移植到 `main`，保证之后从 `main` 发版不会丢失修复。
+- **实现范围**：
+  - 管理端鉴权按路由等价的规范化路径判断，非 origin-form 的请求目标直接返回 400。
+  - New API 盾牌挑战改为纯数据解析，移除 `node:vm`，不再执行上游返回的脚本。
+  - 只有来自 `TRUSTED_PROXIES` 的请求才信任 `X-Forwarded-For`（Fastify `trustProxy` 为该列表，空时为 `false`）；管理员 IP 白名单、限流和设置页显示的当前 IP 都使用可信客户端 IP。
+  - main 新增的 OAuth 起始/重绑路由不再直接读取 `X-Forwarded-Proto` / `X-Forwarded-Host`，改用同样受 `TRUSTED_PROXIES` 约束的 `request.protocol` / `request.host`。
+  - 依赖升级：`fastify ^5.12.8`、`@fastify/static ^10.1.10`。
+  - **不兼容变更**：反向代理部署需要把代理地址配置到 `TRUSTED_PROXIES`。
+- **主要文件**：
+  - `src/server/middleware/apiPath.ts`
+  - `src/server/middleware/auth.ts`
+  - `src/server/config.ts`
+  - `src/server/index.ts`
+  - `src/server/services/platforms/newApiShield.ts`
+  - `src/server/routes/api/oauth.ts`
+  - `docs/configuration.md`、`docs/deployment.md`
+- **验证**：`npm run typecheck`、`npm run build` 通过；`vitest run` 465 个文件、2697 个测试通过（8 个跳过）。
+- **交付物**：代码与文档；无新增 PDF 或截图。
+- **状态**：已完成，等待合并。
+
 ## 后续记录模板
 
 复制下面模板追加到对应日期下，先记录需求来源，再补充实际实现和验证结果：
