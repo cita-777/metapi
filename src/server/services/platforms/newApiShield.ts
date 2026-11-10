@@ -1,5 +1,4 @@
 import type { RequestInit as UndiciRequestInit } from 'undici';
-import { createContext, runInContext } from 'node:vm';
 import { withSiteProxyRequestInit } from '../siteProxy.js';
 
 const SHIELD_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36';
@@ -67,38 +66,44 @@ function parseChallengeMapping(html: string): number[] | null {
   return values;
 }
 
-function parseChallengeXorSeed(html: string): string | null {
-  const fnStart = html.indexOf('function a0i()');
-  const bStart = html.indexOf('function b(');
-  const rotateStart = html.indexOf('(function(a,c){');
-  const rotateEnd = html.indexOf('),!(function', rotateStart);
-  if (fnStart < 0 || bStart < 0 || bStart <= fnStart || rotateStart < 0 || rotateEnd < 0) {
-    return null;
-  }
+const CHALLENGE_STRING_TABLE_PATTERN = /function\s+[\w$]+\(\)\s*\{\s*var\s+[\w$]+\s*=\s*\[([^\]]*)\]/;
+const CHALLENGE_STRING_LITERAL_PATTERN = /'([A-Za-z0-9+/=]*)'/g;
 
-  const helperCode = html.slice(fnStart, bStart);
-  const rotateCode = `${html.slice(rotateStart, rotateEnd + 1)})`;
-
+// The challenge page ships a string table encoded with a case-swapped base64
+// alphabet. Decode it as data only: upstream script is never executed.
+function decodeChallengeTableEntry(encoded: string): string | null {
+  const standard = encoded.replace(/[a-zA-Z]/g, (ch) => (
+    ch === ch.toLowerCase() ? ch.toUpperCase() : ch.toLowerCase()
+  ));
   try {
-    const sandbox: Record<string, unknown> = { decodeURIComponent };
-    createContext(sandbox);
-    runInContext(helperCode, sandbox, { timeout: 100 });
-    runInContext(rotateCode, sandbox, { timeout: 100 });
-    const decoder = sandbox.a0j;
-    if (typeof decoder !== 'function') return null;
-    const seed = (decoder as (index: number) => unknown)(0x115);
-    if (typeof seed !== 'string' || !/^[0-9a-f]+$/i.test(seed)) return null;
-    return seed;
+    return Buffer.from(standard, 'base64').toString('utf8');
   } catch {
     return null;
   }
 }
 
+function parseChallengeXorSeed(html: string, expectedLength: number): string | null {
+  const table = html.match(CHALLENGE_STRING_TABLE_PATTERN)?.[1];
+  if (!table || expectedLength <= 0) return null;
+
+  const candidates = new Set<string>();
+  for (const match of table.matchAll(CHALLENGE_STRING_LITERAL_PATTERN)) {
+    const decoded = decodeChallengeTableEntry(match[1]);
+    if (decoded && decoded.length === expectedLength && /^[0-9a-f]+$/i.test(decoded)) {
+      candidates.add(decoded.toLowerCase());
+    }
+  }
+
+  // Fail closed unless exactly one plausible seed is present.
+  return candidates.size === 1 ? [...candidates][0] : null;
+}
+
 export function solveNewApiAcwScV2(html: string): string | null {
   const arg1 = parseChallengeArg1(html);
   const mapping = parseChallengeMapping(html);
-  const xorSeed = parseChallengeXorSeed(html);
-  if (!arg1 || !mapping || !xorSeed) return null;
+  if (!arg1 || !mapping) return null;
+  const xorSeed = parseChallengeXorSeed(html, arg1.length);
+  if (!xorSeed) return null;
 
   const reordered: string[] = [];
   for (let i = 0; i < arg1.length; i += 1) {

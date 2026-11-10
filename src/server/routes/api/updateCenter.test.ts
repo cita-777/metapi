@@ -467,15 +467,16 @@ describe('update center routes', () => {
   });
 
   it('forces a live refresh on manual check and persists the refreshed snapshot', async () => {
+    const nextVersion = getNextPatchVersion((await import('../../services/updateCenterVersionService.js')).getCurrentRuntimeVersion());
     await saveValidConfig();
     fetchLatestStableGitHubReleaseMock.mockResolvedValue({
       source: 'github-release',
-      rawVersion: 'v1.3.1',
-      normalizedVersion: '1.3.1',
-      tagName: 'v1.3.1',
-      displayVersion: '1.3.1',
+      rawVersion: `v${nextVersion}`,
+      normalizedVersion: nextVersion,
+      tagName: `v${nextVersion}`,
+      displayVersion: nextVersion,
       publishedAt: '2026-03-31T10:00:00Z',
-      url: 'https://github.com/cita-777/metapi/releases/tag/v1.3.1',
+      url: `https://github.com/cita-777/metapi/releases/tag/v${nextVersion}`,
     });
     fetchLatestDockerHubTagMock.mockResolvedValue({
       source: 'docker-hub-tag',
@@ -507,7 +508,7 @@ describe('update center routes', () => {
     expect(checkResponse.statusCode).toBe(200);
     expect(checkResponse.json()).toMatchObject({
       githubRelease: {
-        normalizedVersion: '1.3.1',
+        normalizedVersion: nextVersion,
       },
       dockerHubTag: {
         digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
@@ -524,10 +525,10 @@ describe('update center routes', () => {
     expect(getUpdateCenterHelperStatusMock).toHaveBeenCalledTimes(1);
     expect(await loadUpdateCenterRuntimeState()).toEqual(expect.objectContaining({
       lastResolvedSource: 'github-release',
-      lastResolvedDisplayVersion: '1.3.1',
+      lastResolvedDisplayVersion: nextVersion,
       statusSnapshot: {
         githubRelease: expect.objectContaining({
-          normalizedVersion: '1.3.1',
+          normalizedVersion: nextVersion,
         }),
         dockerHubTag: expect.objectContaining({
           digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
@@ -790,6 +791,7 @@ describe('update center routes', () => {
   });
 
   it('streams deployment logs for known tasks and rejects unknown task ids', async () => {
+    const nextVersion = getNextPatchVersion((await import('../../services/updateCenterVersionService.js')).getCurrentRuntimeVersion());
     await saveValidConfig();
 
     const missingResponse = await app.inject({
@@ -805,7 +807,7 @@ describe('update center routes', () => {
       return {
         success: true,
         targetSource: 'docker-hub-tag',
-        targetTag: '1.3.1',
+        targetTag: nextVersion,
         targetDigest: null,
         previousRevision: '13',
         finalRevision: '14',
@@ -819,7 +821,7 @@ describe('update center routes', () => {
       url: '/api/update-center/deploy',
       payload: {
         source: 'docker-hub-tag',
-        targetVersion: '1.3.1',
+        targetVersion: nextVersion,
       },
     });
 

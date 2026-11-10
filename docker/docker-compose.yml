@@ -13,4 +13,5 @@ services:
       PORT: ${PORT:-4000}
       DATA_DIR: /app/data
       TZ: ${TZ:-Asia/Shanghai}
+      TRUSTED_PROXIES: "${TRUSTED_PROXIES:-}"
     restart: unless-stopped

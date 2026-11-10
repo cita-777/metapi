@@ -79,16 +79,38 @@ export function findInvalidIpAllowlistEntries(allowlist: string[]): string[] {
   return allowlist.filter((item) => parseAllowlistEntry(item) === null);
 }
 
-export function extractClientIp(remoteIp: string | null | undefined, xForwardedFor?: string | string[] | undefined): string {
-  if (Array.isArray(xForwardedFor)) {
-    const first = xForwardedFor.find((item) => item && item.trim().length > 0);
-    if (first) {
-      return normalizeIp(first.split(',')[0]);
-    }
-  } else if (typeof xForwardedFor === 'string' && xForwardedFor.trim().length > 0) {
-    return normalizeIp(xForwardedFor.split(',')[0]);
+function joinHeaderValues(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value.filter((item) => item && item.trim().length > 0).join(',');
+  return typeof value === 'string' ? value : '';
+}
+
+/**
+ * Resolve the client IP. Forwarded headers are only honored when the direct
+ * socket peer is a configured trusted proxy; the chain is then walked from the
+ * right, skipping trusted hops, so a client cannot prepend a spoofed address.
+ */
+export function extractClientIp(
+  remoteIp: string | null | undefined,
+  xForwardedFor?: string | string[] | undefined,
+  trustedProxies: string[] = config.trustedProxies,
+): string {
+  const peerIp = normalizeIp(remoteIp);
+  if (!trustedProxies || trustedProxies.length === 0) return peerIp;
+  if (!peerIp || !isIpAllowed(peerIp, trustedProxies)) return peerIp;
+
+  const forwardedChain = joinHeaderValues(xForwardedFor)
+    .split(',')
+    .map((item) => normalizeIp(item))
+    .filter((item) => item.length > 0);
+
+  let clientIp = peerIp;
+  for (let i = forwardedChain.length - 1; i >= 0; i -= 1) {
+    const hop = forwardedChain[i];
+    if (isIP(hop) === 0) break;
+    clientIp = hop;
+    if (!isIpAllowed(hop, trustedProxies)) break;
   }
-  return normalizeIp(remoteIp);
+  return clientIp;
 }
 
 export function isIpAllowed(clientIp: string, allowlist: string[]): boolean {
@@ -106,8 +128,12 @@ export function isIpAllowed(clientIp: string, allowlist: string[]): boolean {
   });
 }
 
+export function getRequestClientIp(request: FastifyRequest): string {
+  return extractClientIp(request.socket?.remoteAddress ?? request.ip, request.headers['x-forwarded-for']);
+}
+
 export async function authMiddleware(request: FastifyRequest, reply: FastifyReply) {
-  const clientIp = extractClientIp(request.ip, request.headers['x-forwarded-for']);
+  const clientIp = getRequestClientIp(request);
   if (!isIpAllowed(clientIp, config.adminIpAllowlist)) {
     reply.code(403).send({ error: 'IP not allowed' });
     return;
