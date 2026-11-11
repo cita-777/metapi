@@ -3,6 +3,7 @@ export const PAYLOAD_RULE_PROTOCOL_OPTIONS: Array<{ value: string; label: string
   { value: 'codex', label: 'Codex' },
   { value: 'sub2api', label: 'Sub2API' },
   { value: 'orcarouter', label: 'OrcaRouter' },
+  { value: 'cheaperinference', label: 'Cheaper Inference' },
   { value: 'new-api', label: 'New API' },
   { value: 'one-api', label: 'One API' },
   { value: 'cliproxyapi', label: 'CLIProxyAPI' },

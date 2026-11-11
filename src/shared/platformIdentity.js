@@ -18,6 +18,7 @@ export const PLATFORM_ALIASES = Object.assign(Object.create(null), {
   veloera: 'veloera',
   sub2api: 'sub2api',
   orcarouter: 'orcarouter',
+  cheaperinference: 'cheaperinference',
   openai: 'openai',
   codex: 'codex',
   'chatgpt-codex': 'codex',
@@ -95,6 +96,7 @@ export function detectPlatformByUrlHint(url) {
   // subdomains) so a token is never routed to an unrelated URL containing the
   // provider name in a path, query, or userinfo component.
   if (host === 'api.orcarouter.ai' || host.endsWith('.orcarouter.ai')) return 'orcarouter';
+  if (host === 'api.cheaperinference.com' || host.endsWith('.cheaperinference.com')) return 'cheaperinference';
 
   return undefined;
 }

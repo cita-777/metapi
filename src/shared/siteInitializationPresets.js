@@ -86,6 +86,10 @@ const INFISTAR_RECOMMENDED_MODELS = Object.freeze([
   'qwen-plus',
 ]);
 
+const CHEAPERINFERENCE_RECOMMENDED_MODELS = Object.freeze([
+  'gpt-5.4-mini',
+]);
+
 const SITE_INITIALIZATION_PRESETS = Object.freeze([
   Object.freeze({
     id: 'codingplan-openai',
@@ -310,6 +314,21 @@ const SITE_INITIALIZATION_PRESETS = Object.freeze([
     docsUrl: 'https://doc.infistar.cc/api-overview',
     matches(url) {
       return matchesHostAndPaths(url, 'infistar.cc', ['/', '/v1']);
+    },
+  }),
+  Object.freeze({
+    id: 'cheaperinference-openai',
+    label: 'Cheaper Inference / OpenAI',
+    providerLabel: 'Cheaper Inference',
+    description: '适合 Cheaper Inference 官方 OpenAI 兼容入口，用 ci_live_ API Key 直连网关；模型以当前 API Key 的实时模型列表为准。',
+    platform: 'cheaperinference',
+    defaultUrl: 'https://api.cheaperinference.com/v1',
+    initialSegment: 'apikey',
+    recommendedSkipModelFetch: false,
+    recommendedModels: CHEAPERINFERENCE_RECOMMENDED_MODELS,
+    docsUrl: 'https://cheaperinference.com/docs',
+    matches(url) {
+      return matchesHostAndPaths(url, 'api.cheaperinference.com', ['/', '/v1']);
     },
   }),
 ]);

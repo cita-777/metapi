@@ -30,6 +30,7 @@ export const PLATFORM_ENDPOINT_FALLBACK_MAP: Record<string, string[]> = {
   'done-hub': ['openai'],
   sub2api: ['openai'],
   orcarouter: ['openai'],
+  cheaperinference: ['openai'],
   veloera: ['openai'],
   cliproxyapi: ['openai'],
   claude: ['anthropic'],

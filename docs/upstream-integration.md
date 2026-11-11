@@ -307,6 +307,37 @@ CPA 这类站点推荐直接使用 **API Key**：
 
 ---
 
+### Cheaper Inference
+
+**适用平台：** [Cheaper Inference](https://cheaperinference.com) 官方 OpenAI 兼容网关
+
+#### 站点配置
+
+| 字段 | 说明 | 示例 |
+|------|------|------|
+| **站点名称** | 自定义名称 | `Cheaper Inference 网关` |
+| **站点 URL** | Cheaper Inference API 端点（**不含** `/v1` 后缀） | `https://api.cheaperinference.com` |
+| **平台类型** | 选择 `cheaperinference` | - |
+
+#### 账号凭证
+
+**仅支持 API Key：**
+
+- 在「API Token」字段填入：`ci_live_xxxxxxxxxxxxxx`
+- 不支持用户名密码登录（Cheaper Inference 无此接口）
+
+#### 功能限制
+
+| 功能 | 支持情况 |
+|------|----------|
+| 模型列表获取 | ✅ 支持（`/v1/models`） |
+| 代理调用 | ✅ 支持 |
+| 余额查询 | ❌ 不支持（Cheaper Inference 无公开接口） |
+| 自动签到 | ❌ 不适用 |
+| 账号令牌管理 | ❌ 不适用 |
+
+---
+
 ### Claude (Anthropic)
 
 **适用场景：** 直连 Anthropic Claude API

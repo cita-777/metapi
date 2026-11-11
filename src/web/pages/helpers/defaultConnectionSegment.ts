@@ -14,6 +14,7 @@ const SESSION_FIRST_PLATFORMS = new Set([
 const API_KEY_FIRST_PLATFORMS = new Set([
   'openai',
   'orcarouter',
+  'cheaperinference',
   'claude',
   'gemini',
   'cliproxyapi',
