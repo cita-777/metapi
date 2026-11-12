@@ -4,9 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 镜像标签
-        required: false
-        default: latest
+        description: 镜像标签（必填；latest 只由正式版 release 流程发布）
+        required: true
 
 permissions:
   contents: read
