@@ -1,0 +1,6 @@
+# 如果这个 PR 必须改动下面这些鉴权边界文件，保留本文件，并另起一行写下原因（不要用 # 开头）：
+# src/server/middleware/apiPath.ts
+# src/server/middleware/auth.ts
+# src/server/desktop.ts 里的 isPublicApiRoute
+# src/server/config.ts 里的 trustProxy
+# 没有这样一行时，和 main 不一致就会失败。

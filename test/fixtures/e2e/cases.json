@@ -1,0 +1,100 @@
+{
+  "note": "The original Windows 50-case list is not in this repository (main 63894b7, docs, scripts, or other branches). This catalog is the box-staging runner input. Add cases with tags here, or pass another file to the runner. It is not a replacement 50-case list.",
+  "cases": [
+    {
+      "id": "home-ok",
+      "title": "GET / returns 200",
+      "tags": ["smoke"],
+      "method": "GET",
+      "path": "/",
+      "auth": "none",
+      "expect": { "status": 200 }
+    },
+    {
+      "id": "auth-sites-no-token",
+      "title": "GET /api/sites without a token returns 401",
+      "tags": ["auth", "smoke"],
+      "method": "GET",
+      "path": "/api/sites",
+      "auth": "none",
+      "expect": { "status": 401 }
+    },
+    {
+      "id": "auth-sites-ok",
+      "title": "GET /api/sites with the admin token returns 200",
+      "tags": ["auth", "smoke"],
+      "method": "GET",
+      "path": "/api/sites",
+      "auth": "admin",
+      "expect": { "status": 200 }
+    },
+    {
+      "id": "database-runtime-read",
+      "title": "GET /api/settings/database/runtime returns 200",
+      "tags": ["migration", "smoke"],
+      "method": "GET",
+      "path": "/api/settings/database/runtime",
+      "auth": "admin",
+      "expect": { "status": 200 }
+    },
+    {
+      "id": "backup-config-read",
+      "title": "GET /api/settings/backup/webdav returns 200",
+      "tags": ["backup", "smoke"],
+      "method": "GET",
+      "path": "/api/settings/backup/webdav",
+      "auth": "admin",
+      "expect": { "status": 200 }
+    },
+    {
+      "id": "proxy-chat",
+      "title": "POST /v1/chat/completions returns 200 and usage",
+      "tags": ["proxy", "billing"],
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "auth": "proxy",
+      "body": {
+        "model": "mock-chat",
+        "messages": [{ "role": "user", "content": "ping" }]
+      },
+      "expect": { "status": 200, "bodyIncludes": "total_tokens" }
+    },
+    {
+      "id": "proxy-stream",
+      "title": "POST /v1/chat/completions with stream returns 200",
+      "tags": ["proxy", "stream"],
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "auth": "proxy",
+      "body": {
+        "model": "mock-chat",
+        "stream": true,
+        "messages": [{ "role": "user", "content": "ping" }]
+      },
+      "expect": { "status": 200, "bodyIncludes": "ok" }
+    },
+    {
+      "id": "proxy-billing-log",
+      "title": "A forwarded chat is visible to the proxy log reader",
+      "tags": ["billing", "proxy"],
+      "steps": [
+        {
+          "method": "POST",
+          "path": "/v1/chat/completions",
+          "auth": "proxy",
+          "body": {
+            "model": "mock-chat",
+            "messages": [{ "role": "user", "content": "ping" }]
+          },
+          "expect": { "status": 200, "bodyIncludes": "total_tokens" }
+        },
+        {
+          "method": "GET",
+          "path": "/api/stats/proxy-logs",
+          "auth": "admin",
+          "expect": { "status": 200 }
+        }
+      ]
+    }
+  ]
+}

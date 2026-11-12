@@ -180,6 +180,31 @@ jobs:
       - name: Run repo drift check
         run: npm run repo:drift-check
 
+  qa-guards:
+    name: QA Guards
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Fetch main
+        run: git fetch origin main --no-tags
+
+      - name: Check auth boundary against main
+        run: node test/scripts/ci/auth-boundary-guard.mjs --base origin/main
+
+      - name: Check workflow action uses
+        run: node test/scripts/ci/action-uses-guard.mjs
+
   schema-sqlite:
     name: Schema Check (SQLite)
     runs-on: ubuntu-latest
