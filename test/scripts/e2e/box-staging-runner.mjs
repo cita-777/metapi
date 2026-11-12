@@ -4,6 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertLoopbackUrl } from '../loopback-url.mjs';
 
 const DEFAULT_CASES = fileURLToPath(new URL('../../fixtures/e2e/cases.json', import.meta.url));
 
@@ -47,7 +48,12 @@ function checkResponse(response, expectSpec) {
   return null;
 }
 
+export function assertLoopbackBase(base) {
+  assertLoopbackUrl(base, 'e2e runner only accepts a loopback --base');
+}
+
 export async function executeCases(cases, { base, env = process.env, fetchImpl = fetch } = {}) {
+  assertLoopbackBase(base);
   const results = [];
   for (const testCase of cases) {
     const result = { id: testCase.id, ok: true, detail: '' };
@@ -116,6 +122,7 @@ const isMain = process.argv[1]
 if (isMain) {
   Promise.resolve().then(async () => {
     const options = parseArgs(process.argv.slice(2));
+    if (options.base) assertLoopbackBase(options.base);
     const catalog = loadCases(options.cases);
     const selected = selectCases(catalog.cases, options.tags);
     if (options.list || !options.base) {

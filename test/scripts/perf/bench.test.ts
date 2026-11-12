@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
-import { alternatePasses, isLatencyRegression, median } from './bench.mjs';
+import { alternatePasses, isLatencyRegression, median, runBench as measureBench } from './bench.mjs';
 
 function listen(): Promise<{ url: string; close: () => Promise<void> }> {
   const server = createServer((_request, response) => {
@@ -64,6 +64,27 @@ describe('latency bench', () => {
       expect(JSON.parse(readFileSync(out, 'utf8'))['GET / c=1'].p50).toEqual(expect.any(Number));
     } finally {
       await server.close();
+    }
+  });
+
+  it('rejects a non-loopback base and alternate before any fetch', async () => {
+    const original = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      throw new Error('unexpected fetch');
+    };
+    const options = { rounds: 1, samples: 1, warmup: 0, concurrency: [1] };
+    try {
+      await expect(measureBench({ ...options, base: 'https://example.com' })).rejects.toThrow(/loopback --base/);
+      await expect(measureBench({
+        ...options,
+        base: 'http://127.0.0.1:4100',
+        alternate: 'https://example.com',
+      })).rejects.toThrow(/loopback --alternate/);
+      expect(calls).toBe(0);
+    } finally {
+      globalThis.fetch = original;
     }
   });
 });

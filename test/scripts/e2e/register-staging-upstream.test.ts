@@ -35,4 +35,18 @@ describe('staging upstream registration helper', () => {
     expect(calls[2]).toContain('/api/routes/rebuild');
     expect(JSON.stringify(created)).not.toContain(token);
   });
+
+  it('rejects a non-loopback base before any request', async () => {
+    let calls = 0;
+    await expect(registerStagingUpstream({
+      base: 'https://example.com',
+      upstream: 'http://127.0.0.1:9',
+      token: 'admin-token-should-not-appear',
+      fetchImpl: async () => {
+        calls += 1;
+        return { status: 200, text: async () => '{}' };
+      },
+    })).rejects.toThrow(/loopback --base/);
+    expect(calls).toBe(0);
+  });
 });

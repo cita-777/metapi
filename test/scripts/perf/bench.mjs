@@ -4,6 +4,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertLoopbackUrl } from '../loopback-url.mjs';
 
 export function median(values) {
   const sorted = [...values].sort((left, right) => left - right);
@@ -90,7 +91,12 @@ export async function measureOnce(base, path, headers, { samples, warmup, concur
   return { p50: percentile(latencies, 50), p95: percentile(latencies, 95) };
 }
 
+export function assertLoopbackBase(base) {
+  assertLoopbackUrl(base, 'bench only accepts a loopback --base');
+}
+
 export async function measureBase(base, options) {
+  assertLoopbackBase(base);
   const headersFor = (kind) => (kind === 'admin' ? authHeaders() : {});
   const result = {};
   for (const concurrency of options.concurrency) {
@@ -142,6 +148,10 @@ function medianBaseline(passes) {
 }
 
 export async function runBench(options) {
+  assertLoopbackBase(options.base);
+  if (options.alternate) {
+    assertLoopbackUrl(options.alternate, 'bench only accepts a loopback --alternate');
+  }
   if (!options.alternate) {
     const current = await measureBase(options.base, options);
     const baseline = options.compare ? JSON.parse(readFileSync(options.compare, 'utf8')) : null;

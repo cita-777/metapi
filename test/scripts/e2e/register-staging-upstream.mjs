@@ -3,16 +3,14 @@
 // AUTH_TOKEN is read from the environment and is never printed.
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
-
-const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1']);
+import { assertLoopbackUrl } from '../loopback-url.mjs';
 
 export function assertLoopbackUpstream(upstream) {
-  const url = new URL(upstream);
-  const host = url.hostname.replace(/^\[|\]$/g, '');
-  if (!LOOPBACK.has(host)) {
-    throw new Error('staging helper only accepts a loopback mock upstream');
-  }
-  return url.origin;
+  return assertLoopbackUrl(upstream, 'staging helper only accepts a loopback mock upstream').origin;
+}
+
+export function assertLoopbackBase(base) {
+  assertLoopbackUrl(base, 'staging helper only accepts a loopback --base');
 }
 
 export function siteBody(upstream, name) {
@@ -64,6 +62,8 @@ export async function registerStagingUpstream({
   token = process.env.AUTH_TOKEN,
   fetchImpl = fetch,
 }) {
+  assertLoopbackBase(base);
+  assertLoopbackUpstream(upstream);
   if (!token) throw new Error('AUTH_TOKEN is required');
   const site = await send(fetchImpl, base, token, 'POST', '/api/sites', siteBody(upstream, name));
   const siteId = Number(site?.id);
@@ -100,6 +100,7 @@ const isMain = process.argv[1]
 if (isMain) {
   Promise.resolve().then(async () => {
     const options = parseArgs(process.argv.slice(2));
+    if (options.base) assertLoopbackBase(options.base);
     const site = siteBody(options.upstream, options.name);
     if (options.dryRun) {
       console.log(`POST /api/sites ${JSON.stringify(site)}`);
