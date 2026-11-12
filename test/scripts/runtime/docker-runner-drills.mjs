@@ -319,22 +319,14 @@ async function runNamedDrill(name, runnerFile) {
       writeRelease(layout.bootstrap, { version: '1.0.0', nodeMajor: NODE_MAJOR });
       writeRelease(join(layout.runtime, 'releases', '9.0.0'), { version: '9.0.0', nodeMajor: NODE_MAJOR + 20 });
       linkCurrent(layout.runtime, '9.0.0');
-      const notes = [];
-      const warn = console.warn;
-      const error = console.error;
-      console.warn = (...args) => { notes.push(args.map(String).join(' ')); warn(...args); };
-      console.error = (...args) => { notes.push(args.map(String).join(' ')); error(...args); };
-      try {
-        const result = await callRun(runnerFile, optionsFor(runnerFile, layout));
-        notes.push(JSON.stringify(result ?? null));
-      } finally {
-        console.warn = warn;
-        console.error = error;
-      }
+      const result = await callRun(runnerFile, optionsFor(runnerFile, layout));
       const statePath = join(layout.runtime, 'state.json');
-      if (existsSync(statePath)) notes.push(readFileSync(statePath, 'utf8'));
+      const recorded = [
+        JSON.stringify(result ?? null),
+        existsSync(statePath) ? readFileSync(statePath, 'utf8') : '',
+      ].join('\n');
       if (currentVersion(layout.runtime) !== '1.0.0') throw new Error('node major mismatch did not fall back to the image');
-      if (!/node/i.test(notes.join('\n'))) throw new Error('node major mismatch did not record a warning');
+      if (!/node/i.test(recorded)) throw new Error('node major mismatch did not record a warning on the result or state.json');
     });
     return;
   }
