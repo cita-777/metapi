@@ -73,8 +73,8 @@
 **Metapi** 作为这些中转站之上的**元聚合层（Meta-Aggregation Layer）**，把多个站点统一到 **一个入口（可按项目配置多个下游 API Key）**——下游所有工具（Cursor、Claude Code、Codex、Open WebUI 等）即可无感接入全部模型。当前支持的上游范围已经不止传统聚合面板，还包括：
 
 - 聚合面板： [New API](https://github.com/QuantumNous/new-api)、[One API](https://github.com/songquanpeng/one-api)、[OneHub](https://github.com/MartialBE/one-hub)、[DoneHub](https://github.com/deanxv/done-hub)、[Veloera](https://github.com/Veloera/Veloera)、[AnyRouter](https://anyrouter.top)、[Sub2API](https://github.com/Wei-Shaw/sub2api)
-- 通用兼容接口：OpenAI / Claude / Gemini compatible endpoints，以及 `cliproxyapi` / CPA、[OrcaRouter](https://www.orcarouter.ai)
-- 官方预设：阿里云 / 智谱 / 豆包 Coding Plan，DeepSeek，Moonshot(Kimi)，MiniMax，ModelScope，OrcaRouter，无限星河
+- 通用兼容接口：OpenAI / Claude / Gemini compatible endpoints，以及 `cliproxyapi` / CPA、[OrcaRouter](https://www.orcarouter.ai)、[Cheaper Inference](https://cheaperinference.com)
+- 官方预设：阿里云 / 智谱 / 豆包 Coding Plan，DeepSeek，Moonshot(Kimi)，MiniMax，ModelScope，OrcaRouter，无限星河，Cheaper Inference
 - OAuth 连接：Codex、Claude、Gemini CLI、Antigravity
 
 详细接法见 [上游接入](./docs/upstream-integration.md) 与 [OAuth 管理](./docs/oauth.md)。
@@ -229,8 +229,9 @@
 | **AnyRouter** | `anyrouter` | 通用路由平台         |
 | **Sub2API**   | `sub2api`   | 订阅制中转平台       |
 | **OrcaRouter** | `orcarouter` | 官方 OpenAI 兼容网关 |
+| **Cheaper Inference** | `cheaperinference` | 官方 OpenAI 兼容网关 |
 
-各平台适配器覆盖模型枚举、代理接入等通用能力；余额查询和 Token 管理仅在上游提供相应接口的平台可用（OrcaRouter 目前不提供这两项能力）；登录、签到、用户信息等能力按平台而异。
+各平台适配器覆盖模型枚举、代理接入等通用能力；余额查询和 Token 管理仅在上游提供相应接口的平台可用（OrcaRouter、Cheaper Inference 目前不提供这两项能力）；登录、签到、用户信息等能力按平台而异。
 
 ### 👥 账号与 Token 管理
 

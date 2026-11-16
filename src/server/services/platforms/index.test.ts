@@ -72,6 +72,10 @@ describe('getAdapter platform aliases', () => {
     expect(getAdapter('orcarouter')?.platformName).toBe('orcarouter');
   });
 
+  it('supports the dedicated cheaperinference adapter', () => {
+    expect(getAdapter('cheaperinference')?.platformName).toBe('cheaperinference');
+  });
+
   it('detects anyrouter URL before generic new-api adapter', async () => {
     const adapter = await detectPlatform('https://anyrouter.top');
     expect(adapter?.platformName).toBe('anyrouter');
@@ -90,6 +94,16 @@ describe('getAdapter platform aliases', () => {
   it('does not detect OrcaRouter from an unrelated URL component', async () => {
     const adapter = await detectPlatform('https://evil.example.com/orcarouter');
     expect(adapter?.platformName).not.toBe('orcarouter');
+  });
+
+  it('detects cheaperinference URL via the dedicated adapter', async () => {
+    const adapter = await detectPlatform('https://api.cheaperinference.com');
+    expect(adapter?.platformName).toBe('cheaperinference');
+  });
+
+  it('does not detect Cheaper Inference from an unrelated URL component', async () => {
+    const adapter = await detectPlatform('https://evil.example.com/cheaperinference');
+    expect(adapter?.platformName).not.toBe('cheaperinference');
   });
 
   it('detects official openai/claude/gemini upstream URLs', async () => {

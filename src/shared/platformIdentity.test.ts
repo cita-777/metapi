@@ -11,6 +11,7 @@ describe('platformIdentity', () => {
     expect(normalizePlatformAlias('anti-gravity')).toBe('antigravity');
     expect(normalizePlatformAlias('one api')).toBe('one-api');
     expect(normalizePlatformAlias('orcarouter')).toBe('orcarouter');
+    expect(normalizePlatformAlias('cheaperinference')).toBe('cheaperinference');
     expect(normalizePlatformAlias('')).toBe('');
   });
 
@@ -25,6 +26,8 @@ describe('platformIdentity', () => {
     expect(detectPlatformByUrlHint('https://gateway.orcarouter.ai/v1/models')).toBe('orcarouter');
     expect(detectPlatformByUrlHint('https://evil.example.com/orcarouter/v1/models')).toBeUndefined();
     expect(detectPlatformByUrlHint('https://evil.example.com/?next=https://api.orcarouter.ai/v1/models')).toBeUndefined();
+    expect(detectPlatformByUrlHint('https://api.cheaperinference.com/v1/models')).toBe('cheaperinference');
+    expect(detectPlatformByUrlHint('https://evil.example.com/cheaperinference/v1/models')).toBeUndefined();
     expect(detectPlatformByUrlHint('https://evil.example.com/?next=https://api.openai.com/v1/models')).toBeUndefined();
   });
 });

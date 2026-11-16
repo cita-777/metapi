@@ -25,6 +25,7 @@ describe('siteInitializationPresets', () => {
       'doubao-coding-openai',
       'orcarouter-openai',
       'infistar-openai',
+      'cheaperinference-openai',
     ]));
 
     const openaiPreset = getSiteInitializationPreset('codingplan-openai');
@@ -147,6 +148,16 @@ describe('siteInitializationPresets', () => {
       docsUrl: 'https://doc.infistar.cc/api-overview',
     });
     expect(infistarPreset?.recommendedModels).toEqual(['qwen-plus']);
+
+    const cheaperInferencePreset = getSiteInitializationPreset('cheaperinference-openai');
+    expect(cheaperInferencePreset).toMatchObject({
+      id: 'cheaperinference-openai',
+      platform: 'cheaperinference',
+      defaultUrl: 'https://api.cheaperinference.com/v1',
+      initialSegment: 'apikey',
+      recommendedSkipModelFetch: false,
+    });
+    expect(cheaperInferencePreset?.recommendedModels).toEqual(['gpt-5.4-mini']);
   });
 
   it('detects Aliyun CodingPlan endpoints by URL', () => {
@@ -231,6 +242,15 @@ describe('siteInitializationPresets', () => {
     expect(detectSiteInitializationPreset('https://infistar.cc/')).toMatchObject({
       id: 'infistar-openai',
       platform: 'openai',
+    });
+
+    expect(detectSiteInitializationPreset('https://api.cheaperinference.com/v1')).toMatchObject({
+      id: 'cheaperinference-openai',
+      platform: 'cheaperinference',
+    });
+    expect(detectSiteInitializationPreset('https://api.cheaperinference.com')).toMatchObject({
+      id: 'cheaperinference-openai',
+      platform: 'cheaperinference',
     });
   });
 
