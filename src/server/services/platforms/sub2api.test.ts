@@ -80,10 +80,102 @@ describe('Sub2ApiAdapter', () => {
     expect(await adapter.detect(baseUrl)).toBe(false);
   });
 
-  it('returns unsupported for checkin', async () => {
-    const result = await adapter.checkin('http://localhost', 'token');
+  it('claims the built-in daily check-in and reports the receipt amount', async () => {
+    let claimBody: any = null;
+    await startServer((req, res) => {
+      if (req.url !== '/api/v1/user/checkin') {
+        res.writeHead(404).end();
+        return;
+      }
+      if (req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 0,
+          message: 'success',
+          data: { day: '2026-11-20', unit: 'USD', reason: 'available' },
+        }));
+        return;
+      }
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+      req.on('end', () => {
+        claimBody = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 0,
+          message: 'success',
+          data: {
+            day: '2026-11-20',
+            unit: 'USD',
+            reason: 'claimed',
+            receipt: { day: '2026-11-20', amount: 0.19 },
+          },
+        }));
+      });
+    });
+
+    const result = await adapter.checkin(baseUrl, 'jwt-token');
+
+    expect(claimBody).toEqual({ day: '2026-11-20' });
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('0.19 USD');
+    expect(result.reward).toBe('0.19 USD');
+  });
+
+  it('reports an already-claimed built-in check-in without posting again', async () => {
+    let posts = 0;
+    await startServer((req, res) => {
+      if (req.method === 'POST') posts += 1;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        code: 0,
+        message: 'success',
+        data: {
+          day: '2026-11-20',
+          unit: 'USD',
+          reason: 'claimed',
+          receipt: { day: '2026-11-20', amount: 0.05 },
+        },
+      }));
+    });
+
+    const result = await adapter.checkin(baseUrl, 'jwt-token');
+
+    expect(posts).toBe(0);
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('今日已签到');
+    expect(result.reward).toBe('0.05 USD');
+  });
+
+  it('keeps the unsupported answer when the deployment has no built-in check-in', async () => {
+    await startServer((_req, res) => {
+      res.writeHead(404, { 'Content-Type': 'text/html' });
+      res.end('<html><body>Not Found</body></html>');
+    });
+
+    const result = await adapter.checkin(baseUrl, 'jwt-token');
+
     expect(result.success).toBe(false);
     expect(result.message).toContain('not supported');
+  });
+
+  it('surfaces the built-in ineligible reason instead of claiming', async () => {
+    let posts = 0;
+    await startServer((req, res) => {
+      if (req.method === 'POST') posts += 1;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        code: 0,
+        message: 'success',
+        data: { day: '2026-11-20', reason: 'account_on_hold' },
+      }));
+    });
+
+    const result = await adapter.checkin(baseUrl, 'jwt-token');
+
+    expect(posts).toBe(0);
+    expect(result.success).toBe(false);
+    expect(result.message).toContain('冻结');
   });
 
   it('fetches balance from /api/v1/auth/me', async () => {
@@ -485,9 +577,120 @@ describe('Sub2ApiAdapter', () => {
     await expect(adapter.getBalance(baseUrl, 'expired-token')).rejects.toThrow();
   });
 
-  it('login returns unsupported', async () => {
-    const result = await adapter.login('http://localhost', 'user', 'pass');
+  it('logs in with email and password and returns the refresh token', async () => {
+    let loginBody: any = null;
+    await startServer((req, res) => {
+      if (req.method !== 'POST' || req.url !== '/api/v1/auth/login') {
+        res.writeHead(404).end();
+        return;
+      }
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+      req.on('end', () => {
+        loginBody = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 0,
+          message: 'success',
+          data: {
+            access_token: 'jwt-token',
+            refresh_token: 'rt-1',
+            expires_in: 3600,
+            user: { id: 42, username: 'alice', email: 'alice@example.com' },
+          },
+        }));
+      });
+    });
+
+    const result = await adapter.login(baseUrl, 'alice@example.com', 'secret');
+
+    expect(loginBody).toEqual({ email: 'alice@example.com', password: 'secret' });
+    expect(result.success).toBe(true);
+    expect(result.accessToken).toBe('jwt-token');
+    expect(result.refreshToken).toBe('rt-1');
+    expect(result.username).toBe('alice');
+    expect(result.platformUserId).toBe(42);
+    expect(result.tokenExpiresAt).toBeGreaterThan(Date.now());
+  });
+
+  it('fills the missing user id from /api/v1/auth/me after login', async () => {
+    await startServer((req, res) => {
+      if (req.method === 'POST' && req.url === '/api/v1/auth/login') {
+        req.resume();
+        req.on('end', () => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            code: 0,
+            message: 'success',
+            data: { access_token: 'jwt-token', refresh_token: 'rt-1' },
+          }));
+        });
+        return;
+      }
+      if (req.url === '/api/v1/auth/me') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          code: 0,
+          message: 'success',
+          data: { id: 7, username: 'bob', email: 'bob@example.com', balance: 1 },
+        }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    const result = await adapter.login(baseUrl, 'bob@example.com', 'secret');
+
+    expect(result.success).toBe(true);
+    expect(result.platformUserId).toBe(7);
+    expect(result.username).toBe('bob');
+  });
+
+  it('reports invalid credentials from the login endpoint', async () => {
+    await startServer((req, res) => {
+      if (req.method === 'POST' && req.url === '/api/v1/auth/login') {
+        req.resume();
+        req.on('end', () => {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            code: 401,
+            message: 'invalid email or password',
+            reason: 'INVALID_CREDENTIALS',
+          }));
+        });
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    const result = await adapter.login(baseUrl, 'alice@example.com', 'wrong');
+
     expect(result.success).toBe(false);
+    expect(result.message).toContain('邮箱或密码不正确');
+    expect(result.message).toContain('INVALID_CREDENTIALS');
+  });
+
+  it('explains the TOTP challenge instead of reporting a bad password', async () => {
+    await startServer((req, res) => {
+      if (req.method === 'POST' && req.url === '/api/v1/auth/login') {
+        req.resume();
+        req.on('end', () => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            code: 0,
+            message: 'success',
+            data: { requires_2fa: true, temp_token: 'tmp', user_email_masked: 'a***@example.com' },
+          }));
+        });
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    const result = await adapter.login(baseUrl, 'alice@example.com', 'secret');
+
+    expect(result.success).toBe(false);
+    expect(result.message).toContain('两步验证');
   });
 
   it('accepts bearer-prefixed access tokens when verifying session tokens', async () => {

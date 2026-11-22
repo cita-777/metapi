@@ -15,6 +15,7 @@ import {
   getSub2ApiAuthFromExtraConfig,
   mergeAccountExtraConfig,
   normalizeCredentialMode as normalizeCredentialModeInput,
+  getPlatformUserIdFromExtraConfig,
   resolvePlatformUserId,
   resolvePlatformUserIdFromLogin,
   type AccountCredentialMode,
@@ -573,7 +574,10 @@ export async function accountsRoutes(app: FastifyInstance) {
         apiTokens.find((token) => token.enabled !== false && token.key)?.key ||
         apiToken ||
         null;
-      const existing = await db
+      // Accounts created before password login existed may store the numeric
+      // site user id as their username, so fall back to a platformUserId match
+      // before creating a duplicate row for the same site user.
+      let existing = await db
         .select()
         .from(schema.accounts)
         .where(
@@ -583,6 +587,18 @@ export async function accountsRoutes(app: FastifyInstance) {
           ),
         )
         .get();
+      if (!existing && guessedPlatformUserId) {
+        const siteAccounts = await db
+          .select()
+          .from(schema.accounts)
+          .where(eq(schema.accounts.siteId, siteId))
+          .all();
+        existing = siteAccounts.find(
+          (account) =>
+            getPlatformUserIdFromExtraConfig(account.extraConfig) ===
+            guessedPlatformUserId,
+        );
+      }
 
       const extraConfigPatch: Record<string, unknown> = {
         credentialMode: "session",
@@ -594,6 +610,20 @@ export async function accountsRoutes(app: FastifyInstance) {
       };
       if (guessedPlatformUserId) {
         extraConfigPatch.platformUserId = guessedPlatformUserId;
+      }
+      // Session logins that hand out a refresh token let the managed refresh
+      // scheduler renew the access token instead of expiring the account.
+      if (loginResult.refreshToken) {
+        const previousManagedAuth = getSub2ApiAuthFromExtraConfig(
+          existing?.extraConfig,
+        );
+        extraConfigPatch.sub2apiAuth = {
+          ...(previousManagedAuth ?? {}),
+          refreshToken: loginResult.refreshToken,
+          ...(loginResult.tokenExpiresAt
+            ? { tokenExpiresAt: loginResult.tokenExpiresAt }
+            : {}),
+        };
       }
       const extraConfig = mergeAccountExtraConfig(
         existing?.extraConfig,
