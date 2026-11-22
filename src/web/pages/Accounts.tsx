@@ -164,6 +164,13 @@ export default function Accounts() {
   const [rebindVerifyResult, setRebindVerifyResult] = useState<any>(null);
   const [rebindVerifying, setRebindVerifying] = useState(false);
   const [rebindSaving, setRebindSaving] = useState(false);
+  // Sub2API sites can be rebound with the site email + password, which also
+  // captures a refresh token; every other platform still pastes a session.
+  const [rebindMode, setRebindMode] = useState<"password" | "token">("token");
+  const [rebindLoginForm, setRebindLoginForm] = useState({
+    email: "",
+    password: "",
+  });
   const [modelModal, setModelModal] = useState<{
     open: boolean;
     account: any | null;
@@ -1110,6 +1117,14 @@ export default function Accounts() {
     setRebindTarget(account);
     setRebindForm(createRebindForm(extractPlatformUserId(account)));
     setRebindVerifyResult(null);
+    const isSub2ApiSite =
+      (account?.site?.platform || "").toLowerCase() === "sub2api";
+    setRebindMode(isSub2ApiSite ? "password" : "token");
+    const displayName = resolveAccountDisplayName(account) || "";
+    setRebindLoginForm({
+      email: displayName.includes("@") ? displayName : "",
+      password: "",
+    });
   };
 
   const closeRebindPanel = () => {
@@ -1118,6 +1133,44 @@ export default function Accounts() {
     setRebindVerifyResult(null);
     setRebindVerifying(false);
     setRebindSaving(false);
+    setRebindLoginForm({ email: "", password: "" });
+  };
+
+  // Rebind through the site's own login form: the password login also returns
+  // a fresh refresh token, so the account keeps renewing itself later.
+  const handlePasswordRebind = async () => {
+    if (!rebindTarget) return;
+    const email = rebindLoginForm.email.trim();
+    const password = rebindLoginForm.password;
+    if (!email || !password) {
+      toast.error("请输入站点邮箱和密码");
+      return;
+    }
+    setRebindSaving(true);
+    try {
+      const result = await api.loginAccount({
+        siteId: rebindTarget.siteId,
+        username: email,
+        password,
+      });
+      if (!result?.success) {
+        toast.error(result?.message || "登录失败");
+        return;
+      }
+      if (result.account?.id && result.account.id !== rebindTarget.id) {
+        toast.info(
+          `登录成功，但站点返回的账号对应新建记录（ID ${result.account.id}），当前记录未复用，请在列表中确认`,
+        );
+      } else {
+        toast.success("已用邮箱密码重新绑定，会话与 refresh_token 均已更新");
+      }
+      closeRebindPanel();
+      load(true);
+    } catch (e: any) {
+      toast.error(e?.message || "登录失败");
+    } finally {
+      setRebindSaving(false);
+    }
   };
 
   const handleVerifyRebindToken = async () => {
@@ -2002,7 +2055,9 @@ export default function Accounts() {
                     }}
                   >
                     <div className="info-tip">
-                      输入目标站点的账号密码，将自动登录并获取访问令牌和 API Key
+                      {isSub2ApiSelected
+                        ? "输入该 Sub2API 站点的登录邮箱和密码，将自动获取会话与 refresh_token"
+                        : "输入目标站点的账号密码，将自动登录并获取访问令牌和 API Key"}
                     </div>
                     <ModernSelect
                       value={String(loginForm.siteId || 0)}
@@ -2016,7 +2071,7 @@ export default function Accounts() {
                       searchPlaceholder={SITE_SELECT_SEARCH_PLACEHOLDER}
                     />
                     <input
-                      placeholder="用户名"
+                      placeholder={isSub2ApiSelected ? "邮箱" : "用户名"}
                       value={loginForm.username}
                       onChange={(e) =>
                         setLoginForm((f) => ({
@@ -2027,7 +2082,6 @@ export default function Accounts() {
                       style={inputStyle}
                     />
                     <input
-                      type="password"
                       placeholder="密码"
                       value={loginForm.password}
                       onChange={(e) =>
@@ -2037,8 +2091,18 @@ export default function Accounts() {
                         }))
                       }
                       onKeyDown={(e) => e.key === "Enter" && handleLoginAdd()}
-                      style={inputStyle}
+                      spellCheck={false}
+                      style={{
+                        ...inputStyle,
+                        fontFamily: "var(--font-mono)",
+                      }}
                     />
+                    {isSub2ApiSelected && (
+                      <div className="info-tip">
+                        站点开启验证码或两步验证时，账号密码登录会被拦截，请改用
+                        Session Token 添加。
+                      </div>
+                    )}
                     <button
                       onClick={handleLoginAdd}
                       disabled={
@@ -2387,7 +2451,11 @@ export default function Accounts() {
             <CenteredModal
               open={Boolean(rebindTarget)}
               onClose={closeRebindPanel}
-              title="重新绑定 Session Token"
+              title={
+                isRebindSub2Api && rebindMode === "password"
+                  ? "用邮箱密码重新绑定"
+                  : "重新绑定 Session Token"
+              }
               maxWidth={820}
               bodyStyle={{ display: "flex", flexDirection: "column", gap: 12 }}
               footer={
@@ -2406,9 +2474,126 @@ export default function Accounts() {
                     }}
                   >
                     连接: {resolveAccountDisplayName(activeRebindTarget)} @{" "}
-                    {activeRebindTarget.site?.name || "-"}。请粘贴新的 Session
-                    Token，验证成功后再绑定。
+                    {activeRebindTarget.site?.name || "-"}。
+                    {isRebindSub2Api && rebindMode === "password"
+                      ? "输入该站点的登录邮箱和密码，登录成功后会自动更新会话与 refresh_token。"
+                      : "请粘贴新的 Session Token，验证成功后再绑定。"}
                   </div>
+
+                  {isRebindSub2Api && (
+                    <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                      <button
+                        onClick={() => setRebindMode("password")}
+                        className={
+                          rebindMode === "password"
+                            ? "btn btn-primary"
+                            : "btn btn-ghost"
+                        }
+                        style={
+                          rebindMode === "password"
+                            ? undefined
+                            : { border: "1px solid var(--color-border)" }
+                        }
+                      >
+                        邮箱密码
+                      </button>
+                      <button
+                        onClick={() => setRebindMode("token")}
+                        className={
+                          rebindMode === "token"
+                            ? "btn btn-primary"
+                            : "btn btn-ghost"
+                        }
+                        style={
+                          rebindMode === "token"
+                            ? undefined
+                            : { border: "1px solid var(--color-border)" }
+                        }
+                      >
+                        Session Token
+                      </button>
+                    </div>
+                  )}
+
+                  {isRebindSub2Api && rebindMode === "password" && (
+                    <>
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+                          gap: 10,
+                          marginBottom: 4,
+                        }}
+                      >
+                        <input
+                          placeholder="站点登录邮箱"
+                          value={rebindLoginForm.email}
+                          onChange={(e) =>
+                            setRebindLoginForm((prev) => ({
+                              ...prev,
+                              email: e.target.value,
+                            }))
+                          }
+                          spellCheck={false}
+                          style={inputStyle}
+                        />
+                        <input
+                          placeholder="登录密码"
+                          value={rebindLoginForm.password}
+                          onChange={(e) =>
+                            setRebindLoginForm((prev) => ({
+                              ...prev,
+                              password: e.target.value,
+                            }))
+                          }
+                          spellCheck={false}
+                          style={{
+                            ...inputStyle,
+                            fontFamily: "var(--font-mono)",
+                          }}
+                        />
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: "var(--color-text-muted)",
+                          marginBottom: 10,
+                        }}
+                      >
+                        密码会加密保存在账号配置里，用于会话过期时自动重登；站点开启验证码或两步验证时请改用
+                        Session Token。
+                      </div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button
+                          onClick={handlePasswordRebind}
+                          disabled={
+                            rebindSaving ||
+                            !rebindLoginForm.email.trim() ||
+                            !rebindLoginForm.password
+                          }
+                          className="btn btn-success"
+                        >
+                          {rebindSaving ? (
+                            <>
+                              <span
+                                className="spinner spinner-sm"
+                                style={{
+                                  borderTopColor: "white",
+                                  borderColor: "rgba(255,255,255,0.3)",
+                                }}
+                              />
+                              登录中...
+                            </>
+                          ) : (
+                            "登录并重新绑定"
+                          )}
+                        </button>
+                      </div>
+                    </>
+                  )}
+
+                  {(!isRebindSub2Api || rebindMode === "token") && (
+                    <>
 
                   <div
                     style={{
@@ -2573,6 +2758,8 @@ export default function Accounts() {
                       )}
                     </button>
                   </div>
+                    </>
+                  )}
                 </>
               ) : null}
             </CenteredModal>

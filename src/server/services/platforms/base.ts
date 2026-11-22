@@ -49,6 +49,15 @@ export interface LoginResult {
    * to guess it from the username or re-discover it on every request.
    */
   platformUserId?: number;
+  /**
+   * Long-lived refresh token returned by session-based logins (currently
+   * Sub2API's `POST /api/v1/auth/login`). Callers persist it so the access
+   * token can be rotated later without asking the user to paste a new
+   * session by hand.
+   */
+  refreshToken?: string;
+  /** Epoch milliseconds when `accessToken` expires, when the site reports it. */
+  tokenExpiresAt?: number;
 }
 
 export interface UserInfo {

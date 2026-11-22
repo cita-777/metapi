@@ -4,6 +4,7 @@ import {
   CheckinResult,
   BalanceInfo,
   CreateApiTokenOptions,
+  LoginResult,
   SubscriptionPlanSummary,
   SubscriptionSummary,
   type SiteAnnouncement,
@@ -20,11 +21,69 @@ function normalizeBaseUrl(baseUrl: string): string {
   return stripTrailingSlashes(baseUrl || '');
 }
 
+type Sub2ApiLoginSession = {
+  accessToken: string;
+  refreshToken: string;
+  tokenExpiresAt?: number;
+  platformUserId?: number;
+  displayName?: string;
+};
+
+type Sub2ApiFailure = {
+  status?: number;
+  code?: string;
+  message: string;
+};
+
+/** Split the `HTTP <status>: <body>` error thrown by `fetchJson` into fields. */
+function parseSub2ApiVerificationFailure(error: unknown): Sub2ApiFailure {
+  const rawMessage = error instanceof Error
+    ? error.message
+    : typeof error === 'string'
+      ? error
+      : '';
+  const httpMatch = rawMessage.match(/^HTTP\s+(\d+):\s*([\s\S]*)$/i);
+  const status = httpMatch ? Number.parseInt(httpMatch[1] || '', 10) : undefined;
+  const bodyText = httpMatch?.[2]?.trim() || '';
+
+  let payload: Record<string, unknown> | null = null;
+  if (bodyText) {
+    try {
+      const parsed = JSON.parse(bodyText) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        payload = parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Plain-text body: the raw text is the message.
+    }
+  }
+
+  const reason = typeof payload?.reason === 'string' && payload.reason.trim()
+    ? payload.reason.trim()
+    : typeof payload?.code === 'string' && payload.code.trim()
+      ? payload.code.trim()
+      : undefined;
+  const message = typeof payload?.message === 'string'
+    ? payload.message.trim()
+    : bodyText && !payload
+      ? bodyText.slice(0, 240)
+      : '';
+
+  return {
+    ...(Number.isFinite(status) ? { status } : {}),
+    ...(reason ? { code: reason } : {}),
+    message: message || rawMessage.trim(),
+  };
+}
+
 /**
  * Sub2API adapter.
  *
  * Sub2API uses JWT-based auth with endpoints under /api/v1/*.
- * It does NOT support: login or check-in.
+ * Login is email + password (`POST /api/v1/auth/login`); the guard emails the
+ * caller a refresh token so the session can be renewed without a browser.
+ * Check-in uses the built-in `/api/v1/user/checkin` endpoint when the
+ * deployment ships one.
  * Balance is derived from a USD amount returned by /api/v1/auth/me.
  */
 export class Sub2ApiAdapter extends BasePlatformAdapter {
@@ -689,13 +748,191 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
     return Math.round(Math.max(0, balanceUsd) * 500000);
   }
 
-  // --- Login: Not supported (JWT only) ---
+  // --- Login: email + password (JWT session) ---
+  //
+  // Sub2API exposes `POST /api/v1/auth/login` (JSON: Email + Password) and
+  // answers `{ code: 0, data: { access_token, refresh_token, expires_in, user } }`.
+  // Login used to be hard-coded as unsupported, which forced users to log in
+  // through a browser and copy the session by hand; the refresh token issued
+  // here lets the caller renew the session automatically.
   override async login(
-    _baseUrl: string,
-    _username: string,
-    _password: string,
-  ): Promise<{ success: false; message: string }> {
-    return { success: false, message: 'Sub2API uses JWT authentication; login is not supported' };
+    baseUrl: string,
+    username: string,
+    password: string,
+  ): Promise<LoginResult> {
+    const identifier = (username || '').trim();
+    if (!identifier || !password) {
+      return { success: false, message: '请输入 Sub2API 站点的邮箱和密码' };
+    }
+
+    const normalizedBase = normalizeBaseUrl(baseUrl);
+    const endpoint = '/api/v1/auth/login';
+
+    let session: Sub2ApiLoginSession | null = null;
+    let envelopeMessage = '';
+    try {
+      const payload = await this.fetchJson<unknown>(`${normalizedBase}${endpoint}`, {
+        method: 'POST',
+        body: JSON.stringify({ email: identifier, password }),
+      });
+      session = this.parseSub2ApiLoginSession(payload);
+      if (!session && this.isSub2ApiTotpChallenge(payload)) {
+        return {
+          success: false,
+          message: '该账号启用了两步验证 (TOTP)，登录需要动态验证码；请先关闭 2FA 或改用 Session 方式绑定',
+        };
+      }
+      if (!session) {
+        envelopeMessage = this.readEnvelopeString(payload, ['message', 'error', 'reason']);
+      }
+    } catch (error) {
+      const failure = parseSub2ApiVerificationFailure(error);
+      const rawMessage = failure.message || (error instanceof Error ? error.message : '');
+      return {
+        success: false,
+        message: this.describeSub2ApiLoginFailure(rawMessage, failure.code),
+      };
+    }
+
+    if (!session) {
+      return { success: false, message: this.describeSub2ApiLoginFailure(envelopeMessage) };
+    }
+
+    // The login payload already carries `user`; only fill the gaps from
+    // /api/v1/auth/me, and never fail the login when that probe fails.
+    let platformUserId = session.platformUserId;
+    let displayName = session.displayName || '';
+    if (!platformUserId || !displayName) {
+      try {
+        const me = await this.fetchAuthMe(normalizedBase, session.accessToken);
+        platformUserId = platformUserId ?? me.id;
+        displayName = displayName || this.getDisplayName(me.username, me.email);
+      } catch {
+        // Best-effort enrichment only.
+      }
+    }
+
+    return {
+      success: true,
+      accessToken: session.accessToken,
+      refreshToken: session.refreshToken,
+      ...(session.tokenExpiresAt ? { tokenExpiresAt: session.tokenExpiresAt } : {}),
+      username: displayName || identifier,
+      ...(platformUserId ? { platformUserId } : {}),
+    };
+  }
+
+  private readEnvelopeString(payload: unknown, keys: string[]): string {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return '';
+    const envelope = payload as Record<string, unknown>;
+    for (const key of keys) {
+      const value = envelope[key];
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+    return '';
+  }
+
+  private readEnvelopeNumber(payload: Record<string, unknown>, keys: string[]): number {
+    for (const key of keys) {
+      const value = payload[key];
+      if (typeof value === 'number' && Number.isFinite(value)) return value;
+      if (typeof value === 'string' && value.trim()) {
+        const parsed = Number(value.trim());
+        if (Number.isFinite(parsed)) return parsed;
+      }
+    }
+    return Number.NaN;
+  }
+
+  /**
+   * Parse `{ code: 0, data: { access_token, refresh_token, expires_in } }`.
+   *
+   * `expires_in` is the documented shape; when a deployment omits it we fall
+   * back to the JWT `exp` claim so callers still get a renewal deadline.
+   */
+  private parseSub2ApiLoginSession(payload: unknown): Sub2ApiLoginSession | null {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+    const envelope = payload as Record<string, unknown>;
+    const code = typeof envelope.code === 'number'
+      ? envelope.code
+      : typeof envelope.code === 'string'
+        ? Number.parseInt(envelope.code.trim(), 10)
+        : Number.NaN;
+    if (!Number.isFinite(code) || code !== 0) return null;
+
+    const data = envelope.data;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+    const body = data as Record<string, unknown>;
+
+    const accessToken = this.readEnvelopeString(body, ['access_token', 'accessToken', 'token']);
+    const refreshToken = this.readEnvelopeString(body, ['refresh_token', 'refreshToken']);
+    if (!accessToken || !refreshToken) return null;
+
+    const expiresInSeconds = this.readEnvelopeNumber(body, ['expires_in', 'expiresIn']);
+    const tokenExpiresAt = Number.isFinite(expiresInSeconds) && expiresInSeconds > 0
+      ? Date.now() + Math.trunc(expiresInSeconds) * 1000
+      : this.resolveJwtExpiryMs(accessToken);
+
+    // AuthResponse carries `user`, which saves an /api/v1/auth/me round trip.
+    const user = body.user && typeof body.user === 'object' && !Array.isArray(body.user)
+      ? body.user as Record<string, unknown>
+      : null;
+    const platformUserId = user ? this.parsePositiveInteger(user.id) : undefined;
+    const displayName = user
+      ? this.getDisplayName(
+        typeof user.username === 'string' ? user.username : '',
+        typeof user.email === 'string' ? user.email : '',
+      )
+      : '';
+
+    return {
+      accessToken,
+      refreshToken,
+      ...(tokenExpiresAt ? { tokenExpiresAt } : {}),
+      ...(platformUserId ? { platformUserId } : {}),
+      ...(displayName ? { displayName } : {}),
+    };
+  }
+
+  private isSub2ApiTotpChallenge(payload: unknown): boolean {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+    const data = (payload as Record<string, unknown>).data;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
+    return (data as Record<string, unknown>).requires_2fa === true;
+  }
+
+  private resolveJwtExpiryMs(token: string): number | undefined {
+    const parts = token.split('.');
+    if (parts.length < 3 || !parts[1]) return undefined;
+    try {
+      const claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as unknown;
+      if (!claims || typeof claims !== 'object' || Array.isArray(claims)) return undefined;
+      const exp = (claims as Record<string, unknown>).exp;
+      const expSeconds = typeof exp === 'number'
+        ? exp
+        : typeof exp === 'string'
+          ? Number.parseInt(exp.trim(), 10)
+          : Number.NaN;
+      if (!Number.isFinite(expSeconds) || expSeconds <= 0) return undefined;
+      return Math.trunc(expSeconds) * 1000;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private describeSub2ApiLoginFailure(message: string, reason?: string): string {
+    const text = (message || '').trim();
+    const reasonText = (reason || '').trim();
+    const suffix = reasonText ? ` (${reasonText})` : '';
+    const lowered = text.toLowerCase();
+    if (/invalid email or password|invalid credentials|incorrect (email|password|username)/.test(lowered)) {
+      return `Sub2API 登录失败：邮箱或密码不正确${suffix}`;
+    }
+    if (/turnstile|captcha|challenge|risk/i.test(lowered)) {
+      return `Sub2API 登录被站点验证码/风控拦截，请在站点侧完成验证后重试${suffix}`;
+    }
+    if (text) return `Sub2API 登录失败：${text}`;
+    return 'Sub2API 登录失败：站点未返回可用会话';
   }
 
   // --- User Info ---
@@ -711,12 +948,180 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
     }
   }
 
-  // --- Check-in: Not supported ---
-  async checkin(
-    _baseUrl: string,
-    _accessToken: string,
-  ): Promise<CheckinResult> {
+  // --- Check-in: built-in daily check-in ---
+  //
+  // Newer Sub2API deployments ship a built-in check-in: `GET
+  // /api/v1/user/checkin` reports the current day, `POST` with `{ day }`
+  // claims it. Deployments without it answer 404 (or fall back to the SPA
+  // shell), which keeps the historical "not supported" answer so the caller
+  // marks the account as skipped instead of failed.
+  async checkin(baseUrl: string, accessToken: string): Promise<CheckinResult> {
+    const normalizedBase = normalizeBaseUrl(baseUrl);
+
+    const nativeResult = await this.tryNativeCheckin(normalizedBase, accessToken);
+    if (nativeResult) return nativeResult;
+
     return { success: false, message: 'Check-in is not supported by Sub2API' };
+  }
+
+  /**
+   * Claim the built-in daily check-in.
+   *
+   * Returns `null` when the deployment has no such endpoint (404/405/501, or
+   * an unmatched path served as the SPA's index.html), so the caller can fall
+   * back to the historical "unsupported" answer.
+   */
+  private async tryNativeCheckin(baseUrl: string, accessToken: string): Promise<CheckinResult | null> {
+    const endpoint = '/api/v1/user/checkin';
+
+    let status: any;
+    try {
+      const res = await this.fetchJson<any>(`${baseUrl}${endpoint}`, {
+        headers: { ...this.buildAuthHeader(accessToken), Accept: 'application/json' },
+      });
+      status = this.parseSub2ApiEnvelope<any>(res, endpoint);
+    } catch (error) {
+      if (this.isMissingNativeCheckinEndpoint(error)) return null;
+      return { success: false, message: this.describeCheckinError(error) };
+    }
+
+    const day = typeof status?.day === 'string' ? status.day.trim() : '';
+    const reason = typeof status?.reason === 'string' ? status.reason.trim() : '';
+
+    // Already claimed: report the amount instead of posting again.
+    if (reason === 'claimed' || reason === 'legacy_claimed') {
+      const reward = this.formatNativeCheckinReward(status, day);
+      return {
+        success: true,
+        message: `今日已签到${reward ? `，奖励 ${reward}` : ''}`,
+        ...(reward ? { reward } : {}),
+      };
+    }
+
+    if (reason && reason !== 'available') {
+      return { success: false, message: this.describeNativeCheckinReason(reason) };
+    }
+
+    if (!day) {
+      return { success: false, message: '站点未返回可签到的日期' };
+    }
+
+    let payload: any;
+    try {
+      const res = await this.fetchJson<any>(`${baseUrl}${endpoint}`, {
+        method: 'POST',
+        headers: {
+          ...this.buildAuthHeader(accessToken),
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ day }),
+      });
+      payload = this.parseSub2ApiEnvelope<any>(res, endpoint);
+    } catch (error) {
+      return { success: false, message: this.describeCheckinError(error) };
+    }
+
+    // A successful claim usually answers reason=claimed; only a different,
+    // explicit reason means the site rejected it.
+    const blockedReason = typeof payload?.reason === 'string' ? payload.reason.trim() : '';
+    if (blockedReason
+      && blockedReason !== 'claimed'
+      && blockedReason !== 'legacy_claimed'
+      && blockedReason !== 'available') {
+      return { success: false, message: this.describeNativeCheckinReason(blockedReason) };
+    }
+
+    const fallbackUnit = this.readNativeCheckinUnit(status);
+    const reward = this.formatNativeCheckinReward(payload, day, fallbackUnit);
+    return {
+      success: true,
+      message: `签到成功${reward ? `，奖励 ${reward}` : ''}`,
+      ...(reward ? { reward } : {}),
+    };
+  }
+
+  /** The built-in endpoint is missing: an old deployment 404s, some serve the SPA shell. */
+  private isMissingNativeCheckinEndpoint(error: unknown): boolean {
+    const message = (error instanceof Error ? error.message : String(error ?? '')).toLowerCase();
+    if (!message) return false;
+    if (message.includes('http 404') || message.includes('http 405') || message.includes('http 501')) {
+      return true;
+    }
+    return message.includes('invalid response format from /api/v1/user/checkin')
+      || message.includes('invalid response from /api/v1/user/checkin');
+  }
+
+  /** Reward unit reported by the status payload (usually USD). */
+  private readNativeCheckinUnit(payload: any, fallback = 'USD'): string {
+    const unit = typeof payload?.unit === 'string' ? payload.unit.trim() : '';
+    return unit || fallback;
+  }
+
+  /** Render `<amount> <unit>`; undefined when the amount cannot be read. */
+  private formatNativeCheckinReward(payload: any, day: string, fallbackUnit = 'USD'): string | undefined {
+    const amount = this.readNativeCheckinAmount(payload, day);
+    if (amount === undefined) return undefined;
+    return `${amount} ${this.readNativeCheckinUnit(payload, fallbackUnit)}`;
+  }
+
+  /** Prefer `receipt.amount`, then the matching `history` entry for `day`. */
+  private readNativeCheckinAmount(payload: any, day: string): number | undefined {
+    const receiptDay = typeof payload?.receipt?.day === 'string' ? payload.receipt.day : '';
+    const receiptAmount = this.parseNonNegativeNumber(payload?.receipt?.amount);
+    if (receiptAmount !== undefined && (!receiptDay || !day || receiptDay === day)) {
+      return receiptAmount;
+    }
+
+    const history = Array.isArray(payload?.history) ? payload.history : [];
+    for (const entry of history) {
+      if (!entry || typeof entry.day !== 'string') continue;
+      if (day && entry.day !== day) continue;
+      const amount = this.parseNonNegativeNumber(entry.amount);
+      if (amount !== undefined) return amount;
+    }
+    return undefined;
+  }
+
+  /** Turn the built-in check-in `reason` into a readable message. */
+  private describeNativeCheckinReason(reason: string): string {
+    switch (reason) {
+      case 'account_on_hold':
+        return '账号处于冻结状态，站点未开放签到';
+      case 'account_ineligible':
+        return '账号不满足该站点的签到条件';
+      case 'migration_pending':
+        return '站点签到数据迁移中，稍后再试';
+      default:
+        return `站点返回不可签到状态（${reason}）`;
+    }
+  }
+
+  private extractCheckinMessage(payload: any): string {
+    for (const key of ['message', 'error', 'msg']) {
+      const value = payload?.[key];
+      if (typeof value === 'string' && value.trim()) {
+        return value.trim();
+      }
+    }
+    return '';
+  }
+
+  /** Restore the readable message out of `HTTP <status>: <body>`. */
+  private describeCheckinError(error: unknown): string {
+    const raw = error instanceof Error ? error.message : String(error ?? '');
+    const match = raw.match(/^HTTP\s+(\d+):\s*([\s\S]*)$/i);
+    if (!match) return raw.trim() || 'check-in failed';
+
+    const body = (match[2] || '').trim();
+    if (!body) return `HTTP ${match[1]}`;
+    try {
+      const message = this.extractCheckinMessage(JSON.parse(body));
+      if (message) return message;
+    } catch {
+      // Non-JSON body: fall through to the truncated text.
+    }
+    return `HTTP ${match[1]}: ${body.slice(0, 240)}`;
   }
 
   // --- Balance ---
